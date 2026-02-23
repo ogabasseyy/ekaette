@@ -54,3 +54,4 @@ compressed-*.md
 # Misc
 *.log
 tmp/
+frontend/.pnpmrc.json
