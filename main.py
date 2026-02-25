@@ -5,7 +5,6 @@ import base64
 import json
 import logging
 import os
-import re
 import warnings
 
 from dotenv import load_dotenv
@@ -29,17 +28,6 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
-
-# Regex pattern for characters that enable log injection (newlines + control chars).
-_LOG_UNSAFE_RE = re.compile(r"[\r\n\x00-\x1f\x7f]")
-
-
-def _sanitize_log(value: str | None) -> str:
-    """Strip newlines and control characters from user-supplied values before logging."""
-    if value is None:
-        return "<none>"
-    return _LOG_UNSAFE_RE.sub("", value)[:200]
-
 
 # Suppress Pydantic serialization warnings
 warnings.filterwarnings("ignore", category=UserWarning, module="pydantic")
@@ -104,11 +92,11 @@ async def websocket_endpoint(
     """WebSocket endpoint for bidirectional streaming with ADK."""
     origin = websocket.headers.get("origin")
     if not _is_origin_allowed(origin):
-        logger.warning("Rejected WebSocket origin: %s", _sanitize_log(origin))
+        logger.warning("Rejected WebSocket connection: origin not in allowlist")
         await websocket.close(code=1008, reason="Origin not allowed")
         return
 
-    logger.debug("WebSocket connection request: user_id=%s, session_id=%s", _sanitize_log(user_id), _sanitize_log(session_id))
+    logger.debug("WebSocket connection request received")
     await websocket.accept()
     logger.debug("WebSocket connection accepted")
 
