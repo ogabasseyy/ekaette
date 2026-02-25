@@ -51,6 +51,13 @@ Ekaette_*.md
 Ekaette_*.html
 compressed-*.md
 
+# Terraform
+terraform/.terraform/
+terraform/*.tfstate
+terraform/*.tfstate.backup
+terraform/*.tfvars
+terraform/.terraform.lock.hcl
+
 # Misc
 *.log
 tmp/
