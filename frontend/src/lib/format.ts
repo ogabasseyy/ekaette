@@ -5,9 +5,7 @@ export function formatDuration(totalSeconds: number): string {
 }
 
 export function prettyAgentName(value: string): string {
-  return value
-    .replace(/_/g, ' ')
-    .replace(/\b\w/g, char => char.toUpperCase())
+  return value.replace(/_/g, ' ').replace(/\b\w/g, char => char.toUpperCase())
 }
 
 export function formatNaira(value: number): string {

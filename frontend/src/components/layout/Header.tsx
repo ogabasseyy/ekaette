@@ -1,5 +1,5 @@
-import { StatusBadge } from '../ui/StatusBadge'
 import type { ConnectionState, Industry } from '../../types'
+import { StatusBadge } from '../ui/StatusBadge'
 
 interface HeaderProps {
   hint: string
@@ -14,25 +14,19 @@ const INDUSTRY_LABELS: Record<Industry, string> = {
   fashion: 'Fashion',
 }
 
-export function Header({
-  hint,
-  industry,
-  connectionState,
-}: HeaderProps) {
+export function Header({ hint, industry, connectionState }: HeaderProps) {
   const isConnected = connectionState === 'connected'
 
   return (
-    <header className="panel-glass shrink-0 flex flex-col gap-3 px-4 py-4 sm:gap-4 sm:px-5 sm:py-5 lg:flex-row lg:items-center lg:justify-between">
+    <header className="panel-glass flex shrink-0 flex-col gap-3 px-4 py-4 sm:gap-4 sm:px-5 sm:py-5 lg:flex-row lg:items-center lg:justify-between">
       <div className="space-y-1.5">
-        <p className="text-[0.58rem] uppercase tracking-[0.28em] text-muted-foreground sm:text-[0.62rem] sm:tracking-[0.34em]">
+        <p className="text-[0.58rem] text-muted-foreground uppercase tracking-[0.28em] sm:text-[0.62rem] sm:tracking-[0.34em]">
           Baci Technologies
         </p>
-        <h1 className="font-display text-xl tracking-tight text-white sm:text-3xl">
+        <h1 className="font-display text-white text-xl tracking-tight sm:text-3xl">
           Ekaette Live Desk
         </h1>
-        <p className="text-xs leading-relaxed text-muted-foreground sm:text-sm">
-          {hint}
-        </p>
+        <p className="text-muted-foreground text-xs leading-relaxed sm:text-sm">{hint}</p>
       </div>
 
       <div className="flex flex-col items-stretch gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:gap-3">

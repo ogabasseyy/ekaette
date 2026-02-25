@@ -15,9 +15,7 @@ export default function BookingConfirmationCard({
 }: BookingConfirmationCardProps) {
   return (
     <article className="animate-slide-up rounded-2xl border border-border/70 bg-card/65 p-4">
-      <p className="text-[0.64rem] uppercase tracking-[0.16em] text-primary">
-        Booking Confirmed
-      </p>
+      <p className="text-[0.64rem] text-primary uppercase tracking-[0.16em]">Booking Confirmed</p>
       <h4 className="mt-1 font-display text-lg text-white">#{confirmationId}</h4>
 
       <dl className="mt-3 grid grid-cols-2 gap-2 text-sm">

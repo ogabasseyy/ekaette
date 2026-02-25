@@ -1,9 +1,9 @@
-import { Mic, MicOff } from 'lucide-react'
 import { cva, type VariantProps } from 'class-variance-authority'
+import { Mic, MicOff } from 'lucide-react'
 import { cn } from '../../lib/utils'
 
 const micButtonVariants = cva(
-  'control-mic inline-flex items-center justify-center gap-2 rounded-2xl text-sm font-semibold transition',
+  'control-mic inline-flex items-center justify-center gap-2 rounded-2xl font-semibold text-sm transition',
   {
     variants: {
       status: {
@@ -29,17 +29,12 @@ interface MicButtonProps extends VariantProps<typeof micButtonVariants> {
   className?: string
 }
 
-export function MicButton({
-  onClick,
-  disabled = false,
-  className,
-  status,
-  size,
-}: MicButtonProps) {
+export function MicButton({ onClick, disabled = false, className, status, size }: MicButtonProps) {
   const isRecording = status === 'recording'
   const label = isRecording ? 'End call' : 'Start call'
   return (
     <button
+      type="button"
       onClick={onClick}
       disabled={disabled}
       className={cn(

@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
-import { TranscriptionOverlay } from '../layout/TranscriptionOverlay'
 import type { TranscriptMessage } from '../../lib/transcript'
+import { TranscriptionOverlay } from '../layout/TranscriptionOverlay'
 
 describe('TranscriptionOverlay', () => {
   it('renders user right-aligned and agent left-aligned messages', () => {
@@ -28,9 +28,7 @@ describe('TranscriptionOverlay', () => {
   })
 
   it('auto-scrolls when messages update', () => {
-    const scrollSpy = vi
-      .spyOn(Element.prototype, 'scrollIntoView')
-      .mockImplementation(() => {})
+    const scrollSpy = vi.spyOn(Element.prototype, 'scrollIntoView').mockImplementation(() => {})
 
     const messages: TranscriptMessage[] = [
       { type: 'transcription', role: 'agent', text: 'One', partial: false },

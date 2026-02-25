@@ -1,7 +1,7 @@
+import type { ConnectionState } from '../../types'
 import { ImageUpload } from '../ui/ImageUpload'
 import { MicButton } from '../ui/MicButton'
 import { TextInput } from '../ui/TextInput'
-import type { ConnectionState } from '../../types'
 
 interface FooterProps {
   connectionState: ConnectionState
@@ -26,12 +26,7 @@ export function Footer({
       <div className="grid grid-cols-2 gap-3 sm:flex sm:items-center">
         <ImageUpload onImageSelected={onImageSelected} />
 
-        <MicButton
-          onClick={onToggleCall}
-          disabled={isStarting}
-          status={status}
-          size="default"
-        />
+        <MicButton onClick={onToggleCall} disabled={isStarting} status={status} size="default" />
 
         <div className="col-span-2 min-w-0 sm:flex-1">
           <TextInput connected={isConnected} onSend={onSendText} />

@@ -1,18 +1,20 @@
-import { describe, it, expect } from 'vitest'
+import { describe, expect, it } from 'vitest'
+import type { TranscriptMessage } from '../transcript'
 import {
   mergePartialText,
   normalizeTranscriptMessages,
   sanitizeTranscriptForDisplay,
 } from '../transcript'
-import type { TranscriptMessage } from '../transcript'
 
 describe('mergePartialText', () => {
   it('extends when incoming starts with previous', () => {
     expect(mergePartialText('Hello', 'Hello world')).toBe('Hello world')
   })
 
-  it('replaces when incoming is entirely different', () => {
-    expect(mergePartialText('Hello', 'Goodbye')).toBe('Hello Goodbye')
+  it('space-joins non-overlapping text fragments', () => {
+    expect(mergePartialText('Need booking', 'Tomorrow afternoon')).toBe(
+      'Need booking Tomorrow afternoon',
+    )
   })
 
   it('returns incoming when previous is empty', () => {
@@ -47,10 +49,6 @@ describe('mergePartialText', () => {
 
   it('handles single-character overlap', () => {
     expect(mergePartialText('Hello', 'o world')).toBe('Hello world')
-  })
-
-  it('still space-joins genuinely non-overlapping text', () => {
-    expect(mergePartialText('Hello', 'Goodbye')).toBe('Hello Goodbye')
   })
 
   it('does not concatenate dominant-script mismatches in partials', () => {
@@ -220,9 +218,19 @@ describe('normalizeTranscriptMessages', () => {
   it('suppresses long exact duplicate finals replayed after an agent turn', () => {
     const messages: TranscriptMessage[] = [
       { type: 'transcription', role: 'user', text: 'Hi good morning.', partial: false },
-      { type: 'transcription', role: 'agent', text: 'Hello! How can I help you today?', partial: false },
+      {
+        type: 'transcription',
+        role: 'agent',
+        text: 'Hello! How can I help you today?',
+        partial: false,
+      },
       { type: 'transcription', role: 'user', text: 'Hi good morning.', partial: false }, // stale replay
-      { type: 'transcription', role: 'user', text: "I'm thinking of booking a hotel.", partial: false },
+      {
+        type: 'transcription',
+        role: 'user',
+        text: "I'm thinking of booking a hotel.",
+        partial: false,
+      },
     ]
 
     const result = normalizeTranscriptMessages(messages)
@@ -253,12 +261,35 @@ describe('normalizeTranscriptMessages', () => {
 })
 
 describe('sanitizeTranscriptForDisplay', () => {
+  it('returns original messages when preferredUserScript is not provided', () => {
+    const messages: TranscriptMessage[] = [
+      { type: 'transcription', role: 'user', text: 'Hello', partial: false },
+      { type: 'transcription', role: 'agent', text: 'Hi there', partial: false },
+    ]
+
+    const result = sanitizeTranscriptForDisplay(messages, {})
+    expect(result).toEqual(messages)
+
+    const resultWithNull = sanitizeTranscriptForDisplay(messages, { preferredUserScript: null })
+    expect(resultWithNull).toEqual(messages)
+  })
+
   it('suppresses non-latin user transcript anomalies after latin conversation is established', () => {
     const messages: TranscriptMessage[] = [
-      { type: 'transcription', role: 'user', text: 'I need a booking for next week', partial: false },
+      {
+        type: 'transcription',
+        role: 'user',
+        text: 'I need a booking for next week',
+        partial: false,
+      },
       { type: 'transcription', role: 'agent', text: 'Sure, what date works best?', partial: false },
       { type: 'transcription', role: 'user', text: 'मुझे सर दर्द हो रही है', partial: false },
-      { type: 'transcription', role: 'agent', text: 'Understood, can you share your preferred date?', partial: false },
+      {
+        type: 'transcription',
+        role: 'agent',
+        text: 'Understood, can you share your preferred date?',
+        partial: false,
+      },
     ]
 
     const result = sanitizeTranscriptForDisplay(messages, { preferredUserScript: 'latin' })
@@ -271,7 +302,12 @@ describe('sanitizeTranscriptForDisplay', () => {
   it('suppresses a non-latin user anomaly once agent replies in stable latin', () => {
     const messages: TranscriptMessage[] = [
       { type: 'transcription', role: 'user', text: 'హాయ్ గుడ్ మార్నింగ్', partial: false },
-      { type: 'transcription', role: 'agent', text: 'Hello! Good morning! How can I help you today?', partial: false },
+      {
+        type: 'transcription',
+        role: 'agent',
+        text: 'Hello! Good morning! How can I help you today?',
+        partial: false,
+      },
     ]
 
     const result = sanitizeTranscriptForDisplay(messages, { preferredUserScript: 'latin' })

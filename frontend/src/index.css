@@ -96,9 +96,22 @@
   isolation: isolate;
   overflow: hidden;
   background:
-    radial-gradient(circle at 8% 10%, color-mix(in oklab, var(--color-accent), transparent 86%) 0, transparent 42%),
-    radial-gradient(circle at 92% 85%, color-mix(in oklab, var(--color-accent-2), transparent 88%) 0, transparent 44%),
-    linear-gradient(170deg, oklch(12% 0.02 260) 0%, oklch(11% 0.02 260) 44%, oklch(10% 0.018 260) 100%);
+    radial-gradient(
+      circle at 8% 10%,
+      color-mix(in oklab, var(--color-accent), transparent 86%) 0,
+      transparent 42%
+    ),
+    radial-gradient(
+      circle at 92% 85%,
+      color-mix(in oklab, var(--color-accent-2), transparent 88%) 0,
+      transparent 44%
+    ),
+    linear-gradient(
+      170deg,
+      oklch(12% 0.02 260) 0%,
+      oklch(11% 0.02 260) 44%,
+      oklch(10% 0.018 260) 100%
+    );
 }
 
 .atmosphere-layer {
@@ -107,8 +120,16 @@
   inset: -28% -24%;
   z-index: -1;
   background:
-    radial-gradient(circle at 12% 15%, color-mix(in oklab, var(--color-accent), transparent 82%) 0, transparent 36%),
-    radial-gradient(circle at 80% 78%, color-mix(in oklab, var(--color-accent-2), transparent 84%) 0, transparent 42%);
+    radial-gradient(
+      circle at 12% 15%,
+      color-mix(in oklab, var(--color-accent), transparent 82%) 0,
+      transparent 36%
+    ),
+    radial-gradient(
+      circle at 80% 78%,
+      color-mix(in oklab, var(--color-accent-2), transparent 84%) 0,
+      transparent 42%
+    );
   filter: blur(14px);
   opacity: 0.8;
   animation: var(--animate-atmosphere-drift);
@@ -117,12 +138,11 @@
 .panel-glass {
   border-radius: 1.35rem;
   border: 1px solid color-mix(in oklab, var(--color-border), transparent 10%);
-  background:
-    linear-gradient(
-      165deg,
-      color-mix(in oklab, var(--color-card), transparent 18%) 0%,
-      color-mix(in oklab, var(--color-card), transparent 34%) 100%
-    );
+  background: linear-gradient(
+    165deg,
+    color-mix(in oklab, var(--color-card), transparent 18%) 0%,
+    color-mix(in oklab, var(--color-card), transparent 34%) 100%
+  );
   backdrop-filter: blur(14px);
   box-shadow:
     0 2px 0 color-mix(in oklab, black, transparent 74%) inset,
@@ -138,8 +158,16 @@
   border-radius: 9999px;
   border: 1px solid color-mix(in oklab, var(--color-border), transparent 8%);
   background:
-    radial-gradient(circle at 30% 30%, color-mix(in oklab, white, transparent 76%) 0, transparent 34%),
-    radial-gradient(circle at 50% 60%, color-mix(in oklab, var(--color-accent), transparent 38%) 0, color-mix(in oklab, black, transparent 6%) 65%);
+    radial-gradient(
+      circle at 30% 30%,
+      color-mix(in oklab, white, transparent 76%) 0,
+      transparent 34%
+    ),
+    radial-gradient(
+      circle at 50% 60%,
+      color-mix(in oklab, var(--color-accent), transparent 38%) 0,
+      color-mix(in oklab, black, transparent 6%) 65%
+    );
   animation: var(--animate-orb-breathe);
 }
 
@@ -204,22 +232,20 @@
 
 .message-user {
   border-color: color-mix(in oklab, var(--color-accent), transparent 44%);
-  background:
-    linear-gradient(
-      150deg,
-      color-mix(in oklab, var(--color-accent), transparent 80%),
-      color-mix(in oklab, var(--color-card), transparent 14%)
-    );
+  background: linear-gradient(
+    150deg,
+    color-mix(in oklab, var(--color-accent), transparent 80%),
+    color-mix(in oklab, var(--color-card), transparent 14%)
+  );
 }
 
 .message-agent {
   border-color: color-mix(in oklab, var(--color-info), transparent 64%);
-  background:
-    linear-gradient(
-      150deg,
-      color-mix(in oklab, var(--color-info), transparent 86%),
-      color-mix(in oklab, var(--color-card), transparent 16%)
-    );
+  background: linear-gradient(
+    150deg,
+    color-mix(in oklab, var(--color-info), transparent 86%),
+    color-mix(in oklab, var(--color-card), transparent 16%)
+  );
 }
 
 .message-partial {

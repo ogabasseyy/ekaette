@@ -1,18 +1,13 @@
 import {
+  type Dispatch,
+  type MutableRefObject,
+  type SetStateAction,
   useCallback,
   useEffect,
   useRef,
   useState,
-  type Dispatch,
-  type MutableRefObject,
-  type SetStateAction,
 } from 'react'
-import type {
-  ClientMessage,
-  ConnectionState,
-  ServerMessage,
-  TransportMode,
-} from '../types'
+import type { ClientMessage, ConnectionState, ServerMessage, TransportMode } from '../types'
 
 const MAX_RECONNECT_ATTEMPTS = 3
 const BASE_RECONNECT_DELAY = 1000
@@ -129,7 +124,11 @@ function arrayBufferToBase64(data: ArrayBuffer): string {
   const chunkSize = 0x8000
   for (let i = 0; i < bytes.length; i += chunkSize) {
     const chunk = bytes.subarray(i, Math.min(i + chunkSize, bytes.length))
-    binary += String.fromCharCode(...chunk)
+    let chunkBinary = ''
+    for (let j = 0; j < chunk.length; j += 1) {
+      chunkBinary += String.fromCharCode(chunk[j] ?? 0)
+    }
+    binary += chunkBinary
   }
   return btoa(binary)
 }
@@ -293,7 +292,11 @@ export function useEkaetteSocket(
     heartbeatPendingRef.current.clear()
     heartbeatTimerRef.current = setInterval(() => {
       const ws = wsRef.current
-      if (!ws || ws.readyState !== WebSocket.OPEN || activeTransportRef.current !== 'backend-proxy') {
+      if (
+        !ws ||
+        ws.readyState !== WebSocket.OPEN ||
+        activeTransportRef.current !== 'backend-proxy'
+      ) {
         return
       }
       const now = Date.now()
@@ -324,86 +327,87 @@ export function useEkaetteSocket(
     }, HEARTBEAT_INTERVAL_MS)
   }, [mutateDebugMetrics])
 
-  const handleJsonMessage = useCallback((data: string) => {
-    try {
-      const parsed = JSON.parse(data)
-      if (
-        parsed &&
-        typeof parsed === 'object' &&
-        'type' in parsed &&
-        typeof (parsed as { type?: unknown }).type === 'string'
-      ) {
-        const raw = parsed as Record<string, unknown>
-        const rawType = raw.type
-
-        if (rawType === 'ping') {
-          // Server keepalive ping (one-way). Heartbeat RTT is measured via client_ping/client_pong.
-          return
-        }
-
-        if (rawType === 'client_pong') {
-          const seq = typeof raw.seq === 'number' ? raw.seq : Number(raw.seq)
-          const echoedTs =
-            typeof raw.clientTs === 'number' ? raw.clientTs : Number(raw.clientTs)
-          const now = Date.now()
-          const sentAt =
-            (Number.isFinite(seq) ? heartbeatPendingRef.current.get(seq) : undefined) ??
-            (Number.isFinite(echoedTs) ? echoedTs : now)
-          if (Number.isFinite(seq)) {
-            heartbeatPendingRef.current.delete(seq)
-          }
-          const rtt = Math.max(0, now - sentAt)
-          const prevRtt = lastHeartbeatRttRef.current
-          const jitter =
-            prevRtt == null ? 0 : Math.abs(rtt - prevRtt)
-          lastHeartbeatRttRef.current = rtt
-
-          mutateDebugMetrics(draft => {
-            draft.heartbeatRttMs = rtt
-            draft.heartbeatJitterMs =
-              draft.heartbeatJitterMs == null
-                ? jitter
-                : Math.round(draft.heartbeatJitterMs * 0.7 + jitter * 0.3)
-            draft.heartbeatPending = heartbeatPendingRef.current.size
-          })
-          return
-        }
-
-        const serverMessage = parsed as ServerMessage
-
-        // Session ending — notify App so it can handle graceful reconnect.
-        if (serverMessage.type === 'session_ending') {
-          const reason = (serverMessage as { reason?: string }).reason ?? 'unknown'
-          onSessionEnding.current?.(reason)
-          appendMessage(setMessages, serverMessage)
-          return
-        }
-
+  const handleJsonMessage = useCallback(
+    (data: string) => {
+      try {
+        const parsed = JSON.parse(data)
         if (
-          serverMessage.type === 'session_started' &&
-          typeof serverMessage.sessionId === 'string' &&
-          serverMessage.sessionId
+          parsed &&
+          typeof parsed === 'object' &&
+          'type' in parsed &&
+          typeof (parsed as { type?: unknown }).type === 'string'
         ) {
-          currentSessionIdRef.current = serverMessage.sessionId
-          manualVadEnabledRef.current = Boolean(serverMessage.manualVadActive)
-          if (
-            serverMessage.voiceChangeRequiresReconnect &&
-            !demoMode &&
-            activeTransportRef.current === 'backend-proxy' &&
-            wsRef.current?.readyState === WebSocket.OPEN &&
-            !voiceReconnectPendingRef.current
-          ) {
-            voiceReconnectPendingRef.current = true
-            // Native voice changes apply on new live session.
-            wsRef.current.close()
+          const raw = parsed as Record<string, unknown>
+          const rawType = raw.type
+
+          if (rawType === 'ping') {
+            // Server keepalive ping (one-way). Heartbeat RTT is measured via client_ping/client_pong.
+            return
           }
+
+          if (rawType === 'client_pong') {
+            const seq = typeof raw.seq === 'number' ? raw.seq : Number(raw.seq)
+            const echoedTs = typeof raw.clientTs === 'number' ? raw.clientTs : Number(raw.clientTs)
+            const now = Date.now()
+            const sentAt =
+              (Number.isFinite(seq) ? heartbeatPendingRef.current.get(seq) : undefined) ??
+              (Number.isFinite(echoedTs) ? echoedTs : now)
+            if (Number.isFinite(seq)) {
+              heartbeatPendingRef.current.delete(seq)
+            }
+            const rtt = Math.max(0, now - sentAt)
+            const prevRtt = lastHeartbeatRttRef.current
+            const jitter = prevRtt == null ? 0 : Math.abs(rtt - prevRtt)
+            lastHeartbeatRttRef.current = rtt
+
+            mutateDebugMetrics(draft => {
+              draft.heartbeatRttMs = rtt
+              draft.heartbeatJitterMs =
+                draft.heartbeatJitterMs == null
+                  ? jitter
+                  : Math.round(draft.heartbeatJitterMs * 0.7 + jitter * 0.3)
+              draft.heartbeatPending = heartbeatPendingRef.current.size
+            })
+            return
+          }
+
+          const serverMessage = parsed as ServerMessage
+
+          // Session ending — notify App so it can handle graceful reconnect.
+          if (serverMessage.type === 'session_ending') {
+            const reason = (serverMessage as { reason?: string }).reason ?? 'unknown'
+            onSessionEnding.current?.(reason)
+            appendMessage(setMessages, serverMessage)
+            return
+          }
+
+          if (
+            serverMessage.type === 'session_started' &&
+            typeof serverMessage.sessionId === 'string' &&
+            serverMessage.sessionId
+          ) {
+            currentSessionIdRef.current = serverMessage.sessionId
+            manualVadEnabledRef.current = Boolean(serverMessage.manualVadActive)
+            if (
+              serverMessage.voiceChangeRequiresReconnect &&
+              !demoMode &&
+              activeTransportRef.current === 'backend-proxy' &&
+              wsRef.current?.readyState === WebSocket.OPEN &&
+              !voiceReconnectPendingRef.current
+            ) {
+              voiceReconnectPendingRef.current = true
+              // Native voice changes apply on new live session.
+              wsRef.current.close()
+            }
+          }
+          appendMessage(setMessages, serverMessage)
         }
-        appendMessage(setMessages, serverMessage)
+      } catch {
+        // Ignore malformed/non-contract messages.
       }
-    } catch {
-      // Ignore malformed/non-contract messages.
-    }
-  }, [demoMode])
+    },
+    [demoMode, mutateDebugMetrics],
+  )
 
   const trackRxAudioChunk = useCallback(
     (byteLength: number) => {
@@ -430,23 +434,26 @@ export function useEkaetteSocket(
     [mutateDebugMetrics],
   )
 
-  const handleBinaryMessage = useCallback((data: ArrayBuffer | Blob) => {
-    if (data instanceof ArrayBuffer) {
-      trackRxAudioChunk(data.byteLength)
-      onAudioData.current?.(data)
-      return
-    }
-    const blobSize = typeof data.size === 'number' ? data.size : 0
-    void data
-      .arrayBuffer()
-      .then(buffer => {
-        trackRxAudioChunk(blobSize || buffer.byteLength)
-        onAudioData.current?.(buffer)
-      })
-      .catch(() => {
-        // Ignore Blob decode failures.
-      })
-  }, [trackRxAudioChunk])
+  const handleBinaryMessage = useCallback(
+    (data: ArrayBuffer | Blob) => {
+      if (data instanceof ArrayBuffer) {
+        trackRxAudioChunk(data.byteLength)
+        onAudioData.current?.(data)
+        return
+      }
+      const blobSize = typeof data.size === 'number' ? data.size : 0
+      void data
+        .arrayBuffer()
+        .then(buffer => {
+          trackRxAudioChunk(blobSize || buffer.byteLength)
+          onAudioData.current?.(buffer)
+        })
+        .catch(() => {
+          // Ignore Blob decode failures.
+        })
+    },
+    [trackRxAudioChunk],
+  )
 
   const scheduleReconnect = useCallback(() => {
     if (demoMode || !shouldReconnectRef.current) {
@@ -457,7 +464,7 @@ export function useEkaetteSocket(
       return
     }
     setState('reconnecting')
-    const delay = BASE_RECONNECT_DELAY * Math.pow(2, reconnectAttemptRef.current)
+    const delay = BASE_RECONNECT_DELAY * 2 ** reconnectAttemptRef.current
     reconnectAttemptRef.current += 1
     reconnectTimerRef.current = setTimeout(() => {
       connectInternalRef.current()
@@ -490,6 +497,10 @@ export function useEkaetteSocket(
       model: payload.model,
       industry: payload.industry,
       companyId: payload.companyId,
+      manualVadActive:
+        typeof payload.manualVadActive === 'boolean' ? payload.manualVadActive : undefined,
+      vadMode:
+        payload.vadMode === 'auto' || payload.vadMode === 'manual' ? payload.vadMode : undefined,
     }
   }, [companyId, industry, tenantId, userId])
 
@@ -501,115 +512,118 @@ export function useEkaetteSocket(
     })
   }, [])
 
-  const handleDirectLiveMessage = useCallback((message: LiveServerMessage) => {
-    if (typeof message.data === 'string' && message.data.length > 0) {
-      const buffer = base64ToArrayBuffer(message.data)
-      trackRxAudioChunk(buffer.byteLength)
-      onAudioData.current?.(buffer)
-    }
-
-    const content = message.serverContent
-    const parts = content?.modelTurn?.parts ?? []
-    for (const part of parts) {
-      const inline = part.inlineData
-      if (
-        inline &&
-        typeof inline.data === 'string' &&
-        typeof inline.mimeType === 'string' &&
-        inline.mimeType.startsWith('audio/')
-      ) {
-        const buffer = base64ToArrayBuffer(inline.data)
+  const handleDirectLiveMessage = useCallback(
+    (message: LiveServerMessage) => {
+      if (typeof message.data === 'string' && message.data.length > 0) {
+        const buffer = base64ToArrayBuffer(message.data)
         trackRxAudioChunk(buffer.byteLength)
         onAudioData.current?.(buffer)
       }
-    }
 
-    const inputText = content?.inputTranscription?.text
-    if (typeof inputText === 'string' && inputText.trim()) {
-      lastDirectInputTextRef.current = inputText
-      receivingDirectInputRef.current = true
-      appendMessage(setMessages, {
-        type: 'transcription',
-        role: 'user',
-        text: inputText,
-        partial: true,
-      })
-    }
+      const content = message.serverContent
+      const parts = content?.modelTurn?.parts ?? []
+      for (const part of parts) {
+        const inline = part.inlineData
+        if (
+          inline &&
+          typeof inline.data === 'string' &&
+          typeof inline.mimeType === 'string' &&
+          inline.mimeType.startsWith('audio/')
+        ) {
+          const buffer = base64ToArrayBuffer(inline.data)
+          trackRxAudioChunk(buffer.byteLength)
+          onAudioData.current?.(buffer)
+        }
+      }
 
-    const outputText = content?.outputTranscription?.text
-    if (typeof outputText === 'string' && outputText.trim()) {
-      if (receivingDirectInputRef.current && lastDirectInputTextRef.current) {
+      const inputText = content?.inputTranscription?.text
+      if (typeof inputText === 'string' && inputText.trim()) {
+        lastDirectInputTextRef.current = inputText
+        receivingDirectInputRef.current = true
         appendMessage(setMessages, {
           type: 'transcription',
           role: 'user',
-          text: lastDirectInputTextRef.current,
-          partial: false,
+          text: inputText,
+          partial: true,
         })
-        lastDirectInputTextRef.current = ''
-        receivingDirectInputRef.current = false
       }
-      lastDirectOutputTextRef.current = outputText
-      appendMessage(setMessages, {
-        type: 'transcription',
-        role: 'agent',
-        text: outputText,
-        partial: true,
-      })
-    }
 
-    if (content?.interrupted) {
-      if (receivingDirectInputRef.current && lastDirectInputTextRef.current) {
-        appendMessage(setMessages, {
-          type: 'transcription',
-          role: 'user',
-          text: lastDirectInputTextRef.current,
-          partial: false,
-        })
-        lastDirectInputTextRef.current = ''
-        receivingDirectInputRef.current = false
-      }
-      if (lastDirectOutputTextRef.current) {
+      const outputText = content?.outputTranscription?.text
+      if (typeof outputText === 'string' && outputText.trim()) {
+        if (receivingDirectInputRef.current && lastDirectInputTextRef.current) {
+          appendMessage(setMessages, {
+            type: 'transcription',
+            role: 'user',
+            text: lastDirectInputTextRef.current,
+            partial: false,
+          })
+          lastDirectInputTextRef.current = ''
+          receivingDirectInputRef.current = false
+        }
+        lastDirectOutputTextRef.current = outputText
         appendMessage(setMessages, {
           type: 'transcription',
           role: 'agent',
-          text: lastDirectOutputTextRef.current,
-          partial: false,
+          text: outputText,
+          partial: true,
         })
-        lastDirectOutputTextRef.current = ''
       }
-      appendMessage(setMessages, {
-        type: 'interrupted',
-        interrupted: true,
-      })
-    }
 
-    if (content?.turnComplete) {
-      if (lastDirectInputTextRef.current) {
+      if (content?.interrupted) {
+        if (receivingDirectInputRef.current && lastDirectInputTextRef.current) {
+          appendMessage(setMessages, {
+            type: 'transcription',
+            role: 'user',
+            text: lastDirectInputTextRef.current,
+            partial: false,
+          })
+          lastDirectInputTextRef.current = ''
+          receivingDirectInputRef.current = false
+        }
+        if (lastDirectOutputTextRef.current) {
+          appendMessage(setMessages, {
+            type: 'transcription',
+            role: 'agent',
+            text: lastDirectOutputTextRef.current,
+            partial: false,
+          })
+          lastDirectOutputTextRef.current = ''
+        }
         appendMessage(setMessages, {
-          type: 'transcription',
-          role: 'user',
-          text: lastDirectInputTextRef.current,
-          partial: false,
+          type: 'interrupted',
+          interrupted: true,
         })
-        lastDirectInputTextRef.current = ''
-        receivingDirectInputRef.current = false
       }
-      if (lastDirectOutputTextRef.current) {
+
+      if (content?.turnComplete) {
+        if (lastDirectInputTextRef.current) {
+          appendMessage(setMessages, {
+            type: 'transcription',
+            role: 'user',
+            text: lastDirectInputTextRef.current,
+            partial: false,
+          })
+          lastDirectInputTextRef.current = ''
+          receivingDirectInputRef.current = false
+        }
+        if (lastDirectOutputTextRef.current) {
+          appendMessage(setMessages, {
+            type: 'transcription',
+            role: 'agent',
+            text: lastDirectOutputTextRef.current,
+            partial: false,
+          })
+          lastDirectOutputTextRef.current = ''
+        }
         appendMessage(setMessages, {
-          type: 'transcription',
-          role: 'agent',
-          text: lastDirectOutputTextRef.current,
-          partial: false,
+          type: 'agent_status',
+          agent: 'gemini_live',
+          status: 'idle',
         })
-        lastDirectOutputTextRef.current = ''
       }
-      appendMessage(setMessages, {
-        type: 'agent_status',
-        agent: 'gemini_live',
-        status: 'idle',
-      })
-    }
-  }, [mutateDebugMetrics, trackRxAudioChunk])
+    },
+    [trackRxAudioChunk],
+  )
 
   const clearMessages = useCallback(() => {
     setMessages([])
@@ -732,19 +746,37 @@ export function useEkaetteSocket(
         handleJsonMessage(event.data)
       }
     }
-  }, [companyId, handleBinaryMessage, handleJsonMessage, industry, mutateDebugMetrics, scheduleReconnect, startProxyHeartbeat, userId])
+  }, [
+    companyId,
+    handleBinaryMessage,
+    handleJsonMessage,
+    industry,
+    mutateDebugMetrics,
+    scheduleReconnect,
+    startProxyHeartbeat,
+    userId,
+  ])
 
   const connectDirectLive = useCallback(async () => {
-    const tokenPayload = await requestEphemeralToken()
-
-    const { GoogleGenAI, Modality } = await import('@google/genai')
-    const ai = new GoogleGenAI({ apiKey: tokenPayload.token })
-    const selectedModel =
-      tokenPayload.model ?? String(import.meta.env.VITE_LIVE_MODEL_ID ?? 'gemini-2.5-flash-native-audio-preview-12-2025')
-
     shouldReconnectRef.current = true
     connectingRef.current = true
     setState('connecting')
+
+    const tokenPayload = await requestEphemeralToken()
+    if (!shouldReconnectRef.current) {
+      connectingRef.current = false
+      return
+    }
+
+    const { GoogleGenAI, Modality } = await import('@google/genai')
+    if (!shouldReconnectRef.current) {
+      connectingRef.current = false
+      return
+    }
+    const ai = new GoogleGenAI({ apiKey: tokenPayload.token })
+    const selectedModel =
+      tokenPayload.model ??
+      String(import.meta.env.VITE_LIVE_MODEL_ID ?? 'gemini-2.5-flash-native-audio-preview-12-2025')
 
     const session = await ai.live.connect({
       model: selectedModel,
@@ -767,10 +799,10 @@ export function useEkaetteSocket(
             sessionId: currentSessionIdRef.current,
             industry: tokenPayload.industry ?? industry,
             companyId: tokenPayload.companyId ?? companyId,
-            manualVadActive: false,
-            vadMode: 'auto',
+            manualVadActive: tokenPayload.manualVadActive ?? false,
+            vadMode: tokenPayload.vadMode ?? 'auto',
           })
-          manualVadEnabledRef.current = false
+          manualVadEnabledRef.current = Boolean(tokenPayload.manualVadActive)
           setState('connected')
         },
         onmessage: (message: unknown) => {
@@ -795,9 +827,23 @@ export function useEkaetteSocket(
         },
       },
     })
+    if (!shouldReconnectRef.current) {
+      connectingRef.current = false
+      void Promise.resolve(session.close()).catch(() => {
+        // Ignore close race during teardown.
+      })
+      return
+    }
 
     directSessionRef.current = session as unknown as DirectLiveSession
-  }, [companyId, handleDirectLiveMessage, industry, mutateDebugMetrics, requestEphemeralToken, scheduleReconnect])
+  }, [
+    companyId,
+    handleDirectLiveMessage,
+    industry,
+    mutateDebugMetrics,
+    requestEphemeralToken,
+    scheduleReconnect,
+  ])
 
   const connectInternal = useCallback(() => {
     if (demoMode) {
@@ -919,67 +965,79 @@ export function useEkaetteSocket(
   )
 
   // Send binary audio
-  const sendAudio = useCallback((data: ArrayBuffer) => {
-    if (demoMode) {
-      return
-    }
-    const byteLength = data.byteLength
+  const sendAudio = useCallback(
+    (data: ArrayBuffer) => {
+      if (demoMode) {
+        return
+      }
+      const byteLength = data.byteLength
 
-    if (activeTransportRef.current === 'direct-live' && directSessionRef.current) {
-      mutateDebugMetrics(draft => {
-        draft.audioTxChunks += 1
-        draft.audioTxBytes += byteLength
-      })
-      const base64 = arrayBufferToBase64(data)
-      void Promise.resolve(
-        directSessionRef.current.sendRealtimeInput({
-          audio: {
-            data: base64,
-            mimeType: 'audio/pcm;rate=16000',
-          },
-        }),
-      ).catch(() => {
-        // Ignore send race.
-      })
-      return
-    }
+      if (activeTransportRef.current === 'direct-live' && directSessionRef.current) {
+        mutateDebugMetrics(draft => {
+          draft.audioTxChunks += 1
+          draft.audioTxBytes += byteLength
+        })
+        const base64 = arrayBufferToBase64(data)
+        void Promise.resolve(
+          directSessionRef.current.sendRealtimeInput({
+            audio: {
+              data: base64,
+              mimeType: 'audio/pcm;rate=16000',
+            },
+          }),
+        ).catch(() => {
+          // Ignore send race.
+        })
+        return
+      }
 
-    const ws = wsRef.current
-    if (ws?.readyState === WebSocket.OPEN) {
-      const bufferedAmount = ws.bufferedAmount ?? 0
+      const ws = wsRef.current
+      if (ws?.readyState === WebSocket.OPEN) {
+        const bufferedAmount = ws.bufferedAmount ?? 0
+        mutateDebugMetrics(draft => {
+          draft.audioTxChunks += 1
+          draft.audioTxBytes += byteLength
+          draft.audioTxBufferedAmountBytes = bufferedAmount
+          if (bufferedAmount > draft.audioTxBufferedAmountMax) {
+            draft.audioTxBufferedAmountMax = bufferedAmount
+          }
+          if (bufferedAmount > AUDIO_TX_BACKPRESSURE_BYTES) {
+            draft.audioTxBackpressureCount += 1
+          }
+        })
+        ws.send(data)
+        return
+      }
       mutateDebugMetrics(draft => {
-        draft.audioTxChunks += 1
-        draft.audioTxBytes += byteLength
-        draft.audioTxBufferedAmountBytes = bufferedAmount
-        if (bufferedAmount > draft.audioTxBufferedAmountMax) {
-          draft.audioTxBufferedAmountMax = bufferedAmount
-        }
-        if (bufferedAmount > AUDIO_TX_BACKPRESSURE_BYTES) {
-          draft.audioTxBackpressureCount += 1
-        }
+        draft.audioTxDropCount += 1
       })
-      ws.send(data)
-      return
-    }
-    mutateDebugMetrics(draft => {
-      draft.audioTxDropCount += 1
-    })
-  }, [demoMode, mutateDebugMetrics])
+    },
+    [demoMode, mutateDebugMetrics],
+  )
 
   // Send text message
-  const sendText = useCallback((text: string) => {
-    sendJson({ type: 'text', text })
-  }, [sendJson])
+  const sendText = useCallback(
+    (text: string) => {
+      sendJson({ type: 'text', text })
+    },
+    [sendJson],
+  )
 
   // Send image with mimeType
-  const sendImage = useCallback((base64: string, mimeType: string) => {
-    sendJson({ type: 'image', data: base64, mimeType })
-  }, [sendJson])
+  const sendImage = useCallback(
+    (base64: string, mimeType: string) => {
+      sendJson({ type: 'image', data: base64, mimeType })
+    },
+    [sendJson],
+  )
 
   // Send negotiation action
-  const sendNegotiate = useCallback((counterOffer: number, action: 'accept' | 'decline' | 'counter') => {
-    sendJson({ type: 'negotiate', counterOffer, action })
-  }, [sendJson])
+  const sendNegotiate = useCallback(
+    (counterOffer: number, action: 'accept' | 'decline' | 'counter') => {
+      sendJson({ type: 'negotiate', counterOffer, action })
+    },
+    [sendJson],
+  )
 
   const sendActivityStart = useCallback(() => {
     if (!manualVadEnabledRef.current) return

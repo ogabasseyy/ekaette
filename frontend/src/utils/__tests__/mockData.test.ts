@@ -22,13 +22,14 @@ describe('mockData', () => {
   it('returns undefined for invalid step index', () => {
     expect(getDemoStep(-1)).toBeUndefined()
     expect(getDemoStep(999)).toBeUndefined()
+    expect(getDemoStep(1.5 as unknown as number)).toBeUndefined()
+    expect(getDemoStep(Number.NaN)).toBeUndefined()
+    expect(getDemoStep('1' as unknown as number)).toBeUndefined()
   })
 
   it('rejects invalid runtime message shapes', () => {
     expect(isServerMessage({ type: 'transcription', role: 'agent' })).toBe(false)
-    expect(isServerMessage({ type: 'booking_confirmation', confirmationId: 'a' })).toBe(
-      false,
-    )
+    expect(isServerMessage({ type: 'booking_confirmation', confirmationId: 'a' })).toBe(false)
     expect(isServerMessage({ type: 'unknown' })).toBe(false)
   })
 })

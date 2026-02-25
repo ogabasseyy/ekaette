@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
-import { cn } from '../../lib/utils'
 import type { TranscriptMessage } from '../../lib/transcript'
+import { cn } from '../../lib/utils'
 
 interface TranscriptionOverlayProps {
   messages: TranscriptMessage[]
@@ -16,13 +16,13 @@ export function TranscriptionOverlay({ messages }: TranscriptionOverlayProps) {
     } else if (transcriptRef.current) {
       transcriptRef.current.scrollTop = transcriptRef.current.scrollHeight
     }
-  }, [messages])
+  }, [])
 
   return (
-    <section className="panel-glass shrink-0 flex min-h-[12rem] max-h-[15rem] flex-col px-4 py-4 sm:min-h-[14rem] sm:max-h-[18rem] sm:px-5 lg:h-full lg:min-h-0 lg:max-h-none">
+    <section className="panel-glass flex max-h-[15rem] min-h-[12rem] shrink-0 flex-col px-4 py-4 sm:max-h-[18rem] sm:min-h-[14rem] sm:px-5 lg:h-full lg:max-h-none lg:min-h-0">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h3 className="font-display text-base text-white sm:text-xl">Live Transcript</h3>
-        <span className="rounded-full border border-border/80 bg-card/40 px-2 py-1 text-[0.6rem] uppercase tracking-[0.14em] text-muted-foreground sm:text-[0.64rem] sm:tracking-[0.16em]">
+        <span className="rounded-full border border-border/80 bg-card/40 px-2 py-1 text-[0.6rem] text-muted-foreground uppercase tracking-[0.14em] sm:text-[0.64rem] sm:tracking-[0.16em]">
           {messages.length} messages
         </span>
       </div>
@@ -53,7 +53,7 @@ export function TranscriptionOverlay({ messages }: TranscriptionOverlayProps) {
               {message.role === 'user' ? 'You' : 'Ekaette'}
               {message.partial ? ' • listening' : ''}
             </p>
-            <p className="mt-1 text-[0.92rem] leading-relaxed text-foreground sm:text-sm">
+            <p className="mt-1 text-[0.92rem] text-foreground leading-relaxed sm:text-sm">
               {message.text}
             </p>
           </article>

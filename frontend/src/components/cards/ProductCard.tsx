@@ -34,8 +34,8 @@ export default function ProductCard({
           {available ? 'Available' : 'Out'}
         </span>
       </div>
-      <p className="mt-2 text-sm text-muted-foreground">{description}</p>
-      <p className="mt-3 text-base font-semibold text-foreground">{displayPrice}</p>
+      <p className="mt-2 text-muted-foreground text-sm">{description}</p>
+      <p className="mt-3 font-semibold text-base text-foreground">{displayPrice}</p>
     </article>
   )
 }

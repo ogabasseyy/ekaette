@@ -1,5 +1,5 @@
 import { Camera } from 'lucide-react'
-import { useId, useState, type ChangeEvent } from 'react'
+import { type ChangeEvent, useId, useState } from 'react'
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024 // 10MB
 const ALLOWED_MIME_TYPES = new Set([
@@ -65,7 +65,7 @@ export function ImageUpload({
     <div className={['w-full sm:w-auto', className].filter(Boolean).join(' ')}>
       <label
         htmlFor={inputId}
-        className="inline-flex w-full cursor-pointer items-center justify-center gap-2 rounded-2xl border border-border/80 bg-card/40 px-4 py-3 text-sm text-foreground transition hover:border-primary/60 hover:bg-card"
+        className="inline-flex w-full cursor-pointer items-center justify-center gap-2 rounded-2xl border border-border/80 bg-card/40 px-4 py-3 text-foreground text-sm transition hover:border-primary/60 hover:bg-card"
       >
         <Camera className="size-4" />
         <span>Upload photo</span>
@@ -79,7 +79,7 @@ export function ImageUpload({
         onChange={handleImageUpload}
       />
       {validationError ? (
-        <p className="mt-1.5 text-xs text-destructive">{validationError}</p>
+        <p className="mt-1.5 text-destructive text-xs">{validationError}</p>
       ) : null}
       {showPreview && previewSrc ? (
         <img

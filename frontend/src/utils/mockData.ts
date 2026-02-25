@@ -16,8 +16,11 @@ const messageTypes: ServerMessageType[] = [
   'error',
   'interrupted',
   'session_started',
+  'session_ending',
   'memory_recall',
   'agent_status',
+  'telemetry',
+  'ping',
 ]
 
 function hasType(value: unknown): value is { type: string } {
@@ -71,6 +74,14 @@ export function isServerMessage(value: unknown): value is ServerMessage {
       return typeof data.interrupted === 'boolean'
     case 'session_started':
       return typeof data.sessionId === 'string' && typeof data.industry === 'string'
+    case 'session_ending':
+      return (
+        (data.reason === 'go_away' ||
+          data.reason === 'session_resumption' ||
+          data.reason === 'live_session_ended') &&
+        (data.timeLeftMs == null || typeof data.timeLeftMs === 'number') &&
+        (data.resumptionToken == null || typeof data.resumptionToken === 'string')
+      )
     case 'memory_recall':
       return typeof data.previousInteractions === 'number'
     case 'agent_status':
@@ -78,6 +89,18 @@ export function isServerMessage(value: unknown): value is ServerMessage {
         typeof data.agent === 'string' &&
         ['active', 'idle', 'processing'].includes(String(data.status))
       )
+    case 'telemetry':
+      return (
+        typeof data.promptTokens === 'number' &&
+        typeof data.completionTokens === 'number' &&
+        typeof data.totalTokens === 'number' &&
+        typeof data.sessionPromptTokens === 'number' &&
+        typeof data.sessionCompletionTokens === 'number' &&
+        typeof data.sessionTotalTokens === 'number' &&
+        typeof data.sessionCostUsd === 'number'
+      )
+    case 'ping':
+      return typeof data.ts === 'number'
     default:
       return false
   }

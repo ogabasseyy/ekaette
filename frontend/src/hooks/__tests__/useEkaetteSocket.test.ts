@@ -1,13 +1,17 @@
-import { renderHook, act } from '@testing-library/react'
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { useEkaetteSocket } from '../useEkaetteSocket'
+import { act, renderHook } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ServerMessage } from '../../types'
+import { useEkaetteSocket } from '../useEkaetteSocket'
 
 interface MockSocket {
   url: string
   binaryType: string
   sent: Array<string | ArrayBuffer>
+  readyState?: number
+  bufferedAmount?: number
   onmessage: ((event: MessageEvent) => void) | null
+  onclose?: ((event: CloseEvent) => void) | null
+  close?: () => void
 }
 
 function getLastSocket(): MockSocket {
@@ -35,6 +39,7 @@ describe('useEkaetteSocket', () => {
 
   afterEach(() => {
     vi.useRealTimers()
+    vi.restoreAllMocks()
   })
 
   it('starts disconnected', () => {
@@ -104,6 +109,39 @@ describe('useEkaetteSocket', () => {
     expect(result.current.messages).toHaveLength(1)
     const first = result.current.messages[0]
     expect(first.type).toBe('transcription')
+  })
+
+  it('caps messages at 500 and drops oldest entries', async () => {
+    const { result } = renderHook(() => useEkaetteSocket('user1', 'session1'))
+    act(() => {
+      result.current.connect()
+    })
+    await act(async () => {
+      vi.advanceTimersByTime(1)
+    })
+
+    const ws = getLastSocket()
+    act(() => {
+      for (let i = 0; i < 505; i += 1) {
+        ws.onmessage?.(
+          new MessageEvent('message', {
+            data: JSON.stringify({
+              type: 'transcription',
+              role: 'agent',
+              text: `message-${i}`,
+              partial: false,
+            }),
+          }),
+        )
+      }
+    })
+
+    expect(result.current.messages).toHaveLength(500)
+    const first = result.current.messages[0]
+    expect(first.type).toBe('transcription')
+    if (first.type === 'transcription') {
+      expect(first.text).toBe('message-5')
+    }
   })
 
   it('reconnects when server indicates voice change requires reconnect', async () => {
@@ -271,6 +309,10 @@ describe('useEkaetteSocket', () => {
       result.current.sendActivityStart()
     })
     expect(ws.sent.length).toBe(sentBefore)
+    act(() => {
+      result.current.sendActivityEnd()
+    })
+    expect(ws.sent.length).toBe(sentBefore)
 
     // Simulate backend capability handshake enabling manual VAD.
     act(() => {
@@ -302,6 +344,36 @@ describe('useEkaetteSocket', () => {
     expect(JSON.parse(raw as string)).toEqual({ type: 'activity_end' })
   })
 
+  it('clearMessages removes accumulated messages', async () => {
+    const { result } = renderHook(() => useEkaetteSocket('user1', 'session1'))
+    act(() => {
+      result.current.connect()
+    })
+    await act(async () => {
+      vi.advanceTimersByTime(1)
+    })
+
+    const ws = getLastSocket()
+    act(() => {
+      ws.onmessage?.(
+        new MessageEvent('message', {
+          data: JSON.stringify({
+            type: 'transcription',
+            role: 'agent',
+            text: 'Hello',
+            partial: false,
+          }),
+        }),
+      )
+    })
+    expect(result.current.messages.length).toBe(1)
+
+    act(() => {
+      result.current.clearMessages()
+    })
+    expect(result.current.messages).toEqual([])
+  })
+
   it('disconnect sets state to disconnected', async () => {
     const { result } = renderHook(() => useEkaetteSocket('user1', 'session1'))
     act(() => {
@@ -319,9 +391,7 @@ describe('useEkaetteSocket', () => {
   })
 
   it('supports demo mode bypass and injected demo messages', () => {
-    const { result } = renderHook(() =>
-      useEkaetteSocket('user1', 'session1', { demoMode: true }),
-    )
+    const { result } = renderHook(() => useEkaetteSocket('user1', 'session1', { demoMode: true }))
 
     act(() => {
       result.current.connect()
@@ -342,13 +412,11 @@ describe('useEkaetteSocket', () => {
   })
 
   it('falls back to backend proxy when direct-live token preflight fails', async () => {
-    const originalFetch = globalThis.fetch
-    const fetchMock = vi.fn().mockResolvedValue({
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
       ok: false,
       status: 503,
       json: async () => ({ error: 'unavailable' }),
-    })
-    ;(globalThis as { fetch: typeof fetch }).fetch = fetchMock as unknown as typeof fetch
+    } as Response)
 
     const { result } = renderHook(() =>
       useEkaetteSocket('user1', 'session1', {
@@ -367,7 +435,7 @@ describe('useEkaetteSocket', () => {
     })
 
     const ws = getLastSocket()
-    expect(fetchMock).toHaveBeenCalledWith(
+    expect(fetchSpy).toHaveBeenCalledWith(
       '/api/token',
       expect.objectContaining({
         method: 'POST',
@@ -378,7 +446,73 @@ describe('useEkaetteSocket', () => {
       message => message.type === 'error' && message.code === 'DIRECT_MODE_FALLBACK',
     )
     expect(fallback).toBeDefined()
+  })
 
-    ;(globalThis as { fetch: typeof fetch }).fetch = originalFetch
+  it('emits rapid disconnect error after repeated short-lived disconnects', async () => {
+    const { result } = renderHook(() => useEkaetteSocket('user1', 'session1'))
+
+    act(() => {
+      result.current.connect()
+    })
+    await act(async () => {
+      vi.advanceTimersByTime(1)
+    })
+
+    let ws = getLastSocket()
+    act(() => {
+      ws.close?.()
+    })
+    await act(async () => {
+      vi.advanceTimersByTime(1001)
+    })
+
+    ws = getLastSocket()
+    act(() => {
+      ws.close?.()
+    })
+    await act(async () => {
+      vi.advanceTimersByTime(2001)
+    })
+
+    ws = getLastSocket()
+    act(() => {
+      ws.close?.()
+    })
+
+    expect(result.current.state).toBe('disconnected')
+    const rapid = result.current.messages.find(
+      message => message.type === 'error' && message.code === 'RAPID_DISCONNECT',
+    )
+    expect(rapid).toBeDefined()
+  })
+
+  it('tracks sendAudio drops when disconnected and backpressure when websocket is open', async () => {
+    const { result } = renderHook(() => useEkaetteSocket('user1', 'session1'))
+    const droppedChunk = new Uint8Array([1, 2, 3]).buffer
+
+    act(() => {
+      result.current.sendAudio(droppedChunk)
+    })
+    expect(result.current.debugMetrics.audioTxDropCount).toBe(1)
+
+    act(() => {
+      result.current.connect()
+    })
+    await act(async () => {
+      vi.advanceTimersByTime(1)
+    })
+
+    const ws = getLastSocket()
+    ws.bufferedAmount = 300 * 1024
+    const chunk = new Uint8Array([9, 8, 7, 6]).buffer
+    act(() => {
+      result.current.sendAudio(chunk)
+    })
+
+    expect(ws.sent.at(-1)).toBe(chunk)
+    expect(result.current.debugMetrics.audioTxChunks).toBe(1)
+    expect(result.current.debugMetrics.audioTxBytes).toBe(4)
+    expect(result.current.debugMetrics.audioTxBackpressureCount).toBe(1)
+    expect(result.current.debugMetrics.audioTxDropCount).toBe(1)
   })
 })

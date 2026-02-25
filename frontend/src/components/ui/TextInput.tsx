@@ -1,4 +1,4 @@
-import { useMemo, useState, useTransition, type KeyboardEvent } from 'react'
+import { type KeyboardEvent, useMemo, useState, useTransition } from 'react'
 import { cn } from '../../lib/utils'
 
 interface TextInputProps {
@@ -40,18 +40,15 @@ export function TextInput({ connected, onSend }: TextInputProps) {
         value={draft}
         onChange={event => handleChange(event.target.value)}
         onKeyDown={handleKeyDown}
-        placeholder={
-          connected
-            ? 'Type a message and press Enter...'
-            : 'Connect call to send text'
-        }
-        className="w-full min-w-0 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground"
+        placeholder={connected ? 'Type a message and press Enter...' : 'Connect call to send text'}
+        className="w-full min-w-0 bg-transparent text-foreground text-sm outline-none placeholder:text-muted-foreground"
       />
       <button
+        type="button"
         onClick={handleSend}
         disabled={!canSend}
         className={cn(
-          'shrink-0 rounded-xl border border-primary/40 bg-primary/15 px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.12em] text-primary transition hover:bg-primary/25',
+          'shrink-0 rounded-xl border border-primary/40 bg-primary/15 px-3 py-1.5 font-semibold text-primary text-xs uppercase tracking-[0.12em] transition hover:bg-primary/25',
           'disabled:cursor-not-allowed disabled:opacity-50',
         )}
       >

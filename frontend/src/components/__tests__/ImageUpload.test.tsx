@@ -14,10 +14,8 @@ describe('ImageUpload', () => {
     const original = globalThis.FileReader
 
     class MockFileReader {
-      result: string | ArrayBuffer | null =
-        'data:image/jpeg;base64,ZmFrZS1pbWFnZS1iYXNlNjQ='
-      onload: ((this: FileReader, ev: ProgressEvent<FileReader>) => unknown) | null =
-        null
+      result: string | ArrayBuffer | null = 'data:image/jpeg;base64,ZmFrZS1pbWFnZS1iYXNlNjQ='
+      onload: ((this: FileReader, ev: ProgressEvent<FileReader>) => unknown) | null = null
       readAsDataURL() {
         this.onload?.call(this as unknown as FileReader, {} as ProgressEvent<FileReader>)
       }

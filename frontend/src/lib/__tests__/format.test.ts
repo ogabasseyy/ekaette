@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest'
-import { formatDuration, prettyAgentName, formatNaira } from '../format'
+import { describe, expect, it } from 'vitest'
+import { formatDuration, formatNaira, prettyAgentName } from '../format'
 
 describe('formatDuration', () => {
   it('formats zero seconds as 00:00', () => {

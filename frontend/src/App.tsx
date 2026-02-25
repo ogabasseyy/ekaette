@@ -1,4 +1,5 @@
 import {
+  type CSSProperties,
   lazy,
   Suspense,
   useCallback,
@@ -6,20 +7,20 @@ import {
   useMemo,
   useRef,
   useState,
-  type CSSProperties,
 } from 'react'
 
 // bundle-dynamic-imports: cards lazy-loaded since they only render on specific message types
 const ValuationCard = lazy(() => import('./components/cards/ValuationCard'))
 const BookingConfirmationCard = lazy(() => import('./components/cards/BookingConfirmationCard'))
 const ProductCard = lazy(() => import('./components/cards/ProductCard'))
+
 import { Footer } from './components/layout/Footer'
 import { Header } from './components/layout/Header'
 import { IndustryOnboarding } from './components/layout/IndustryOnboarding'
 import { TranscriptionOverlay } from './components/layout/TranscriptionOverlay'
 import { VoicePanel } from './components/layout/VoicePanel'
 import { ImagePreview } from './components/media/ImagePreview'
-import { useAudioWorklet, type PlaybackStats } from './hooks/useAudioWorklet'
+import { type PlaybackStats, useAudioWorklet } from './hooks/useAudioWorklet'
 import { useDemoMode } from './hooks/useDemoMode'
 import { useEkaetteSocket } from './hooks/useEkaetteSocket'
 import {
@@ -49,13 +50,12 @@ const INDUSTRY_COMPANY_MAP: Record<Industry, string> = {
   automotive: 'ekaette-automotive',
   fashion: 'ekaette-fashion',
 }
+const INDUSTRY_VALUES = Object.keys(INDUSTRY_COMPANY_MAP) as Industry[]
+const INDUSTRY_VALUE_SET = new Set<Industry>(INDUSTRY_VALUES)
 
 function parseStoredIndustry(value: string | null): Industry | null {
-  if (value === 'electronics') return 'electronics'
-  if (value === 'hotel') return 'hotel'
-  if (value === 'automotive') return 'automotive'
-  if (value === 'fashion') return 'fashion'
-  return null
+  if (!value) return null
+  return INDUSTRY_VALUE_SET.has(value as Industry) ? (value as Industry) : null
 }
 
 function readDemoModeFlag(): boolean {
@@ -111,9 +111,10 @@ interface DebugEventItem {
 
 function formatDebugTime(ts: number): string {
   const date = new Date(ts)
-  return `${String(date.getMinutes()).padStart(2, '0')}:${String(
-    date.getSeconds(),
-  ).padStart(2, '0')}.${String(date.getMilliseconds()).padStart(3, '0')}`
+  return `${String(date.getMinutes()).padStart(2, '0')}:${String(date.getSeconds()).padStart(
+    2,
+    '0',
+  )}.${String(date.getMilliseconds()).padStart(3, '0')}`
 }
 
 function formatMs(value: number | null | undefined): string {
@@ -214,6 +215,15 @@ function App() {
   const socketStateRef = useRef(socket.state)
   const processedCountRef = useRef(0)
   const wasConnectedRef = useRef(false)
+  const connectWaitTimerRef = useRef<number | null>(null)
+  const isMountedRef = useRef(true)
+
+  const clearConnectWaitTimer = useCallback(() => {
+    if (connectWaitTimerRef.current != null) {
+      window.clearInterval(connectWaitTimerRef.current)
+      connectWaitTimerRef.current = null
+    }
+  }, [])
 
   // Single-pass message extraction (js-combine-iterations)
   const derived = useMemo(() => {
@@ -297,10 +307,7 @@ function App() {
     })
   }, [derived.transcripts, preferLatinTranscriptDisplay])
   const rawTranscriptTail = useMemo(
-    () =>
-      debugOpen
-        ? socket.messages.filter(msg => msg.type === 'transcription').slice(-10)
-        : [],
+    () => (debugOpen ? socket.messages.filter(msg => msg.type === 'transcription').slice(-10) : []),
     [socket.messages, debugOpen],
   )
   const socketDebug = socket.debugMetrics
@@ -347,7 +354,7 @@ function App() {
     if (socket.state === 'disconnected') {
       wasConnectedRef.current = false
     }
-  }, [socket.state, audio, demoModeEnabled])
+  }, [socket.state, audio.initPlayer, audio.startRecording, audio.stop, demoModeEnabled])
 
   useEffect(() => {
     onAudioChunkRef.current = socket.sendAudio
@@ -384,7 +391,15 @@ function App() {
     return () => {
       socket.onSessionEnding.current = null
     }
-  }, [socket])
+  }, [socket.clearMessages, socket.onSessionEnding])
+
+  useEffect(() => {
+    isMountedRef.current = true
+    return () => {
+      isMountedRef.current = false
+      clearConnectWaitTimer()
+    }
+  }, [clearConnectWaitTimer])
 
   useEffect(() => {
     socket.onAudioData.current = (data: ArrayBuffer) => {
@@ -400,8 +415,7 @@ function App() {
     processedCountRef.current = socket.messages.length
     for (const msg of newMessages) {
       if (msg.type === 'transcription') {
-        const snippet =
-          msg.text.length > 90 ? `${msg.text.slice(0, 90)}...` : msg.text
+        const snippet = msg.text.length > 90 ? `${msg.text.slice(0, 90)}...` : msg.text
         pushDebugEvent(
           'tx',
           `${msg.role}:${msg.partial ? 'P' : 'F'} ${snippet.replace(/\s+/g, ' ')}`,
@@ -486,14 +500,15 @@ function App() {
       await audio.recoverAudioContexts()
       await new Promise<void>((resolve, reject) => {
         const startedAt = Date.now()
-        const timer = window.setInterval(() => {
+        clearConnectWaitTimer()
+        connectWaitTimerRef.current = window.setInterval(() => {
           if (socketStateRef.current === 'connected') {
-            window.clearInterval(timer)
+            clearConnectWaitTimer()
             resolve()
             return
           }
           if (Date.now() - startedAt > 5000) {
-            window.clearInterval(timer)
+            clearConnectWaitTimer()
             reject(new Error('WebSocket connection timeout'))
           }
         }, 50)
@@ -501,13 +516,18 @@ function App() {
       await audio.initPlayer()
       await audio.startRecording()
     } catch (error) {
-      setCallError(error instanceof Error ? error.message : 'Call start failed')
+      if (isMountedRef.current) {
+        setCallError(error instanceof Error ? error.message : 'Call start failed')
+      }
       socket.disconnect()
       if (!demoModeEnabled) {
         audio.stop()
       }
     } finally {
-      setIsStarting(false)
+      clearConnectWaitTimer()
+      if (isMountedRef.current) {
+        setIsStarting(false)
+      }
     }
   }
 
@@ -559,7 +579,7 @@ function App() {
     >
       <div className="atmosphere-layer" aria-hidden />
 
-      <div className="relative mx-auto flex h-full w-full max-w-6xl flex-col px-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] pt-[calc(env(safe-area-inset-top)+0.75rem)] sm:px-6 sm:pb-6 sm:pt-5 lg:px-8">
+      <div className="relative mx-auto flex h-full w-full max-w-6xl flex-col px-3 pt-[calc(env(safe-area-inset-top)+0.75rem)] pb-[calc(env(safe-area-inset-bottom)+0.75rem)] sm:px-6 sm:pt-5 sm:pb-6 lg:px-8">
         {!industry ? (
           <main className="mt-3 grid min-h-0 flex-1 overflow-y-auto pb-1 sm:mt-4 sm:pb-0">
             <IndustryOnboarding onComplete={handleOnboardingComplete} />
@@ -567,14 +587,10 @@ function App() {
         ) : (
           <>
             <div className="hidden lg:block">
-              <Header
-                hint={theme.hint}
-                industry={activeIndustry}
-                connectionState={socket.state}
-              />
+              <Header hint={theme.hint} industry={activeIndustry} connectionState={socket.state} />
             </div>
 
-            <main className="mt-3 flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto pb-1 sm:mt-4 sm:pb-0 lg:grid lg:overflow-hidden lg:pb-0 lg:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]">
+            <main className="mt-3 flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto pb-1 sm:mt-4 sm:pb-0 lg:grid lg:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)] lg:overflow-hidden lg:pb-0">
               <div className="lg:hidden">
                 <Header
                   hint={theme.hint}
@@ -651,7 +667,7 @@ function App() {
             {errorToast ? (
               <div
                 role="alert"
-                className="error-toast fixed bottom-[calc(env(safe-area-inset-bottom)+6rem)] left-1/2 z-50 w-[min(calc(100vw-1.5rem),32rem)] -translate-x-1/2 rounded-xl border border-destructive/50 bg-destructive/15 px-4 py-3 text-sm text-destructive backdrop-blur-sm sm:bottom-24"
+                className="error-toast fixed bottom-[calc(env(safe-area-inset-bottom)+6rem)] left-1/2 z-50 w-[min(calc(100vw-1.5rem),32rem)] -translate-x-1/2 rounded-xl border border-destructive/50 bg-destructive/15 px-4 py-3 text-destructive text-sm backdrop-blur-sm sm:bottom-24"
               >
                 {errorToast.message}
               </div>
@@ -669,14 +685,15 @@ function App() {
       </div>
 
       {import.meta.env.DEV && (
-        <div className="pointer-events-none fixed bottom-3 right-3 z-50 hidden max-w-[22rem] flex-col items-end gap-2 sm:flex">
-          <div className="pointer-events-auto rounded-2xl border border-border/80 bg-card/85 px-3 py-2 text-[10px] uppercase tracking-[0.12em] text-muted-foreground shadow-lg backdrop-blur">
+        <div className="pointer-events-none fixed right-3 bottom-3 z-50 hidden max-w-[22rem] flex-col items-end gap-2 sm:flex">
+          <div className="pointer-events-auto rounded-2xl border border-border/80 bg-card/85 px-3 py-2 text-[10px] text-muted-foreground uppercase tracking-[0.12em] shadow-lg backdrop-blur">
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
               <span>
                 RTT <span className="text-foreground">{formatMs(socketDebug.heartbeatRttMs)}</span>
               </span>
               <span>
-                Jitter <span className="text-foreground">{formatMs(socketDebug.heartbeatJitterMs)}</span>
+                Jitter{' '}
+                <span className="text-foreground">{formatMs(socketDebug.heartbeatJitterMs)}</span>
               </span>
               <span>
                 Buf{' '}
@@ -687,10 +704,7 @@ function App() {
                 </span>
               </span>
               <span>
-                Und{' '}
-                <span className="text-foreground">
-                  {playbackStats?.underrunCount ?? 0}
-                </span>
+                Und <span className="text-foreground">{playbackStats?.underrunCount ?? 0}</span>
               </span>
               <span>
                 BP <span className="text-foreground">{socketDebug.audioTxBackpressureCount}</span>
@@ -706,20 +720,20 @@ function App() {
           <button
             type="button"
             onClick={() => setDebugOpen(prev => !prev)}
-            className="pointer-events-auto rounded-full border border-border/80 bg-card/85 px-3 py-1 text-[0.65rem] font-medium uppercase tracking-[0.16em] text-muted-foreground shadow-lg backdrop-blur"
+            className="pointer-events-auto rounded-full border border-border/80 bg-card/85 px-3 py-1 font-medium text-[0.65rem] text-muted-foreground uppercase tracking-[0.16em] shadow-lg backdrop-blur"
           >
             {debugOpen ? 'Hide Debug' : 'Show Debug'}
           </button>
           {debugOpen && (
             <aside className="pointer-events-auto w-full rounded-2xl border border-border/80 bg-background/92 p-3 shadow-2xl backdrop-blur">
               <div className="flex items-center justify-between gap-2">
-                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                <p className="font-semibold text-muted-foreground text-xs uppercase tracking-[0.16em]">
                   Live Debug
                 </p>
                 <button
                   type="button"
                   onClick={() => setDebugEvents([])}
-                  className="rounded-md border border-border/70 px-2 py-1 text-[10px] uppercase tracking-[0.12em] text-muted-foreground"
+                  className="rounded-md border border-border/70 px-2 py-1 text-[10px] text-muted-foreground uppercase tracking-[0.12em]"
                 >
                   Clear
                 </button>
@@ -732,7 +746,9 @@ function App() {
                     {socket.state} / {transportMode}
                   </p>
                   <p className="mt-1 text-[10px] text-muted-foreground">
-                    RTT {formatMs(socketDebug.heartbeatRttMs)} · jitter {formatMs(socketDebug.heartbeatJitterMs)} · pending {socketDebug.heartbeatPending} · timeouts {socketDebug.heartbeatTimeouts}
+                    RTT {formatMs(socketDebug.heartbeatRttMs)} · jitter{' '}
+                    {formatMs(socketDebug.heartbeatJitterMs)} · pending{' '}
+                    {socketDebug.heartbeatPending} · timeouts {socketDebug.heartbeatTimeouts}
                   </p>
                 </div>
                 <div className="rounded-lg border border-border/60 bg-card/60 p-2">
@@ -753,13 +769,19 @@ function App() {
                       : 'waiting for audio'}
                   </p>
                   <p className="mt-1 text-[10px] text-muted-foreground">
-                    tx {socketDebug.audioTxChunks} chunks / {Math.round(socketDebug.audioTxBytes / 1024)} KiB · rx {socketDebug.audioRxChunks} chunks / {Math.round(socketDebug.audioRxBytes / 1024)} KiB · txDrop {socketDebug.audioTxDropCount} · bp {socketDebug.audioTxBackpressureCount} · rxGap {socketDebug.audioRxDropSuspectCount} ({formatMs(socketDebug.audioRxLastGapMs)})
+                    tx {socketDebug.audioTxChunks} chunks /{' '}
+                    {Math.round(socketDebug.audioTxBytes / 1024)} KiB · rx{' '}
+                    {socketDebug.audioRxChunks} chunks /{' '}
+                    {Math.round(socketDebug.audioRxBytes / 1024)} KiB · txDrop{' '}
+                    {socketDebug.audioTxDropCount} · bp {socketDebug.audioTxBackpressureCount} ·
+                    rxGap {socketDebug.audioRxDropSuspectCount} (
+                    {formatMs(socketDebug.audioRxLastGapMs)})
                   </p>
                 </div>
               </div>
 
               <div className="mt-3">
-                <p className="mb-1 text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
+                <p className="mb-1 text-[10px] text-muted-foreground uppercase tracking-[0.16em]">
                   Raw Transcript Tail
                 </p>
                 <div className="max-h-28 space-y-1 overflow-y-auto rounded-lg border border-border/60 bg-card/40 p-2 font-mono text-[10px] leading-4">
@@ -779,7 +801,7 @@ function App() {
               </div>
 
               <div className="mt-3">
-                <p className="mb-1 text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
+                <p className="mb-1 text-[10px] text-muted-foreground uppercase tracking-[0.16em]">
                   Event Trace
                 </p>
                 <div className="max-h-44 space-y-1 overflow-y-auto rounded-lg border border-border/60 bg-card/40 p-2 font-mono text-[10px] leading-4">

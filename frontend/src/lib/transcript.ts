@@ -98,14 +98,7 @@ function hasMeaningfulTextOverlap(a: string, b: string): boolean {
   const right = b.trim()
   if (!left || !right) return false
 
-  if (
-    left.includes(right) ||
-    right.includes(left) ||
-    left.startsWith(right) ||
-    left.endsWith(right) ||
-    right.startsWith(left) ||
-    right.endsWith(left)
-  ) {
+  if (left.includes(right) || right.includes(left)) {
     return true
   }
 
@@ -285,10 +278,8 @@ export function normalizeTranscriptMessages(messages: TranscriptMessage[]): Tran
     }
 
     const latestSameRoleIndex = findLatestSameRoleIndex(role)
-    const latestSameRole =
-      latestSameRoleIndex >= 0 ? normalized[latestSameRoleIndex] : undefined
-    const latestSameRoleMeta =
-      latestSameRoleIndex >= 0 ? meta[latestSameRoleIndex] : undefined
+    const latestSameRole = latestSameRoleIndex >= 0 ? normalized[latestSameRoleIndex] : undefined
+    const latestSameRoleMeta = latestSameRoleIndex >= 0 ? meta[latestSameRoleIndex] : undefined
 
     if (message.partial) {
       if (latestSameRole && isEquivalentTranscriptText(latestSameRole.text, rawText)) {

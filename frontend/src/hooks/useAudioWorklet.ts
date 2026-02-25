@@ -1,10 +1,4 @@
-import {
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-  type MutableRefObject,
-} from 'react'
+import { type MutableRefObject, useCallback, useEffect, useRef, useState } from 'react'
 
 interface UseAudioWorkletReturn {
   startRecording: () => Promise<void>
@@ -56,6 +50,12 @@ export function useAudioWorklet(
 
   useEffect(() => {
     onPlaybackStatsRef.current = options.onPlaybackStats
+    if (playerNodeRef.current) {
+      playerNodeRef.current.port.postMessage({
+        command: 'enable_playback_stats',
+        enabled: Boolean(options.onPlaybackStats),
+      })
+    }
   }, [options.onPlaybackStats])
 
   const startRecording = useCallback(async () => {
@@ -113,6 +113,8 @@ export function useAudioWorklet(
           return
         }
         if (chunk instanceof Float32Array) {
+          // Fallback for non-standard recorder processors that emit Float32 PCM.
+          // Convert here so onAudioChunk.current consumers always receive Int16 PCM buffers.
           const pcm16 = new Int16Array(chunk.length)
           for (let i = 0; i < chunk.length; i++) {
             const sample = Math.max(-1, Math.min(1, chunk[i]))
@@ -124,9 +126,7 @@ export function useAudioWorklet(
         if (ArrayBuffer.isView(chunk)) {
           const view = chunk as ArrayBufferView
           const normalized = new Uint8Array(view.byteLength)
-          normalized.set(
-            new Uint8Array(view.buffer, view.byteOffset, view.byteLength),
-          )
+          normalized.set(new Uint8Array(view.buffer, view.byteOffset, view.byteLength))
           onAudioChunk.current?.(normalized.buffer)
         }
       }
@@ -155,14 +155,14 @@ export function useAudioWorklet(
       playerNodeRef.current = player
       player.port.onmessage = (event: MessageEvent) => {
         const payload = event.data
-        if (
-          payload &&
-          typeof payload === 'object' &&
-          payload.type === 'playback_stats'
-        ) {
+        if (payload && typeof payload === 'object' && payload.type === 'playback_stats') {
           onPlaybackStatsRef.current?.(payload as PlaybackStats)
         }
       }
+      player.port.postMessage({
+        command: 'enable_playback_stats',
+        enabled: Boolean(onPlaybackStatsRef.current),
+      })
       player.connect(ctx.destination)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Audio playback failed')
@@ -201,27 +201,36 @@ export function useAudioWorklet(
   const stop = useCallback(() => {
     // Gain ramp-down on player to avoid audio pops (pattern from live-api-web-console).
     const playerCtx = playerCtxRef.current
-    if (playerCtx && playerNodeRef.current) {
+    const playerNode = playerNodeRef.current
+    if (playerCtx && playerNode) {
       try {
         const gain = playerCtx.createGain()
         gain.gain.setValueAtTime(1, playerCtx.currentTime)
         gain.gain.linearRampToValueAtTime(0, playerCtx.currentTime + 0.05)
-        playerNodeRef.current.disconnect()
-        playerNodeRef.current.connect(gain)
+        playerNode.disconnect()
+        playerNode.connect(gain)
         gain.connect(playerCtx.destination)
         // Close after ramp completes
         setTimeout(() => {
-          playerNodeRef.current?.disconnect()
-          playerNodeRef.current = null
+          playerNode.disconnect()
+          if (playerNodeRef.current === playerNode) {
+            playerNodeRef.current = null
+          }
           playerCtx.close().catch(() => {})
-          playerCtxRef.current = null
+          if (playerCtxRef.current === playerCtx) {
+            playerCtxRef.current = null
+          }
         }, 80)
       } catch {
         // Fallback: immediate close
-        playerNodeRef.current?.disconnect()
-        playerNodeRef.current = null
+        playerNode.disconnect()
+        if (playerNodeRef.current === playerNode) {
+          playerNodeRef.current = null
+        }
         playerCtx.close().catch(() => {})
-        playerCtxRef.current = null
+        if (playerCtxRef.current === playerCtx) {
+          playerCtxRef.current = null
+        }
       }
     } else {
       playerNodeRef.current?.disconnect()
@@ -231,7 +240,9 @@ export function useAudioWorklet(
     }
 
     // Stop microphone tracks
-    streamRef.current?.getTracks().forEach(track => track.stop())
+    streamRef.current?.getTracks().forEach(track => {
+      track.stop()
+    })
     streamRef.current = null
 
     // Disconnect recorder
