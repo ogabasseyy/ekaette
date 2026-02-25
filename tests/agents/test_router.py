@@ -37,13 +37,24 @@ class TestEkaetteRouterAgent:
         expected = {"vision_agent", "valuation_agent", "booking_agent", "catalog_agent", "support_agent"}
         assert names == expected, f"Expected sub-agents {expected}, got {names}"
 
-    def test_sub_agents_use_standard_model(self):
-        """Sub-agents use the standard API model (not Live API)."""
+    def test_sub_agents_use_live_model(self):
+        """Sub-agents must use a Live API-compatible model for bidi-streaming."""
         from app.agents.ekaette_router.agent import ekaette_router
         for sa in ekaette_router.sub_agents:
-            assert "native-audio" not in sa.model, (
-                f"Sub-agent {sa.name} should NOT use native-audio model, got: {sa.model}"
+            model = sa.model
+            assert "native-audio" in model or "live" in model.lower(), (
+                f"Sub-agent {sa.name} must use a Live API model for bidi, got: {model}"
             )
+
+    def test_sub_agents_have_model_and_tool_callbacks(self):
+        """Sub-agents expose callbacks for production observability/event wiring."""
+        from app.agents.ekaette_router.agent import ekaette_router
+        for sa in ekaette_router.sub_agents:
+            assert sa.before_model_callback is not None
+            assert sa.after_model_callback is not None
+            assert sa.before_tool_callback is not None
+            assert sa.after_tool_callback is not None
+            assert sa.on_tool_error_callback is not None
 
     def test_agent_has_instruction(self):
         """Root agent has a non-empty instruction string."""
@@ -58,10 +69,28 @@ class TestEkaetteRouterAgent:
         for name in ["vision_agent", "valuation_agent", "booking_agent", "catalog_agent", "support_agent"]:
             assert name in instruction, f"Instruction should mention {name}"
 
+    def test_agent_instruction_mentions_company_grounding_state(self):
+        """Router instruction should mention company grounding context keys."""
+        from app.agents.ekaette_router.agent import ekaette_router
+
+        instruction = ekaette_router.instruction
+        assert "app:company_profile" in instruction
+        assert "app:company_knowledge" in instruction
+        assert "app:company_id" in instruction
+
     def test_agent_has_after_agent_callback(self):
         """Root agent has an after_agent_callback for memory saves."""
         from app.agents.ekaette_router.agent import ekaette_router
         assert ekaette_router.after_agent_callback is not None
+
+    def test_agent_has_model_and_tool_callbacks(self):
+        """Root agent has callbacks wired for model/tool lifecycle."""
+        from app.agents.ekaette_router.agent import ekaette_router
+        assert ekaette_router.before_model_callback is not None
+        assert ekaette_router.after_model_callback is not None
+        assert ekaette_router.before_tool_callback is not None
+        assert ekaette_router.after_tool_callback is not None
+        assert ekaette_router.on_tool_error_callback is not None
 
     def test_agent_has_preload_memory_tool(self):
         """Root agent includes PreloadMemoryTool in tool list."""
@@ -73,10 +102,8 @@ class TestEkaetteRouterAgent:
         """Root agent reads LIVE_MODEL_ID from environment at module load time."""
         # Verify the module-level variable matches what os.getenv returns
         from app.agents.ekaette_router import agent as router_mod
-        expected = os.getenv(
-            "LIVE_MODEL_ID",
-            "gemini-2.5-flash-native-audio-preview-12-2025",
-        )
+        from app.configs.model_resolver import resolve_live_model_id
+        expected = resolve_live_model_id()
         assert router_mod.LIVE_MODEL_ID == expected
 
 
@@ -112,3 +139,24 @@ class TestSubAgentStubs:
         agent = getattr(mod, agent_name)
         assert agent.instruction is not None
         assert len(agent.instruction) > 20
+
+    @pytest.mark.parametrize("agent_module,agent_name", [
+        ("app.agents.vision_agent.agent", "vision_agent"),
+        ("app.agents.valuation_agent.agent", "valuation_agent"),
+        ("app.agents.booking_agent.agent", "booking_agent"),
+        ("app.agents.catalog_agent.agent", "catalog_agent"),
+        ("app.agents.support_agent.agent", "support_agent"),
+    ])
+    def test_sub_agent_has_company_grounding_tools(self, agent_module, agent_name):
+        """All specialist agents should have company grounding tools."""
+        import importlib
+
+        mod = importlib.import_module(agent_module)
+        agent = getattr(mod, agent_name)
+        tool_names = {
+            getattr(tool, "name", getattr(tool, "__name__", str(tool)))
+            for tool in agent.tools
+        }
+        assert "search_company_knowledge" in tool_names
+        assert "get_company_profile_fact" in tool_names
+        assert "query_company_system" in tool_names
