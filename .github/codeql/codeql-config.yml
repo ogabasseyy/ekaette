@@ -1,0 +1,20 @@
+queries:
+  - uses: security-and-quality
+
+paths-ignore:
+  # Local tooling and scripts
+  - "scripts/**"
+  - "**/*.sh"
+
+  # Generated/frontend artifacts
+  - "frontend/dist/**"
+  - "frontend/coverage/**"
+
+  # Sample/reference assets not shipped as application code
+  - "adk-samples/**"
+  - "docs/**"
+
+  # Terraform local state/cache
+  - "terraform/.terraform/**"
+  - "terraform/**/*.tfstate"
+  - "terraform/**/*.tfstate.backup"

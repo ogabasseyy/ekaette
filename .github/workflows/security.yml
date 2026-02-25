@@ -1,0 +1,126 @@
+# Security Scanning Workflow
+# Runs Semgrep and dependency vulnerability scanning
+
+name: "Security"
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+  schedule:
+    # Run daily at 3:00 AM UTC
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: security-${{ github.ref }}
+  # Only cancel in-progress for PRs, allow scheduled/push scans to complete
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  semgrep:
+    name: Semgrep SAST
+    runs-on: ubuntu-latest
+    # Skip for forked PRs where SEMGREP_APP_TOKEN is not available
+    # Forked PRs don't have access to secrets, which would cause Semgrep CI to fail
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    permissions:
+      contents: read
+      security-events: write
+
+    container:
+      # Pin to specific version for reproducibility
+      image: semgrep/semgrep:1.104.0
+
+    steps:
+      - name: Checkout repository
+        # Pin to full SHA for supply chain security
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Check Semgrep token availability
+        id: semgrep-token
+        run: |
+          if [ -n "${SEMGREP_APP_TOKEN:-}" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          fi
+        env:
+          SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
+
+      - name: Skip Semgrep (token not configured)
+        if: steps.semgrep-token.outputs.available != 'true'
+        run: echo "::notice::SEMGREP_APP_TOKEN not configured; skipping Semgrep scan."
+
+      - name: Run Semgrep
+        id: semgrep
+        if: steps.semgrep-token.outputs.available == 'true'
+        run: semgrep ci --sarif --output=semgrep.sarif
+        env:
+          SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
+        continue-on-error: true
+
+      - name: Verify SARIF exists
+        id: verify-sarif
+        if: always() && steps.semgrep-token.outputs.available == 'true'
+        run: |
+          if [ -s semgrep.sarif ]; then
+            echo "sarif_exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "sarif_exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload SARIF file
+        # Pin to full SHA for supply chain security
+        uses: github/codeql-action/upload-sarif@45580472a5bb82c4681c4ac726cfdb60060c2ee1 # v3.32.4
+        if: always() && steps.semgrep-token.outputs.available == 'true' && steps.verify-sarif.outputs.sarif_exists == 'true'
+        with:
+          sarif_file: semgrep.sarif
+
+      - name: Fail if Semgrep reported issues
+        if: steps.semgrep-token.outputs.available == 'true' && steps.semgrep.outcome == 'failure'
+        run: exit 1
+
+  dependency-review:
+    name: Dependency Review
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+      pull-requests: write
+
+    steps:
+      - name: Checkout repository
+        # Pin to full SHA for supply chain security
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Dependency Review
+        # Pin to full SHA for supply chain security
+        uses: actions/dependency-review-action@05fe4576374b728f0c523d6a13d64c25081e0803 # v4.8.3
+        with:
+          fail-on-severity: high
+          # Allow permissive + copyleft licenses used in our dependency tree
+          allow-licenses: "MIT, MIT-0, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, 0BSD, Unlicense, CC0-1.0, WTFPL, Zlib, BlueOak-1.0.0, MPL-2.0, LGPL-2.1-only, LGPL-2.1-or-later, LGPL-3.0-only, LGPL-3.0-or-later, AGPL-3.0-only, AGPL-3.0-or-later, CC-BY-3.0, CC-BY-4.0, Python-2.0, PSF-2.0, Artistic-2.0"
+          # Packages with undetectable licenses (verified manually)
+          allow-dependencies-licenses: "pkg:npm/@bramus/specificity"
+
+  secrets-scan:
+    name: Secret Scanning
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+
+    steps:
+      - name: Checkout repository
+        # Pin to full SHA for supply chain security
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: TruffleHog OSS
+        # Pin to full SHA for supply-chain security
+        uses: trufflesecurity/trufflehog@7c0734f987ad0bb30ee8da210773b800ee2016d3 # v3.93.4
+        with:
+          extra_args: --only-verified

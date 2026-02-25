@@ -44,7 +44,14 @@ service-account*.json
 
 # ADK
 adk-samples/
+.adk/
+
+# Reference docs (not part of codebase)
+Ekaette_*.md
+Ekaette_*.html
+compressed-*.md
 
 # Misc
 *.log
 tmp/
+frontend/.pnpmrc.json
