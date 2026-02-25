@@ -508,6 +508,8 @@ async def create_ephemeral_token(
         "userId": payload.user_id,
         "model": selected_model,
         "fallbackModelUsed": selected_model != LIVE_MODEL_CANDIDATES[0],
+        "manualVadActive": MANUAL_VAD_ACTIVE,
+        "vadMode": "manual" if MANUAL_VAD_ACTIVE else "auto",
     }
 
 
