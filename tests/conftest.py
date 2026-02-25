@@ -75,3 +75,63 @@ def session_factory():
         session.events = []
         return session
     return _create
+
+
+# ═══ Phase 0 Shared Builders (Registry Migration) ═══
+
+
+def make_session_state(
+    industry: str = "electronics",
+    company_id: str = "ekaette-electronics",
+    *,
+    include_config: bool = True,
+    extra: dict | None = None,
+) -> dict[str, object]:
+    """Build a realistic session state dict for tests.
+
+    Mirrors the state created by build_session_state() + build_company_session_state()
+    in the production code paths (main.py session init).
+    """
+    from app.configs.industry_loader import LOCAL_INDUSTRY_CONFIGS
+
+    config = LOCAL_INDUSTRY_CONFIGS.get(industry, {
+        "name": industry.title(),
+        "voice": "Aoede",
+        "greeting": f"Welcome to {industry}.",
+    })
+
+    state: dict[str, object] = {
+        "app:industry": industry,
+        "app:voice": config.get("voice", "Aoede"),
+        "app:greeting": config.get("greeting", ""),
+        "app:company_id": company_id,
+        "app:company_profile": {"name": f"Test {company_id}", "overview": "Test company"},
+        "app:company_knowledge": [],
+    }
+    if include_config:
+        state["app:industry_config"] = config
+    if extra:
+        state.update(extra)
+    return state
+
+
+def make_ws_message(msg_type: str, **fields: object) -> dict[str, object]:
+    """Build a WebSocket server message dict for tests.
+
+    Mirrors the JSON messages sent from backend to frontend.
+    """
+    message: dict[str, object] = {"type": msg_type}
+    message.update(fields)
+    return message
+
+
+@pytest.fixture
+def electronics_session_state():
+    """Pre-built session state for electronics industry."""
+    return make_session_state("electronics", "ekaette-electronics")
+
+
+@pytest.fixture
+def hotel_session_state():
+    """Pre-built session state for hotel industry."""
+    return make_session_state("hotel", "ekaette-hotel")
