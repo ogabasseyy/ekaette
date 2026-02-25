@@ -1,4 +1,4 @@
-import { useMemo, useState, useTransition, type KeyboardEvent } from 'react'
+import { useState, type KeyboardEvent } from 'react'
 import { cn } from '../../lib/utils'
 
 interface TextInputProps {
@@ -8,12 +8,8 @@ interface TextInputProps {
 
 export function TextInput({ connected, onSend }: TextInputProps) {
   const [draft, setDraft] = useState('')
-  const [isPending, startTransition] = useTransition()
 
-  const canSend = useMemo(
-    () => connected && draft.trim().length > 0 && !isPending,
-    [connected, draft, isPending],
-  )
+  const canSend = connected && draft.trim().length > 0
 
   const handleSend = () => {
     const text = draft.trim()
@@ -22,15 +18,10 @@ export function TextInput({ connected, onSend }: TextInputProps) {
     setDraft('')
   }
 
-  const handleChange = (next: string) => {
-    startTransition(() => {
-      setDraft(next)
-    })
-  }
-
   const handleKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.key !== 'Enter') return
     event.preventDefault()
+    if (!canSend) return
     handleSend()
   }
 
@@ -38,7 +29,7 @@ export function TextInput({ connected, onSend }: TextInputProps) {
     <div className="flex min-w-0 flex-1 items-center gap-2 rounded-2xl border border-border/80 bg-black/35 px-2.5 py-2 sm:px-3">
       <input
         value={draft}
-        onChange={event => handleChange(event.target.value)}
+        onChange={event => setDraft(event.target.value)}
         onKeyDown={handleKeyDown}
         placeholder={
           connected
@@ -48,6 +39,7 @@ export function TextInput({ connected, onSend }: TextInputProps) {
         className="w-full min-w-0 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground"
       />
       <button
+        type="button"
         onClick={handleSend}
         disabled={!canSend}
         className={cn(

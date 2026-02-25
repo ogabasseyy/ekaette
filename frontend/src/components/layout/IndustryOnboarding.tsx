@@ -38,7 +38,7 @@ export function IndustryOnboarding({ onComplete }: IndustryOnboardingProps) {
 
   return (
     <section className="panel-glass mx-auto w-full max-w-3xl px-4 py-5 sm:px-7 sm:py-8">
-      <p className="text-[0.58rem] uppercase tracking-[0.24em] text-[color:var(--industry-accent)] sm:text-[0.64rem] sm:tracking-[0.3em]">
+      <p className="text-[0.58rem] uppercase tracking-[0.24em] text-accent sm:text-[0.64rem] sm:tracking-[0.3em]">
         Onboarding
       </p>
       <h1 className="mt-2 font-display text-xl leading-tight text-white sm:text-3xl">
@@ -49,13 +49,15 @@ export function IndustryOnboarding({ onComplete }: IndustryOnboardingProps) {
         This is locked during active conversations.
       </p>
 
-      <div className="mt-5 grid gap-3 sm:mt-6 sm:grid-cols-2">
+      <div role="radiogroup" aria-label="Service industry" className="mt-5 grid gap-3 sm:mt-6 sm:grid-cols-2">
         {INDUSTRY_OPTIONS.map(option => {
           const active = selected === option.value
           return (
             <button
               key={option.value}
               type="button"
+              role="radio"
+              aria-checked={active}
               onClick={() => setSelected(option.value)}
               className={cn(
                 'rounded-2xl border px-4 py-4 text-left transition',
@@ -75,7 +77,7 @@ export function IndustryOnboarding({ onComplete }: IndustryOnboardingProps) {
         <button
           type="button"
           onClick={() => onComplete(selected)}
-          className="w-full rounded-full bg-[color:var(--industry-accent)] px-5 py-2.5 text-sm font-semibold text-black transition hover:brightness-110 sm:w-auto sm:py-2"
+          className="w-full rounded-full bg-accent px-5 py-2.5 text-sm font-semibold text-black transition hover:brightness-110 sm:w-auto sm:py-2"
         >
           Continue
         </button>

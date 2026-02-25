@@ -7,7 +7,7 @@ const micButtonVariants = cva(
   {
     variants: {
       status: {
-        idle: 'bg-[color:var(--industry-accent)] text-black hover:brightness-110',
+        idle: 'bg-accent text-black hover:brightness-110',
         recording: 'bg-destructive/90 text-white hover:bg-destructive',
         processing: 'bg-warning/90 text-black hover:bg-warning',
       },
@@ -40,6 +40,7 @@ export function MicButton({
   const label = isRecording ? 'End call' : 'Start call'
   return (
     <button
+      type="button"
       onClick={onClick}
       disabled={disabled}
       className={cn(

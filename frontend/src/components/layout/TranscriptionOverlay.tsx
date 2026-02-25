@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 import { cn } from '../../lib/utils'
 import type { TranscriptMessage } from '../../lib/transcript'
 
@@ -9,8 +9,26 @@ interface TranscriptionOverlayProps {
 export function TranscriptionOverlay({ messages }: TranscriptionOverlayProps) {
   const transcriptRef = useRef<HTMLDivElement | null>(null)
   const bottomRef = useRef<HTMLDivElement | null>(null)
+  const userScrolledUpRef = useRef(false)
+
+  const isNearBottom = useCallback(() => {
+    const el = transcriptRef.current
+    if (!el) return true
+    return el.scrollHeight - el.scrollTop - el.clientHeight < 80
+  }, [])
 
   useEffect(() => {
+    const el = transcriptRef.current
+    if (!el) return
+    const handler = () => {
+      userScrolledUpRef.current = !isNearBottom()
+    }
+    el.addEventListener('scroll', handler, { passive: true })
+    return () => el.removeEventListener('scroll', handler)
+  }, [isNearBottom])
+
+  useEffect(() => {
+    if (userScrolledUpRef.current) return
     if (bottomRef.current) {
       bottomRef.current.scrollIntoView({ block: 'end' })
     } else if (transcriptRef.current) {
@@ -42,7 +60,7 @@ export function TranscriptionOverlay({ messages }: TranscriptionOverlayProps) {
 
         {messages.map((message, index) => (
           <article
-            key={`${index}-${message.role}-${message.text.slice(0, 12)}`}
+            key={`${index}-${message.role}`}
             className={cn(
               'message-bubble',
               message.role === 'user' ? 'message-user ml-auto' : 'message-agent mr-auto',

@@ -23,6 +23,23 @@ describe('ValuationCard', () => {
     expect(screen.getByText(/185,000/)).toBeInTheDocument()
   })
 
+  it('formats non-NGN currency with Intl', () => {
+    render(
+      <ValuationCard
+        deviceName="iPhone 14 Pro"
+        condition="Excellent"
+        price={500}
+        currency="USD"
+        details="Mint condition."
+        onAccept={() => {}}
+        onDecline={() => {}}
+        onCounterOffer={() => {}}
+      />,
+    )
+
+    expect(screen.getByText(/\$500/)).toBeInTheDocument()
+  })
+
   it('updates counter-offer input and emits value', async () => {
     const onCounterOffer = vi.fn()
     render(

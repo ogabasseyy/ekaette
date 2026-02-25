@@ -18,7 +18,7 @@ export default function ProductCard({
   const displayPrice =
     currency === 'NGN' || currency === '₦'
       ? formatNaira(price)
-      : `${currency} ${price.toLocaleString()}`
+      : new Intl.NumberFormat('en', { style: 'currency', currency, maximumFractionDigits: 0 }).format(price)
 
   return (
     <article className="animate-slide-up rounded-2xl border border-border/70 bg-card/65 p-4">
@@ -31,7 +31,7 @@ export default function ProductCard({
               : 'rounded-full border border-destructive/40 bg-destructive/15 px-2 py-0.5 text-[0.65rem] text-destructive'
           }
         >
-          {available ? 'Available' : 'Out'}
+          {available ? 'Available' : 'Out of stock'}
         </span>
       </div>
       <p className="mt-2 text-sm text-muted-foreground">{description}</p>

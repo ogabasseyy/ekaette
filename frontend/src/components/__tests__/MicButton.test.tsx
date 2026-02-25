@@ -7,7 +7,7 @@ describe('MicButton', () => {
   it('renders idle variant with start label', () => {
     render(<MicButton status="idle" onClick={() => {}} />)
     const button = screen.getByRole('button', { name: /start call/i })
-    expect(button).toHaveClass('bg-[color:var(--industry-accent)]')
+    expect(button).toHaveClass('bg-accent')
   })
 
   it('renders recording variant with end label', () => {
@@ -34,5 +34,14 @@ describe('MicButton', () => {
     const button = screen.getByRole('button', { name: /start call/i })
     expect(button).toHaveClass('w-auto')
     expect(button).toHaveClass('px-3')
+  })
+
+  it('is disabled and does not fire onClick when disabled', async () => {
+    const onClick = vi.fn()
+    render(<MicButton status="idle" onClick={onClick} disabled />)
+    const button = screen.getByRole('button', { name: /start call/i })
+    expect(button).toBeDisabled()
+    await userEvent.click(button)
+    expect(onClick).not.toHaveBeenCalled()
   })
 })

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { cva } from 'class-variance-authority'
 import { cn } from '../../lib/utils'
 import { formatNaira } from '../../lib/format'
@@ -44,8 +44,12 @@ export default function ValuationCard({
     if (currency === 'NGN' || currency === '₦') {
       return formatNaira(price)
     }
-    return `${currency} ${price.toLocaleString()}`
+    return new Intl.NumberFormat('en', { style: 'currency', currency, maximumFractionDigits: 0 }).format(price)
   }, [currency, price])
+
+  useEffect(() => {
+    setCounterOffer(price)
+  }, [price])
 
   return (
     <article className="animate-slide-up rounded-2xl border border-border/70 bg-card/65 p-4">
@@ -71,18 +75,21 @@ export default function ValuationCard({
 
       <div className="mt-3 flex flex-wrap gap-2">
         <button
+          type="button"
           onClick={onAccept}
           className="rounded-xl border border-primary/40 bg-primary/15 px-3 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-primary"
         >
           Accept
         </button>
         <button
+          type="button"
           onClick={() => onCounterOffer(counterOffer)}
           className="rounded-xl border border-warning/40 bg-warning/12 px-3 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-warning"
         >
           Counter
         </button>
         <button
+          type="button"
           onClick={onDecline}
           className="rounded-xl border border-destructive/40 bg-destructive/12 px-3 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-destructive"
         >

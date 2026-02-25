@@ -35,7 +35,7 @@ export function VoicePanel({
   return (
     <section className="panel-glass flex min-h-0 flex-col justify-between px-4 py-4 sm:px-5 sm:py-5">
       <div>
-        <p className="text-[0.58rem] uppercase tracking-[0.24em] text-[color:var(--industry-accent)] sm:text-[0.64rem] sm:tracking-[0.3em]">
+        <p className="text-[0.58rem] uppercase tracking-[0.24em] text-accent sm:text-[0.64rem] sm:tracking-[0.3em]">
           {title}
         </p>
         <h2 className="mt-2 font-display text-lg text-white sm:text-2xl">
@@ -53,7 +53,7 @@ export function VoicePanel({
             className={cn(
               'voice-orb',
               isConnected && 'is-live',
-              isStarting && 'is-warming',
+              isStarting && !isConnected && 'is-warming',
             )}
           >
             <span className="voice-core">

@@ -32,6 +32,7 @@ export function ImageUpload({
     if (!file) return
 
     setValidationError(null)
+    setPreviewSrc(null)
 
     if (!ALLOWED_MIME_TYPES.has(file.type)) {
       const msg = 'Unsupported image format. Use JPEG, PNG, WebP, HEIC, or HEIF.'
@@ -51,12 +52,22 @@ export function ImageUpload({
     reader.onload = () => {
       const value = String(reader.result)
       const parts = value.split(',')
-      if (parts.length < 2) return
+      if (parts.length < 2) {
+        const msg = 'Failed to read image data.'
+        setValidationError(msg)
+        onError?.(msg)
+        return
+      }
       const base64 = parts[1]
       onImageSelected(base64, file.type)
       if (showPreview) {
         setPreviewSrc(value)
       }
+    }
+    reader.onerror = () => {
+      const msg = 'Failed to read file.'
+      setValidationError(msg)
+      onError?.(msg)
     }
     reader.readAsDataURL(file)
   }

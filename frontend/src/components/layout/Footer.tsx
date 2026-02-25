@@ -19,7 +19,11 @@ export function Footer({
   onImageSelected,
 }: FooterProps) {
   const isConnected = connectionState === 'connected'
-  const status = isConnected ? 'recording' : isStarting ? 'processing' : 'idle'
+  const status = isConnected
+    ? 'recording'
+    : isStarting || connectionState === 'reconnecting'
+      ? 'processing'
+      : 'idle'
 
   return (
     <footer className="panel-glass mt-3 shrink-0 px-4 py-3 sm:mt-4 sm:px-5 sm:py-4">

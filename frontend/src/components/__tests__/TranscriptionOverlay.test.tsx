@@ -4,6 +4,13 @@ import { TranscriptionOverlay } from '../layout/TranscriptionOverlay'
 import type { TranscriptMessage } from '../../lib/transcript'
 
 describe('TranscriptionOverlay', () => {
+  it('renders empty state with placeholder text and 0 messages badge', () => {
+    render(<TranscriptionOverlay messages={[]} />)
+
+    expect(screen.getByText('No live transcript yet.')).toBeInTheDocument()
+    expect(screen.getByText('0 messages')).toBeInTheDocument()
+  })
+
   it('renders user right-aligned and agent left-aligned messages', () => {
     const messages: TranscriptMessage[] = [
       { type: 'transcription', role: 'user', text: 'Hi', partial: false },
@@ -16,15 +23,17 @@ describe('TranscriptionOverlay', () => {
     const agentArticle = screen.getByText('Hello').closest('article')
     expect(userArticle).toHaveClass('message-user')
     expect(agentArticle).toHaveClass('message-agent')
+    expect(screen.getByText('2 messages')).toBeInTheDocument()
   })
 
-  it('renders partial messages with partial class', () => {
+  it('renders partial messages with partial class and listening label', () => {
     const messages: TranscriptMessage[] = [
       { type: 'transcription', role: 'agent', text: 'Listening', partial: true },
     ]
     render(<TranscriptionOverlay messages={messages} />)
     const article = screen.getByText('Listening').closest('article')
     expect(article).toHaveClass('message-partial')
+    expect(screen.getByText(/• listening/)).toBeInTheDocument()
   })
 
   it('auto-scrolls when messages update', () => {

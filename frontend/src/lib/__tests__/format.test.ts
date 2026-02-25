@@ -21,6 +21,14 @@ describe('formatDuration', () => {
   it('pads single-digit minutes', () => {
     expect(formatDuration(90)).toBe('01:30')
   })
+
+  it('clamps negative values to 00:00', () => {
+    expect(formatDuration(-5)).toBe('00:00')
+  })
+
+  it('floors fractional seconds', () => {
+    expect(formatDuration(61.9)).toBe('01:01')
+  })
 })
 
 describe('prettyAgentName', () => {
@@ -52,10 +60,9 @@ describe('formatNaira', () => {
     expect(result).toContain('0')
   })
 
-  it('returns a string containing the currency indicator', () => {
+  it('returns a string containing the ₦ or NGN currency indicator', () => {
     const result = formatNaira(1000)
-    // Intl.NumberFormat for NGN produces ₦ or NGN depending on locale
-    expect(result.length).toBeGreaterThan(0)
+    expect(result).toMatch(/₦|NGN/)
   })
 
   it('formats large values with commas', () => {

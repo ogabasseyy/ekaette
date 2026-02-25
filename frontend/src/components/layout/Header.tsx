@@ -7,6 +7,13 @@ interface HeaderProps {
   connectionState: ConnectionState
 }
 
+const CONNECTION_LABELS: Record<ConnectionState, string> = {
+  disconnected: 'Disconnected',
+  connecting: 'Connecting',
+  connected: 'Connected',
+  reconnecting: 'Reconnecting',
+}
+
 const INDUSTRY_LABELS: Record<Industry, string> = {
   electronics: 'Electronics',
   hotel: 'Hotel',
@@ -40,7 +47,7 @@ export function Header({
           variant={isConnected ? 'connected' : 'muted'}
           className="text-center sm:text-left"
         >
-          {connectionState}
+          {CONNECTION_LABELS[connectionState]}
         </StatusBadge>
         <StatusBadge variant="muted" className="text-center sm:text-left">
           Industry: {INDUSTRY_LABELS[industry]}
