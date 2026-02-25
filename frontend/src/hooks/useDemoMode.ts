@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ServerMessage } from '../types'
-import { ELECTRONICS_DEMO_STEPS, type DemoStep } from '../utils/mockData'
+import { type DemoStep, ELECTRONICS_DEMO_STEPS } from '../utils/mockData'
 
 interface UseDemoModeOptions {
   steps?: DemoStep[]
@@ -38,12 +38,17 @@ export function useDemoMode(options: UseDemoModeOptions = {}): UseDemoModeReturn
   const playingRef = useRef(false)
   const pausedRef = useRef(false)
   const stepRef = useRef(0)
+  const timerStartedAtRef = useRef<number | null>(null)
+  const scheduledDelayRef = useRef(0)
+  const remainingDelayRef = useRef<number | null>(null)
 
   const clearTimer = useCallback(() => {
     if (timerRef.current) {
       clearTimeout(timerRef.current)
       timerRef.current = null
     }
+    timerStartedAtRef.current = null
+    scheduledDelayRef.current = 0
   }, [])
 
   const emitStep = useCallback(
@@ -75,6 +80,9 @@ export function useDemoMode(options: UseDemoModeOptions = {}): UseDemoModeReturn
       }
 
       const delay = getStepDelay(steps, nextStep)
+      timerStartedAtRef.current = Date.now()
+      scheduledDelayRef.current = delay
+      remainingDelayRef.current = null
       timerRef.current = setTimeout(() => {
         emitStep(nextStep)
       }, delay)
@@ -90,6 +98,9 @@ export function useDemoMode(options: UseDemoModeOptions = {}): UseDemoModeReturn
     setIsPaused(false)
     clearTimer()
     const delay = getStepDelay(steps, stepRef.current)
+    timerStartedAtRef.current = Date.now()
+    scheduledDelayRef.current = delay
+    remainingDelayRef.current = null
     timerRef.current = setTimeout(() => {
       emitStep(stepRef.current)
     }, delay)
@@ -99,6 +110,10 @@ export function useDemoMode(options: UseDemoModeOptions = {}): UseDemoModeReturn
     if (!playingRef.current || pausedRef.current) return
     pausedRef.current = true
     setIsPaused(true)
+    if (timerRef.current && timerStartedAtRef.current !== null) {
+      const elapsed = Math.max(0, Date.now() - timerStartedAtRef.current)
+      remainingDelayRef.current = Math.max(0, scheduledDelayRef.current - elapsed)
+    }
     clearTimer()
   }, [clearTimer])
 
@@ -107,7 +122,10 @@ export function useDemoMode(options: UseDemoModeOptions = {}): UseDemoModeReturn
     pausedRef.current = false
     setIsPaused(false)
     clearTimer()
-    const delay = getStepDelay(steps, stepRef.current)
+    const delay = remainingDelayRef.current ?? getStepDelay(steps, stepRef.current)
+    timerStartedAtRef.current = Date.now()
+    scheduledDelayRef.current = delay
+    remainingDelayRef.current = null
     timerRef.current = setTimeout(() => {
       emitStep(stepRef.current)
     }, delay)
@@ -118,6 +136,7 @@ export function useDemoMode(options: UseDemoModeOptions = {}): UseDemoModeReturn
     playingRef.current = false
     pausedRef.current = false
     stepRef.current = 0
+    remainingDelayRef.current = null
     setMessages([])
     setCurrentStep(0)
     setIsPlaying(false)

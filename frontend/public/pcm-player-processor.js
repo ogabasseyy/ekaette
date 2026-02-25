@@ -16,7 +16,7 @@
  * - google/adk-samples bidi-demo (ring buffer base)
  */
 class PCMPlayerProcessor extends AudioWorkletProcessor {
-  constructor() {
+  constructor(options = {}) {
     super();
 
     // Ring buffer: 24kHz x 180 seconds max capacity.
@@ -38,19 +38,32 @@ class PCMPlayerProcessor extends AudioWorkletProcessor {
     this.blocksSinceLastUnderrun = 0;
     this.statsEveryBlocks = 16; // ~85ms at 128-frame render quanta
     this.statsBlockCounter = 0;
+    this.emitPlaybackStats = Boolean(
+      options &&
+      options.processorOptions &&
+      options.processorOptions.emitPlaybackStats
+    );
 
     // Fade-out state for smooth interruption (avoids clicks on clear).
     this.fadeOutRemaining = 0;
     this.fadeOutLength = Math.floor(24000 * 0.01); // 10ms ramp
+    this.endOfAudioWriteIndex = null;
 
     this.port.onmessage = (event) => {
+      if (event.data && event.data.command === 'enable_playback_stats') {
+        this.emitPlaybackStats = Boolean(event.data.enabled);
+        return;
+      }
+
       if (event.data && event.data.command === 'endOfAudio') {
+        this.endOfAudioWriteIndex = this.writeIndex;
         // Start a brief fade-out instead of hard-cutting.
         if (this._availableSamples() > 0) {
           this.fadeOutRemaining = Math.min(this.fadeOutLength, this._availableSamples());
         } else {
           // Buffer already empty — just reset.
-          this.readIndex = this.writeIndex;
+          this.readIndex = this.endOfAudioWriteIndex;
+          this.endOfAudioWriteIndex = null;
         }
         // Return to buffering state so next response pre-buffers again.
         this.isBuffering = true;
@@ -86,6 +99,9 @@ class PCMPlayerProcessor extends AudioWorkletProcessor {
   }
 
   _emitStats() {
+    if (!this.emitPlaybackStats) {
+      return;
+    }
     this.port.postMessage({
       type: 'playback_stats',
       availableSamples: this._availableSamples(),
@@ -117,8 +133,13 @@ class PCMPlayerProcessor extends AudioWorkletProcessor {
         }
       }
       if (this.fadeOutRemaining <= 0) {
-        // Fade complete — discard remaining buffer.
-        this.readIndex = this.writeIndex;
+        // Fade complete — discard only audio queued before endOfAudio.
+        if (typeof this.endOfAudioWriteIndex === 'number') {
+          this.readIndex = this.endOfAudioWriteIndex;
+          this.endOfAudioWriteIndex = null;
+        } else {
+          this.readIndex = this.writeIndex;
+        }
       }
       return true;
     }

@@ -1,7 +1,8 @@
 class PCMProcessor extends AudioWorkletProcessor {
   constructor() {
     super();
-    // 512 samples @ 16kHz = 32ms (within 20-40ms target chunk window).
+    // process() runs every render quantum (128 samples @ 16kHz ≈ 8ms).
+    // chunkSize below is 512 samples (≈32ms) for PCM uplink batching.
     this.chunkSize = 512;
     this.pcmBytes = new ArrayBuffer(this.chunkSize * 2);
     this.pcmView = new DataView(this.pcmBytes);
@@ -17,10 +18,10 @@ class PCMProcessor extends AudioWorkletProcessor {
     // Hysteresis + debounce to prevent VAD chatter on keyboard clicks / mic noise.
     this.vadStartThreshold = 0.014;
     this.vadEndThreshold = 0.0085;
-    this.speechFramesForStart = 2; // ~64ms confirmation before speech_start
-    this.silenceFramesForEnd = 12; // ~384ms hangover to avoid word-gap flicker
-    this.minSpeakingFramesBeforeEnd = 4; // ~128ms minimum speech hold
-    this.cooldownFramesAfterEnd = 3; // ~96ms guard against immediate retrigger
+    this.speechFramesForStart = 8; // ~64ms confirmation before speech_start
+    this.silenceFramesForEnd = 48; // ~384ms hangover to avoid word-gap flicker
+    this.minSpeakingFramesBeforeEnd = 16; // ~128ms minimum speech hold
+    this.cooldownFramesAfterEnd = 12; // ~96ms guard against immediate retrigger
   }
 
   process(inputs, outputs, parameters) {
