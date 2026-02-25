@@ -107,3 +107,7 @@ Object.defineProperty(globalThis.navigator, 'mediaDevices', {
   },
   configurable: true,
 })
+
+if (!Element.prototype.scrollIntoView) {
+  Element.prototype.scrollIntoView = () => {}
+}
