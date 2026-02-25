@@ -84,6 +84,17 @@ def _is_origin_allowed(origin: str | None) -> bool:
     """Validate browser Origin against explicit allowlist."""
     return origin in ALLOWED_ORIGIN_SET
 
+
+# Regex pattern for characters that enable log injection (newlines + control chars).
+_LOG_UNSAFE_RE = re.compile(r"[\r\n\x00-\x1f\x7f]")
+
+
+def _sanitize_log(value: str | None) -> str:
+    """Strip newlines and control characters from user-supplied values before logging."""
+    if value is None:
+        return "<none>"
+    return _LOG_UNSAFE_RE.sub("", value)[:200]
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
@@ -497,6 +508,8 @@ async def create_ephemeral_token(
         "userId": payload.user_id,
         "model": selected_model,
         "fallbackModelUsed": selected_model != LIVE_MODEL_CANDIDATES[0],
+        "manualVadActive": MANUAL_VAD_ACTIVE,
+        "vadMode": "manual" if MANUAL_VAD_ACTIVE else "auto",
     }
 
 
@@ -561,11 +574,11 @@ async def websocket_endpoint(
     """WebSocket endpoint for bidirectional streaming with ADK."""
     origin = websocket.headers.get("origin")
     if not _is_origin_allowed(origin):
-        logger.warning("Rejected WebSocket origin: %s", origin)
+        logger.warning("Rejected WebSocket origin: %s", _sanitize_log(origin))
         await websocket.close(code=1008, reason="Origin not allowed")
         return
 
-    logger.debug(f"WebSocket connection request: user_id={user_id}, session_id={session_id}")
+    logger.debug("WebSocket connection request: user_id=%s, session_id=%s", _sanitize_log(user_id), _sanitize_log(session_id))
     await websocket.accept()
     logger.debug("WebSocket connection accepted")
     client_ip = websocket.client.host if websocket.client else "unknown"
@@ -692,8 +705,8 @@ async def websocket_endpoint(
         "Model: %s, native_audio=%s, industry=%s, company_id=%s, voice=%s",
         model_name,
         is_native_audio,
-        industry,
-        company_id,
+        _sanitize_log(industry),
+        _sanitize_log(company_id),
         _voice_for_industry(industry),
     )
 
@@ -746,7 +759,7 @@ async def websocket_endpoint(
                     "ts": int(time.time() * 1000),
                 }))
             except Exception:
-                break
+                break  # WebSocket closed; stop keepalive
 
     async def upstream_task() -> None:
         """Receives from WebSocket, sends to LiveRequestQueue."""
@@ -1254,14 +1267,14 @@ async def websocket_endpoint(
 
         # Live API session ended naturally (timeout / GoAway completion).
         # Notify client so it can decide to reconnect gracefully.
-        logger.info("downstream_task: run_live loop ended for session %s", resolved_session_id)
+        logger.info("downstream_task: run_live loop ended for session %s", _sanitize_log(resolved_session_id))
         try:
             await websocket.send_text(json.dumps({
                 "type": "session_ending",
                 "reason": "live_session_ended",
             }))
         except Exception:
-            pass
+            pass  # Client already disconnected; safe to ignore
 
     async def silence_nudge_task() -> None:
         """Nudge the model when the customer has been silent too long.

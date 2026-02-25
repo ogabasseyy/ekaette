@@ -10,9 +10,20 @@ import asyncio
 import inspect
 import logging
 import os
+import re
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+_LOG_UNSAFE_RE = re.compile(r"[\r\n\x00-\x1f\x7f]")
+
+
+def _sanitize_log(value: str | None) -> str:
+    """Strip newlines/control chars from user-supplied values before logging."""
+    if value is None:
+        return "<none>"
+    return _LOG_UNSAFE_RE.sub("", value)[:200]
+
 
 DEFAULT_COMPANY_PROFILE: dict[str, Any] = {
     "company_id": "default",
@@ -368,7 +379,7 @@ async def load_company_profile(
             if isinstance(raw, dict):
                 return _normalize_profile(normalized_id, raw)
     except Exception as exc:
-        logger.warning("Failed to load company profile '%s': %s", normalized_id, exc)
+        logger.warning("Failed to load company profile '%s': %s", _sanitize_log(normalized_id), exc)
 
     return _fallback_profile_for(normalized_id)
 
@@ -420,7 +431,7 @@ async def load_company_knowledge(
         if entries:
             return entries
     except Exception as exc:
-        logger.warning("Failed to load company knowledge '%s': %s", normalized_id, exc)
+        logger.warning("Failed to load company knowledge '%s': %s", _sanitize_log(normalized_id), exc)
 
     return _fallback_knowledge_for(normalized_id)
 

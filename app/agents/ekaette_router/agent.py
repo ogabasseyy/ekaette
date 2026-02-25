@@ -91,14 +91,14 @@ async def save_session_and_telemetry_callback(callback_context: CallbackContext)
     # Token telemetry (non-blocking)
     try:
         await telemetry_after_agent(callback_context=callback_context)
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("Telemetry callback failed (non-blocking): %s", exc)
 
     # Memory Bank save (non-blocking, incremental via cursor)
     try:
         _schedule_memory_save(callback_context)
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("Memory save scheduling failed (non-blocking): %s", exc)
     return None
 
 

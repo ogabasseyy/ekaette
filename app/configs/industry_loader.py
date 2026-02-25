@@ -3,12 +3,22 @@
 import asyncio
 import logging
 import os
+import re
 from typing import Any
 
 from google.adk.events import Event
 from google.adk.events.event_actions import EventActions
 
 logger = logging.getLogger(__name__)
+
+_LOG_UNSAFE_RE = re.compile(r"[\r\n\x00-\x1f\x7f]")
+
+
+def _sanitize_log(value: str | None) -> str:
+    """Strip newlines/control chars from user-supplied values before logging."""
+    if value is None:
+        return "<none>"
+    return _LOG_UNSAFE_RE.sub("", value)[:200]
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "name": "General",
@@ -80,7 +90,7 @@ async def load_industry_config(
     is unreachable — never let config loading break the voice session.
     """
     if db is None:
-        logger.debug("No Firestore client — returning default config for '%s'", industry)
+        logger.debug("No Firestore client — returning default config for '%s'", _sanitize_log(industry))
         return _fallback_config_for(industry)
 
     try:
@@ -94,7 +104,7 @@ async def load_industry_config(
         if doc.exists:
             return doc.to_dict()
     except Exception as exc:
-        logger.warning("Failed to load industry config '%s': %s", industry, exc)
+        logger.warning("Failed to load industry config '%s': %s", _sanitize_log(industry), exc)
 
     return _fallback_config_for(industry)
 
@@ -146,8 +156,8 @@ def async_save_session_state(
                 logger.warning(
                     "Session not found for async save (app=%s user=%s session=%s)",
                     app_name,
-                    user_id,
-                    session_id,
+                    _sanitize_log(user_id),
+                    _sanitize_log(session_id),
                 )
                 return
 
