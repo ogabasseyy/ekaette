@@ -25,6 +25,7 @@ function getLastSocket(): MockSocket {
 describe('useEkaetteSocket', () => {
   beforeEach(() => {
     vi.useFakeTimers()
+    ;(globalThis.WebSocket as unknown as { instances?: unknown[] }).instances = []
     ;(
       globalThis as {
         __lastMockWebSocket?: MockSocket
@@ -48,9 +49,21 @@ describe('useEkaetteSocket', () => {
     })
 
     const ws = getLastSocket()
-    expect(ws.url).toContain('/ws/user1/session1')
+    expect(ws.url).toContain('/ws/user1/session1?industry=electronics')
     expect(ws.binaryType).toBe('arraybuffer')
     expect(result.current.state).toBe('connecting')
+  })
+
+  it('connects with industry query parameter when provided', () => {
+    const { result } = renderHook(() =>
+      useEkaetteSocket('user1', 'session1', { industry: 'hotel' }),
+    )
+    act(() => {
+      result.current.connect()
+    })
+
+    const ws = getLastSocket()
+    expect(ws.url).toContain('/ws/user1/session1?industry=hotel')
   })
 
   it('transitions to connected on open', async () => {
@@ -59,7 +72,7 @@ describe('useEkaetteSocket', () => {
       result.current.connect()
     })
     await act(async () => {
-      vi.runAllTimers()
+      vi.advanceTimersByTime(1)
     })
 
     expect(result.current.state).toBe('connected')
@@ -71,7 +84,7 @@ describe('useEkaetteSocket', () => {
       result.current.connect()
     })
     await act(async () => {
-      vi.runAllTimers()
+      vi.advanceTimersByTime(1)
     })
 
     const ws = getLastSocket()
@@ -93,6 +106,42 @@ describe('useEkaetteSocket', () => {
     expect(first.type).toBe('transcription')
   })
 
+  it('reconnects when server indicates voice change requires reconnect', async () => {
+    const { result } = renderHook(() =>
+      useEkaetteSocket('user1', 'session1', { industry: 'hotel' }),
+    )
+    act(() => {
+      result.current.connect()
+    })
+    await act(async () => {
+      vi.advanceTimersByTime(1)
+    })
+
+    const firstWs = getLastSocket()
+    act(() => {
+      firstWs.onmessage?.(
+        new MessageEvent('message', {
+          data: JSON.stringify({
+            type: 'session_started',
+            sessionId: 'session1',
+            industry: 'hotel',
+            voiceChangeRequiresReconnect: true,
+          }),
+        }),
+      )
+    })
+
+    // Advance past 150ms voice reconnect delay + 1ms for onopen setTimeout(0).
+    await act(async () => {
+      vi.advanceTimersByTime(200)
+    })
+    const secondWs = getLastSocket()
+
+    expect(secondWs).not.toBe(firstWs)
+    expect(secondWs.url).toContain('/ws/user1/session1?industry=hotel')
+    expect(result.current.state).toBe('connected')
+  })
+
   it('routes ArrayBuffer messages to onAudioData callback', async () => {
     const { result } = renderHook(() => useEkaetteSocket('user1', 'session1'))
     const received: ArrayBuffer[] = []
@@ -104,7 +153,7 @@ describe('useEkaetteSocket', () => {
       result.current.connect()
     })
     await act(async () => {
-      vi.runAllTimers()
+      vi.advanceTimersByTime(1)
     })
 
     const ws = getLastSocket()
@@ -128,7 +177,7 @@ describe('useEkaetteSocket', () => {
       result.current.connect()
     })
     await act(async () => {
-      vi.runAllTimers()
+      vi.advanceTimersByTime(1)
     })
 
     const ws = getLastSocket()
@@ -148,7 +197,7 @@ describe('useEkaetteSocket', () => {
       result.current.connect()
     })
     await act(async () => {
-      vi.runAllTimers()
+      vi.advanceTimersByTime(1)
     })
 
     act(() => {
@@ -167,7 +216,7 @@ describe('useEkaetteSocket', () => {
       result.current.connect()
     })
     await act(async () => {
-      vi.runAllTimers()
+      vi.advanceTimersByTime(1)
     })
 
     act(() => {
@@ -190,7 +239,7 @@ describe('useEkaetteSocket', () => {
       result.current.connect()
     })
     await act(async () => {
-      vi.runAllTimers()
+      vi.advanceTimersByTime(1)
     })
 
     act(() => {
@@ -207,26 +256,50 @@ describe('useEkaetteSocket', () => {
     })
   })
 
-  it('sendConfig sends industry payload', async () => {
+  it('sendActivityStart and sendActivityEnd only send when manual VAD is enabled by server', async () => {
     const { result } = renderHook(() => useEkaetteSocket('user1', 'session1'))
     act(() => {
       result.current.connect()
     })
     await act(async () => {
-      vi.runAllTimers()
-    })
-
-    act(() => {
-      result.current.sendConfig('hotel')
+      vi.advanceTimersByTime(1)
     })
 
     const ws = getLastSocket()
-    const raw = ws.sent.at(-1)
-    expect(typeof raw).toBe('string')
-    expect(JSON.parse(raw as string)).toEqual({
-      type: 'config',
-      industry: 'hotel',
+    const sentBefore = ws.sent.length
+    act(() => {
+      result.current.sendActivityStart()
     })
+    expect(ws.sent.length).toBe(sentBefore)
+
+    // Simulate backend capability handshake enabling manual VAD.
+    act(() => {
+      ws.onmessage?.(
+        new MessageEvent('message', {
+          data: JSON.stringify({
+            type: 'session_started',
+            sessionId: 'session1',
+            industry: 'electronics',
+            manualVadActive: true,
+            vadMode: 'manual',
+          }),
+        }),
+      )
+    })
+
+    act(() => {
+      result.current.sendActivityStart()
+    })
+    let raw = ws.sent.at(-1)
+    expect(typeof raw).toBe('string')
+    expect(JSON.parse(raw as string)).toEqual({ type: 'activity_start' })
+
+    act(() => {
+      result.current.sendActivityEnd()
+    })
+    raw = ws.sent.at(-1)
+    expect(typeof raw).toBe('string')
+    expect(JSON.parse(raw as string)).toEqual({ type: 'activity_end' })
   })
 
   it('disconnect sets state to disconnected', async () => {
@@ -235,7 +308,7 @@ describe('useEkaetteSocket', () => {
       result.current.connect()
     })
     await act(async () => {
-      vi.runAllTimers()
+      vi.advanceTimersByTime(1)
     })
 
     act(() => {
@@ -266,5 +339,46 @@ describe('useEkaetteSocket', () => {
 
     expect(result.current.messages).toHaveLength(1)
     expect(result.current.messages[0].type).toBe('session_started')
+  })
+
+  it('falls back to backend proxy when direct-live token preflight fails', async () => {
+    const originalFetch = globalThis.fetch
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 503,
+      json: async () => ({ error: 'unavailable' }),
+    })
+    ;(globalThis as { fetch: typeof fetch }).fetch = fetchMock as unknown as typeof fetch
+
+    const { result } = renderHook(() =>
+      useEkaetteSocket('user1', 'session1', {
+        transportMode: 'direct-live',
+        tenantId: 'public',
+        companyId: 'ekaette-electronics',
+      }),
+    )
+
+    act(() => {
+      result.current.connect()
+    })
+    await act(async () => {
+      await Promise.resolve()
+      vi.advanceTimersByTime(1)
+    })
+
+    const ws = getLastSocket()
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/token',
+      expect.objectContaining({
+        method: 'POST',
+      }),
+    )
+    expect(ws.url).toContain('/ws/user1/session1?industry=electronics')
+    const fallback = result.current.messages.find(
+      message => message.type === 'error' && message.code === 'DIRECT_MODE_FALLBACK',
+    )
+    expect(fallback).toBeDefined()
+
+    ;(globalThis as { fetch: typeof fetch }).fetch = originalFetch
   })
 })

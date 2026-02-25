@@ -1,16 +1,40 @@
-import { useCallback, useRef, useState, type MutableRefObject } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type MutableRefObject,
+} from 'react'
 
 interface UseAudioWorkletReturn {
   startRecording: () => Promise<void>
   initPlayer: () => Promise<void>
   playAudioChunk: (data: ArrayBuffer) => void
   clearPlaybackBuffer: () => void
+  recoverAudioContexts: () => Promise<void>
   stop: () => void
   error: string | null
 }
 
+type SpeechActivityState = 'start' | 'end'
+
+interface UseAudioWorkletOptions {
+  onSpeechActivity?: (state: SpeechActivityState) => void
+  onPlaybackStats?: (stats: PlaybackStats) => void
+}
+
+export interface PlaybackStats {
+  type: 'playback_stats'
+  availableSamples: number
+  isBuffering: boolean
+  startupPrebufferSamples: number
+  currentRebufferSamples: number
+  underrunCount: number
+}
+
 export function useAudioWorklet(
   onAudioChunk: MutableRefObject<((data: ArrayBuffer) => void) | null>,
+  options: UseAudioWorkletOptions = {},
 ): UseAudioWorkletReturn {
   // FIX: Separate contexts for different sample rates
   const recorderCtxRef = useRef<AudioContext | null>(null)
@@ -19,6 +43,20 @@ export function useAudioWorklet(
   const playerNodeRef = useRef<AudioWorkletNode | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const onSpeechActivityRef = useRef<UseAudioWorkletOptions['onSpeechActivity']>(
+    options.onSpeechActivity,
+  )
+  const onPlaybackStatsRef = useRef<UseAudioWorkletOptions['onPlaybackStats']>(
+    options.onPlaybackStats,
+  )
+
+  useEffect(() => {
+    onSpeechActivityRef.current = options.onSpeechActivity
+  }, [options.onSpeechActivity])
+
+  useEffect(() => {
+    onPlaybackStatsRef.current = options.onPlaybackStats
+  }, [options.onPlaybackStats])
 
   const startRecording = useCallback(async () => {
     try {
@@ -52,8 +90,35 @@ export function useAudioWorklet(
       // Use ref pattern to avoid stale closure
       recorder.port.onmessage = (event: MessageEvent) => {
         const chunk = event.data
+        if (
+          chunk &&
+          typeof chunk === 'object' &&
+          'type' in chunk &&
+          chunk.type === 'vad' &&
+          (chunk.state === 'speech_start' || chunk.state === 'speech_end')
+        ) {
+          if (chunk.state === 'speech_start') {
+            // Signal the server that user started speaking (for manual VAD).
+            // Do NOT clear playback buffer here — that causes voice breaks.
+            // The server sends an 'interrupted' message when the agent should
+            // actually stop; clearPlaybackBuffer is called from App.tsx on that event.
+            onSpeechActivityRef.current?.('start')
+          } else {
+            onSpeechActivityRef.current?.('end')
+          }
+          return
+        }
         if (chunk instanceof ArrayBuffer) {
           onAudioChunk.current?.(chunk)
+          return
+        }
+        if (chunk instanceof Float32Array) {
+          const pcm16 = new Int16Array(chunk.length)
+          for (let i = 0; i < chunk.length; i++) {
+            const sample = Math.max(-1, Math.min(1, chunk[i]))
+            pcm16[i] = sample < 0 ? sample * 0x8000 : sample * 0x7fff
+          }
+          onAudioChunk.current?.(pcm16.buffer)
           return
         }
         if (ArrayBuffer.isView(chunk)) {
@@ -88,6 +153,16 @@ export function useAudioWorklet(
       await ctx.audioWorklet.addModule('/pcm-player-processor.js')
       const player = new AudioWorkletNode(ctx, 'pcm-player-processor')
       playerNodeRef.current = player
+      player.port.onmessage = (event: MessageEvent) => {
+        const payload = event.data
+        if (
+          payload &&
+          typeof payload === 'object' &&
+          payload.type === 'playback_stats'
+        ) {
+          onPlaybackStatsRef.current?.(payload as PlaybackStats)
+        }
+      }
       player.connect(ctx.destination)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Audio playback failed')
@@ -106,22 +181,66 @@ export function useAudioWorklet(
     }
   }, [])
 
+  const recoverAudioContexts = useCallback(async () => {
+    const resumes: Promise<unknown>[] = []
+    if (playerCtxRef.current?.state === 'suspended') {
+      resumes.push(playerCtxRef.current.resume())
+    }
+    if (recorderCtxRef.current?.state === 'suspended') {
+      resumes.push(recorderCtxRef.current.resume())
+    }
+    if (resumes.length > 0) {
+      try {
+        await Promise.all(resumes)
+      } catch {
+        // Ignore resume races; normal playback/recording may still recover on next gesture.
+      }
+    }
+  }, [])
+
   const stop = useCallback(() => {
+    // Gain ramp-down on player to avoid audio pops (pattern from live-api-web-console).
+    const playerCtx = playerCtxRef.current
+    if (playerCtx && playerNodeRef.current) {
+      try {
+        const gain = playerCtx.createGain()
+        gain.gain.setValueAtTime(1, playerCtx.currentTime)
+        gain.gain.linearRampToValueAtTime(0, playerCtx.currentTime + 0.05)
+        playerNodeRef.current.disconnect()
+        playerNodeRef.current.connect(gain)
+        gain.connect(playerCtx.destination)
+        // Close after ramp completes
+        setTimeout(() => {
+          playerNodeRef.current?.disconnect()
+          playerNodeRef.current = null
+          playerCtx.close().catch(() => {})
+          playerCtxRef.current = null
+        }, 80)
+      } catch {
+        // Fallback: immediate close
+        playerNodeRef.current?.disconnect()
+        playerNodeRef.current = null
+        playerCtx.close().catch(() => {})
+        playerCtxRef.current = null
+      }
+    } else {
+      playerNodeRef.current?.disconnect()
+      playerNodeRef.current = null
+      playerCtxRef.current?.close().catch(() => {})
+      playerCtxRef.current = null
+    }
+
     // Stop microphone tracks
     streamRef.current?.getTracks().forEach(track => track.stop())
     streamRef.current = null
 
-    // Disconnect nodes
+    // Disconnect recorder
     recorderNodeRef.current?.disconnect()
-    playerNodeRef.current?.disconnect()
     recorderNodeRef.current = null
-    playerNodeRef.current = null
 
-    // Close both contexts
-    recorderCtxRef.current?.close()
-    playerCtxRef.current?.close()
+    // Close recorder context
+    recorderCtxRef.current?.close().catch(() => {})
     recorderCtxRef.current = null
-    playerCtxRef.current = null
   }, [])
 
   return {
@@ -129,6 +248,7 @@ export function useAudioWorklet(
     initPlayer,
     playAudioChunk,
     clearPlaybackBuffer,
+    recoverAudioContexts,
     stop,
     error,
   }
