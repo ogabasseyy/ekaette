@@ -60,7 +60,9 @@ export function TranscriptionOverlay({ messages }: TranscriptionOverlayProps) {
 
         {messages.map((message, index) => (
           <article
-            key={`${index}-${message.role}`}
+            // Transcript messages are append-only in this view; index stays stable
+            // while partial text grows, which avoids remounting on text updates.
+            key={index}
             className={cn(
               'message-bubble',
               message.role === 'user' ? 'message-user ml-auto' : 'message-agent mr-auto',

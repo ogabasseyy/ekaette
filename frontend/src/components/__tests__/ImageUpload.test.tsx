@@ -58,20 +58,24 @@ describe('ImageUpload', () => {
   })
 
   it('rejects unsupported file types', () => {
+    const onImageSelected = vi.fn()
     const onError = vi.fn()
-    render(<ImageUpload onImageSelected={() => {}} onError={onError} />)
+    render(<ImageUpload onImageSelected={onImageSelected} onError={onError} showPreview />)
 
     const input = screen.getByLabelText(/upload photo/i, { selector: 'input' })
     const file = new File(['hello'], 'doc.txt', { type: 'text/plain' })
     fireEvent.change(input, { target: { files: [file] } })
 
     expect(onError).toHaveBeenCalledWith(expect.stringContaining('Unsupported'))
+    expect(onImageSelected).not.toHaveBeenCalled()
+    expect(screen.queryByAltText(/upload preview/i)).not.toBeInTheDocument()
     expect(screen.getByText(/unsupported/i)).toBeInTheDocument()
   })
 
   it('rejects files larger than 10MB', () => {
+    const onImageSelected = vi.fn()
     const onError = vi.fn()
-    render(<ImageUpload onImageSelected={() => {}} onError={onError} />)
+    render(<ImageUpload onImageSelected={onImageSelected} onError={onError} showPreview />)
 
     const input = screen.getByLabelText(/upload photo/i, { selector: 'input' })
     const bigFile = new File([new ArrayBuffer(11 * 1024 * 1024)], 'huge.jpg', {
@@ -80,21 +84,28 @@ describe('ImageUpload', () => {
     fireEvent.change(input, { target: { files: [bigFile] } })
 
     expect(onError).toHaveBeenCalledWith(expect.stringContaining('10 MB'))
+    expect(onImageSelected).not.toHaveBeenCalled()
+    expect(screen.queryByAltText(/upload preview/i)).not.toBeInTheDocument()
   })
 
   it('handles FileReader error', () => {
+    const onImageSelected = vi.fn()
     const onError = vi.fn()
 
     withMockFileReader(
       null,
       () => {
-        render(<ImageUpload onImageSelected={() => {}} onError={onError} />)
+        render(
+          <ImageUpload onImageSelected={onImageSelected} onError={onError} showPreview />,
+        )
 
         const input = screen.getByLabelText(/upload photo/i, { selector: 'input' })
         const file = new File(['content'], 'device.jpg', { type: 'image/jpeg' })
         fireEvent.change(input, { target: { files: [file] } })
 
         expect(onError).toHaveBeenCalledWith(expect.stringContaining('Failed'))
+        expect(onImageSelected).not.toHaveBeenCalled()
+        expect(screen.queryByAltText(/upload preview/i)).not.toBeInTheDocument()
       },
       true,
     )
