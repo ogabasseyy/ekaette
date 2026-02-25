@@ -7,7 +7,7 @@ google-genai==1.64.0
 google-cloud-aiplatform==1.138.0
 fastapi==0.131.0
 uvicorn[standard]==0.41.0
-websockets==15.0.1
+websockets==16.0
 greenlet==3.2.4
 
 # Google Cloud services
