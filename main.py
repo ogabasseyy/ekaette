@@ -5,6 +5,7 @@ import base64
 import json
 import logging
 import os
+import re
 import warnings
 
 from dotenv import load_dotenv
@@ -28,6 +29,17 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
+
+# Regex pattern for characters that enable log injection (newlines + control chars).
+_LOG_UNSAFE_RE = re.compile(r"[\r\n\x00-\x1f\x7f]")
+
+
+def _sanitize_log(value: str | None) -> str:
+    """Strip newlines and control characters from user-supplied values before logging."""
+    if value is None:
+        return "<none>"
+    return _LOG_UNSAFE_RE.sub("", value)[:200]
+
 
 # Suppress Pydantic serialization warnings
 warnings.filterwarnings("ignore", category=UserWarning, module="pydantic")
@@ -92,11 +104,11 @@ async def websocket_endpoint(
     """WebSocket endpoint for bidirectional streaming with ADK."""
     origin = websocket.headers.get("origin")
     if not _is_origin_allowed(origin):
-        logger.warning("Rejected WebSocket origin: %s", origin)
+        logger.warning("Rejected WebSocket origin: %s", _sanitize_log(origin))
         await websocket.close(code=1008, reason="Origin not allowed")
         return
 
-    logger.debug(f"WebSocket connection request: user_id={user_id}, session_id={session_id}")
+    logger.debug("WebSocket connection request: user_id=%s, session_id=%s", _sanitize_log(user_id), _sanitize_log(session_id))
     await websocket.accept()
     logger.debug("WebSocket connection accepted")
 
@@ -123,7 +135,7 @@ async def websocket_endpoint(
             session_resumption=types.SessionResumptionConfig(),
         )
 
-    logger.debug(f"Model: {model_name}, native_audio={is_native_audio}")
+    logger.debug("Model: %s, native_audio=%s", model_name, is_native_audio)
 
     session = await session_service.get_session(
         app_name=APP_NAME, user_id=user_id, session_id=session_id
@@ -224,7 +236,7 @@ async def websocket_endpoint(
     except WebSocketDisconnect:
         logger.debug("Client disconnected normally")
     except Exception as e:
-        logger.error(f"Streaming error: {e}", exc_info=True)
+        logger.error("Streaming error: %s", e, exc_info=True)
     finally:
         live_request_queue.close()
 

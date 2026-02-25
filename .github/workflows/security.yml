@@ -100,15 +100,10 @@ jobs:
         uses: actions/dependency-review-action@05fe4576374b728f0c523d6a13d64c25081e0803 # v4.8.3
         with:
           fail-on-severity: high
-          # 2026 best practice: use allow-licenses (deny-licenses is deprecated)
-          # Allow permissive licenses + AGPL for TruffleHog security tool
-          allow-licenses: >-
-            MIT, MIT-0, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, 0BSD,
-            Unlicense, CC0-1.0, WTFPL, Zlib, BlueOak-1.0.0,
-            MPL-2.0, LGPL-2.1-only, LGPL-2.1-or-later,
-            LGPL-3.0-only, LGPL-3.0-or-later,
-            AGPL-3.0-only, AGPL-3.0-or-later,
-            CC-BY-3.0, CC-BY-4.0, Python-2.0, PSF-2.0, Artistic-2.0
+          # Allow permissive + copyleft licenses used in our dependency tree
+          allow-licenses: "MIT, MIT-0, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, 0BSD, Unlicense, CC0-1.0, WTFPL, Zlib, BlueOak-1.0.0, MPL-2.0, LGPL-2.1-only, LGPL-2.1-or-later, LGPL-3.0-only, LGPL-3.0-or-later, AGPL-3.0-only, AGPL-3.0-or-later, CC-BY-3.0, CC-BY-4.0, Python-2.0, PSF-2.0, Artistic-2.0"
+          # Packages with undetectable licenses (verified manually)
+          allow-dependencies-licenses: "pkg:npm/@bramus/specificity"
 
   secrets-scan:
     name: Secret Scanning
