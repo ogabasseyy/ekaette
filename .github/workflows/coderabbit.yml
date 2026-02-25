@@ -21,7 +21,7 @@ jobs:
         (github.event_name == 'issue_comment' && github.event.issue.pull_request && contains(github.event.comment.body, '@coderabbitai'))
     steps:
       - name: CodeRabbit AI Reviewer
-        uses: coderabbitai/ai-pr-reviewer@516a0728038a4363e7eb4ed6ee2cc23660a2a0a3 # v1
+        uses: coderabbitai/ai-pr-reviewer@44244a9e06f5acf72a93f661c7dbb8d8d808143d # v1.16.2
         with:
           debug: false
           review_simple_changes: false
