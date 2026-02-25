@@ -118,6 +118,71 @@ class TestLoadIndustryConfig:
         config = await load_industry_config(None, "nonexistent")
         assert config["name"] == "General"
 
+    @pytest.mark.asyncio
+    async def test_registry_enabled_prefers_registry_template_adapter(self, monkeypatch):
+        """Phase 1: when registry is enabled, adapt template -> legacy config shape."""
+        from app.configs.industry_loader import load_industry_config
+
+        monkeypatch.setenv("REGISTRY_ENABLED", "true")
+        mock_db = MagicMock()
+
+        with patch(
+            "app.configs.registry_loader.load_industry_template",
+            AsyncMock(
+                return_value={
+                    "id": "telecom",
+                    "label": "Telecom Support",
+                    "default_voice": "Puck",
+                    "greeting_policy": "Welcome to telecom support.",
+                }
+            ),
+        ) as mock_registry_load:
+            config = await load_industry_config(mock_db, "telecom")
+
+        mock_registry_load.assert_awaited_once_with(mock_db, "telecom")
+        # Registry path should short-circuit legacy industry_configs collection lookup.
+        mock_db.collection.assert_not_called()
+        assert config == {
+            "name": "Telecom Support",
+            "voice": "Puck",
+            "greeting": "Welcome to telecom support.",
+        }
+
+    @pytest.mark.asyncio
+    async def test_registry_enabled_falls_back_to_legacy_firestore_when_template_missing(self, monkeypatch):
+        """Phase 1 compatibility adapter: registry miss still uses existing loader path."""
+        from app.configs.industry_loader import load_industry_config
+
+        monkeypatch.setenv("REGISTRY_ENABLED", "true")
+
+        mock_doc = MagicMock()
+        mock_doc.exists = True
+        mock_doc.to_dict.return_value = {
+            "name": "Hotels & Hospitality",
+            "voice": "Puck",
+            "greeting": "Welcome to the hotel.",
+        }
+
+        mock_doc_ref = MagicMock()
+        mock_doc_ref.get = AsyncMock(return_value=mock_doc)
+
+        mock_collection = MagicMock()
+        mock_collection.document.return_value = mock_doc_ref
+
+        mock_db = MagicMock()
+        mock_db.collection.return_value = mock_collection
+
+        with patch(
+            "app.configs.registry_loader.load_industry_template",
+            AsyncMock(return_value=None),
+        ) as mock_registry_load:
+            config = await load_industry_config(mock_db, "hotel")
+
+        mock_registry_load.assert_awaited_once_with(mock_db, "hotel")
+        mock_db.collection.assert_called_once_with("industry_configs")
+        assert config["name"] == "Hotels & Hospitality"
+        assert config["voice"] == "Puck"
+
 
 class TestInjectConfigToSessionState:
     """Test injecting config into session state with app: prefix."""

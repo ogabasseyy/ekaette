@@ -25,6 +25,19 @@ def _sanitize_log(value: str | None) -> str:
     return _LOG_UNSAFE_RE.sub("", value)[:200]
 
 
+def _env_flag(name: str, default: str = "false") -> bool:
+    return os.getenv(name, default).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _registry_enabled() -> bool:
+    return _env_flag("REGISTRY_ENABLED")
+
+
+def _default_registry_tenant_id() -> str:
+    raw = os.getenv("REGISTRY_DEFAULT_TENANT_ID", "public").strip().lower()
+    return raw or "public"
+
+
 DEFAULT_COMPANY_PROFILE: dict[str, Any] = {
     "company_id": "default",
     "name": "Demo Company",
@@ -267,6 +280,25 @@ def _normalize_profile(company_id: str, raw: Any) -> dict[str, Any]:
     return profile
 
 
+def _normalize_registry_company_profile(
+    company_id: str,
+    raw_company: Any,
+) -> dict[str, Any]:
+    """Project a tenant-scoped registry company doc into legacy company profile shape."""
+    if not isinstance(raw_company, dict):
+        return _normalize_profile(company_id, {})
+
+    projected = {
+        "company_id": company_id,
+        "name": raw_company.get("display_name") or raw_company.get("name"),
+        "overview": raw_company.get("overview"),
+        "facts": raw_company.get("facts"),
+        "links": raw_company.get("links"),
+        "system_connectors": raw_company.get("connectors"),
+    }
+    return _normalize_profile(company_id, projected)
+
+
 def _normalize_knowledge_entry(
     company_id: str,
     raw: dict[str, Any],
@@ -365,11 +397,29 @@ async def _call_firestore_get(doc_ref: Any) -> Any:
 async def load_company_profile(
     db: Any,
     company_id: str,
+    *,
+    tenant_id: str | None = None,
 ) -> dict[str, Any]:
     """Load company profile from Firestore with safe local fallback."""
     normalized_id = (company_id or "default").strip().lower() or "default"
     if db is None:
         return _fallback_profile_for(normalized_id)
+
+    if _registry_enabled():
+        try:
+            from app.configs.registry_loader import load_tenant_company
+
+            resolved_tenant = (tenant_id or _default_registry_tenant_id()).strip().lower() or "public"
+            company_doc = await load_tenant_company(db, resolved_tenant, normalized_id)
+            if isinstance(company_doc, dict):
+                return _normalize_registry_company_profile(normalized_id, company_doc)
+        except Exception as exc:
+            logger.warning(
+                "Registry company profile lookup failed '%s' (tenant=%s): %s",
+                _sanitize_log(normalized_id),
+                _sanitize_log((tenant_id or _default_registry_tenant_id())),
+                exc,
+            )
 
     try:
         doc_ref = db.collection("company_profiles").document(normalized_id)
@@ -388,6 +438,8 @@ async def load_company_knowledge(
     db: Any,
     company_id: str,
     limit: int = 12,
+    *,
+    tenant_id: str | None = None,
 ) -> list[dict[str, Any]]:
     """Load company knowledge entries for grounding.
 
@@ -403,6 +455,45 @@ async def load_company_knowledge(
     safe_limit = max(1, min(limit, 50))
     if db is None:
         return _fallback_knowledge_for(normalized_id)
+
+    if _registry_enabled():
+        try:
+            resolved_tenant = (tenant_id or _default_registry_tenant_id()).strip().lower() or "public"
+            query = (
+                db.collection("tenants")
+                .document(resolved_tenant)
+                .collection("companies")
+                .document(normalized_id)
+                .collection("knowledge")
+                .limit(safe_limit)
+            )
+
+            stream_result = query.stream()
+            if inspect.isawaitable(stream_result):
+                stream_result = await stream_result
+
+            if hasattr(stream_result, "__aiter__"):
+                docs = [doc async for doc in stream_result]
+            else:
+                docs = await asyncio.to_thread(lambda: list(stream_result))
+
+            entries: list[dict[str, Any]] = []
+            for idx, doc in enumerate(docs, start=1):
+                raw = doc.to_dict() if hasattr(doc, "to_dict") else {}
+                if not isinstance(raw, dict):
+                    continue
+                entry_id = str(getattr(doc, "id", "") or raw.get("id") or f"kb-{idx}")
+                entries.append(_normalize_knowledge_entry(normalized_id, raw, entry_id))
+
+            if entries:
+                return entries
+        except Exception as exc:
+            logger.warning(
+                "Registry company knowledge lookup failed '%s' (tenant=%s): %s",
+                _sanitize_log(normalized_id),
+                _sanitize_log((tenant_id or _default_registry_tenant_id())),
+                exc,
+            )
 
     try:
         query = (

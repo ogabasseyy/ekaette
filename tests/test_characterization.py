@@ -370,6 +370,7 @@ class TestTokenEndpointResponseShape:
             "fallbackModelUsed",
             "manualVadActive",
             "vadMode",
+            "voice",  # Added in Phase 2
         }
         fake_client = _FakeTokenClient()
         monkeypatch.setattr(main_module, "TOKEN_CLIENT", fake_client)

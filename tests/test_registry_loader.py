@@ -244,6 +244,8 @@ class TestResolveRegistryConfig:
         assert config.tenant_id == "public"
         assert config.company_id == "ekaette-electronics"
         assert config.industry_template_id == "electronics"
+        assert config.template_category == "retail"
+        assert config.template_label == "Electronics & Gadgets"
         assert "catalog_lookup" in config.capabilities
         assert config.voice == "Aoede"
         assert config.theme["title"] == "Electronics Trade Desk"
@@ -334,6 +336,67 @@ class TestResolveRegistryConfig:
         assert "booking_reservations" not in config.capabilities
         assert "catalog_lookup" in config.capabilities  # Unchanged
 
+    @pytest.mark.asyncio
+    async def test_malformed_shapes_fail_safe_defaults(self):
+        from app.configs.registry_loader import resolve_registry_config
+
+        malformed_template = {
+            "id": "electronics",
+            "category": None,
+            "label": 123,
+            "default_voice": None,
+            "greeting_policy": None,
+            "theme": "not-a-dict",
+            "capabilities": "catalog_lookup",  # bad shape
+            "status": "active",
+        }
+        malformed_company = {
+            "company_id": "ekaette-electronics",
+            "tenant_id": "public",
+            "industry_template_id": "electronics",
+            "connectors": "bad",
+            "ui_overrides": "bad",
+            "capability_overrides": {
+                "add": "also-bad",
+                "remove": ["catalog_lookup"],  # should have no effect because base is empty
+            },
+        }
+        db = _mock_db_with_docs({
+            "industry_templates/electronics": malformed_template,
+            "tenants/public/companies/ekaette-electronics": malformed_company,
+        })
+
+        config = await resolve_registry_config(db, "public", "ekaette-electronics")
+        assert config is not None
+        assert config.voice == "Aoede"
+        assert config.theme == {}
+        assert config.greeting == ""
+        assert config.capabilities == []
+        assert config.connector_manifest == {}
+        assert config.template_category == "electronics"
+        assert config.template_label == "Electronics"
+
+    @pytest.mark.asyncio
+    async def test_registry_version_changes_when_config_changes(self):
+        from app.configs.registry_loader import resolve_registry_config
+
+        db1 = _mock_db_with_docs({
+            "industry_templates/electronics": ELECTRONICS_TEMPLATE,
+            "tenants/public/companies/ekaette-electronics": EKAETTE_ELECTRONICS_COMPANY,
+        })
+        config1 = await resolve_registry_config(db1, "public", "ekaette-electronics")
+
+        changed_company = dict(EKAETTE_ELECTRONICS_COMPANY)
+        changed_company["ui_overrides"] = {"voice": "Puck"}
+        db2 = _mock_db_with_docs({
+            "industry_templates/electronics": ELECTRONICS_TEMPLATE,
+            "tenants/public/companies/ekaette-electronics": changed_company,
+        })
+        config2 = await resolve_registry_config(db2, "public", "ekaette-electronics")
+
+        assert config1 is not None and config2 is not None
+        assert config1.registry_version != config2.registry_version
+
 
 # ═══ ResolvedRegistryConfig tests ═══
 
@@ -348,6 +411,8 @@ class TestResolvedRegistryConfig:
             tenant_id="public",
             company_id="ekaette-electronics",
             industry_template_id="electronics",
+            template_category="retail",
+            template_label="Electronics & Gadgets",
             capabilities=["catalog_lookup"],
             voice="Aoede",
             theme={"accent": "oklch(74% 0.21 158)", "title": "Test"},
@@ -358,6 +423,8 @@ class TestResolvedRegistryConfig:
         assert config.tenant_id == "public"
         assert config.company_id == "ekaette-electronics"
         assert config.industry_template_id == "electronics"
+        assert config.template_category == "retail"
+        assert config.template_label == "Electronics & Gadgets"
         assert config.capabilities == ["catalog_lookup"]
         assert config.voice == "Aoede"
         assert config.theme["accent"] == "oklch(74% 0.21 158)"
@@ -382,6 +449,8 @@ class TestBuildSessionStateFromRegistry:
             tenant_id="public",
             company_id="ekaette-electronics",
             industry_template_id="electronics",
+            template_category="electronics",
+            template_label="Electronics & Gadgets",
             capabilities=["catalog_lookup", "valuation_tradein"],
             voice="Aoede",
             theme={"accent": "oklch(74% 0.21 158)", "title": "Electronics Trade Desk"},
@@ -397,6 +466,7 @@ class TestBuildSessionStateFromRegistry:
         assert state["app:company_id"] == "ekaette-electronics"
         assert state["app:voice"] == "Aoede"
         assert state["app:greeting"] == "Welcome!"
+        assert state["app:industry_config"]["name"] == "Electronics & Gadgets"
 
     def test_returns_canonical_keys(self):
         from app.configs.registry_loader import (
@@ -408,6 +478,8 @@ class TestBuildSessionStateFromRegistry:
             tenant_id="public",
             company_id="ekaette-electronics",
             industry_template_id="electronics",
+            template_category="electronics",
+            template_label="Electronics & Gadgets",
             capabilities=["catalog_lookup", "valuation_tradein"],
             voice="Aoede",
             theme={"accent": "oklch(74% 0.21 158)", "title": "Electronics Trade Desk"},
@@ -436,6 +508,8 @@ class TestBuildSessionStateFromRegistry:
             tenant_id="public",
             company_id="ekaette-electronics",
             industry_template_id="electronics",
+            template_category="electronics",
+            template_label="Electronics & Gadgets",
             capabilities=["catalog_lookup"],
             voice="Aoede",
             theme={"title": "Electronics Trade Desk"},
@@ -450,6 +524,31 @@ class TestBuildSessionStateFromRegistry:
         assert "name" in ic
         assert "voice" in ic
         assert "greeting" in ic
+
+    def test_legacy_alias_uses_template_category_not_full_template_id(self):
+        """Future templates may be more specific than the legacy industry alias."""
+        from app.configs.registry_loader import (
+            ResolvedRegistryConfig,
+            build_session_state_from_registry,
+        )
+
+        config = ResolvedRegistryConfig(
+            tenant_id="public",
+            company_id="airline-1",
+            industry_template_id="aviation-support",
+            template_category="aviation",
+            template_label="Aviation Customer Support",
+            capabilities=["policy_qa", "flight_status_lookup"],
+            voice="Puck",
+            theme={"title": "Aviation Desk"},
+            greeting="Welcome aboard.",
+            connector_manifest={},
+            registry_version="v1-test",
+        )
+        state = build_session_state_from_registry(config)
+
+        assert state["app:industry"] == "aviation"
+        assert state["app:industry_template_id"] == "aviation-support"
 
 
 # ═══ Compatibility: load_industry_config fallback behavior ═══

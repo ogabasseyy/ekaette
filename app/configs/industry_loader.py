@@ -20,6 +20,10 @@ def _sanitize_log(value: str | None) -> str:
         return "<none>"
     return _LOG_UNSAFE_RE.sub("", value)[:200]
 
+
+def _env_flag(name: str, default: str = "false") -> bool:
+    return os.getenv(name, default).strip().lower() in {"1", "true", "yes", "on"}
+
 DEFAULT_CONFIG: dict[str, Any] = {
     "name": "General",
     "voice": "Aoede",
@@ -58,6 +62,27 @@ def _fallback_config_for(industry: str) -> dict[str, Any]:
     return dict(DEFAULT_CONFIG)
 
 
+def _legacy_config_from_registry_template(
+    template_id: str,
+    template: dict[str, Any],
+) -> dict[str, Any]:
+    """Project a registry template into the legacy industry_config shape."""
+    name = template.get("label") or template.get("name") or template_id.title()
+    voice = template.get("default_voice") or "Aoede"
+    greeting = template.get("greeting_policy") or DEFAULT_CONFIG["greeting"]
+    if not isinstance(name, str) or not name.strip():
+        name = template_id.title()
+    if not isinstance(voice, str) or not voice.strip():
+        voice = "Aoede"
+    if not isinstance(greeting, str) or not greeting.strip():
+        greeting = DEFAULT_CONFIG["greeting"]
+    return {
+        "name": name.strip(),
+        "voice": voice.strip(),
+        "greeting": greeting.strip(),
+    }
+
+
 def create_industry_config_client(project: str | None = None) -> Any | None:
     """Create a Firestore async client for industry config lookups.
 
@@ -92,6 +117,20 @@ async def load_industry_config(
     if db is None:
         logger.debug("No Firestore client — returning default config for '%s'", _sanitize_log(industry))
         return _fallback_config_for(industry)
+
+    if _env_flag("REGISTRY_ENABLED"):
+        try:
+            from app.configs.registry_loader import load_industry_template
+
+            template = await load_industry_template(db, industry)
+            if isinstance(template, dict):
+                return _legacy_config_from_registry_template(industry, template)
+        except Exception as exc:
+            logger.warning(
+                "Registry industry template lookup failed for '%s': %s",
+                _sanitize_log(industry),
+                exc,
+            )
 
     try:
         doc_ref = db.collection("industry_configs").document(industry)

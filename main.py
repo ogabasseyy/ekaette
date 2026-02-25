@@ -203,8 +203,12 @@ def _normalize_company_id(raw_value: object) -> str:
     return normalized
 
 
-def _native_audio_live_config(industry: str) -> dict[str, object]:
+def _native_audio_live_config(
+    industry: str,
+    voice_override: str | None = None,
+) -> dict[str, object]:
     """Shared native-audio config used by token and websocket paths."""
+    voice = voice_override if voice_override else _voice_for_industry(industry)
     return {
         "response_modalities": ["AUDIO"],
         "input_audio_transcription": types.AudioTranscriptionConfig(),
@@ -219,7 +223,7 @@ def _native_audio_live_config(industry: str) -> dict[str, object]:
         "speech_config": types.SpeechConfig(
             voice_config=types.VoiceConfig(
                 prebuilt_voice_config=types.PrebuiltVoiceConfig(
-                    voice_name=_voice_for_industry(industry),
+                    voice_name=voice,
                 )
             ),
         ),
@@ -498,7 +502,7 @@ async def create_ephemeral_token(
             content={"error": "Token response was empty"},
         )
 
-    return {
+    response: dict[str, object] = {
         "token": auth_token.name,
         "expiresAt": expires_at.isoformat(),
         "maxUses": TOKEN_MAX_USES,
@@ -511,6 +515,34 @@ async def create_ephemeral_token(
         "manualVadActive": MANUAL_VAD_ACTIVE,
         "vadMode": "manual" if MANUAL_VAD_ACTIVE else "auto",
     }
+
+    # Phase 2: add voice field (always available from industry map or registry)
+    response["voice"] = _voice_for_industry(payload.industry)
+
+    return response
+
+
+# ═══ Onboarding Config Endpoint ═══
+
+
+@app.get("/api/onboarding/config")
+async def get_onboarding_config(request: Request):
+    """Return industry templates + companies for the onboarding UI."""
+    blocked_origin = _origin_or_reject(request.headers.get("origin"))
+    if blocked_origin:
+        return blocked_origin
+
+    tenant_id = request.query_params.get("tenantId")
+    if not tenant_id:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "Missing required query parameter: tenantId"},
+        )
+
+    from app.configs.registry_loader import build_onboarding_config
+
+    config = await build_onboarding_config(industry_config_client, tenant_id)
+    return config
 
 
 @app.post("/api/upload/validate")
@@ -686,10 +718,17 @@ async def websocket_endpoint(
         ):
             resolved_session_id = created_session.id
 
+    # Collect the final session state for voice + canonical fields.
+    _ss: dict[str, object] = session.state if session else initial_state
+
+    # Voice: prefer state override, fall back to industry map.
+    _voice = _ss.get("app:voice") if isinstance(_ss.get("app:voice"), str) else None
+    session_voice = _voice or _voice_for_industry(industry)
+
     if is_native_audio:
         run_config_kwargs: dict[str, object] = {
             "streaming_mode": StreamingMode.BIDI,
-            **_native_audio_live_config(industry),
+            **_native_audio_live_config(industry, voice_override=_voice),
         }
         if REALTIME_INPUT_CONFIG is not None:
             run_config_kwargs["realtime_input_config"] = REALTIME_INPUT_CONFIG
@@ -713,15 +752,31 @@ async def websocket_endpoint(
     manual_vad_active = MANUAL_VAD_ACTIVE and is_native_audio
 
     # Notify client with the canonical session ID.
-    await websocket.send_text(json.dumps({
+    _session_started_msg: dict[str, object] = {
         "type": "session_started",
         "sessionId": resolved_session_id,
         "industry": industry,
         "companyId": company_id,
-        "voice": _voice_for_industry(industry),
+        "voice": session_voice,
         "manualVadActive": manual_vad_active,
         "vadMode": "manual" if manual_vad_active else "auto",
-    }))
+    }
+
+    # Phase 2: include canonical fields when present in session state.
+    _tenant = _ss.get("app:tenant_id")
+    if isinstance(_tenant, str) and _tenant:
+        _session_started_msg["tenantId"] = _tenant
+    _template = _ss.get("app:industry_template_id")
+    if isinstance(_template, str) and _template:
+        _session_started_msg["industryTemplateId"] = _template
+    _caps = _ss.get("app:capabilities")
+    if isinstance(_caps, list):
+        _session_started_msg["capabilities"] = _caps
+    _reg_ver = _ss.get("app:registry_version")
+    if isinstance(_reg_ver, str) and _reg_ver:
+        _session_started_msg["registryVersion"] = _reg_ver
+
+    await websocket.send_text(json.dumps(_session_started_msg))
 
     live_request_queue = LiveRequestQueue()
     session_alive = asyncio.Event()
