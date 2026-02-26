@@ -118,7 +118,7 @@ describe('Per-industry demo steps (mockData)', () => {
     expect(DEMO_STEPS_BY_TEMPLATE.automotive).toBeDefined()
     expect(DEMO_STEPS_BY_TEMPLATE.fashion).toBeDefined()
     expect(DEMO_STEPS_BY_TEMPLATE.telecom).toBeDefined()
-    expect(DEMO_STEPS_BY_TEMPLATE.aviation).toBeDefined()
+    expect(DEMO_STEPS_BY_TEMPLATE['aviation-support']).toBeDefined()
   })
 
   it('hotel demo includes booking_confirmation step', async () => {
@@ -141,14 +141,16 @@ describe('Per-industry demo steps (mockData)', () => {
 
   it('each demo starts with session_started including industryTemplateId', async () => {
     const { DEMO_STEPS_BY_TEMPLATE, validateDemoSteps } = await import('../utils/mockData')
+    const canonicalTemplateIds: Record<string, string> = { aviation: 'aviation-support' }
     for (const [templateId, steps] of Object.entries(DEMO_STEPS_BY_TEMPLATE)) {
       expect(steps.length).toBeGreaterThanOrEqual(3)
       expect(validateDemoSteps(steps)).toBe(true)
       const first = steps[0]
       expect(first.message.type).toBe('session_started')
       const msg = first.message as unknown as Record<string, unknown>
-      expect(msg.industry).toBe(templateId)
-      expect(msg.industryTemplateId).toBe(templateId)
+      // industry is the broad category, industryTemplateId is the specific key
+      expect(msg.industry).toBeDefined()
+      expect(msg.industryTemplateId).toBe(canonicalTemplateIds[templateId] ?? templateId)
       expect(msg.tenantId).toBe('public')
     }
   })

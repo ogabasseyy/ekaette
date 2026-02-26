@@ -461,7 +461,7 @@ export const AVIATION_DEMO_STEPS: DemoStep[] = [
       sessionId: 'demo-session-aviation',
       industry: 'aviation',
       tenantId: 'public',
-      industryTemplateId: 'aviation',
+      industryTemplateId: 'aviation-support',
     },
   },
   {
@@ -566,7 +566,8 @@ export const DEMO_STEPS_BY_TEMPLATE: Record<string, DemoStep[]> = {
   automotive: AUTOMOTIVE_DEMO_STEPS,
   fashion: FASHION_DEMO_STEPS,
   telecom: TELECOM_DEMO_STEPS,
-  aviation: AVIATION_DEMO_STEPS,
+  aviation: AVIATION_DEMO_STEPS, // legacy alias during template-id migration
+  'aviation-support': AVIATION_DEMO_STEPS,
 }
 
 export function validateDemoSteps(steps: DemoStep[]): boolean {
