@@ -306,7 +306,7 @@ class TestTokenEndpointCanonicalFields:
         fake_client = _FakeTokenClient()
         monkeypatch.setattr(main_module, "TOKEN_CLIENT", fake_client)
         monkeypatch.setattr(main_module, "TOKEN_ALLOWED_TENANTS", {"public"})
-        monkeypatch.delenv("REGISTRY_ENABLED", raising=False)
+        monkeypatch.setenv("REGISTRY_ENABLED", "false")
 
         response = await client.post(
             "/api/token",
@@ -775,8 +775,9 @@ class TestBuildOnboardingConfig:
         assert config["defaults"]["companyId"] == "ekaette-electronics"
 
     @pytest.mark.asyncio
-    async def test_registry_mode_uses_firestore_templates_and_companies(self):
+    async def test_registry_mode_uses_firestore_templates_and_companies(self, monkeypatch):
         from app.configs.registry_loader import build_onboarding_config
+        monkeypatch.setenv("REGISTRY_ENABLED", "true")
 
         db = _FakeRegistryDb(
             template_docs=[
@@ -861,8 +862,9 @@ class TestBuildOnboardingConfig:
         assert default_company["templateId"] == config["defaults"]["templateId"]
 
     @pytest.mark.asyncio
-    async def test_registry_mode_falls_back_to_compat_when_registry_empty(self):
+    async def test_registry_disabled_falls_back_to_compat_when_registry_empty(self, monkeypatch):
         from app.configs.registry_loader import build_onboarding_config
+        monkeypatch.setenv("REGISTRY_ENABLED", "false")
 
         db = _FakeRegistryDb(template_docs=[], tenant_company_docs={"public": []})
         config = await build_onboarding_config(db, "public")

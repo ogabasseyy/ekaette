@@ -92,41 +92,24 @@ class TestLoadCompanyProfile:
         assert profile["system_connectors"]["crm"]["provider"] == "mock-crm"
 
     @pytest.mark.asyncio
-    async def test_registry_enabled_profile_falls_back_to_legacy_collection_on_registry_miss(self, monkeypatch):
-        """Phase 1 adapter: registry miss should preserve current Firestore path behavior."""
-        from app.configs.company_loader import load_company_profile
+    async def test_registry_enabled_raises_when_company_missing(self, monkeypatch):
+        """Phase 7 cutover: registry miss raises RegistryDataMissingError (no silent fallback)."""
+        from app.configs.company_loader import RegistryDataMissingError, load_company_profile
 
         monkeypatch.setenv("REGISTRY_ENABLED", "true")
         monkeypatch.setenv("REGISTRY_DEFAULT_TENANT_ID", "public")
 
-        mock_doc = MagicMock()
-        mock_doc.exists = True
-        mock_doc.to_dict.return_value = {
-            "name": "Legacy Profile",
-            "overview": "Legacy fallback path.",
-            "facts": {"rooms": 10},
-            "system_connectors": {"crm": {"provider": "legacy"}},
-        }
-
-        mock_doc_ref = MagicMock()
-        mock_doc_ref.get = AsyncMock(return_value=mock_doc)
-
-        mock_collection = MagicMock()
-        mock_collection.document.return_value = mock_doc_ref
-
         mock_db = MagicMock()
-        mock_db.collection.return_value = mock_collection
+        mock_db.collection.return_value = MagicMock()
 
         with patch(
             "app.configs.registry_loader.load_tenant_company",
             AsyncMock(return_value=None),
         ) as mock_registry_company:
-            profile = await load_company_profile(mock_db, "acme-hotel", tenant_id="public")
+            with pytest.raises(RegistryDataMissingError, match="not found"):
+                await load_company_profile(mock_db, "acme-hotel", tenant_id="public")
 
         mock_registry_company.assert_awaited_once_with(mock_db, "public", "acme-hotel")
-        mock_db.collection.assert_called_once_with("company_profiles")
-        assert profile["name"] == "Legacy Profile"
-        assert profile["facts"]["rooms"] == 10
 
 
 class TestLoadCompanyKnowledge:
@@ -245,8 +228,8 @@ class TestLoadCompanyKnowledge:
         assert entries[0]["title"] == "SIM replacement policy"
 
     @pytest.mark.asyncio
-    async def test_registry_enabled_knowledge_falls_back_to_legacy_collection_when_registry_empty(self, monkeypatch):
-        """Phase 1 adapter: preserve legacy company_knowledge path if registry path returns no entries."""
+    async def test_registry_enabled_knowledge_returns_empty_when_registry_empty(self, monkeypatch):
+        """Phase 7 cutover: registry mode returns empty list (no legacy/global fallback)."""
         from app.configs.company_loader import load_company_knowledge
 
         monkeypatch.setenv("REGISTRY_ENABLED", "true")
@@ -265,18 +248,10 @@ class TestLoadCompanyKnowledge:
         tenants_collection = MagicMock()
         tenants_collection.document.return_value = tenant_doc_ref
 
-        legacy_doc = MagicMock()
-        legacy_doc.id = "kb-legacy-1"
-        legacy_doc.to_dict.return_value = {
-            "company_id": "acme-hotel",
-            "title": "Late checkout policy",
-            "text": "Late checkout until 1 PM.",
-            "tags": ["policy"],
-        }
         legacy_query = MagicMock()
         legacy_query.where.return_value = legacy_query
         legacy_query.limit.return_value = legacy_query
-        legacy_query.stream.return_value = iter([legacy_doc])
+        legacy_query.stream.return_value = iter([])
 
         mock_db = MagicMock()
 
@@ -291,11 +266,9 @@ class TestLoadCompanyKnowledge:
 
         entries = await load_company_knowledge(mock_db, "acme-hotel", tenant_id="public", limit=3)
 
-        assert len(entries) == 1
-        assert entries[0]["id"] == "kb-legacy-1"
-        assert entries[0]["company_id"] == "acme-hotel"
-        legacy_query.where.assert_called_once_with("company_id", "==", "acme-hotel")
-        legacy_query.limit.assert_called_once_with(3)
+        assert entries == []
+        legacy_query.where.assert_not_called()
+        legacy_query.limit.assert_not_called()
 
 
 class TestBuildCompanySessionState:

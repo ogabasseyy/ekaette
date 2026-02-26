@@ -29,8 +29,12 @@ def _env_flag(name: str, default: str = "false") -> bool:
     return os.getenv(name, default).strip().lower() in {"1", "true", "yes", "on"}
 
 
+class RegistryDataMissingError(Exception):
+    """Raised when REGISTRY_ENABLED=true but required registry data is absent."""
+
+
 def _registry_enabled() -> bool:
-    return _env_flag("REGISTRY_ENABLED")
+    return _env_flag("REGISTRY_ENABLED", "true")
 
 
 def _default_registry_tenant_id() -> str:
@@ -400,12 +404,21 @@ async def load_company_profile(
     *,
     tenant_id: str | None = None,
 ) -> dict[str, Any]:
-    """Load company profile from Firestore with safe local fallback."""
+    """Load company profile from Firestore.
+
+    When REGISTRY_ENABLED=true (default after Phase 7 cutover):
+      - Registry is the ONLY source — raises RegistryDataMissingError on miss.
+    When REGISTRY_ENABLED=false (legacy mode):
+      - Falls back to old Firestore collection, then LOCAL_COMPANY_PROFILES.
+    """
     normalized_id = (company_id or "default").strip().lower() or "default"
-    if db is None:
-        return _fallback_profile_for(normalized_id)
 
     if _registry_enabled():
+        if db is None:
+            raise RegistryDataMissingError(
+                f"Firestore client required when REGISTRY_ENABLED=true "
+                f"(company='{_sanitize_log(normalized_id)}')"
+            )
         try:
             from app.configs.registry_loader import load_tenant_company
 
@@ -413,6 +426,8 @@ async def load_company_profile(
             company_doc = await load_tenant_company(db, resolved_tenant, normalized_id)
             if isinstance(company_doc, dict):
                 return _normalize_registry_company_profile(normalized_id, company_doc)
+        except RegistryDataMissingError:
+            raise
         except Exception as exc:
             logger.warning(
                 "Registry company profile lookup failed '%s' (tenant=%s): %s",
@@ -420,6 +435,14 @@ async def load_company_profile(
                 _sanitize_log((tenant_id or _default_registry_tenant_id())),
                 exc,
             )
+        raise RegistryDataMissingError(
+            f"Registry company not found for company='{_sanitize_log(normalized_id)}' "
+            f"(REGISTRY_ENABLED=true)"
+        )
+
+    # Legacy mode: REGISTRY_ENABLED=false
+    if db is None:
+        return _fallback_profile_for(normalized_id)
 
     try:
         doc_ref = db.collection("company_profiles").document(normalized_id)
@@ -450,13 +473,22 @@ async def load_company_knowledge(
       - url: str (optional)
       - tags: list[str] (optional)
       - source: str (optional, e.g. text|url|crm|mcp)
+
+    When REGISTRY_ENABLED=true (default after Phase 7 cutover):
+      - Uses only tenant-scoped registry knowledge path.
+      - Returns an empty list when no registry entries exist.
+      - Raises RegistryDataMissingError when Firestore is unavailable.
+    When REGISTRY_ENABLED=false (legacy mode):
+      - Uses legacy company_knowledge collection and local fallback.
     """
     normalized_id = (company_id or "default").strip().lower() or "default"
     safe_limit = max(1, min(limit, 50))
-    if db is None:
-        return _fallback_knowledge_for(normalized_id)
-
     if _registry_enabled():
+        if db is None:
+            raise RegistryDataMissingError(
+                f"Firestore client required when REGISTRY_ENABLED=true "
+                f"(company='{_sanitize_log(normalized_id)}')"
+            )
         try:
             resolved_tenant = (tenant_id or _default_registry_tenant_id()).strip().lower() or "public"
             query = (
@@ -484,9 +516,9 @@ async def load_company_knowledge(
                     continue
                 entry_id = str(getattr(doc, "id", "") or raw.get("id") or f"kb-{idx}")
                 entries.append(_normalize_knowledge_entry(normalized_id, raw, entry_id))
-
-            if entries:
-                return entries
+            # In registry mode, no entries is valid (empty knowledge base) and should not
+            # silently fall back to legacy/global sources.
+            return entries
         except Exception as exc:
             logger.warning(
                 "Registry company knowledge lookup failed '%s' (tenant=%s): %s",
@@ -494,6 +526,14 @@ async def load_company_knowledge(
                 _sanitize_log((tenant_id or _default_registry_tenant_id())),
                 exc,
             )
+            raise RegistryDataMissingError(
+                f"Registry company knowledge unavailable for company='{_sanitize_log(normalized_id)}' "
+                f"(tenant='{_sanitize_log(resolved_tenant)}', REGISTRY_ENABLED=true)"
+            ) from exc
+
+    # Legacy mode: REGISTRY_ENABLED=false
+    if db is None:
+        return _fallback_knowledge_for(normalized_id)
 
     try:
         query = (

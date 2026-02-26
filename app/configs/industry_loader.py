@@ -24,6 +24,10 @@ def _sanitize_log(value: str | None) -> str:
 def _env_flag(name: str, default: str = "false") -> bool:
     return os.getenv(name, default).strip().lower() in {"1", "true", "yes", "on"}
 
+
+class RegistryDataMissingError(Exception):
+    """Raised when REGISTRY_ENABLED=true but required registry data is absent."""
+
 DEFAULT_CONFIG: dict[str, Any] = {
     "name": "General",
     "voice": "Aoede",
@@ -111,26 +115,46 @@ async def load_industry_config(
 ) -> dict[str, Any]:
     """Load an industry config from Firestore.
 
-    Falls back to DEFAULT_CONFIG when the document is missing or Firestore
-    is unreachable — never let config loading break the voice session.
+    When REGISTRY_ENABLED=true (default after Phase 7 cutover):
+      - Registry is the ONLY source — raises RegistryDataMissingError on miss.
+    When REGISTRY_ENABLED=false (legacy mode):
+      - Falls back to old Firestore collection, then LOCAL_INDUSTRY_CONFIGS.
     """
-    if db is None:
-        logger.debug("No Firestore client — returning default config for '%s'", _sanitize_log(industry))
-        return _fallback_config_for(industry)
+    registry_mode = _env_flag("REGISTRY_ENABLED", "true")
 
-    if _env_flag("REGISTRY_ENABLED"):
+    if registry_mode:
+        if db is None:
+            raise RegistryDataMissingError(
+                f"Firestore client required when REGISTRY_ENABLED=true "
+                f"(industry='{_sanitize_log(industry)}')"
+            )
         try:
             from app.configs.registry_loader import load_industry_template
 
             template = await load_industry_template(db, industry)
             if isinstance(template, dict):
                 return _legacy_config_from_registry_template(industry, template)
+        except RegistryDataMissingError:
+            raise
         except Exception as exc:
             logger.warning(
                 "Registry industry template lookup failed for '%s': %s",
                 _sanitize_log(industry),
                 exc,
             )
+        logger.warning(
+            "Registry template not found for industry='%s' (REGISTRY_ENABLED=true)",
+            _sanitize_log(industry),
+        )
+        raise RegistryDataMissingError(
+            f"Registry template not found for industry='{_sanitize_log(industry)}' "
+            f"(REGISTRY_ENABLED=true)"
+        )
+
+    # Legacy mode: REGISTRY_ENABLED=false
+    if db is None:
+        logger.debug("No Firestore client — returning default config for '%s'", _sanitize_log(industry))
+        return _fallback_config_for(industry)
 
     try:
         doc_ref = db.collection("industry_configs").document(industry)

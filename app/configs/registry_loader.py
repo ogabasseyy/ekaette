@@ -15,6 +15,7 @@ import hashlib
 import inspect
 import json
 import logging
+import os
 import re
 from dataclasses import dataclass
 from typing import Any
@@ -32,6 +33,18 @@ def _sanitize_log(value: str | None) -> str:
 
 class RegistryMismatchError(Exception):
     """Raised when a company's industry_template_id doesn't match the resolved template."""
+
+
+class RegistryDataMissingError(Exception):
+    """Raised when REGISTRY_ENABLED=true but required registry data is absent."""
+
+
+def _env_flag(name: str, default: str = "false") -> bool:
+    return os.getenv(name, default).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _registry_enabled() -> bool:
+    return _env_flag("REGISTRY_ENABLED", "true")
 
 
 @dataclass(frozen=True)
@@ -245,7 +258,7 @@ async def resolve_registry_config(
         _string_or_default(template.get("name"), template_id.title()),
     )
 
-    return ResolvedRegistryConfig(
+    resolved = ResolvedRegistryConfig(
         tenant_id=tenant_id,
         company_id=company_id,
         industry_template_id=template_id,
@@ -258,6 +271,16 @@ async def resolve_registry_config(
         connector_manifest=connector_manifest,
         registry_version=_compute_registry_version(template, company),
     )
+    logger.debug(
+        "registry_loader: resolved config tenant_id=%s company_id=%s "
+        "industry_template_id=%s registry_version=%s capabilities=%s",
+        _sanitize_log(tenant_id),
+        _sanitize_log(company_id),
+        _sanitize_log(template_id),
+        _sanitize_log(resolved.registry_version),
+        capabilities,
+    )
+    return resolved
 
 
 def build_session_state_from_registry(
@@ -500,12 +523,22 @@ async def build_onboarding_config(
 ) -> dict[str, Any]:
     """Build the onboarding config response for the frontend.
 
-    When db is None or registry is unavailable, builds from local configs.
-    When registry is available, queries Firestore for templates + companies.
+    Phase 7 cutover behavior:
+    - REGISTRY_ENABLED=true: registry is authoritative; raise on missing/unavailable data.
+    - REGISTRY_ENABLED=false: use local compatibility configs.
     """
-    registry_config = await _build_onboarding_config_registry(db, tenant_id)
-    if registry_config is not None:
-        return registry_config
+    if _registry_enabled():
+        registry_config = await _build_onboarding_config_registry(db, tenant_id)
+        if registry_config is not None:
+            return registry_config
+        logger.warning(
+            "registry_loader: onboarding registry config missing for tenant_id=%s (REGISTRY_ENABLED=true)",
+            _sanitize_log(tenant_id),
+        )
+        raise RegistryDataMissingError(
+            f"Registry onboarding config not found for tenant='{_sanitize_log(tenant_id)}' "
+            f"(REGISTRY_ENABLED=true)"
+        )
     return _build_onboarding_config_compat(tenant_id)
 
 

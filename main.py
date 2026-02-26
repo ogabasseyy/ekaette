@@ -258,7 +258,7 @@ def _native_audio_live_config(
 
 
 def _registry_enabled() -> bool:
-    return _env_flag("REGISTRY_ENABLED", "false")
+    return _env_flag("REGISTRY_ENABLED", "true")
 
 
 def _registry_require_company_template_match() -> bool:
@@ -819,9 +819,20 @@ async def get_onboarding_config(request: Request):
             content={"error": "Missing required query parameter: tenantId"},
         )
 
-    from app.configs.registry_loader import build_onboarding_config
+    from app.configs.registry_loader import RegistryDataMissingError, build_onboarding_config
 
-    config = await build_onboarding_config(industry_config_client, tenant_id)
+    try:
+        config = await build_onboarding_config(industry_config_client, tenant_id)
+    except RegistryDataMissingError as exc:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": "Registry onboarding config unavailable",
+                "code": "REGISTRY_ONBOARDING_CONFIG_NOT_FOUND",
+                "tenantId": tenant_id,
+                "details": str(exc),
+            },
+        )
     return config
 
 

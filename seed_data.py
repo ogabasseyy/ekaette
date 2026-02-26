@@ -1,4 +1,15 @@
-"""seed_data.py — Load industry configs into Firestore."""
+"""seed_data.py — Load industry configs into Firestore.
+
+DEPRECATED: This script seeds legacy flat Firestore collections (industry_configs,
+company_profiles, company_knowledge, products, booking_slots). After Phase 7 cutover,
+use the registry CLI instead:
+
+    python -m scripts.registry seed-templates --file=<template.json>
+    python -m scripts.registry provision-company --tenant=X --company=Y --template=Z
+    python -m scripts.registry import-knowledge --tenant=X --company=Y --file=<entries.json>
+
+This file is retained for backward compatibility with pre-registry deployments.
+"""
 
 import os
 

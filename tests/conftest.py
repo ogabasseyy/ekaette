@@ -5,6 +5,18 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _default_registry_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Default REGISTRY_ENABLED=false for all tests.
+
+    After Phase 7 cutover, production defaults to REGISTRY_ENABLED=true.
+    Existing tests were written for legacy (non-registry) mode, so we default
+    to false here. Tests that need registry mode explicitly set it via
+    monkeypatch.setenv("REGISTRY_ENABLED", "true").
+    """
+    monkeypatch.setenv("REGISTRY_ENABLED", "false")
+
+
 @pytest.fixture
 def mock_genai_client():
     """Mock Google GenAI client — never hit real API in tests."""
