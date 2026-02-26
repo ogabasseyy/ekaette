@@ -18,6 +18,23 @@ logger = logging.getLogger(__name__)
 
 _PRICE_PATTERN = re.compile(r"\b\d[\d,]{2,}\b")
 
+# ═══ Capability Guard ═══
+
+TOOL_CAPABILITY_MAP: dict[str, str] = {
+    "create_booking": "booking_reservations",
+    "cancel_booking": "booking_reservations",
+    "check_availability": "booking_reservations",
+    "search_catalog": "catalog_lookup",
+    "get_product_details": "catalog_lookup",
+    "analyze_device_image_tool": "valuation_tradein",
+    "grade_and_value_tool": "valuation_tradein",
+    "grade_condition": "valuation_tradein",
+    "calculate_trade_in_value": "valuation_tradein",
+    "search_company_knowledge": "policy_qa",
+    "get_company_profile_fact": "policy_qa",
+    "query_company_system": "connector_dispatch",
+}
+
 
 def _next_server_message_id(state: State) -> int:
     """Return monotonically increasing ID for websocket server messages."""
@@ -212,6 +229,43 @@ async def after_model_valuation_sanity(
             parsed_values,
         )
     return None
+
+
+async def before_tool_capability_guard(
+    tool: BaseTool,
+    args: dict[str, Any],
+    tool_context: ToolContext,
+) -> dict[str, Any] | None:
+    """Block tool calls when the session lacks the required capability.
+
+    Returns None to allow the call, or a dict error to short-circuit.
+    Tools not in TOOL_CAPABILITY_MAP are always allowed.
+    When ``app:capabilities`` is absent from state, all tools are allowed
+    (backward-compatible / compat mode).
+    """
+    required_cap = TOOL_CAPABILITY_MAP.get(tool.name)
+    if required_cap is None:
+        return None
+
+    capabilities = tool_context.state.get("app:capabilities")
+    if not isinstance(capabilities, list):
+        return None  # Compat mode — no guard
+
+    if required_cap in capabilities:
+        return None
+
+    logger.warning(
+        "capability_blocked agent=%s tool=%s required=%s capabilities=%s",
+        tool_context.agent_name,
+        tool.name,
+        required_cap,
+        capabilities,
+    )
+    return {
+        "error": "capability_not_enabled",
+        "tool": tool.name,
+        "required": required_cap,
+    }
 
 
 async def before_tool_log(

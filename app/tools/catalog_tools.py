@@ -1,12 +1,15 @@
 """Catalog tools — product search and recommendations.
 
 Uses Firestore for catalog storage. Falls back to basic query
-when Vertex AI Search is unavailable.
+when Vertex AI Search is unavailable. Queries are tenant/company-scoped
+when session state contains canonical keys.
 """
 
 import asyncio
 import logging
 from typing import Any
+
+from app.tools.scoped_queries import scoped_collection_or_global
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +55,7 @@ async def search_catalog(
     query: str,
     category: str | None = None,
     max_results: int = 10,
+    tool_context: Any = None,
 ) -> dict[str, Any]:
     """Search the product catalog.
 
@@ -62,6 +66,7 @@ async def search_catalog(
         query: Search query string.
         category: Optional category filter.
         max_results: Maximum number of results to return.
+        tool_context: ADK ToolContext for tenant/company scoping.
 
     Returns:
         Dict with list of matching products.
@@ -72,7 +77,9 @@ async def search_catalog(
 
     try:
         query_text = query.strip()
-        collection = db.collection("products")
+        collection = scoped_collection_or_global(db, tool_context, "products")
+        if collection is None:
+            return {"error": "Catalog service unavailable", "products": []}
 
         if category:
             collection = collection.where("category", "==", category)

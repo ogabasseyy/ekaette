@@ -1,7 +1,8 @@
 """Booking tools — availability checking, booking creation, cancellation.
 
 Uses Firestore for slot storage. All functions are async for non-blocking
-operation in the voice pipeline.
+operation in the voice pipeline. Queries are tenant/company-scoped when
+session state contains canonical keys.
 """
 
 import asyncio
@@ -9,6 +10,8 @@ import logging
 import uuid
 from datetime import datetime, timezone
 from typing import Any
+
+from app.tools.scoped_queries import scoped_collection_or_global
 
 logger = logging.getLogger(__name__)
 
@@ -37,12 +40,14 @@ def _generate_confirmation_id() -> str:
 async def check_availability(
     date: str,
     location: str | None = None,
+    tool_context: Any = None,
 ) -> dict[str, Any]:
     """Check available booking slots for a given date.
 
     Args:
         date: Date string (YYYY-MM-DD).
         location: Optional location filter.
+        tool_context: ADK ToolContext for tenant/company scoping.
 
     Returns:
         Dict with list of available slots.
@@ -52,7 +57,9 @@ async def check_availability(
         return {"error": "Booking service unavailable", "slots": []}
 
     try:
-        query = db.collection("booking_slots")
+        query = scoped_collection_or_global(db, tool_context, "booking_slots")
+        if query is None:
+            return {"error": "Booking service unavailable", "slots": []}
         query = query.where("date", "==", date)
 
         if location:
@@ -80,6 +87,7 @@ async def create_booking(
     user_name: str,
     device_name: str,
     service_type: str,
+    tool_context: Any = None,
 ) -> dict[str, Any]:
     """Create a new booking.
 
@@ -89,6 +97,7 @@ async def create_booking(
         user_name: Customer display name.
         device_name: Device being serviced.
         service_type: Type of service (e.g. "trade-in pickup").
+        tool_context: ADK ToolContext for tenant/company scoping.
 
     Returns:
         Dict with confirmation_id and booking details.
@@ -98,7 +107,12 @@ async def create_booking(
         return {"error": "Booking service unavailable"}
 
     try:
-        slot_ref = db.collection("booking_slots").document(slot_id)
+        slots_col = scoped_collection_or_global(db, tool_context, "booking_slots")
+        bookings_col = scoped_collection_or_global(db, tool_context, "bookings")
+        if slots_col is None or bookings_col is None:
+            return {"error": "Booking service unavailable"}
+
+        slot_ref = slots_col.document(slot_id)
         slot_doc = await asyncio.to_thread(slot_ref.get)
         if not slot_doc.exists:
             return {"error": f"Slot '{slot_id}' not found"}
@@ -106,10 +120,15 @@ async def create_booking(
         if not slot_data.get("available", False):
             return {"error": f"Slot '{slot_id}' is no longer available"}
 
+        # Extract tenant/company from context for data provenance.
+        _state = getattr(tool_context, "state", {}) if tool_context else {}
+        _tenant = _state.get("app:tenant_id", "")
+        _company = _state.get("app:company_id", "")
+
         confirmation_id = _generate_confirmation_id()
         now = datetime.now(timezone.utc).isoformat()
 
-        booking_data = {
+        booking_data: dict[str, Any] = {
             "confirmation_id": confirmation_id,
             "slot_id": slot_id,
             "user_id": user_id,
@@ -122,9 +141,13 @@ async def create_booking(
             "time": slot_data.get("time", ""),
             "location": slot_data.get("location", ""),
         }
+        if isinstance(_tenant, str) and _tenant:
+            booking_data["tenant_id"] = _tenant
+        if isinstance(_company, str) and _company:
+            booking_data["company_id"] = _company
 
         # Atomic commit after availability check to reduce overbooking risk.
-        booking_ref = db.collection("bookings").document(confirmation_id)
+        booking_ref = bookings_col.document(confirmation_id)
         batch = db.batch()
         batch.set(booking_ref, booking_data)
         batch.update(slot_ref, {"available": False})
@@ -140,12 +163,14 @@ async def create_booking(
 async def cancel_booking(
     confirmation_id: str,
     user_id: str,
+    tool_context: Any = None,
 ) -> dict[str, Any]:
     """Cancel an existing booking.
 
     Args:
         confirmation_id: Booking confirmation ID.
         user_id: User requesting cancellation (must match booking owner).
+        tool_context: ADK ToolContext for tenant/company scoping.
 
     Returns:
         Dict with cancellation confirmation or error.
@@ -155,7 +180,12 @@ async def cancel_booking(
         return {"error": "Booking service unavailable"}
 
     try:
-        doc_ref = db.collection("bookings").document(confirmation_id)
+        bookings_col = scoped_collection_or_global(db, tool_context, "bookings")
+        slots_col = scoped_collection_or_global(db, tool_context, "booking_slots")
+        if bookings_col is None:
+            return {"error": "Booking service unavailable"}
+
+        doc_ref = bookings_col.document(confirmation_id)
         doc = await asyncio.to_thread(doc_ref.get)
 
         if not doc.exists:
@@ -167,13 +197,24 @@ async def cancel_booking(
         if booking.get("user_id") != user_id:
             return {"error": "You can only cancel your own bookings"}
 
+        # Verify company ownership (cross-company guard)
+        _state = getattr(tool_context, "state", {}) if tool_context else {}
+        caller_company = _state.get("app:company_id")
+        booking_company = booking.get("company_id")
+        if (
+            isinstance(caller_company, str) and caller_company
+            and isinstance(booking_company, str) and booking_company
+            and caller_company != booking_company
+        ):
+            return {"error": "Cannot cancel bookings belonging to another company"}
+
         # Cancel the booking
         await asyncio.to_thread(lambda: doc_ref.update({"status": "cancelled"}))
 
         # Re-open the slot
         slot_id = booking.get("slot_id")
-        if slot_id:
-            slot_ref = db.collection("booking_slots").document(slot_id)
+        if slot_id and slots_col is not None:
+            slot_ref = slots_col.document(slot_id)
             await asyncio.to_thread(lambda: slot_ref.update({"available": True}))
 
         return {
