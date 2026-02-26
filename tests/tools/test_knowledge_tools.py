@@ -197,3 +197,61 @@ class TestQueryCompanySystem:
         result = await query_company_system("crm", "lookup_guest", tool_context=ctx)
         assert "error" in result
         assert result["provider"] == "salesforce"
+
+    @pytest.mark.asyncio
+    async def test_prefers_connector_manifest_over_profile_connectors(self):
+        from app.tools.knowledge_tools import query_company_system
+
+        ctx = _tool_context_with_state(
+            {
+                "app:company_id": "acme-hotel",
+                "app:connector_manifest": {
+                    "crm": {
+                        "provider": "mock",
+                        "mock_actions": {
+                            "lookup_guest": {"source": "manifest", "vip": False}
+                        },
+                    }
+                },
+                "app:company_profile": {
+                    "system_connectors": {
+                        "crm": {
+                            "provider": "mock",
+                            "mock_actions": {
+                                "lookup_guest": {"source": "profile", "vip": True}
+                            },
+                        }
+                    }
+                },
+            }
+        )
+
+        result = await query_company_system("crm", "lookup_guest", tool_context=ctx)
+        assert result["result"]["source"] == "manifest"
+        assert result["provider"] == "mock"
+
+    @pytest.mark.asyncio
+    async def test_empty_connector_manifest_fails_closed_no_profile_fallback(self):
+        from app.tools.knowledge_tools import query_company_system
+
+        ctx = _tool_context_with_state(
+            {
+                "app:company_id": "acme-hotel",
+                # Canonical key present but empty -> authoritative deny, not profile fallback
+                "app:connector_manifest": {},
+                "app:company_profile": {
+                    "system_connectors": {
+                        "crm": {
+                            "provider": "mock",
+                            "mock_actions": {
+                                "lookup_guest": {"vip": True}
+                            },
+                        }
+                    }
+                },
+            }
+        )
+
+        result = await query_company_system("crm", "lookup_guest", tool_context=ctx)
+        assert "error" in result
+        assert result["error"] == "No system connectors configured for this company."

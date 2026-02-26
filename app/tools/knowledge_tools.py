@@ -36,6 +36,26 @@ def _company_id_from_state(tool_context: ToolContext | None) -> str:
     return value if isinstance(value, str) else ""
 
 
+def _connector_manifest_from_state(tool_context: ToolContext | None) -> tuple[dict[str, Any], bool]:
+    """Return (manifest, present) from session state.
+
+    ``present`` distinguishes:
+    - False: legacy/compat mode (no manifest key in state) -> callers may fallback
+    - True: registry/canonical mode (manifest key present, possibly empty) -> callers
+      should treat the manifest as authoritative and fail closed when a connector is
+      missing instead of falling back to profile connectors.
+    """
+    if tool_context is None:
+        return {}, False
+    state = getattr(tool_context, "state", None)
+    if not isinstance(state, dict):
+        return {}, False
+    if "app:connector_manifest" not in state:
+        return {}, False
+    raw = state.get("app:connector_manifest")
+    return (raw if isinstance(raw, dict) else {}), True
+
+
 def _tokenize(text: str) -> list[str]:
     return re.findall(r"[a-z0-9]+", text.lower())
 
@@ -226,6 +246,7 @@ async def query_company_system(
     """
     profile = _profile_from_state(tool_context)
     company_id = _company_id_from_state(tool_context)
+    connector_manifest, manifest_present = _connector_manifest_from_state(tool_context)
     safe_payload: dict[str, Any] = {}
     if isinstance(payload, dict):  # Backward compatibility for direct callers/tests.
         safe_payload = payload
@@ -246,8 +267,15 @@ async def query_company_system(
             "company_id": company_id,
         }
 
-    connectors = profile.get("system_connectors")
+    if manifest_present:
+        connectors = connector_manifest
+    else:
+        connectors = profile.get("system_connectors")
+
     if not isinstance(connectors, dict):
+        connectors = {}
+
+    if not connectors:
         return {
             "error": "No system connectors configured for this company.",
             "system": system,
