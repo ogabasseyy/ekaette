@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import inspect
 import json
 import logging
 import re
@@ -345,6 +346,154 @@ _LOCAL_INDUSTRY_COMPANY_MAP: dict[str, str] = {
 }
 
 
+async def _collect_query_docs(query: Any) -> list[Any]:
+    """Collect Firestore query stream results from sync or async clients."""
+    stream_result = query.stream()
+    if inspect.isawaitable(stream_result):
+        stream_result = await stream_result
+    if hasattr(stream_result, "__aiter__"):
+        return [doc async for doc in stream_result]
+    return await asyncio.to_thread(lambda: list(stream_result))
+
+
+def _normalize_onboarding_template(raw: Any, doc_id: str) -> dict[str, Any] | None:
+    """Normalize registry template doc to onboarding payload shape."""
+    if not isinstance(raw, dict):
+        return None
+
+    template_id = _string_or_default(raw.get("id"), doc_id).lower()
+    if not template_id:
+        return None
+
+    label = _string_or_default(
+        raw.get("label"),
+        _string_or_default(raw.get("name"), template_id.title()),
+    )
+    category = _string_or_default(raw.get("category"), template_id)
+    description = _string_or_default(raw.get("description"), "")
+    default_voice = _string_or_default(raw.get("default_voice"), "Aoede")
+    theme = _dict_or_empty(raw.get("theme"))
+    capabilities = _list_of_strings(raw.get("capabilities", []))
+    status = _string_or_default(raw.get("status"), "active").lower()
+    if status not in {"active", "beta", "disabled"}:
+        status = "active"
+
+    return {
+        "id": template_id,
+        "label": label,
+        "category": category,
+        "description": description,
+        "defaultVoice": default_voice,
+        "theme": theme,
+        "capabilities": capabilities,
+        "status": status,
+    }
+
+
+def _normalize_onboarding_company(raw: Any, doc_id: str) -> dict[str, Any] | None:
+    """Normalize tenant company doc to onboarding payload shape."""
+    if not isinstance(raw, dict):
+        return None
+
+    company_id = _string_or_default(raw.get("company_id"), doc_id).lower()
+    if not company_id:
+        return None
+
+    template_id = _string_or_default(raw.get("industry_template_id"), "")
+    display_name = _string_or_default(
+        raw.get("display_name"),
+        _string_or_default(raw.get("name"), company_id),
+    )
+    return {
+        "id": company_id,
+        "templateId": template_id,
+        "displayName": display_name,
+    }
+
+
+def _registry_onboarding_defaults(
+    templates: list[dict[str, Any]],
+    companies: list[dict[str, Any]],
+) -> dict[str, str]:
+    """Choose stable onboarding defaults from resolved registry records."""
+    template_ids = {str(t.get("id", "")) for t in templates}
+    company_ids = {str(c.get("id", "")) for c in companies}
+    if "electronics" in template_ids and "ekaette-electronics" in company_ids:
+        return {"templateId": "electronics", "companyId": "ekaette-electronics"}
+
+    if templates and companies:
+        first_template = str(templates[0].get("id", ""))
+        for company in companies:
+            if str(company.get("templateId", "")) == first_template and company.get("id"):
+                return {"templateId": first_template, "companyId": str(company["id"])}
+        return {"templateId": first_template, "companyId": str(companies[0].get("id", ""))}
+
+    if templates:
+        return {"templateId": str(templates[0].get("id", "electronics")), "companyId": ""}
+
+    return {"templateId": "electronics", "companyId": "ekaette-electronics"}
+
+
+async def _build_onboarding_config_registry(
+    db: Any,
+    tenant_id: str,
+) -> dict[str, Any] | None:
+    """Build onboarding config from registry collections; return None on miss/error."""
+    if db is None:
+        return None
+
+    try:
+        template_docs = await _collect_query_docs(db.collection("industry_templates"))
+    except Exception as exc:
+        logger.warning(
+            "registry_loader: onboarding template query failed for tenant=%s: %s",
+            _sanitize_log(tenant_id),
+            exc,
+        )
+        return None
+
+    templates: list[dict[str, Any]] = []
+    for doc in template_docs:
+        raw = doc.to_dict() if hasattr(doc, "to_dict") else {}
+        doc_id = str(getattr(doc, "id", "") or (raw.get("id") if isinstance(raw, dict) else ""))
+        template = _normalize_onboarding_template(raw, doc_id)
+        if template is not None:
+            templates.append(template)
+
+    if not templates:
+        return None
+
+    try:
+        company_docs = await _collect_query_docs(
+            db.collection("tenants").document(tenant_id).collection("companies")
+        )
+    except Exception as exc:
+        logger.warning(
+            "registry_loader: onboarding company query failed for tenant=%s: %s",
+            _sanitize_log(tenant_id),
+            exc,
+        )
+        return None
+
+    companies: list[dict[str, Any]] = []
+    for doc in company_docs:
+        raw = doc.to_dict() if hasattr(doc, "to_dict") else {}
+        doc_id = str(getattr(doc, "id", "") or (raw.get("company_id") if isinstance(raw, dict) else ""))
+        company = _normalize_onboarding_company(raw, doc_id)
+        if company is not None:
+            companies.append(company)
+
+    templates.sort(key=lambda item: (item.get("status") == "disabled", str(item.get("label", item.get("id", ""))).lower()))
+    companies.sort(key=lambda item: str(item.get("displayName", item.get("id", ""))).lower())
+
+    return {
+        "tenantId": tenant_id,
+        "templates": templates,
+        "companies": companies,
+        "defaults": _registry_onboarding_defaults(templates, companies),
+    }
+
+
 async def build_onboarding_config(
     db: Any,
     tenant_id: str,
@@ -354,8 +503,9 @@ async def build_onboarding_config(
     When db is None or registry is unavailable, builds from local configs.
     When registry is available, queries Firestore for templates + companies.
     """
-    # TODO: When REGISTRY_ENABLED, query Firestore industry_templates + companies.
-    # For now, always use compat mode (local configs).
+    registry_config = await _build_onboarding_config_registry(db, tenant_id)
+    if registry_config is not None:
+        return registry_config
     return _build_onboarding_config_compat(tenant_id)
 
 

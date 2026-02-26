@@ -123,6 +123,7 @@ class TokenRequestPayload(BaseModel):
         pattern=r"^[A-Za-z0-9_-]+$",
     )
     industry: str = Field(default="electronics")
+    industry_template_id: str | None = Field(default=None, alias="industryTemplateId")
     company_id: str = Field(default="default", alias="companyId")
 
 
@@ -189,6 +190,8 @@ DEFAULT_COMPANY_ID = (
     os.getenv("DEFAULT_COMPANY_ID", "default").strip().lower() or "default"
 )
 _COMPANY_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]{1,63}$")
+_TENANT_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]{1,63}$")
+_TEMPLATE_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]{1,127}$")
 
 
 def _normalize_company_id(raw_value: object) -> str:
@@ -200,6 +203,30 @@ def _normalize_company_id(raw_value: object) -> str:
         return DEFAULT_COMPANY_ID
     if not _COMPANY_ID_PATTERN.fullmatch(normalized):
         return DEFAULT_COMPANY_ID
+    return normalized
+
+
+def _normalize_tenant_id(raw_value: object, default: str = "public") -> str:
+    """Sanitize tenant ID from untrusted input."""
+    if not isinstance(raw_value, str):
+        return default
+    normalized = raw_value.strip().lower()
+    if not normalized:
+        return default
+    if not _TENANT_ID_PATTERN.fullmatch(normalized):
+        return default
+    return normalized
+
+
+def _normalize_template_id(raw_value: object) -> str | None:
+    """Sanitize optional industry template ID from untrusted input."""
+    if not isinstance(raw_value, str):
+        return None
+    normalized = raw_value.strip().lower()
+    if not normalized:
+        return None
+    if not _TEMPLATE_ID_PATTERN.fullmatch(normalized):
+        return None
     return normalized
 
 
@@ -228,6 +255,207 @@ def _native_audio_live_config(
             ),
         ),
     }
+
+
+def _registry_enabled() -> bool:
+    return _env_flag("REGISTRY_ENABLED", "false")
+
+
+def _registry_require_company_template_match() -> bool:
+    return _env_flag("REGISTRY_REQUIRE_COMPANY_TEMPLATE_MATCH", "false")
+
+
+def _registry_db_client() -> object | None:
+    """Pick a Firestore client suitable for registry lookups."""
+    return company_config_client or industry_config_client
+
+
+async def _resolve_registry_runtime_config(
+    *,
+    tenant_id: str,
+    company_id: str,
+) -> object | None:
+    """Resolve canonical registry config when registry mode is enabled."""
+    if not _registry_enabled():
+        return None
+
+    db = _registry_db_client()
+    if db is None:
+        return None
+
+    try:
+        from app.configs.registry_loader import resolve_registry_config
+
+        return await resolve_registry_config(db, tenant_id, company_id)
+    except Exception as exc:
+        logger.warning(
+            "Registry runtime config resolution failed tenant=%s company=%s: %s",
+            _sanitize_log(tenant_id),
+            _sanitize_log(company_id),
+            exc,
+        )
+        return None
+
+
+def _registry_mismatch_response(
+    *,
+    requested_template_id: str | None,
+    resolved_template_id: str | None,
+) -> JSONResponse | None:
+    """Return a strict mismatch response when configured to reject conflicts."""
+    if not _registry_require_company_template_match():
+        return None
+    if not requested_template_id or not resolved_template_id:
+        return None
+    if requested_template_id == resolved_template_id:
+        return None
+    return JSONResponse(
+        status_code=409,
+        content={
+            "error": "industryTemplateId does not match company configuration",
+            "code": "TEMPLATE_COMPANY_MISMATCH",
+            "requestedIndustryTemplateId": requested_template_id,
+            "resolvedIndustryTemplateId": resolved_template_id,
+        },
+    )
+
+
+def _legacy_industry_alias_from_registry_config(
+    config: object | None,
+    *,
+    fallback: str,
+) -> str:
+    """Derive a backward-compatible legacy industry alias from registry config.
+
+    Current frontend/runtime compatibility still expects legacy ids like
+    `electronics`, `hotel`, `automotive`, `fashion`. Future templates may use
+    more specific IDs (for example `aviation-support`), so we derive a stable
+    legacy alias without exposing broad non-legacy categories like `retail`.
+    """
+    if config is None:
+        return fallback
+
+    known_legacy = {"electronics", "hotel", "automotive", "fashion"}
+
+    explicit_alias = getattr(config, "legacy_industry_alias", None)
+    if isinstance(explicit_alias, str):
+        alias = explicit_alias.strip().lower()
+        if alias:
+            return alias
+
+    template_id = getattr(config, "industry_template_id", None)
+    if isinstance(template_id, str):
+        normalized_template = template_id.strip().lower()
+        if normalized_template in known_legacy:
+            return normalized_template
+        if "-" in normalized_template:
+            prefix = normalized_template.split("-", 1)[0].strip()
+            if prefix:
+                return prefix
+
+    category = getattr(config, "template_category", None)
+    if isinstance(category, str):
+        normalized_category = category.strip().lower()
+        if normalized_category in known_legacy:
+            return normalized_category
+        # For new verticals (for example telecom/aviation), category often *is*
+        # the desired legacy alias.
+        if normalized_category in {"telecom", "aviation"}:
+            return normalized_category
+
+    return fallback
+
+
+def _canonical_state_updates_from_registry(config: object) -> dict[str, object]:
+    """Extract registry-derived session keys (canonical + compatibility aliases)."""
+    if config is None:
+        return {}
+
+    keys = (
+        "app:industry",
+        "app:industry_config",
+        "app:greeting",
+        "app:voice",
+        "app:tenant_id",
+        "app:industry_template_id",
+        "app:capabilities",
+        "app:ui_theme",
+        "app:connector_manifest",
+        "app:registry_version",
+    )
+
+    try:
+        from app.configs.registry_loader import build_session_state_from_registry
+
+        registry_state = build_session_state_from_registry(config)
+    except Exception:
+        return {}
+
+    updates = {k: registry_state[k] for k in keys if k in registry_state}
+    fallback_industry = (
+        str(getattr(config, "industry_template_id", "") or "").strip().lower() or "electronics"
+    )
+    updates["app:industry"] = _legacy_industry_alias_from_registry_config(
+        config,
+        fallback=fallback_industry,
+    )
+    return updates
+
+
+def _build_session_started_message(
+    *,
+    session_id: str,
+    industry: str,
+    company_id: str,
+    voice: str,
+    manual_vad_active: bool,
+    session_state: dict[str, object] | None,
+) -> dict[str, object]:
+    """Build a consistent session_started payload for all websocket code paths."""
+    payload: dict[str, object] = {
+        "type": "session_started",
+        "sessionId": session_id,
+        "industry": industry,
+        "companyId": company_id,
+        "voice": voice,
+        "manualVadActive": manual_vad_active,
+        "vadMode": "manual" if manual_vad_active else "auto",
+    }
+    if not isinstance(session_state, dict):
+        return payload
+
+    tenant = session_state.get("app:tenant_id")
+    if isinstance(tenant, str) and tenant:
+        payload["tenantId"] = tenant
+    template_id = session_state.get("app:industry_template_id")
+    if isinstance(template_id, str) and template_id:
+        payload["industryTemplateId"] = template_id
+    caps = session_state.get("app:capabilities")
+    if isinstance(caps, list):
+        payload["capabilities"] = caps
+    registry_version = session_state.get("app:registry_version")
+    if isinstance(registry_version, str) and registry_version:
+        payload["registryVersion"] = registry_version
+    return payload
+
+
+def _append_canonical_lock_fields(
+    payload: dict[str, object],
+    session_state: dict[str, object] | None,
+) -> dict[str, object]:
+    """Attach canonical lock metadata to lock/error responses when present."""
+    if not isinstance(session_state, dict):
+        return payload
+    tenant = session_state.get("app:tenant_id")
+    if isinstance(tenant, str) and tenant:
+        payload["tenantId"] = tenant
+    template_id = session_state.get("app:industry_template_id")
+    if isinstance(template_id, str) and template_id:
+        payload["industryTemplateId"] = template_id
+    registry_version = session_state.get("app:registry_version")
+    if isinstance(registry_version, str) and registry_version:
+        payload["registryVersion"] = registry_version
+    return payload
 
 
 # ═══ Session Service ═══
@@ -452,7 +680,42 @@ async def create_ephemeral_token(
     new_session_expires_at = datetime.now(timezone.utc) + timedelta(
         seconds=TOKEN_NEW_SESSION_TTL_SECONDS
     )
-    live_connect_config_kwargs = _native_audio_live_config(payload.industry)
+    normalized_tenant_id = _normalize_tenant_id(payload.tenant_id, default="public")
+    normalized_company_id = _normalize_company_id(payload.company_id)
+    requested_template_id = _normalize_template_id(payload.industry_template_id)
+    requested_industry = (payload.industry or "electronics").strip().lower() or "electronics"
+
+    registry_config = await _resolve_registry_runtime_config(
+        tenant_id=normalized_tenant_id,
+        company_id=normalized_company_id,
+    )
+    if _registry_enabled() and registry_config is None:
+        return JSONResponse(
+            status_code=404,
+            content={
+                "error": "Company configuration not found in registry",
+                "code": "REGISTRY_CONFIG_NOT_FOUND",
+                "tenantId": normalized_tenant_id,
+                "companyId": normalized_company_id,
+            },
+        )
+    if registry_config is not None:
+        mismatch_response = _registry_mismatch_response(
+            requested_template_id=requested_template_id,
+            resolved_template_id=getattr(registry_config, "industry_template_id", None),
+        )
+        if mismatch_response is not None:
+            return mismatch_response
+
+    resolved_voice = (
+        getattr(registry_config, "voice", None)
+        if isinstance(getattr(registry_config, "voice", None), str)
+        else None
+    )
+    live_connect_config_kwargs = _native_audio_live_config(
+        requested_industry,
+        voice_override=resolved_voice,
+    )
     if REALTIME_INPUT_CONFIG is not None:
         live_connect_config_kwargs["realtime_input_config"] = REALTIME_INPUT_CONFIG
 
@@ -502,13 +765,20 @@ async def create_ephemeral_token(
             content={"error": "Token response was empty"},
         )
 
+    resolved_legacy_industry = requested_industry
+    if registry_config is not None:
+        resolved_legacy_industry = _legacy_industry_alias_from_registry_config(
+            registry_config,
+            fallback=requested_industry,
+        )
+
     response: dict[str, object] = {
         "token": auth_token.name,
         "expiresAt": expires_at.isoformat(),
         "maxUses": TOKEN_MAX_USES,
-        "industry": payload.industry,
-        "companyId": _normalize_company_id(payload.company_id),
-        "tenantId": payload.tenant_id,
+        "industry": resolved_legacy_industry,
+        "companyId": normalized_company_id,
+        "tenantId": normalized_tenant_id,
         "userId": payload.user_id,
         "model": selected_model,
         "fallbackModelUsed": selected_model != LIVE_MODEL_CANDIDATES[0],
@@ -516,8 +786,18 @@ async def create_ephemeral_token(
         "vadMode": "manual" if MANUAL_VAD_ACTIVE else "auto",
     }
 
-    # Phase 2: add voice field (always available from industry map or registry)
-    response["voice"] = _voice_for_industry(payload.industry)
+    # Phase 2 canonical fields (registry path) + voice resolution.
+    response["voice"] = resolved_voice or _voice_for_industry(resolved_legacy_industry)
+    if registry_config is not None:
+        template_id = getattr(registry_config, "industry_template_id", None)
+        capabilities = getattr(registry_config, "capabilities", None)
+        registry_version = getattr(registry_config, "registry_version", None)
+        if isinstance(template_id, str) and template_id:
+            response["industryTemplateId"] = template_id
+        if isinstance(capabilities, list):
+            response["capabilities"] = capabilities
+        if isinstance(registry_version, str) and registry_version:
+            response["registryVersion"] = registry_version
 
     return response
 
@@ -624,6 +904,15 @@ async def websocket_endpoint(
     if not isinstance(requested_industry, str):
         requested_industry = "electronics"
     industry = requested_industry.strip().lower() or "electronics"
+    requested_template_id = _normalize_template_id(
+        websocket.query_params.get("industry_template_id")
+        or websocket.query_params.get("industryTemplateId")
+    )
+    tenant_id = _normalize_tenant_id(
+        websocket.query_params.get("tenant_id")
+        or websocket.query_params.get("tenantId"),
+        default="public",
+    )
 
     requested_company = websocket.query_params.get(
         "company_id",
@@ -637,6 +926,7 @@ async def websocket_endpoint(
     session = await session_service.get_session(
         app_name=SESSION_APP_NAME, user_id=user_id, session_id=resolved_session_id
     )
+    registry_config = None
     if session:
         if isinstance(getattr(session, "id", None), str) and session.id:
             resolved_session_id = session.id
@@ -649,6 +939,10 @@ async def websocket_endpoint(
         if isinstance(resumed_company, str) and resumed_company.strip():
             company_id = _normalize_company_id(resumed_company)
 
+        resumed_tenant = session.state.get("app:tenant_id")
+        if isinstance(resumed_tenant, str) and resumed_tenant.strip():
+            tenant_id = _normalize_tenant_id(resumed_tenant, default=tenant_id)
+
         state_updates: dict[str, object] = {}
         if "app:industry_config" not in session.state:
             industry_config = await load_industry_config(industry_config_client, industry)
@@ -659,12 +953,16 @@ async def websocket_endpoint(
             or "app:company_knowledge" not in session.state
             or "app:company_id" not in session.state
         ):
-            company_profile = await load_company_profile(
-                company_config_client, company_id
-            )
-            company_knowledge = await load_company_knowledge(
-                company_config_client, company_id
-            )
+            if _registry_enabled():
+                company_profile = await load_company_profile(
+                    company_config_client, company_id, tenant_id=tenant_id
+                )
+                company_knowledge = await load_company_knowledge(
+                    company_config_client, company_id, tenant_id=tenant_id
+                )
+            else:
+                company_profile = await load_company_profile(company_config_client, company_id)
+                company_knowledge = await load_company_knowledge(company_config_client, company_id)
             state_updates.update(
                 build_company_session_state(
                     company_id=company_id,
@@ -672,6 +970,19 @@ async def websocket_endpoint(
                     knowledge=company_knowledge,
                 )
             )
+
+        if _registry_enabled() and (
+            "app:tenant_id" not in session.state
+            or "app:industry_template_id" not in session.state
+            or "app:capabilities" not in session.state
+            or "app:registry_version" not in session.state
+        ):
+            registry_config = await _resolve_registry_runtime_config(
+                tenant_id=tenant_id,
+                company_id=company_id,
+            )
+            if registry_config is not None:
+                state_updates.update(_canonical_state_updates_from_registry(registry_config))
 
         if state_updates:
             await async_save_session_state(
@@ -682,15 +993,54 @@ async def websocket_endpoint(
                 state_updates=state_updates,
             )
     else:
+        if _registry_enabled():
+            registry_config = await _resolve_registry_runtime_config(
+                tenant_id=tenant_id,
+                company_id=company_id,
+            )
+            if registry_config is not None:
+                # In strict mode, reject explicit template/company mismatches.
+                if requested_template_id is not None:
+                    mismatch_response = _registry_mismatch_response(
+                        requested_template_id=requested_template_id,
+                        resolved_template_id=getattr(registry_config, "industry_template_id", None),
+                    )
+                    if mismatch_response is not None:
+                        body = mismatch_response.body
+                        if isinstance(body, bytes):
+                            try:
+                                body = json.loads(body.decode("utf-8"))
+                            except Exception:
+                                body = {"error": "Template/company mismatch"}
+                        await websocket.send_text(json.dumps(body))
+                        await websocket.close(code=1008)
+                        return
+
+                resolved_template_id = getattr(registry_config, "industry_template_id", None)
+                if isinstance(resolved_template_id, str) and resolved_template_id:
+                    industry = resolved_template_id
+
         # Load onboarding context and build initial state
         industry_config = await load_industry_config(
             industry_config_client,
             industry,
         )
-        company_profile = await load_company_profile(company_config_client, company_id)
-        company_knowledge = await load_company_knowledge(
-            company_config_client, company_id
-        )
+        if _registry_enabled():
+            company_profile = await load_company_profile(
+                company_config_client,
+                company_id,
+                tenant_id=tenant_id,
+            )
+            company_knowledge = await load_company_knowledge(
+                company_config_client,
+                company_id,
+                tenant_id=tenant_id,
+            )
+        else:
+            company_profile = await load_company_profile(company_config_client, company_id)
+            company_knowledge = await load_company_knowledge(
+                company_config_client, company_id
+            )
 
         initial_state = build_session_state(industry_config, industry)
         initial_state.update(
@@ -700,6 +1050,8 @@ async def websocket_endpoint(
                 knowledge=company_knowledge,
             )
         )
+        if registry_config is not None:
+            initial_state.update(_canonical_state_updates_from_registry(registry_config))
         create_kwargs: dict[str, object] = {
             "app_name": SESSION_APP_NAME,
             "user_id": user_id,
@@ -721,9 +1073,13 @@ async def websocket_endpoint(
     # Collect the final session state for voice + canonical fields.
     _ss: dict[str, object] = session.state if session else initial_state
 
+    # Use locked session aliases when available.
+    locked_industry = _ss.get("app:industry") if isinstance(_ss.get("app:industry"), str) else None
+    session_industry = (locked_industry or industry).strip().lower() if isinstance((locked_industry or industry), str) else industry
+
     # Voice: prefer state override, fall back to industry map.
     _voice = _ss.get("app:voice") if isinstance(_ss.get("app:voice"), str) else None
-    session_voice = _voice or _voice_for_industry(industry)
+    session_voice = _voice or _voice_for_industry(session_industry)
 
     if is_native_audio:
         run_config_kwargs: dict[str, object] = {
@@ -752,31 +1108,14 @@ async def websocket_endpoint(
     manual_vad_active = MANUAL_VAD_ACTIVE and is_native_audio
 
     # Notify client with the canonical session ID.
-    _session_started_msg: dict[str, object] = {
-        "type": "session_started",
-        "sessionId": resolved_session_id,
-        "industry": industry,
-        "companyId": company_id,
-        "voice": session_voice,
-        "manualVadActive": manual_vad_active,
-        "vadMode": "manual" if manual_vad_active else "auto",
-    }
-
-    # Phase 2: include canonical fields when present in session state.
-    _tenant = _ss.get("app:tenant_id")
-    if isinstance(_tenant, str) and _tenant:
-        _session_started_msg["tenantId"] = _tenant
-    _template = _ss.get("app:industry_template_id")
-    if isinstance(_template, str) and _template:
-        _session_started_msg["industryTemplateId"] = _template
-    _caps = _ss.get("app:capabilities")
-    if isinstance(_caps, list):
-        _session_started_msg["capabilities"] = _caps
-    _reg_ver = _ss.get("app:registry_version")
-    if isinstance(_reg_ver, str) and _reg_ver:
-        _session_started_msg["registryVersion"] = _reg_ver
-
-    await websocket.send_text(json.dumps(_session_started_msg))
+    await websocket.send_text(json.dumps(_build_session_started_message(
+        session_id=resolved_session_id,
+        industry=session_industry,
+        company_id=company_id,
+        voice=session_voice,
+        manual_vad_active=manual_vad_active,
+        session_state=_ss,
+    )))
 
     live_request_queue = LiveRequestQueue()
     session_alive = asyncio.Event()
@@ -976,19 +1315,20 @@ async def websocket_endpoint(
                         )
                     )
 
-                    if requested_industry != industry:
-                        await websocket.send_text(json.dumps({
+                    if requested_industry != session_industry:
+                        await websocket.send_text(json.dumps(_append_canonical_lock_fields({
                             "type": "error",
                             "code": "INDUSTRY_LOCKED",
                             "message": (
                                 "Industry is set during onboarding and cannot be changed "
                                 "during an active session."
                             ),
-                            "industry": industry,
+                            "industry": session_industry,
+                            "companyId": company_id,
                             "requestedIndustry": requested_industry,
-                        }))
+                        }, _ss)))
                     elif requested_company != company_id:
-                        await websocket.send_text(json.dumps({
+                        await websocket.send_text(json.dumps(_append_canonical_lock_fields({
                             "type": "error",
                             "code": "COMPANY_LOCKED",
                             "message": (
@@ -997,17 +1337,22 @@ async def websocket_endpoint(
                             ),
                             "companyId": company_id,
                             "requestedCompanyId": requested_company,
-                        }))
+                            "industry": session_industry,
+                        }, _ss)))
                     else:
-                        await websocket.send_text(json.dumps({
-                            "type": "session_started",
-                            "sessionId": resolved_session_id,
-                            "industry": industry,
-                            "companyId": company_id,
-                            "voice": _voice_for_industry(industry),
-                            "manualVadActive": manual_vad_active,
-                            "vadMode": "manual" if manual_vad_active else "auto",
-                        }))
+                        current_voice = (
+                            _ss.get("app:voice")
+                            if isinstance(_ss.get("app:voice"), str)
+                            else None
+                        ) or _voice_for_industry(session_industry)
+                        await websocket.send_text(json.dumps(_build_session_started_message(
+                            session_id=resolved_session_id,
+                            industry=session_industry,
+                            company_id=company_id,
+                            voice=current_voice,
+                            manual_vad_active=manual_vad_active,
+                            session_state=_ss,
+                        )))
 
                 elif msg_type == "negotiate":
                     action = json_message.get("action", "counter")
