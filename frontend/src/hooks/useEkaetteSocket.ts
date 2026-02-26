@@ -662,8 +662,9 @@ export function useEkaetteSocket(
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
     const industryQuery = encodeURIComponent(industry)
     const companyQuery = companyId ? `&company_id=${encodeURIComponent(companyId)}` : ''
+    const tenantQuery = tenantId ? `&tenant_id=${encodeURIComponent(tenantId)}` : ''
     const ws = new WebSocket(
-      `${protocol}//${window.location.host}/ws/${userId}/${currentSessionIdRef.current}?industry=${industryQuery}${companyQuery}`,
+      `${protocol}//${window.location.host}/ws/${userId}/${currentSessionIdRef.current}?industry=${industryQuery}${companyQuery}${tenantQuery}`,
     )
     ws.binaryType = 'arraybuffer'
     wsRef.current = ws

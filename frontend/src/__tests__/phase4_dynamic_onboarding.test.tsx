@@ -4,9 +4,11 @@
  * TDD Red: These tests define the target behavior for registry-driven
  * onboarding, per-industry demo mode, and canonical session state.
  */
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import App from '../App'
+import { getLastSocket, sendServerMessage } from './test-helpers'
 
 import type {
   IndustryTemplateMeta,
@@ -144,8 +146,10 @@ describe('Per-industry demo steps (mockData)', () => {
       expect(validateDemoSteps(steps)).toBe(true)
       const first = steps[0]
       expect(first.message.type).toBe('session_started')
-      const msg = first.message as Record<string, unknown>
+      const msg = first.message as unknown as Record<string, unknown>
       expect(msg.industry).toBe(templateId)
+      expect(msg.industryTemplateId).toBe(templateId)
+      expect(msg.tenantId).toBe('public')
     }
   })
 
@@ -161,7 +165,6 @@ describe('useDemoMode with industryTemplateId', () => {
   it('selects hotel steps when industryTemplateId is hotel', async () => {
     const { renderHook, act: hookAct } = await import('@testing-library/react')
     const { useDemoMode } = await import('../hooks/useDemoMode')
-    const { DEMO_STEPS_BY_TEMPLATE } = await import('../utils/mockData')
 
     const { result } = renderHook(() =>
       useDemoMode({ industryTemplateId: 'hotel' }),
@@ -194,7 +197,6 @@ describe('useDemoMode with industryTemplateId', () => {
   it('defaults to electronics when no industryTemplateId given', async () => {
     const { renderHook } = await import('@testing-library/react')
     const { useDemoMode } = await import('../hooks/useDemoMode')
-    const { ELECTRONICS_DEMO_STEPS } = await import('../utils/mockData')
 
     const { result } = renderHook(() => useDemoMode())
     // Default behavior should remain electronics
@@ -213,14 +215,15 @@ describe('IndustryOnboarding dynamic templates', () => {
     render(
       <IndustryOnboarding
         templates={MOCK_TEMPLATES}
+        companies={MOCK_ONBOARDING_CONFIG.companies}
         onComplete={() => {}}
       />,
     )
 
     // All 3 templates from props should render
-    expect(screen.getByRole('button', { name: /electronics/i })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /hospitality/i })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /telecom/i })).toBeInTheDocument()
+    expect(screen.getByRole('radio', { name: /electronics/i })).toBeInTheDocument()
+    expect(screen.getByRole('radio', { name: /hospitality/i })).toBeInTheDocument()
+    expect(screen.getByRole('radio', { name: /telecom/i })).toBeInTheDocument()
   })
 
   it('calls onComplete with template id (not legacy industry string)', async () => {
@@ -233,13 +236,18 @@ describe('IndustryOnboarding dynamic templates', () => {
     render(
       <IndustryOnboarding
         templates={MOCK_TEMPLATES}
+        companies={MOCK_ONBOARDING_CONFIG.companies}
         onComplete={onComplete}
       />,
     )
 
-    await user.click(screen.getByRole('button', { name: /telecom/i }))
+    await user.click(screen.getByRole('radio', { name: /telecom/i }))
+    await user.selectOptions(screen.getByLabelText(/choose company/i), 'ekaette-telecom')
     await user.click(screen.getByRole('button', { name: /continue/i }))
-    expect(onComplete).toHaveBeenCalledWith('telecom')
+    expect(onComplete).toHaveBeenCalledWith({
+      templateId: 'telecom',
+      companyId: 'ekaette-telecom',
+    })
   })
 
   it('defaults to first template when none selected', async () => {
@@ -252,12 +260,16 @@ describe('IndustryOnboarding dynamic templates', () => {
     render(
       <IndustryOnboarding
         templates={MOCK_TEMPLATES}
+        companies={MOCK_ONBOARDING_CONFIG.companies}
         onComplete={onComplete}
       />,
     )
 
     await user.click(screen.getByRole('button', { name: /continue/i }))
-    expect(onComplete).toHaveBeenCalledWith('electronics')
+    expect(onComplete).toHaveBeenCalledWith({
+      templateId: 'electronics',
+      companyId: 'ekaette-electronics',
+    })
   })
 })
 
@@ -316,5 +328,131 @@ describe('localStorage canonical tuple storage', () => {
     // Phase 4: localStorage should accept any template ID string, not just legacy Industry union
     window.localStorage.setItem(STORAGE_KEY, 'telecom')
     expect(window.localStorage.getItem(STORAGE_KEY)).toBe('telecom')
+  })
+})
+
+// ═══ App integration (real Phase 4 behavior) ═══
+
+describe('App dynamic onboarding integration', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    ;(globalThis.WebSocket as unknown as { instances?: unknown[] }).instances = []
+    ;(globalThis as { __lastMockWebSocket?: unknown }).__lastMockWebSocket = undefined
+    window.localStorage.clear()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.restoreAllMocks()
+    window.localStorage.clear()
+  })
+
+  async function flushOnboardingFetch() {
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+  }
+
+  async function connectCall() {
+    const micButton = screen.getByRole('button', { name: /start call/i })
+    await act(async () => {
+      micButton.click()
+    })
+    await act(async () => {
+      vi.advanceTimersByTime(1)
+    })
+    await act(async () => {
+      vi.advanceTimersByTime(100)
+    })
+    await act(async () => {
+      await Promise.resolve()
+    })
+  }
+
+  it('fetches onboarding config and renders backend-provided template options in App', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      json: async () => MOCK_ONBOARDING_CONFIG,
+    } as Response)
+
+    render(<App />)
+    await flushOnboardingFetch()
+
+    expect(screen.getByRole('radio', { name: /telecom & mobile/i })).toBeInTheDocument()
+    expect(screen.getByRole('radio', { name: /hospitality & hotels/i })).toBeInTheDocument()
+  })
+
+  it('falls back to local onboarding options when onboarding config fetch fails', async () => {
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('network down'))
+
+    render(<App />)
+    await flushOnboardingFetch()
+
+    expect(screen.getByText(/using local compatibility onboarding/i)).toBeInTheDocument()
+    expect(screen.getByRole('radio', { name: /electronics/i })).toBeInTheDocument()
+    expect(screen.getByRole('radio', { name: /hotel/i })).toBeInTheDocument()
+  })
+
+  it('persists canonical onboarding tuple and uses selected company in websocket URL', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      json: async () => MOCK_ONBOARDING_CONFIG,
+    } as Response)
+
+    render(<App />)
+    await flushOnboardingFetch()
+
+    await act(async () => {
+      screen.getByRole('radio', { name: /telecom & mobile/i }).click()
+      fireEvent.change(screen.getByLabelText(/choose company/i), {
+        target: { value: 'ekaette-telecom' },
+      })
+      screen.getByRole('button', { name: /continue/i }).click()
+    })
+
+    expect(window.localStorage.getItem('ekaette:onboarding:templateId')).toBe('telecom')
+    expect(window.localStorage.getItem('ekaette:onboarding:companyId')).toBe('ekaette-telecom')
+    expect(window.localStorage.getItem('ekaette:onboarding:tenantId')).toBe('public')
+    expect(window.localStorage.getItem('ekaette:onboarding:industry')).toBe('telecom') // legacy alias
+
+    await connectCall()
+    const ws = getLastSocket()
+    expect(ws.url).toContain('industry=telecom')
+    expect(ws.url).toContain('company_id=ekaette-telecom')
+    expect(ws.url).toContain('tenant_id=public')
+  })
+
+  it('reconciles canonical session_started fields into local storage state', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      json: async () => MOCK_ONBOARDING_CONFIG,
+    } as Response)
+
+    window.localStorage.setItem('ekaette:onboarding:industry', 'electronics')
+    window.localStorage.setItem('ekaette:onboarding:templateId', 'electronics')
+    window.localStorage.setItem('ekaette:onboarding:companyId', 'ekaette-electronics')
+    render(<App />)
+    await flushOnboardingFetch()
+    await connectCall()
+
+    const ws = getLastSocket()
+    await act(async () => {
+      sendServerMessage(ws, {
+        type: 'session_started',
+        sessionId: 'session-1',
+        industry: 'electronics',
+        companyId: 'ekaette-telecom',
+        tenantId: 'public',
+        industryTemplateId: 'telecom',
+        capabilities: ['policy_qa'],
+        registryVersion: 'v1-telecom',
+      })
+    })
+
+    expect(window.localStorage.getItem('ekaette:onboarding:templateId')).toBe('telecom')
+    expect(window.localStorage.getItem('ekaette:onboarding:industry')).toBe('telecom')
+    expect(window.localStorage.getItem('ekaette:onboarding:companyId')).toBe('ekaette-telecom')
+    expect(screen.getAllByText(/Industry: Telecom & Mobile/i).length).toBeGreaterThan(0)
   })
 })

@@ -35,6 +35,8 @@ import type {
   ImageReceivedMessage,
   IndustryTemplateMeta,
   MemoryRecallMessage,
+  OnboardingCompanyMeta,
+  OnboardingConfigResponse,
   ProductRecommendation,
   SessionStartedMessage,
   TelemetryMessage,
@@ -43,6 +45,9 @@ import type {
 } from './types'
 
 const INDUSTRY_STORAGE_KEY = 'ekaette:onboarding:industry'
+const TEMPLATE_STORAGE_KEY = 'ekaette:onboarding:templateId'
+const COMPANY_STORAGE_KEY = 'ekaette:onboarding:companyId'
+const TENANT_STORAGE_KEY = 'ekaette:onboarding:tenantId'
 
 // ═══ Hardcoded Fallbacks (legacy compat, used until registry fetch is wired) ═══
 
@@ -106,6 +111,11 @@ function parseStoredIndustry(value: string | null): string | null {
   return value
 }
 
+function parseStoredValue(value: string | null): string | null {
+  if (!value || !value.trim()) return null
+  return value.trim()
+}
+
 function readDemoModeFlag(): boolean {
   if (typeof window === 'undefined') return false
   if (window.location.search.includes('demo=1')) return true
@@ -130,11 +140,33 @@ function resolveTheme(
   return FALLBACK_THEMES[templateId] ?? DEFAULT_THEME
 }
 
+function resolveCompanyFromConfig(
+  templateId: string,
+  companies: OnboardingCompanyMeta[] | null,
+  defaults?: { templateId: string; companyId: string } | null,
+): string | null {
+  if (!companies || companies.length === 0) return null
+  if (
+    defaults &&
+    defaults.templateId === templateId &&
+    companies.some(company => company.id === defaults.companyId && company.templateId === templateId)
+  ) {
+    return defaults.companyId
+  }
+  const match = companies.find(company => company.templateId === templateId)
+  return match?.id ?? null
+}
+
 function resolveCompanyId(
   templateId: string,
-  _templates: IndustryTemplateMeta[] | null,
+  onboardingConfig: OnboardingConfigResponse | null,
 ): string {
-  // For now, use fallback map. When registry fetch is wired, use config.companies.
+  const fromConfig = resolveCompanyFromConfig(
+    templateId,
+    onboardingConfig?.companies ?? null,
+    onboardingConfig?.defaults ?? null,
+  )
+  if (fromConfig) return fromConfig
   return FALLBACK_COMPANY_MAP[templateId] ?? `ekaette-${templateId}`
 }
 
@@ -159,6 +191,8 @@ interface DebugEventItem {
   detail: string
 }
 
+type OnboardingConfigStatus = 'idle' | 'loading' | 'ready' | 'compat' | 'error'
+
 function formatDebugTime(ts: number): string {
   const date = new Date(ts)
   return `${String(date.getMinutes()).padStart(2, '0')}:${String(date.getSeconds()).padStart(
@@ -175,10 +209,24 @@ function formatMs(value: number | null | undefined): string {
 function App() {
   const [industry, setIndustry] = useState<string | null>(() => {
     if (typeof window === 'undefined') return null
-    return parseStoredIndustry(window.localStorage.getItem(INDUSTRY_STORAGE_KEY))
+    return (
+      parseStoredValue(window.localStorage.getItem(TEMPLATE_STORAGE_KEY)) ??
+      parseStoredIndustry(window.localStorage.getItem(INDUSTRY_STORAGE_KEY))
+    )
   })
-  // Server-provided templates (null until fetched or when using fallback)
-  const [templates] = useState<IndustryTemplateMeta[] | null>(null)
+  const [companySelection, setCompanySelection] = useState<string | null>(() => {
+    if (typeof window === 'undefined') return null
+    return parseStoredValue(window.localStorage.getItem(COMPANY_STORAGE_KEY))
+  })
+  const [tenantSelection, setTenantSelection] = useState<string | null>(() => {
+    if (typeof window === 'undefined') return null
+    return parseStoredValue(window.localStorage.getItem(TENANT_STORAGE_KEY))
+  })
+  const [onboardingConfig, setOnboardingConfig] = useState<OnboardingConfigResponse | null>(null)
+  const [onboardingConfigStatus, setOnboardingConfigStatus] =
+    useState<OnboardingConfigStatus>('idle')
+  const [onboardingConfigError, setOnboardingConfigError] = useState<string | null>(null)
+  const [onboardingReloadNonce, setOnboardingReloadNonce] = useState(0)
   const userId = 'demo-user'
   const [sessionId] = useState(() => `session-${Date.now()}`)
   const [isStarting, setIsStarting] = useState(false)
@@ -195,9 +243,22 @@ function App() {
   const activeIndustry = industry ?? 'electronics'
   const demoModeEnabled = useMemo(() => readDemoModeFlag(), [])
   const transportMode = useMemo(() => resolveTransportMode(), [])
-  const tenantId = String(import.meta.env.VITE_TENANT_ID ?? 'public')
+  const allowOnboardingCompatFallback =
+    import.meta.env.DEV ||
+    demoModeEnabled ||
+    String(import.meta.env.VITE_ONBOARDING_COMPAT_FALLBACK ?? '').toLowerCase() === 'true'
+  const tenantId = tenantSelection ?? String(import.meta.env.VITE_TENANT_ID ?? 'public')
+  const templates = onboardingConfig?.templates ?? null
+  const companies = onboardingConfig?.companies ?? null
 
-  const companyId = resolveCompanyId(activeIndustry, templates)
+  const fallbackCompanyId = resolveCompanyId(activeIndustry, onboardingConfig)
+  const companyId = useMemo(() => {
+    if (companySelection && companies?.some(company => company.id === companySelection)) {
+      const company = companies.find(item => item.id === companySelection)
+      if (company?.templateId === activeIndustry) return companySelection
+    }
+    return fallbackCompanyId
+  }, [activeIndustry, companies, companySelection, fallbackCompanyId])
   const theme = resolveTheme(activeIndustry, templates)
   const templateLabel = resolveTemplateLabel(activeIndustry, templates)
 
@@ -379,6 +440,96 @@ function App() {
       }) as CSSProperties,
     [theme.accent, theme.accentSoft],
   )
+
+  useEffect(() => {
+    let disposed = false
+    const controller = new AbortController()
+
+    async function loadOnboardingConfig() {
+      setOnboardingConfigStatus('loading')
+      setOnboardingConfigError(null)
+      try {
+        const response = await fetch(
+          `/api/onboarding/config?tenantId=${encodeURIComponent(tenantId)}`,
+          {
+            signal: controller.signal,
+            headers: { Accept: 'application/json' },
+          },
+        )
+        if (!response.ok) {
+          if (disposed) return
+          setOnboardingConfigStatus(allowOnboardingCompatFallback ? 'compat' : 'error')
+          setOnboardingConfigError(`Onboarding config request failed (${response.status})`)
+          return
+        }
+        const payload = (await response.json()) as OnboardingConfigResponse
+        if (disposed) return
+        setOnboardingConfig(payload)
+        setOnboardingConfigStatus('ready')
+      } catch {
+        if (disposed) return
+        setOnboardingConfigStatus(allowOnboardingCompatFallback ? 'compat' : 'error')
+        setOnboardingConfigError('Unable to load onboarding configuration')
+      }
+    }
+
+    void loadOnboardingConfig()
+    return () => {
+      disposed = true
+      controller.abort()
+    }
+  }, [allowOnboardingCompatFallback, onboardingReloadNonce, tenantId])
+
+  useEffect(() => {
+    if (!onboardingConfig || !industry || companySelection) return
+    const resolvedCompany = resolveCompanyFromConfig(
+      industry,
+      onboardingConfig.companies,
+      onboardingConfig.defaults,
+    )
+    if (!resolvedCompany) return
+    setCompanySelection(resolvedCompany)
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem(COMPANY_STORAGE_KEY, resolvedCompany)
+    }
+  }, [onboardingConfig, industry, companySelection])
+
+  useEffect(() => {
+    const started = derived.sessionStarted
+    if (!started) return
+
+    const nextTemplateId =
+      (typeof started.industryTemplateId === 'string' && started.industryTemplateId.trim()) ||
+      (typeof started.industry === 'string' && started.industry.trim()) ||
+      null
+    const nextCompanyId =
+      typeof started.companyId === 'string' && started.companyId.trim() ? started.companyId : null
+    const nextTenantId =
+      typeof started.tenantId === 'string' && started.tenantId.trim() ? started.tenantId : null
+
+    if (nextTemplateId && nextTemplateId !== industry) {
+      setIndustry(nextTemplateId)
+    }
+    if (nextCompanyId && nextCompanyId !== companySelection) {
+      setCompanySelection(nextCompanyId)
+    }
+    if (nextTenantId && nextTenantId !== tenantSelection) {
+      setTenantSelection(nextTenantId)
+    }
+
+    if (typeof window !== 'undefined') {
+      if (nextTemplateId) {
+        window.localStorage.setItem(TEMPLATE_STORAGE_KEY, nextTemplateId)
+        window.localStorage.setItem(INDUSTRY_STORAGE_KEY, nextTemplateId) // legacy compat alias
+      }
+      if (nextCompanyId) {
+        window.localStorage.setItem(COMPANY_STORAGE_KEY, nextCompanyId)
+      }
+      if (nextTenantId) {
+        window.localStorage.setItem(TENANT_STORAGE_KEY, nextTenantId)
+      }
+    }
+  }, [derived.sessionStarted, industry, companySelection, tenantSelection])
 
   useEffect(() => {
     const prevState = socketStateRef.current
@@ -602,12 +753,17 @@ function App() {
     [isConnected, socket],
   )
 
-  const handleOnboardingComplete = useCallback((selectedTemplateId: string) => {
-    setIndustry(selectedTemplateId)
+  const handleOnboardingComplete = useCallback((selection: { templateId: string; companyId: string }) => {
+    setIndustry(selection.templateId)
+    setCompanySelection(selection.companyId)
+    setTenantSelection(tenantId)
     if (typeof window !== 'undefined') {
-      window.localStorage.setItem(INDUSTRY_STORAGE_KEY, selectedTemplateId)
+      window.localStorage.setItem(INDUSTRY_STORAGE_KEY, selection.templateId)
+      window.localStorage.setItem(TEMPLATE_STORAGE_KEY, selection.templateId)
+      window.localStorage.setItem(COMPANY_STORAGE_KEY, selection.companyId)
+      window.localStorage.setItem(TENANT_STORAGE_KEY, tenantId)
     }
-  }, [])
+  }, [tenantId])
 
   const handleAcceptValuation = useCallback(() => {
     if (derived.valuation) {
@@ -628,6 +784,10 @@ function App() {
     [socket],
   )
 
+  const handleRetryOnboardingConfig = useCallback(() => {
+    setOnboardingReloadNonce(value => value + 1)
+  }, [])
+
   return (
     <div
       className="app-shell h-screen min-h-screen overflow-hidden text-foreground supports-[height:100dvh]:h-dvh supports-[height:100dvh]:min-h-dvh"
@@ -638,10 +798,46 @@ function App() {
       <div className="relative mx-auto flex h-full w-full max-w-6xl flex-col px-3 pt-[calc(env(safe-area-inset-top)+0.75rem)] pb-[calc(env(safe-area-inset-bottom)+0.75rem)] sm:px-6 sm:pt-5 sm:pb-6 lg:px-8">
         {!industry ? (
           <main className="mt-3 grid min-h-0 flex-1 overflow-y-auto pb-1 sm:mt-4 sm:pb-0">
-            <IndustryOnboarding
-              templates={templates ?? undefined}
-              onComplete={handleOnboardingComplete}
-            />
+            <div className="mx-auto flex w-full max-w-3xl flex-col gap-3">
+              {onboardingConfigStatus === 'compat' ? (
+                <div className="panel-glass px-4 py-3 text-xs text-muted-foreground sm:px-5">
+                  Using local compatibility onboarding because backend onboarding config is
+                  unavailable.
+                </div>
+              ) : null}
+
+              {onboardingConfigStatus === 'error' && !allowOnboardingCompatFallback ? (
+                <section className="panel-glass w-full px-4 py-5 sm:px-7 sm:py-8">
+                  <p className="text-[0.58rem] text-muted-foreground uppercase tracking-[0.24em] sm:text-[0.64rem] sm:tracking-[0.3em]">
+                    Onboarding
+                  </p>
+                  <h1 className="mt-2 font-display text-white text-xl leading-tight sm:text-3xl">
+                    Onboarding Unavailable
+                  </h1>
+                  <p className="mt-2 max-w-2xl text-muted-foreground text-xs leading-relaxed sm:text-sm">
+                    {onboardingConfigError ??
+                      'Unable to load onboarding configuration. Please try again.'}
+                  </p>
+                  <div className="mt-6 flex justify-stretch sm:justify-end">
+                    <button
+                      type="button"
+                      onClick={handleRetryOnboardingConfig}
+                      className="w-full rounded-full border border-primary/50 bg-primary/10 px-5 py-2.5 font-semibold text-primary text-sm transition hover:bg-primary/15 sm:w-auto sm:py-2"
+                    >
+                      Retry
+                    </button>
+                  </div>
+                </section>
+              ) : (
+                <IndustryOnboarding
+                  templates={templates ?? undefined}
+                  companies={companies ?? undefined}
+                  defaultTemplateId={onboardingConfig?.defaults.templateId ?? industry}
+                  defaultCompanyId={onboardingConfig?.defaults.companyId ?? companySelection}
+                  onComplete={handleOnboardingComplete}
+                />
+              )}
+            </div>
           </main>
         ) : (
           <>

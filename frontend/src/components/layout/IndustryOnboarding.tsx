@@ -1,6 +1,6 @@
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { cn } from '../../lib/utils'
-import type { IndustryTemplateMeta } from '../../types'
+import type { IndustryTemplateMeta, OnboardingCompanyMeta } from '../../types'
 
 /** Hardcoded fallback used when no templates prop is provided (legacy compat). */
 const FALLBACK_OPTIONS: IndustryTemplateMeta[] = [
@@ -68,12 +68,66 @@ const FALLBACK_OPTIONS: IndustryTemplateMeta[] = [
 
 interface IndustryOnboardingProps {
   templates?: IndustryTemplateMeta[]
-  onComplete: (templateId: string) => void
+  companies?: OnboardingCompanyMeta[]
+  defaultTemplateId?: string | null
+  defaultCompanyId?: string | null
+  onComplete: (selection: { templateId: string; companyId: string }) => void
 }
 
-export function IndustryOnboarding({ templates, onComplete }: IndustryOnboardingProps) {
+export function IndustryOnboarding({
+  templates,
+  companies,
+  defaultTemplateId,
+  defaultCompanyId,
+  onComplete,
+}: IndustryOnboardingProps) {
   const options = templates && templates.length > 0 ? templates : FALLBACK_OPTIONS
-  const [selected, setSelected] = useState<string>(options[0]?.id ?? 'electronics')
+  const initialTemplateId =
+    (defaultTemplateId && options.some(option => option.id === defaultTemplateId) && defaultTemplateId) ||
+    options[0]?.id ||
+    'electronics'
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string>(initialTemplateId)
+  const [templateTouched, setTemplateTouched] = useState(false)
+
+  const availableCompanies = useMemo(() => {
+    if (!companies || companies.length === 0) return []
+    return companies.filter(company => company.templateId === selectedTemplateId)
+  }, [companies, selectedTemplateId])
+
+  const fallbackCompanyId = `ekaette-${selectedTemplateId}`
+  const [selectedCompanyId, setSelectedCompanyId] = useState<string>(
+    defaultCompanyId && availableCompanies.some(company => company.id === defaultCompanyId)
+      ? defaultCompanyId
+      : availableCompanies[0]?.id ?? fallbackCompanyId,
+  )
+
+  useEffect(() => {
+    if (
+      !templateTouched &&
+      defaultTemplateId &&
+      options.some(option => option.id === defaultTemplateId) &&
+      selectedTemplateId !== defaultTemplateId
+    ) {
+      setSelectedTemplateId(defaultTemplateId)
+      return
+    }
+    if (!options.some(option => option.id === selectedTemplateId)) {
+      setSelectedTemplateId(initialTemplateId)
+    }
+  }, [defaultTemplateId, initialTemplateId, options, selectedTemplateId, templateTouched])
+
+  useEffect(() => {
+    const nextCompanyId =
+      (defaultCompanyId &&
+        availableCompanies.some(company => company.id === defaultCompanyId) &&
+        defaultCompanyId) ||
+      availableCompanies[0]?.id ||
+      fallbackCompanyId
+
+    if (!availableCompanies.some(company => company.id === selectedCompanyId)) {
+      setSelectedCompanyId(nextCompanyId)
+    }
+  }, [availableCompanies, defaultCompanyId, fallbackCompanyId, selectedCompanyId])
 
   return (
     <section className="panel-glass mx-auto w-full max-w-3xl px-4 py-5 sm:px-7 sm:py-8">
@@ -88,14 +142,19 @@ export function IndustryOnboarding({ templates, onComplete }: IndustryOnboarding
         during active conversations.
       </p>
 
-      <div className="mt-5 grid gap-3 sm:mt-6 sm:grid-cols-2">
+      <div className="mt-5 grid gap-3 sm:mt-6 sm:grid-cols-2" role="radiogroup" aria-label="Industry templates">
         {options.map(option => {
-          const active = selected === option.id
+          const active = selectedTemplateId === option.id
           return (
             <button
               key={option.id}
               type="button"
-              onClick={() => setSelected(option.id)}
+              role="radio"
+              aria-checked={active}
+              onClick={() => {
+                setTemplateTouched(true)
+                setSelectedTemplateId(option.id)
+              }}
               className={cn(
                 'rounded-2xl border px-4 py-4 text-left transition',
                 active
@@ -110,10 +169,38 @@ export function IndustryOnboarding({ templates, onComplete }: IndustryOnboarding
         })}
       </div>
 
+      <div className="mt-4">
+        <label htmlFor="onboarding-company" className="block text-[0.68rem] text-muted-foreground uppercase tracking-[0.16em]">
+          Company
+        </label>
+        <select
+          id="onboarding-company"
+          aria-label="Choose Company"
+          value={selectedCompanyId}
+          onChange={event => setSelectedCompanyId(event.target.value)}
+          className="mt-2 w-full rounded-xl border border-border/70 bg-card/60 px-3 py-2 text-sm text-white outline-none focus:border-primary/60"
+        >
+          {availableCompanies.length > 0 ? (
+            availableCompanies.map(company => (
+              <option key={company.id} value={company.id}>
+                {company.displayName}
+              </option>
+            ))
+          ) : (
+            <option value={fallbackCompanyId}>{fallbackCompanyId}</option>
+          )}
+        </select>
+      </div>
+
       <div className="mt-6 flex justify-stretch sm:justify-end">
         <button
           type="button"
-          onClick={() => onComplete(selected)}
+          onClick={() =>
+            onComplete({
+              templateId: selectedTemplateId,
+              companyId: selectedCompanyId || fallbackCompanyId,
+            })
+          }
           className="w-full rounded-full bg-[color:var(--industry-accent)] px-5 py-2.5 font-semibold text-black text-sm transition hover:brightness-110 sm:w-auto sm:py-2"
         >
           Continue

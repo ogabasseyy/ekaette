@@ -114,10 +114,10 @@ describe('IndustryOnboarding characterization', () => {
     )
     render(<IndustryOnboarding onComplete={() => {}} />)
 
-    expect(screen.getByRole('button', { name: /electronics/i })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /hotel/i })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /automotive/i })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /fashion/i })).toBeInTheDocument()
+    expect(screen.getByRole('radio', { name: /electronics/i })).toBeInTheDocument()
+    expect(screen.getByRole('radio', { name: /hotel/i })).toBeInTheDocument()
+    expect(screen.getByRole('radio', { name: /automotive/i })).toBeInTheDocument()
+    expect(screen.getByRole('radio', { name: /fashion/i })).toBeInTheDocument()
   })
 
   it('defaults to electronics selected', async () => {
@@ -130,7 +130,10 @@ describe('IndustryOnboarding characterization', () => {
     // Click continue without changing selection → should default to electronics
     const user = userEvent.setup()
     await user.click(screen.getByRole('button', { name: /continue/i }))
-    expect(onComplete).toHaveBeenCalledWith('electronics')
+    expect(onComplete).toHaveBeenCalledWith({
+      templateId: 'electronics',
+      companyId: 'ekaette-electronics',
+    })
   })
 
   it('calls onComplete with selected industry', async () => {
@@ -141,9 +144,12 @@ describe('IndustryOnboarding characterization', () => {
     const user = userEvent.setup()
     render(<IndustryOnboarding onComplete={onComplete} />)
 
-    await user.click(screen.getByRole('button', { name: /hotel/i }))
+    await user.click(screen.getByRole('radio', { name: /hotel/i }))
     await user.click(screen.getByRole('button', { name: /continue/i }))
-    expect(onComplete).toHaveBeenCalledWith('hotel')
+    expect(onComplete).toHaveBeenCalledWith({
+      templateId: 'hotel',
+      companyId: 'ekaette-hotel',
+    })
   })
 
   it('each option has a description', async () => {
@@ -265,7 +271,7 @@ describe('Demo mode characterization', () => {
   })
 
   it('useDemoMode defaults to electronics steps regardless of industry', async () => {
-    const { renderHook, act } = await import('@testing-library/react')
+    const { renderHook } = await import('@testing-library/react')
     const { useDemoMode } = await import('../hooks/useDemoMode')
 
     // No steps or industry parameter — should default to electronics

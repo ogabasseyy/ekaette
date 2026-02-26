@@ -113,6 +113,8 @@ export const ELECTRONICS_DEMO_STEPS: DemoStep[] = [
       type: 'session_started',
       sessionId: 'demo-session-electronics',
       industry: 'electronics',
+      tenantId: 'public',
+      industryTemplateId: 'electronics',
     },
   },
   {
@@ -206,6 +208,8 @@ export const HOTEL_DEMO_STEPS: DemoStep[] = [
       type: 'session_started',
       sessionId: 'demo-session-hotel',
       industry: 'hotel',
+      tenantId: 'public',
+      industryTemplateId: 'hotel',
     },
   },
   {
@@ -263,6 +267,8 @@ export const AUTOMOTIVE_DEMO_STEPS: DemoStep[] = [
       type: 'session_started',
       sessionId: 'demo-session-automotive',
       industry: 'automotive',
+      tenantId: 'public',
+      industryTemplateId: 'automotive',
     },
   },
   {
@@ -327,6 +333,8 @@ export const FASHION_DEMO_STEPS: DemoStep[] = [
       type: 'session_started',
       sessionId: 'demo-session-fashion',
       industry: 'fashion',
+      tenantId: 'public',
+      industryTemplateId: 'fashion',
     },
   },
   {
@@ -395,6 +403,8 @@ export const TELECOM_DEMO_STEPS: DemoStep[] = [
       type: 'session_started',
       sessionId: 'demo-session-telecom',
       industry: 'telecom',
+      tenantId: 'public',
+      industryTemplateId: 'telecom',
     },
   },
   {
@@ -450,6 +460,8 @@ export const AVIATION_DEMO_STEPS: DemoStep[] = [
       type: 'session_started',
       sessionId: 'demo-session-aviation',
       industry: 'aviation',
+      tenantId: 'public',
+      industryTemplateId: 'aviation',
     },
   },
   {
@@ -506,6 +518,8 @@ export const GENERIC_SUPPORT_DEMO_STEPS: DemoStep[] = [
       type: 'session_started',
       sessionId: 'demo-session-generic',
       industry: 'support',
+      tenantId: 'public',
+      industryTemplateId: 'generic-support',
     },
   },
   {

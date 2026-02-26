@@ -9,6 +9,14 @@ interface HeaderProps {
 
 export function Header({ hint, templateLabel, connectionState }: HeaderProps) {
   const isConnected = connectionState === 'connected'
+  const connectionLabel =
+    connectionState === 'connected'
+      ? 'Connected'
+      : connectionState === 'connecting'
+        ? 'Connecting'
+        : connectionState === 'reconnecting'
+          ? 'Reconnecting'
+          : 'Disconnected'
 
   return (
     <header className="panel-glass flex shrink-0 flex-col gap-3 px-4 py-4 sm:gap-4 sm:px-5 sm:py-5 lg:flex-row lg:items-center lg:justify-between">
@@ -27,7 +35,7 @@ export function Header({ hint, templateLabel, connectionState }: HeaderProps) {
           variant={isConnected ? 'connected' : 'muted'}
           className="text-center sm:text-left"
         >
-          {connectionState}
+          {connectionLabel}
         </StatusBadge>
         <StatusBadge variant="muted" className="text-center sm:text-left">
           Industry: {templateLabel}

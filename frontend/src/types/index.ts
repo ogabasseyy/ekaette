@@ -199,6 +199,12 @@ export type Industry = 'electronics' | 'hotel' | 'automotive' | 'fashion'
 export type IndustryTemplateId = string
 export type CompanyId = string
 
+export interface OnboardingCompanyMeta {
+  id: CompanyId
+  templateId: IndustryTemplateId
+  displayName: string
+}
+
 export interface IndustryTemplateMeta {
   id: IndustryTemplateId
   label: string
@@ -213,6 +219,6 @@ export interface IndustryTemplateMeta {
 export interface OnboardingConfigResponse {
   tenantId: string
   templates: IndustryTemplateMeta[]
-  companies: Array<{ id: CompanyId; templateId: IndustryTemplateId; displayName: string }>
+  companies: OnboardingCompanyMeta[]
   defaults: { templateId: IndustryTemplateId; companyId: CompanyId }
 }
