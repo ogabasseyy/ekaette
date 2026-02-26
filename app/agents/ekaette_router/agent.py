@@ -18,7 +18,7 @@ from app.agents.callbacks import (
     after_model_valuation_sanity,
     after_tool_emit_messages,
     before_model_inject_config,
-    before_tool_log,
+    before_tool_capability_guard_and_log,
     on_tool_error_emit,
 )
 from app.agents.dedup import dedup_before_agent, telemetry_after_agent
@@ -184,7 +184,7 @@ ekaette_router = Agent(
     before_agent_callback=dedup_before_agent,
     before_model_callback=before_model_inject_config,
     after_model_callback=after_model_valuation_sanity,
-    before_tool_callback=before_tool_log,
+    before_tool_callback=before_tool_capability_guard_and_log,
     after_tool_callback=after_tool_emit_messages,
     on_tool_error_callback=on_tool_error_emit,
     after_agent_callback=save_session_and_telemetry_callback,

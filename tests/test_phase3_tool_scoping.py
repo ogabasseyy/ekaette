@@ -89,18 +89,36 @@ class TestScopedCollection:
         result = scoped_collection(None, ctx, "booking_slots")
         assert result is None
 
-    def test_falls_back_to_global_when_no_tenant(self):
-        """When tenant_id is absent and fallback=True, use global collection."""
+    def test_falls_back_to_global_only_when_no_canonical_keys_present(self):
+        """Legacy compat mode (no canonical keys) may use global collection."""
         from app.tools.scoped_queries import scoped_collection_or_global
 
         mock_db = MagicMock()
         mock_global = MagicMock()
         mock_db.collection.return_value = mock_global
 
-        ctx = _make_tool_context({"app:company_id": "acme-hotel"})
+        ctx = _make_tool_context({})
         result = scoped_collection_or_global(mock_db, ctx, "booking_slots")
         mock_db.collection.assert_called_with("booking_slots")
         assert result == mock_global
+
+    def test_partial_canonical_scope_fails_closed_tenant_only(self):
+        from app.tools.scoped_queries import scoped_collection_or_global
+
+        mock_db = MagicMock()
+        ctx = _make_tool_context({"app:tenant_id": "acme"})
+        result = scoped_collection_or_global(mock_db, ctx, "booking_slots")
+        assert result is None
+        mock_db.collection.assert_not_called()
+
+    def test_partial_canonical_scope_fails_closed_company_only(self):
+        from app.tools.scoped_queries import scoped_collection_or_global
+
+        mock_db = MagicMock()
+        ctx = _make_tool_context({"app:company_id": "acme-hotel"})
+        result = scoped_collection_or_global(mock_db, ctx, "booking_slots")
+        assert result is None
+        mock_db.collection.assert_not_called()
 
 
 # ═══ 2. Capability Guards ═══
@@ -195,6 +213,39 @@ class TestCapabilityGuard:
         result = await before_tool_capability_guard(knowledge_tool, {}, ctx)
         assert result is None  # Allowed
 
+    @pytest.mark.asyncio
+    async def test_composed_before_tool_callback_blocks_before_logging(self):
+        from app.agents.callbacks import before_tool_capability_guard_and_log
+
+        tool = SimpleNamespace(name="create_booking")
+        ctx = _make_tool_context(_make_state(capabilities=["catalog_lookup"]))
+        result = await before_tool_capability_guard_and_log(tool, {}, ctx)
+        assert isinstance(result, dict)
+        assert result["error"] == "capability_not_enabled"
+
+
+class TestAgentWiring:
+    """Agents should actually use the composed before_tool callback at runtime."""
+
+    def test_all_agents_use_capability_guard_and_log_callback(self):
+        from app.agents.callbacks import before_tool_capability_guard_and_log
+        from app.agents.booking_agent.agent import booking_agent
+        from app.agents.catalog_agent.agent import catalog_agent
+        from app.agents.ekaette_router.agent import ekaette_router
+        from app.agents.support_agent.agent import support_agent
+        from app.agents.valuation_agent.agent import valuation_agent
+        from app.agents.vision_agent.agent import vision_agent
+
+        for agent in [
+            ekaette_router,
+            booking_agent,
+            catalog_agent,
+            support_agent,
+            valuation_agent,
+            vision_agent,
+        ]:
+            assert getattr(agent, "before_tool_callback", None) is before_tool_capability_guard_and_log
+
 
 class TestToolCapabilityMap:
     """TOOL_CAPABILITY_MAP covers all critical tools."""
@@ -254,7 +305,7 @@ class TestBookingToolsScoped:
              patch("app.tools.booking_tools.scoped_collection_or_global", return_value=mock_query) as mock_scoped:
             result = await check_availability(date="2026-03-01", tool_context=ctx)
 
-        mock_scoped.assert_called_once()
+        mock_scoped.assert_called_once_with(mock_db, ctx, "booking_slots")
         assert result.get("error") is None or result["slots"] == []
 
     @pytest.mark.asyncio
@@ -358,7 +409,7 @@ class TestCatalogToolsScoped:
 
     @pytest.mark.asyncio
     async def test_search_catalog_uses_scoped_collection(self):
-        """search_catalog should query scoped catalog_items."""
+        """search_catalog should query the scoped legacy 'products' collection."""
         from app.tools.catalog_tools import search_catalog
 
         mock_query = MagicMock()
@@ -376,6 +427,8 @@ class TestCatalogToolsScoped:
             result = await search_catalog(query="iPhone", tool_context=ctx)
 
         mock_scoped.assert_called_once()
+        call_args = mock_scoped.call_args[0]
+        assert call_args[2] == "products"
         assert "products" in result
 
     @pytest.mark.asyncio

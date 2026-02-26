@@ -70,11 +70,13 @@ def scoped_collection_or_global(
     tool_context: Any,
     subcollection: str,
 ) -> Any | None:
-    """Return scoped collection, falling back to global if tenant not set.
+    """Return scoped collection, falling back to global only in true compat mode.
 
     This is the migration-safe path: when tenant/company are in session
-    state, queries are scoped. Otherwise, falls back to the legacy global
-    collection for backward compatibility.
+    state, queries are scoped. If canonical scoping keys are partially present
+    (for example tenant_id without company_id), fail closed to avoid accidental
+    cross-tenant/global queries. Only when *no* canonical scoping keys are
+    present do we fall back to the legacy global collection.
     """
     if db is None:
         return None
@@ -82,6 +84,20 @@ def scoped_collection_or_global(
     result = scoped_collection(db, tool_context, subcollection)
     if result is not None:
         return result
+
+    state = getattr(tool_context, "state", None)
+    if isinstance(state, dict):
+        has_tenant_key = "app:tenant_id" in state
+        has_company_key = "app:company_id" in state
+        if has_tenant_key or has_company_key:
+            logger.warning(
+                "scoped_collection fail-closed due partial canonical scope "
+                "collection=%s has_tenant_key=%s has_company_key=%s",
+                subcollection,
+                has_tenant_key,
+                has_company_key,
+            )
+            return None
 
     # Fallback to global (legacy/compat)
     logger.debug(

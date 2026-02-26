@@ -286,6 +286,23 @@ async def before_tool_log(
     return None
 
 
+async def before_tool_capability_guard_and_log(
+    tool: BaseTool,
+    args: dict[str, Any],
+    tool_context: ToolContext,
+) -> dict[str, Any] | None:
+    """Enforce capability guards, then emit structured tool-start logs.
+
+    Returning a dict short-circuits the tool call in ADK. Logging is skipped when
+    the tool is blocked so denied operations do not emit a misleading tool_start.
+    """
+    blocked = await before_tool_capability_guard(tool, args, tool_context)
+    if blocked is not None:
+        return blocked
+    await before_tool_log(tool, args, tool_context)
+    return None
+
+
 def _format_product_description(product: dict[str, Any]) -> str:
     features = product.get("features")
     if isinstance(features, list) and features:
