@@ -10,6 +10,11 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.configs import (
+    MAX_SUPPORTED_SCHEMA_VERSION,
+    MIN_SUPPORTED_SCHEMA_VERSION,
+)
+
 # ═══ Template Validation ═══
 
 _TEMPLATE_REQUIRED_STRINGS = ("id", "label", "category", "status")
@@ -21,6 +26,15 @@ def validate_template(data: Any) -> list[str]:
         return ["template must be a dict"]
 
     errors: list[str] = []
+
+    schema_version = data.get("schema_version")
+    if not isinstance(schema_version, int):
+        errors.append("missing or invalid required field: schema_version (must be an integer)")
+    elif schema_version < MIN_SUPPORTED_SCHEMA_VERSION or schema_version > MAX_SUPPORTED_SCHEMA_VERSION:
+        errors.append(
+            "unsupported schema_version "
+            f"{schema_version} (supported {MIN_SUPPORTED_SCHEMA_VERSION}-{MAX_SUPPORTED_SCHEMA_VERSION})"
+        )
 
     for field in _TEMPLATE_REQUIRED_STRINGS:
         value = data.get(field)
@@ -61,6 +75,15 @@ def validate_company(data: Any) -> list[str]:
         return ["company must be a dict"]
 
     errors: list[str] = []
+
+    schema_version = data.get("schema_version")
+    if not isinstance(schema_version, int):
+        errors.append("missing or invalid required field: schema_version (must be an integer)")
+    elif schema_version < MIN_SUPPORTED_SCHEMA_VERSION or schema_version > MAX_SUPPORTED_SCHEMA_VERSION:
+        errors.append(
+            "unsupported schema_version "
+            f"{schema_version} (supported {MIN_SUPPORTED_SCHEMA_VERSION}-{MAX_SUPPORTED_SCHEMA_VERSION})"
+        )
 
     for field in _COMPANY_REQUIRED_STRINGS:
         value = data.get(field)

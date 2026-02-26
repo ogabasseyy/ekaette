@@ -10,31 +10,13 @@ import asyncio
 import inspect
 import logging
 import os
-import re
 from typing import Any
 
+from app.configs import RegistryDataMissingError  # noqa: F401 — re-export
+from app.configs import registry_enabled as _registry_enabled
+from app.configs import sanitize_log as _sanitize_log
+
 logger = logging.getLogger(__name__)
-
-_LOG_UNSAFE_RE = re.compile(r"[\r\n\x00-\x1f\x7f]")
-
-
-def _sanitize_log(value: str | None) -> str:
-    """Strip newlines/control chars from user-supplied values before logging."""
-    if value is None:
-        return "<none>"
-    return _LOG_UNSAFE_RE.sub("", value)[:200]
-
-
-def _env_flag(name: str, default: str = "false") -> bool:
-    return os.getenv(name, default).strip().lower() in {"1", "true", "yes", "on"}
-
-
-class RegistryDataMissingError(Exception):
-    """Raised when REGISTRY_ENABLED=true but required registry data is absent."""
-
-
-def _registry_enabled() -> bool:
-    return _env_flag("REGISTRY_ENABLED", "true")
 
 
 def _default_registry_tenant_id() -> str:
@@ -244,7 +226,9 @@ LOCAL_COMPANY_KNOWLEDGE: dict[str, list[dict[str, Any]]] = {
 
 
 def _fallback_profile_for(company_id: str) -> dict[str, Any]:
+    """.. deprecated:: Phase 7 — Legacy path, only used when REGISTRY_ENABLED=false."""
     normalized_id = (company_id or "default").strip().lower() or "default"
+    logger.debug("company_loader: using legacy profile fallback for '%s'", _sanitize_log(normalized_id))
     base = LOCAL_COMPANY_PROFILES.get(normalized_id, DEFAULT_COMPANY_PROFILE)
     profile = dict(base)
     profile["company_id"] = normalized_id
@@ -343,7 +327,9 @@ def _normalize_knowledge_entry(
 
 
 def _fallback_knowledge_for(company_id: str) -> list[dict[str, Any]]:
+    """.. deprecated:: Phase 7 — Legacy path, only used when REGISTRY_ENABLED=false."""
     normalized_id = (company_id or "default").strip().lower() or "default"
+    logger.debug("company_loader: using legacy knowledge fallback for '%s'", _sanitize_log(normalized_id))
     local_entries = LOCAL_COMPANY_KNOWLEDGE.get(normalized_id)
     if isinstance(local_entries, list) and local_entries:
         entries: list[dict[str, Any]] = []

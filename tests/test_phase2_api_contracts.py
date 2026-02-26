@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -258,6 +259,38 @@ class TestTokenEndpointCanonicalFields:
         payload = response.json()
         assert payload["code"] == "REGISTRY_CONFIG_NOT_FOUND"
         assert payload["companyId"] == "missing-company"
+
+    @pytest.mark.asyncio
+    async def test_token_registry_miss_logs_observability_context(
+        self, client, main_module, monkeypatch, caplog: pytest.LogCaptureFixture
+    ):
+        fake_client = _FakeTokenClient()
+        monkeypatch.setattr(main_module, "TOKEN_CLIENT", fake_client)
+        monkeypatch.setattr(main_module, "TOKEN_ALLOWED_TENANTS", {"public"})
+        monkeypatch.setenv("REGISTRY_ENABLED", "true")
+        monkeypatch.setattr(
+            main_module,
+            "_resolve_registry_runtime_config",
+            AsyncMock(return_value=None),
+        )
+
+        with caplog.at_level(logging.WARNING, logger="main"):
+            response = await client.post(
+                "/api/token",
+                headers={"Origin": "http://localhost:5173"},
+                json={
+                    "userId": "user_123",
+                    "tenantId": "public",
+                    "industry": "electronics",
+                    "companyId": "missing-company",
+                },
+            )
+        assert response.status_code == 404
+        log_text = " ".join(caplog.messages)
+        assert "source=api_token" in log_text
+        assert "registry_mode=enabled" in log_text
+        assert "tenant_id=public" in log_text
+        assert "company_id=missing-company" in log_text
 
     @pytest.mark.asyncio
     async def test_token_rejects_template_company_mismatch_in_strict_mode(
@@ -587,6 +620,58 @@ class TestSessionStartedCanonicalFields:
                 assert err["registryVersion"] == "v1-abc123"
                 ws.close(code=1000)
 
+    def test_websocket_rejects_forbidden_tenant_before_session_start(
+        self, app, main_module, monkeypatch, caplog: pytest.LogCaptureFixture
+    ):
+        monkeypatch.setattr(main_module, "TOKEN_ALLOWED_TENANTS", {"public"})
+
+        with caplog.at_level(logging.WARNING, logger="main"):
+            with TestClient(app) as tc:
+                with tc.websocket_connect(
+                    "/ws/user_123/session_abc?tenantId=forbidden&industry=electronics&companyId=ekaette-electronics",
+                    headers={"origin": "http://localhost:5173"},
+                ) as ws:
+                    err = json.loads(ws.receive_text())
+                    assert err["type"] == "error"
+                    assert err["code"] == "TENANT_FORBIDDEN"
+                    assert err["tenantId"] == "forbidden"
+        log_text = " ".join(caplog.messages)
+        assert "source=ws_startup" in log_text
+        assert "registry_mode=" in log_text
+        assert "tenant_id=forbidden" in log_text
+
+    def test_websocket_startup_rejects_template_company_tamper(
+        self, app, main_module, monkeypatch
+    ):
+        class _FakeSessionService:
+            async def get_session(self, *, app_name, user_id, session_id):
+                return None
+
+            async def create_session(self, **kwargs):
+                raise AssertionError("create_session should not be called on mismatch")
+
+        monkeypatch.setenv("REGISTRY_ENABLED", "true")
+        monkeypatch.setenv("REGISTRY_REQUIRE_COMPANY_TEMPLATE_MATCH", "true")
+        monkeypatch.setattr(main_module, "TOKEN_ALLOWED_TENANTS", {"public"})
+        monkeypatch.setattr(main_module, "session_service", _FakeSessionService())
+        monkeypatch.setattr(
+            main_module,
+            "_resolve_registry_runtime_config",
+            AsyncMock(return_value=SimpleNamespace(industry_template_id="hotel")),
+        )
+
+        with TestClient(app) as tc:
+            with tc.websocket_connect(
+                "/ws/user_123/session_abc?tenantId=public&industryTemplateId=electronics&companyId=ekaette-hotel",
+                headers={"origin": "http://localhost:5173"},
+            ) as ws:
+                err = json.loads(ws.receive_text())
+                assert err["code"] == "TEMPLATE_COMPANY_MISMATCH"
+                assert err["tenantId"] == "public"
+                assert err["companyId"] == "ekaette-hotel"
+                assert err["requestedIndustryTemplateId"] == "electronics"
+                assert err["resolvedIndustryTemplateId"] == "hotel"
+
 
 # ═══ Voice Resolution ═══
 
@@ -712,6 +797,34 @@ class TestOnboardingConfigEndpoint:
         assert response.status_code == 400
 
     @pytest.mark.asyncio
+    async def test_forbidden_tenant_returns_403(self, client, main_module, monkeypatch):
+        monkeypatch.setattr(main_module, "TOKEN_ALLOWED_TENANTS", {"public"})
+        response = await client.get(
+            "/api/onboarding/config?tenantId=forbidden",
+            headers={"Origin": "http://localhost:5173"},
+        )
+        assert response.status_code == 403
+        payload = response.json()
+        assert payload["error"] == "Tenant not allowed"
+        assert payload["tenantId"] == "forbidden"
+
+    @pytest.mark.asyncio
+    async def test_forbidden_tenant_logs_observability_context(
+        self, client, main_module, monkeypatch, caplog: pytest.LogCaptureFixture
+    ):
+        monkeypatch.setattr(main_module, "TOKEN_ALLOWED_TENANTS", {"public"})
+        with caplog.at_level(logging.WARNING, logger="main"):
+            response = await client.get(
+                "/api/onboarding/config?tenantId=forbidden",
+                headers={"Origin": "http://localhost:5173"},
+            )
+        assert response.status_code == 403
+        log_text = " ".join(caplog.messages)
+        assert "source=api_onboarding" in log_text
+        assert "registry_mode=" in log_text
+        assert "tenant_id=forbidden" in log_text
+
+    @pytest.mark.asyncio
     async def test_all_templates_have_active_status(self, client):
         """Compat mode templates should all be active."""
         response = await client.get(
@@ -781,10 +894,11 @@ class TestBuildOnboardingConfig:
 
         db = _FakeRegistryDb(
             template_docs=[
-                _FakeRegistryDoc(
-                    "aviation-support",
-                    {
-                        "id": "aviation-support",
+                    _FakeRegistryDoc(
+                        "aviation-support",
+                        {
+                            "schema_version": 1,
+                            "id": "aviation-support",
                         "label": "Aviation Support Desk",
                         "category": "aviation",
                         "description": "Flight status and support workflows.",
@@ -794,10 +908,11 @@ class TestBuildOnboardingConfig:
                         "status": "beta",
                     },
                 ),
-                _FakeRegistryDoc(
-                    "telecom",
-                    {
-                        "id": "telecom",
+                    _FakeRegistryDoc(
+                        "telecom",
+                        {
+                            "schema_version": 1,
+                            "id": "telecom",
                         "label": "Telecom Care Desk",
                         "category": "telecom",
                         "description": "Plans and support.",
@@ -807,27 +922,27 @@ class TestBuildOnboardingConfig:
                         "status": "active",
                     },
                 ),
-                _FakeRegistryDoc("bad-template", {"id": "bad-template", "capabilities": "oops"}),
             ],
             tenant_company_docs={
                 "public": [
-                    _FakeRegistryDoc(
-                        "airline-1",
-                        {
-                            "company_id": "airline-1",
+                        _FakeRegistryDoc(
+                            "airline-1",
+                            {
+                                "schema_version": 1,
+                                "company_id": "airline-1",
                             "industry_template_id": "aviation-support",
                             "display_name": "CloudWing Air",
                         },
                     ),
-                    _FakeRegistryDoc(
-                        "telco-1",
-                        {
-                            "company_id": "telco-1",
+                        _FakeRegistryDoc(
+                            "telco-1",
+                            {
+                                "schema_version": 1,
+                                "company_id": "telco-1",
                             "industry_template_id": "telecom",
                             "display_name": "SignalWave Telecom",
                         },
                     ),
-                    _FakeRegistryDoc("bad-company", {"company_id": "bad-company"}),
                 ]
             },
         )
@@ -851,8 +966,6 @@ class TestBuildOnboardingConfig:
         assert companies["airline-1"]["templateId"] == "aviation-support"
         assert companies["airline-1"]["displayName"] == "CloudWing Air"
         assert companies["telco-1"]["templateId"] == "telecom"
-        # malformed company is tolerated and normalized, but remains usable
-        assert companies["bad-company"]["templateId"] == ""
 
         # Defaults should align to the first sorted template/company pair when compat
         # defaults (electronics) are absent.

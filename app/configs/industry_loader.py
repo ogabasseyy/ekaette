@@ -3,30 +3,16 @@
 import asyncio
 import logging
 import os
-import re
 from typing import Any
 
 from google.adk.events import Event
 from google.adk.events.event_actions import EventActions
 
+from app.configs import RegistryDataMissingError  # noqa: F401 — re-export
+from app.configs import env_flag as _env_flag
+from app.configs import sanitize_log as _sanitize_log
+
 logger = logging.getLogger(__name__)
-
-_LOG_UNSAFE_RE = re.compile(r"[\r\n\x00-\x1f\x7f]")
-
-
-def _sanitize_log(value: str | None) -> str:
-    """Strip newlines/control chars from user-supplied values before logging."""
-    if value is None:
-        return "<none>"
-    return _LOG_UNSAFE_RE.sub("", value)[:200]
-
-
-def _env_flag(name: str, default: str = "false") -> bool:
-    return os.getenv(name, default).strip().lower() in {"1", "true", "yes", "on"}
-
-
-class RegistryDataMissingError(Exception):
-    """Raised when REGISTRY_ENABLED=true but required registry data is absent."""
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "name": "General",
@@ -59,7 +45,12 @@ LOCAL_INDUSTRY_CONFIGS: dict[str, dict[str, Any]] = {
 
 
 def _fallback_config_for(industry: str) -> dict[str, Any]:
-    """Return local fallback config for known industries, else default."""
+    """Return local fallback config for known industries, else default.
+
+    .. deprecated:: Phase 7
+        Legacy path — only used when REGISTRY_ENABLED=false.
+    """
+    logger.debug("industry_loader: using legacy fallback for '%s'", _sanitize_log(industry))
     key = (industry or "").strip().lower()
     if key in LOCAL_INDUSTRY_CONFIGS:
         return dict(LOCAL_INDUSTRY_CONFIGS[key])

@@ -117,6 +117,7 @@ def _make_tool_context(state: dict[str, Any]) -> SimpleNamespace:
 
 
 TELECOM_TEMPLATE = {
+    "schema_version": 1,
     "id": "telecom",
     "label": "Telecom",
     "category": "telecom",
@@ -141,6 +142,7 @@ TELECOM_TEMPLATE = {
 }
 
 AVIATION_TEMPLATE = {
+    "schema_version": 1,
     "id": "aviation-support",
     "label": "Aviation",
     "category": "aviation",
@@ -166,6 +168,7 @@ AVIATION_TEMPLATE = {
 }
 
 EKAETTE_TELECOM_COMPANY = {
+    "schema_version": 1,
     "company_id": "ekaette-telecom",
     "tenant_id": "public",
     "industry_template_id": "telecom",
@@ -180,6 +183,7 @@ EKAETTE_TELECOM_COMPANY = {
 }
 
 EKAETTE_AVIATION_COMPANY = {
+    "schema_version": 1,
     "company_id": "ekaette-aviation",
     "tenant_id": "public",
     "industry_template_id": "aviation-support",
@@ -195,6 +199,7 @@ EKAETTE_AVIATION_COMPANY = {
 
 # Registry subset for onboarding tests (seeded templates + companies)
 ELECTRONICS_TEMPLATE = {
+    "schema_version": 1,
     "id": "electronics",
     "label": "Electronics & Gadgets",
     "category": "retail",
@@ -413,6 +418,7 @@ class TestOnboardingConfigWithNewTemplates:
             "industry_templates/telecom": TELECOM_TEMPLATE,
             "industry_templates/aviation-support": AVIATION_TEMPLATE,
             "tenants/public/companies/ekaette-electronics": {
+                "schema_version": 1,
                 "company_id": "ekaette-electronics",
                 "tenant_id": "public",
                 "industry_template_id": "electronics",

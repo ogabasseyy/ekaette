@@ -68,6 +68,7 @@ def _mock_db_with_docs(docs: dict[str, dict[str, Any] | None]) -> MagicMock:
 
 
 ELECTRONICS_TEMPLATE = {
+    "schema_version": 1,
     "id": "electronics",
     "label": "Electronics & Gadgets",
     "category": "retail",
@@ -89,6 +90,7 @@ ELECTRONICS_TEMPLATE = {
 }
 
 HOTEL_TEMPLATE = {
+    "schema_version": 1,
     "id": "hotel",
     "label": "Hotels & Hospitality",
     "category": "hospitality",
@@ -110,6 +112,7 @@ HOTEL_TEMPLATE = {
 }
 
 EKAETTE_ELECTRONICS_COMPANY = {
+    "schema_version": 1,
     "company_id": "ekaette-electronics",
     "tenant_id": "public",
     "industry_template_id": "electronics",
@@ -124,6 +127,7 @@ EKAETTE_ELECTRONICS_COMPANY = {
 }
 
 ACME_HOTEL_COMPANY = {
+    "schema_version": 1,
     "company_id": "acme-hotel",
     "tenant_id": "public",
     "industry_template_id": "hotel",
@@ -181,6 +185,18 @@ class TestLoadIndustryTemplate:
         result = await load_industry_template(db, "electronics")
         assert result is None
 
+    @pytest.mark.asyncio
+    async def test_rejects_unsupported_template_schema_version(self):
+        from app.configs import RegistrySchemaVersionError
+        from app.configs.registry_loader import load_industry_template
+
+        bad_template = dict(ELECTRONICS_TEMPLATE)
+        bad_template["schema_version"] = 99
+        db = _mock_db_with_docs({"industry_templates/electronics": bad_template})
+
+        with pytest.raises(RegistrySchemaVersionError, match="unsupported schema_version"):
+            await load_industry_template(db, "electronics")
+
 
 # ═══ load_tenant_company tests ═══
 
@@ -223,6 +239,18 @@ class TestLoadTenantCompany:
         db.collection.side_effect = Exception("Firestore unavailable")
         result = await load_tenant_company(db, "public", "ekaette-electronics")
         assert result is None
+
+    @pytest.mark.asyncio
+    async def test_rejects_company_missing_schema_version(self):
+        from app.configs import RegistrySchemaVersionError
+        from app.configs.registry_loader import load_tenant_company
+
+        bad_company = dict(EKAETTE_ELECTRONICS_COMPANY)
+        bad_company.pop("schema_version", None)
+        db = _mock_db_with_docs({"tenants/public/companies/ekaette-electronics": bad_company})
+
+        with pytest.raises(RegistrySchemaVersionError, match="missing integer schema_version"):
+            await load_tenant_company(db, "public", "ekaette-electronics")
 
 
 # ═══ resolve_registry_config tests ═══
@@ -341,6 +369,7 @@ class TestResolveRegistryConfig:
         from app.configs.registry_loader import resolve_registry_config
 
         malformed_template = {
+            "schema_version": 1,
             "id": "electronics",
             "category": None,
             "label": 123,
@@ -351,6 +380,7 @@ class TestResolveRegistryConfig:
             "status": "active",
         }
         malformed_company = {
+            "schema_version": 1,
             "company_id": "ekaette-electronics",
             "tenant_id": "public",
             "industry_template_id": "electronics",

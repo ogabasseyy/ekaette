@@ -15,36 +15,20 @@ import hashlib
 import inspect
 import json
 import logging
-import os
-import re
 from dataclasses import dataclass
 from typing import Any
 
+from app.configs import RegistryDataMissingError  # noqa: F401 — re-export
+from app.configs import RegistrySchemaVersionError
+from app.configs import registry_enabled as _registry_enabled
+from app.configs import sanitize_log as _sanitize_log
+from app.configs import validate_registry_schema_version
+
 logger = logging.getLogger(__name__)
-
-_LOG_UNSAFE_RE = re.compile(r"[\r\n\x00-\x1f\x7f]")
-
-
-def _sanitize_log(value: str | None) -> str:
-    if value is None:
-        return "<none>"
-    return _LOG_UNSAFE_RE.sub("", value)[:200]
 
 
 class RegistryMismatchError(Exception):
     """Raised when a company's industry_template_id doesn't match the resolved template."""
-
-
-class RegistryDataMissingError(Exception):
-    """Raised when REGISTRY_ENABLED=true but required registry data is absent."""
-
-
-def _env_flag(name: str, default: str = "false") -> bool:
-    return os.getenv(name, default).strip().lower() in {"1", "true", "yes", "on"}
-
-
-def _registry_enabled() -> bool:
-    return _env_flag("REGISTRY_ENABLED", "true")
 
 
 @dataclass(frozen=True)
@@ -83,7 +67,16 @@ async def load_industry_template(
             doc = await asyncio.to_thread(doc_ref.get)
 
         if doc.exists:
-            return doc.to_dict()
+            data = doc.to_dict()
+            if isinstance(data, dict):
+                validate_registry_schema_version(
+                    data,
+                    kind="industry template",
+                    identifier=str(data.get("id") or template_id),
+                )
+            return data
+    except RegistrySchemaVersionError:
+        raise
     except Exception as exc:
         logger.warning(
             "registry_loader: failed to load template %s: %s",
@@ -120,7 +113,16 @@ async def load_tenant_company(
             doc = await asyncio.to_thread(doc_ref.get)
 
         if doc.exists:
-            return doc.to_dict()
+            data = doc.to_dict()
+            if isinstance(data, dict):
+                validate_registry_schema_version(
+                    data,
+                    kind="company",
+                    identifier=str(data.get("company_id") or company_id),
+                )
+            return data
+    except RegistrySchemaVersionError:
+        raise
     except Exception as exc:
         logger.warning(
             "registry_loader: failed to load company %s/%s: %s",
@@ -273,11 +275,14 @@ async def resolve_registry_config(
     )
     logger.debug(
         "registry_loader: resolved config tenant_id=%s company_id=%s "
-        "industry_template_id=%s registry_version=%s capabilities=%s",
+        "industry_template_id=%s registry_version=%s template_schema_version=%s "
+        "company_schema_version=%s source=registry capabilities=%s",
         _sanitize_log(tenant_id),
         _sanitize_log(company_id),
         _sanitize_log(template_id),
         _sanitize_log(resolved.registry_version),
+        template.get("schema_version"),
+        company.get("schema_version"),
         capabilities,
     )
     return resolved
@@ -383,6 +388,7 @@ def _normalize_onboarding_template(raw: Any, doc_id: str) -> dict[str, Any] | No
     """Normalize registry template doc to onboarding payload shape."""
     if not isinstance(raw, dict):
         return None
+    validate_registry_schema_version(raw, kind="industry template", identifier=doc_id)
 
     template_id = _string_or_default(raw.get("id"), doc_id).lower()
     if not template_id:
@@ -417,6 +423,7 @@ def _normalize_onboarding_company(raw: Any, doc_id: str) -> dict[str, Any] | Non
     """Normalize tenant company doc to onboarding payload shape."""
     if not isinstance(raw, dict):
         return None
+    validate_registry_schema_version(raw, kind="company", identifier=doc_id)
 
     company_id = _string_or_default(raw.get("company_id"), doc_id).lower()
     if not company_id:
@@ -479,7 +486,16 @@ async def _build_onboarding_config_registry(
     for doc in template_docs:
         raw = doc.to_dict() if hasattr(doc, "to_dict") else {}
         doc_id = str(getattr(doc, "id", "") or (raw.get("id") if isinstance(raw, dict) else ""))
-        template = _normalize_onboarding_template(raw, doc_id)
+        try:
+            template = _normalize_onboarding_template(raw, doc_id)
+        except RegistrySchemaVersionError as exc:
+            logger.warning(
+                "registry_loader: onboarding invalid template tenant_id=%s template=%s error=%s",
+                _sanitize_log(tenant_id),
+                _sanitize_log(doc_id),
+                exc,
+            )
+            return None
         if template is not None:
             templates.append(template)
 
@@ -502,7 +518,16 @@ async def _build_onboarding_config_registry(
     for doc in company_docs:
         raw = doc.to_dict() if hasattr(doc, "to_dict") else {}
         doc_id = str(getattr(doc, "id", "") or (raw.get("company_id") if isinstance(raw, dict) else ""))
-        company = _normalize_onboarding_company(raw, doc_id)
+        try:
+            company = _normalize_onboarding_company(raw, doc_id)
+        except RegistrySchemaVersionError as exc:
+            logger.warning(
+                "registry_loader: onboarding invalid company tenant_id=%s company=%s error=%s",
+                _sanitize_log(tenant_id),
+                _sanitize_log(doc_id),
+                exc,
+            )
+            return None
         if company is not None:
             companies.append(company)
 
@@ -543,7 +568,12 @@ async def build_onboarding_config(
 
 
 def _build_onboarding_config_compat(tenant_id: str) -> dict[str, Any]:
-    """Build onboarding config from LOCAL_INDUSTRY_CONFIGS (compat mode)."""
+    """Build onboarding config from LOCAL_INDUSTRY_CONFIGS (compat mode).
+
+    .. deprecated:: Phase 7
+        Legacy path — only used when REGISTRY_ENABLED=false.
+    """
+    logger.debug("registry_loader: using compat onboarding config for tenant='%s'", _sanitize_log(tenant_id))
     from app.configs.industry_loader import LOCAL_INDUSTRY_CONFIGS
     from app.configs.company_loader import LOCAL_COMPANY_PROFILES
 

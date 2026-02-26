@@ -362,4 +362,17 @@ def _dispatch_connector(
             "configured_actions": configured_actions,
         }
 
+    secret_ref = connector.get("secret_ref")
+    if not isinstance(secret_ref, str) or not secret_ref.strip():
+        return {
+            "error": (
+                f"Connector '{system}' provider '{provider}' is missing required secret_ref."
+            ),
+            "company_id": company_id,
+            "system": system,
+            "action": action,
+            "provider": provider,
+            "code": "CONNECTOR_SECRET_REF_MISSING",
+        }
+
     return None

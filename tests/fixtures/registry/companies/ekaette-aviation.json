@@ -1,4 +1,5 @@
 {
+  "schema_version": 1,
   "company_id": "ekaette-aviation",
   "tenant_id": "public",
   "industry_template_id": "aviation-support",

@@ -199,6 +199,47 @@ class TestQueryCompanySystem:
         assert result["provider"] == "salesforce"
 
     @pytest.mark.asyncio
+    async def test_non_mock_provider_without_secret_ref_fails_closed(self):
+        from app.tools.knowledge_tools import query_company_system
+
+        ctx = _tool_context_with_state(
+            {
+                "app:company_id": "acme-hotel",
+                "app:company_profile": {
+                    "system_connectors": {
+                        "crm": {"provider": "salesforce"}
+                    }
+                },
+            }
+        )
+
+        result = await query_company_system("crm", "lookup_guest", tool_context=ctx)
+        assert result["code"] == "CONNECTOR_SECRET_REF_MISSING"
+        assert result["provider"] == "salesforce"
+
+    @pytest.mark.asyncio
+    async def test_non_mock_provider_with_secret_ref_returns_not_implemented(self):
+        from app.tools.knowledge_tools import query_company_system
+
+        ctx = _tool_context_with_state(
+            {
+                "app:company_id": "acme-hotel",
+                "app:company_profile": {
+                    "system_connectors": {
+                        "crm": {
+                            "provider": "salesforce",
+                            "secret_ref": "projects/demo/secrets/sf/versions/latest",
+                        }
+                    }
+                },
+            }
+        )
+
+        result = await query_company_system("crm", "lookup_guest", tool_context=ctx)
+        assert "error" in result
+        assert result["provider"] == "salesforce"
+
+    @pytest.mark.asyncio
     async def test_prefers_connector_manifest_over_profile_connectors(self):
         from app.tools.knowledge_tools import query_company_system
 

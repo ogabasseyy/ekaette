@@ -25,6 +25,7 @@ def _seed_registry(db: FakeFirestoreDB) -> None:
     """Seed minimal registry data for cutover tests."""
     # Template
     db.set_doc("industry_templates/electronics", {
+        "schema_version": 1,
         "id": "electronics",
         "label": "Electronics & Gadgets",
         "category": "electronics",
@@ -41,6 +42,7 @@ def _seed_registry(db: FakeFirestoreDB) -> None:
         "status": "active",
     })
     db.set_doc("industry_templates/hotel", {
+        "schema_version": 1,
         "id": "hotel",
         "label": "Hotels & Hospitality",
         "category": "hotel",
@@ -58,6 +60,7 @@ def _seed_registry(db: FakeFirestoreDB) -> None:
     })
     # Companies (tenant-scoped)
     db.set_doc("tenants/public/companies/ekaette-electronics", {
+        "schema_version": 1,
         "company_id": "ekaette-electronics",
         "tenant_id": "public",
         "industry_template_id": "electronics",
@@ -71,6 +74,7 @@ def _seed_registry(db: FakeFirestoreDB) -> None:
         "status": "active",
     })
     db.set_doc("tenants/public/companies/ekaette-hotel", {
+        "schema_version": 1,
         "company_id": "ekaette-hotel",
         "tenant_id": "public",
         "industry_template_id": "hotel",

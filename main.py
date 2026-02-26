@@ -28,6 +28,7 @@ load_dotenv()
 
 from app.agents.ekaette_router.agent import ekaette_router  # noqa: E402
 from app.agents.tool_scheduling import install_tool_response_scheduling_patch  # noqa: E402
+from app.configs import RegistrySchemaVersionError  # noqa: E402
 from app.configs.company_loader import (  # noqa: E402
     build_company_session_state,
     create_company_config_client,
@@ -43,6 +44,7 @@ from app.configs.industry_loader import (  # noqa: E402
 from app.configs.model_resolver import get_live_model_candidates  # noqa: E402
 from app.configs.session_factory import create_session_service, get_effective_app_name  # noqa: E402
 from app.memory.memory_factory import create_memory_service  # noqa: E402
+from app.observability import registry_log_context  # noqa: E402
 from app.tools.vision_tools import cache_latest_image  # noqa: E402
 
 # Configure logging
@@ -285,8 +287,11 @@ async def _resolve_registry_runtime_config(
 
     try:
         from app.configs.registry_loader import resolve_registry_config
+        from app.configs import RegistrySchemaVersionError
 
         return await resolve_registry_config(db, tenant_id, company_id)
+    except RegistrySchemaVersionError:
+        raise
     except Exception as exc:
         logger.warning(
             "Registry runtime config resolution failed tenant=%s company=%s: %s",
@@ -519,6 +524,11 @@ def _origin_or_reject(origin: str | None) -> JSONResponse | None:
     return None
 
 
+def _tenant_allowed(tenant_id: str) -> bool:
+    """Check tenant against allowed list used for external-facing endpoints."""
+    return not TOKEN_ALLOWED_TENANTS or tenant_id in TOKEN_ALLOWED_TENANTS
+
+
 # ═══ Ephemeral Token Endpoint ═══
 GEMINI_API_KEY = os.getenv("GOOGLE_API_KEY", "")
 TOKEN_MAX_USES = int(os.getenv("TOKEN_MAX_USES", "1"))
@@ -665,6 +675,14 @@ async def create_ephemeral_token(
         )
 
     if TOKEN_ALLOWED_TENANTS and payload.tenant_id not in TOKEN_ALLOWED_TENANTS:
+        logger.warning(
+            "Token request rejected (tenant forbidden) %s",
+            registry_log_context(
+                tenant_id=payload.tenant_id,
+                registry_mode=_registry_enabled(),
+                source="api_token",
+            ),
+        )
         return JSONResponse(
             status_code=403,
             content={"error": "Tenant not allowed"},
@@ -685,11 +703,42 @@ async def create_ephemeral_token(
     requested_template_id = _normalize_template_id(payload.industry_template_id)
     requested_industry = (payload.industry or "electronics").strip().lower() or "electronics"
 
-    registry_config = await _resolve_registry_runtime_config(
-        tenant_id=normalized_tenant_id,
-        company_id=normalized_company_id,
-    )
+    try:
+        registry_config = await _resolve_registry_runtime_config(
+            tenant_id=normalized_tenant_id,
+            company_id=normalized_company_id,
+        )
+    except RegistrySchemaVersionError as exc:
+        logger.warning(
+            "Token request rejected (registry schema version) %s details=%s",
+            registry_log_context(
+                tenant_id=normalized_tenant_id,
+                company_id=normalized_company_id,
+                registry_mode=_registry_enabled(),
+                source="api_token",
+            ),
+            exc,
+        )
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": "Unsupported registry schema version",
+                "code": getattr(exc, "code", "REGISTRY_SCHEMA_VERSION_UNSUPPORTED"),
+                "tenantId": normalized_tenant_id,
+                "companyId": normalized_company_id,
+                "details": str(exc),
+            },
+        )
     if _registry_enabled() and registry_config is None:
+        logger.warning(
+            "Token request rejected (registry config missing) %s",
+            registry_log_context(
+                tenant_id=normalized_tenant_id,
+                company_id=normalized_company_id,
+                registry_mode=True,
+                source="api_token",
+            ),
+        )
         return JSONResponse(
             status_code=404,
             content={
@@ -705,6 +754,19 @@ async def create_ephemeral_token(
             resolved_template_id=getattr(registry_config, "industry_template_id", None),
         )
         if mismatch_response is not None:
+            logger.warning(
+                "Token request rejected (template/company mismatch) %s requested_template_id=%s resolved_template_id=%s",
+                registry_log_context(
+                    tenant_id=normalized_tenant_id,
+                    company_id=normalized_company_id,
+                    industry_template_id=getattr(registry_config, "industry_template_id", None),
+                    registry_version=getattr(registry_config, "registry_version", None),
+                    registry_mode=True,
+                    source="api_token",
+                ),
+                _sanitize_log(requested_template_id),
+                _sanitize_log(getattr(registry_config, "industry_template_id", None)),
+            )
             return mismatch_response
 
     resolved_voice = (
@@ -814,22 +876,53 @@ async def get_onboarding_config(request: Request):
 
     tenant_id = request.query_params.get("tenantId")
     if not tenant_id:
+        logger.warning(
+            "Onboarding config request rejected (missing tenantId) %s",
+            registry_log_context(registry_mode=_registry_enabled(), source="api_onboarding"),
+        )
         return JSONResponse(
             status_code=400,
             content={"error": "Missing required query parameter: tenantId"},
+        )
+    normalized_tenant_id = _normalize_tenant_id(tenant_id, default="public")
+    if not _tenant_allowed(normalized_tenant_id):
+        logger.warning(
+            "Onboarding config request rejected (tenant forbidden) %s",
+            registry_log_context(
+                tenant_id=normalized_tenant_id,
+                registry_mode=_registry_enabled(),
+                source="api_onboarding",
+            ),
+        )
+        return JSONResponse(
+            status_code=403,
+            content={
+                "error": "Tenant not allowed",
+                "tenantId": normalized_tenant_id,
+            },
         )
 
     from app.configs.registry_loader import RegistryDataMissingError, build_onboarding_config
 
     try:
-        config = await build_onboarding_config(industry_config_client, tenant_id)
+        config = await build_onboarding_config(industry_config_client, normalized_tenant_id)
     except RegistryDataMissingError as exc:
+        logger.warning(
+            "Onboarding config unavailable %s code=%s details=%s",
+            registry_log_context(
+                tenant_id=normalized_tenant_id,
+                registry_mode=_registry_enabled(),
+                source="api_onboarding",
+            ),
+            getattr(exc, "code", "REGISTRY_ONBOARDING_CONFIG_NOT_FOUND"),
+            exc,
+        )
         return JSONResponse(
             status_code=503,
             content={
                 "error": "Registry onboarding config unavailable",
-                "code": "REGISTRY_ONBOARDING_CONFIG_NOT_FOUND",
-                "tenantId": tenant_id,
+                "code": getattr(exc, "code", "REGISTRY_ONBOARDING_CONFIG_NOT_FOUND"),
+                "tenantId": normalized_tenant_id,
                 "details": str(exc),
             },
         )
@@ -924,6 +1017,23 @@ async def websocket_endpoint(
         or websocket.query_params.get("tenantId"),
         default="public",
     )
+    if not _tenant_allowed(tenant_id):
+        logger.warning(
+            "WebSocket startup rejected (tenant forbidden) %s",
+            registry_log_context(
+                tenant_id=tenant_id,
+                registry_mode=_registry_enabled(),
+                source="ws_startup",
+            ),
+        )
+        await websocket.send_text(json.dumps({
+            "type": "error",
+            "code": "TENANT_FORBIDDEN",
+            "message": "Tenant not allowed",
+            "tenantId": tenant_id,
+        }))
+        await websocket.close(code=1008, reason="Tenant not allowed")
+        return
 
     requested_company = websocket.query_params.get(
         "company_id",
@@ -988,10 +1098,32 @@ async def websocket_endpoint(
             or "app:capabilities" not in session.state
             or "app:registry_version" not in session.state
         ):
-            registry_config = await _resolve_registry_runtime_config(
-                tenant_id=tenant_id,
-                company_id=company_id,
-            )
+            try:
+                registry_config = await _resolve_registry_runtime_config(
+                    tenant_id=tenant_id,
+                    company_id=company_id,
+                )
+            except RegistrySchemaVersionError as exc:
+                logger.warning(
+                    "WebSocket startup rejected (registry schema version, resumed session) %s details=%s",
+                    registry_log_context(
+                        tenant_id=tenant_id,
+                        company_id=company_id,
+                        registry_mode=True,
+                        source="ws_startup",
+                    ),
+                    exc,
+                )
+                await websocket.send_text(json.dumps({
+                    "type": "error",
+                    "code": getattr(exc, "code", "REGISTRY_SCHEMA_VERSION_UNSUPPORTED"),
+                    "message": "Unsupported registry schema version",
+                    "tenantId": tenant_id,
+                    "companyId": company_id,
+                    "details": str(exc),
+                }))
+                await websocket.close(code=1011)
+                return
             if registry_config is not None:
                 state_updates.update(_canonical_state_updates_from_registry(registry_config))
 
@@ -1005,10 +1137,32 @@ async def websocket_endpoint(
             )
     else:
         if _registry_enabled():
-            registry_config = await _resolve_registry_runtime_config(
-                tenant_id=tenant_id,
-                company_id=company_id,
-            )
+            try:
+                registry_config = await _resolve_registry_runtime_config(
+                    tenant_id=tenant_id,
+                    company_id=company_id,
+                )
+            except RegistrySchemaVersionError as exc:
+                logger.warning(
+                    "WebSocket startup rejected (registry schema version, fresh session) %s details=%s",
+                    registry_log_context(
+                        tenant_id=tenant_id,
+                        company_id=company_id,
+                        registry_mode=True,
+                        source="ws_startup",
+                    ),
+                    exc,
+                )
+                await websocket.send_text(json.dumps({
+                    "type": "error",
+                    "code": getattr(exc, "code", "REGISTRY_SCHEMA_VERSION_UNSUPPORTED"),
+                    "message": "Unsupported registry schema version",
+                    "tenantId": tenant_id,
+                    "companyId": company_id,
+                    "details": str(exc),
+                }))
+                await websocket.close(code=1011)
+                return
             if registry_config is not None:
                 # In strict mode, reject explicit template/company mismatches.
                 if requested_template_id is not None:
@@ -1017,12 +1171,28 @@ async def websocket_endpoint(
                         resolved_template_id=getattr(registry_config, "industry_template_id", None),
                     )
                     if mismatch_response is not None:
+                        logger.warning(
+                            "WebSocket startup rejected (template/company mismatch) %s requested_template_id=%s resolved_template_id=%s",
+                            registry_log_context(
+                                tenant_id=tenant_id,
+                                company_id=company_id,
+                                industry_template_id=getattr(registry_config, "industry_template_id", None),
+                                registry_version=getattr(registry_config, "registry_version", None),
+                                registry_mode=True,
+                                source="ws_startup",
+                            ),
+                            _sanitize_log(requested_template_id),
+                            _sanitize_log(getattr(registry_config, "industry_template_id", None)),
+                        )
                         body = mismatch_response.body
                         if isinstance(body, bytes):
                             try:
                                 body = json.loads(body.decode("utf-8"))
                             except Exception:
                                 body = {"error": "Template/company mismatch"}
+                        if isinstance(body, dict):
+                            body.setdefault("tenantId", tenant_id)
+                            body.setdefault("companyId", company_id)
                         await websocket.send_text(json.dumps(body))
                         await websocket.close(code=1008)
                         return
@@ -1030,6 +1200,25 @@ async def websocket_endpoint(
                 resolved_template_id = getattr(registry_config, "industry_template_id", None)
                 if isinstance(resolved_template_id, str) and resolved_template_id:
                     industry = resolved_template_id
+            else:
+                logger.warning(
+                    "WebSocket startup rejected (registry config missing) %s",
+                    registry_log_context(
+                        tenant_id=tenant_id,
+                        company_id=company_id,
+                        registry_mode=True,
+                        source="ws_startup",
+                    ),
+                )
+                await websocket.send_text(json.dumps({
+                    "type": "error",
+                    "code": "REGISTRY_CONFIG_NOT_FOUND",
+                    "message": "Company configuration not found in registry",
+                    "tenantId": tenant_id,
+                    "companyId": company_id,
+                }))
+                await websocket.close(code=1008)
+                return
 
         # Load onboarding context and build initial state
         industry_config = await load_industry_config(
