@@ -1,0 +1,16 @@
+{
+  "company_id": "ekaette-telecom",
+  "tenant_id": "public",
+  "industry_template_id": "telecom",
+  "display_name": "Ekaette Telecom",
+  "overview": "Mobile plans, data comparison, and account support.",
+  "facts": {
+    "support_hours": "24/7",
+    "coverage": "nationwide"
+  },
+  "links": [],
+  "connectors": {},
+  "capability_overrides": {},
+  "ui_overrides": {},
+  "status": "active"
+}

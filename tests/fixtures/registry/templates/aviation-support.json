@@ -1,0 +1,24 @@
+{
+  "id": "aviation-support",
+  "label": "Aviation",
+  "category": "aviation",
+  "description": "Flight status, schedule lookup, and customer support.",
+  "default_voice": "Puck",
+  "greeting_policy": "Welcome to Aviation Support. I can help with flight status and policies.",
+  "theme": {
+    "accent": "oklch(68% 0.12 260)",
+    "accentSoft": "oklch(60% 0.09 275)",
+    "title": "Aviation Customer Support",
+    "hint": "Flight status, schedule lookup, and travel policy assistance."
+  },
+  "capabilities": [
+    "policy_qa",
+    "public_search_fallback",
+    "flight_status_lookup",
+    "schedule_lookup",
+    "escalation_handoff"
+  ],
+  "enabled_agents": ["support_agent"],
+  "connectors_supported": [],
+  "status": "active"
+}

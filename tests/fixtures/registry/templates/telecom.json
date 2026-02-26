@@ -1,0 +1,23 @@
+{
+  "id": "telecom",
+  "label": "Telecom",
+  "category": "telecom",
+  "description": "Data plan comparison, policy support, and store visit booking.",
+  "default_voice": "Fenrir",
+  "greeting_policy": "Welcome to Telecom Support. How can I help with your plan today?",
+  "theme": {
+    "accent": "oklch(72% 0.16 220)",
+    "accentSoft": "oklch(64% 0.12 235)",
+    "title": "Telecom Support Center",
+    "hint": "Plan comparison, policy lookup, and store visit scheduling."
+  },
+  "capabilities": [
+    "policy_qa",
+    "public_search_fallback",
+    "catalog_lookup",
+    "device_comparison_support"
+  ],
+  "enabled_agents": ["support_agent", "catalog_agent"],
+  "connectors_supported": [],
+  "status": "active"
+}

@@ -1,0 +1,16 @@
+{
+  "company_id": "ekaette-aviation",
+  "tenant_id": "public",
+  "industry_template_id": "aviation-support",
+  "display_name": "Ekaette Airways",
+  "overview": "Customer support for flight status, policies, and escalation.",
+  "facts": {
+    "hub": "Murtala Muhammed International Airport",
+    "fleet_size": 12
+  },
+  "links": [],
+  "connectors": {},
+  "capability_overrides": {},
+  "ui_overrides": {},
+  "status": "active"
+}
