@@ -399,6 +399,10 @@ class TestTelecomAllowedTools:
 
 class TestOnboardingConfigWithNewTemplates:
 
+    @pytest.fixture(autouse=True)
+    def _enable_registry(self, monkeypatch):
+        monkeypatch.setenv("REGISTRY_ENABLED", "true")
+
     @pytest.mark.asyncio
     async def test_onboarding_config_includes_telecom_and_aviation(self):
         """When registry includes telecom + aviation-support, onboarding includes both."""
