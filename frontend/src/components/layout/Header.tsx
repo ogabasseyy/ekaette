@@ -1,20 +1,13 @@
-import type { ConnectionState, Industry } from '../../types'
+import type { ConnectionState } from '../../types'
 import { StatusBadge } from '../ui/StatusBadge'
 
 interface HeaderProps {
   hint: string
-  industry: Industry
+  templateLabel: string
   connectionState: ConnectionState
 }
 
-const INDUSTRY_LABELS: Record<Industry, string> = {
-  electronics: 'Electronics',
-  hotel: 'Hotel',
-  automotive: 'Automotive',
-  fashion: 'Fashion',
-}
-
-export function Header({ hint, industry, connectionState }: HeaderProps) {
+export function Header({ hint, templateLabel, connectionState }: HeaderProps) {
   const isConnected = connectionState === 'connected'
 
   return (
@@ -37,7 +30,7 @@ export function Header({ hint, industry, connectionState }: HeaderProps) {
           {connectionState}
         </StatusBadge>
         <StatusBadge variant="muted" className="text-center sm:text-left">
-          Industry: {INDUSTRY_LABELS[industry]}
+          Industry: {templateLabel}
         </StatusBadge>
         <p className="px-1 text-[0.68rem] text-muted-foreground sm:basis-full sm:pt-0.5">
           Onboarding is locked during active calls.

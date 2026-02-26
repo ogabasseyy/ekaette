@@ -1,9 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ServerMessage } from '../types'
-import { type DemoStep, ELECTRONICS_DEMO_STEPS } from '../utils/mockData'
+import {
+  type DemoStep,
+  DEMO_STEPS_BY_TEMPLATE,
+  ELECTRONICS_DEMO_STEPS,
+  GENERIC_SUPPORT_DEMO_STEPS,
+} from '../utils/mockData'
 
 interface UseDemoModeOptions {
   steps?: DemoStep[]
+  industryTemplateId?: string
   onEmit?: (message: ServerMessage) => void
 }
 
@@ -25,8 +31,16 @@ function getStepDelay(steps: DemoStep[], index: number): number {
   return Math.max(0, current - previous)
 }
 
+function resolveSteps(options: UseDemoModeOptions): DemoStep[] {
+  if (options.steps) return options.steps
+  if (options.industryTemplateId) {
+    return DEMO_STEPS_BY_TEMPLATE[options.industryTemplateId] ?? GENERIC_SUPPORT_DEMO_STEPS
+  }
+  return ELECTRONICS_DEMO_STEPS
+}
+
 export function useDemoMode(options: UseDemoModeOptions = {}): UseDemoModeReturn {
-  const steps = options.steps ?? ELECTRONICS_DEMO_STEPS
+  const steps = resolveSteps(options)
   const onEmit = options.onEmit
 
   const [messages, setMessages] = useState<ServerMessage[]>([])

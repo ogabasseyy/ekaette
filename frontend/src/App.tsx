@@ -33,7 +33,7 @@ import type {
   BookingConfirmation,
   ErrorMessage,
   ImageReceivedMessage,
-  Industry,
+  IndustryTemplateMeta,
   MemoryRecallMessage,
   ProductRecommendation,
   SessionStartedMessage,
@@ -44,35 +44,23 @@ import type {
 
 const INDUSTRY_STORAGE_KEY = 'ekaette:onboarding:industry'
 
-const INDUSTRY_COMPANY_MAP: Record<Industry, string> = {
+// ═══ Hardcoded Fallbacks (legacy compat, used until registry fetch is wired) ═══
+
+interface ThemeConfig {
+  accent: string
+  accentSoft: string
+  title: string
+  hint: string
+}
+
+const FALLBACK_COMPANY_MAP: Record<string, string> = {
   electronics: 'ekaette-electronics',
   hotel: 'ekaette-hotel',
   automotive: 'ekaette-automotive',
   fashion: 'ekaette-fashion',
 }
-const INDUSTRY_VALUES = Object.keys(INDUSTRY_COMPANY_MAP) as Industry[]
-const INDUSTRY_VALUE_SET = new Set<Industry>(INDUSTRY_VALUES)
 
-function parseStoredIndustry(value: string | null): Industry | null {
-  if (!value) return null
-  return INDUSTRY_VALUE_SET.has(value as Industry) ? (value as Industry) : null
-}
-
-function readDemoModeFlag(): boolean {
-  if (typeof window === 'undefined') return false
-  if (window.location.search.includes('demo=1')) return true
-  return String(import.meta.env.VITE_DEMO_MODE ?? '').toLowerCase() === 'true'
-}
-
-function resolveTransportMode(): TransportMode {
-  const raw = String(import.meta.env.VITE_LIVE_TRANSPORT ?? '').toLowerCase()
-  return raw === 'direct-live' ? 'direct-live' : 'backend-proxy'
-}
-
-const INDUSTRY_THEMES: Record<
-  Industry,
-  { accent: string; accentSoft: string; title: string; hint: string }
-> = {
+const FALLBACK_THEMES: Record<string, ThemeConfig> = {
   electronics: {
     accent: 'oklch(74% 0.21 158)',
     accentSoft: 'oklch(62% 0.14 172)',
@@ -99,6 +87,68 @@ const INDUSTRY_THEMES: Record<
   },
 }
 
+const FALLBACK_LABELS: Record<string, string> = {
+  electronics: 'Electronics',
+  hotel: 'Hotel',
+  automotive: 'Automotive',
+  fashion: 'Fashion',
+}
+
+const DEFAULT_THEME: ThemeConfig = {
+  accent: 'oklch(74% 0.21 158)',
+  accentSoft: 'oklch(62% 0.14 172)',
+  title: 'Ekaette Live Desk',
+  hint: 'AI-powered customer service.',
+}
+
+function parseStoredIndustry(value: string | null): string | null {
+  if (!value || !value.trim()) return null
+  return value
+}
+
+function readDemoModeFlag(): boolean {
+  if (typeof window === 'undefined') return false
+  if (window.location.search.includes('demo=1')) return true
+  return String(import.meta.env.VITE_DEMO_MODE ?? '').toLowerCase() === 'true'
+}
+
+function resolveTransportMode(): TransportMode {
+  const raw = String(import.meta.env.VITE_LIVE_TRANSPORT ?? '').toLowerCase()
+  return raw === 'direct-live' ? 'direct-live' : 'backend-proxy'
+}
+
+function resolveTheme(
+  templateId: string,
+  templates: IndustryTemplateMeta[] | null,
+): ThemeConfig {
+  // Server-provided templates take priority
+  if (templates) {
+    const match = templates.find(t => t.id === templateId)
+    if (match) return match.theme
+  }
+  // Fallback to hardcoded
+  return FALLBACK_THEMES[templateId] ?? DEFAULT_THEME
+}
+
+function resolveCompanyId(
+  templateId: string,
+  _templates: IndustryTemplateMeta[] | null,
+): string {
+  // For now, use fallback map. When registry fetch is wired, use config.companies.
+  return FALLBACK_COMPANY_MAP[templateId] ?? `ekaette-${templateId}`
+}
+
+function resolveTemplateLabel(
+  templateId: string,
+  templates: IndustryTemplateMeta[] | null,
+): string {
+  if (templates) {
+    const match = templates.find(t => t.id === templateId)
+    if (match) return match.label
+  }
+  return FALLBACK_LABELS[templateId] ?? templateId
+}
+
 const ERROR_TOAST_DURATION = 8000
 const DEBUG_EVENT_LIMIT = 40
 
@@ -123,10 +173,12 @@ function formatMs(value: number | null | undefined): string {
 }
 
 function App() {
-  const [industry, setIndustry] = useState<Industry | null>(() => {
+  const [industry, setIndustry] = useState<string | null>(() => {
     if (typeof window === 'undefined') return null
     return parseStoredIndustry(window.localStorage.getItem(INDUSTRY_STORAGE_KEY))
   })
+  // Server-provided templates (null until fetched or when using fallback)
+  const [templates] = useState<IndustryTemplateMeta[] | null>(null)
   const userId = 'demo-user'
   const [sessionId] = useState(() => `session-${Date.now()}`)
   const [isStarting, setIsStarting] = useState(false)
@@ -140,19 +192,24 @@ function App() {
   const lastPlaybackUnderrunsRef = useRef(0)
   const lastPlaybackDebugAtRef = useRef(0)
   const debugEventIdRef = useRef(0)
-  const activeIndustry: Industry = industry ?? 'electronics'
+  const activeIndustry = industry ?? 'electronics'
   const demoModeEnabled = useMemo(() => readDemoModeFlag(), [])
   const transportMode = useMemo(() => resolveTransportMode(), [])
   const tenantId = String(import.meta.env.VITE_TENANT_ID ?? 'public')
 
+  const companyId = resolveCompanyId(activeIndustry, templates)
+  const theme = resolveTheme(activeIndustry, templates)
+  const templateLabel = resolveTemplateLabel(activeIndustry, templates)
+
   const socket = useEkaetteSocket(userId, sessionId, {
     demoMode: demoModeEnabled,
     industry: activeIndustry,
-    companyId: INDUSTRY_COMPANY_MAP[activeIndustry],
+    companyId,
     tenantId,
     transportMode,
   })
   const demo = useDemoMode({
+    industryTemplateId: activeIndustry,
     onEmit: socket.injectDemoMessage,
   })
   const isConnected = socket.state === 'connected'
@@ -313,7 +370,6 @@ function App() {
   const socketDebug = socket.debugMetrics
 
   const displaySessionId = derived.sessionStarted?.sessionId ?? sessionId
-  const theme = INDUSTRY_THEMES[activeIndustry]
 
   const rootStyle = useMemo(
     () =>
@@ -546,10 +602,10 @@ function App() {
     [isConnected, socket],
   )
 
-  const handleOnboardingComplete = useCallback((selectedIndustry: Industry) => {
-    setIndustry(selectedIndustry)
+  const handleOnboardingComplete = useCallback((selectedTemplateId: string) => {
+    setIndustry(selectedTemplateId)
     if (typeof window !== 'undefined') {
-      window.localStorage.setItem(INDUSTRY_STORAGE_KEY, selectedIndustry)
+      window.localStorage.setItem(INDUSTRY_STORAGE_KEY, selectedTemplateId)
     }
   }, [])
 
@@ -582,19 +638,22 @@ function App() {
       <div className="relative mx-auto flex h-full w-full max-w-6xl flex-col px-3 pt-[calc(env(safe-area-inset-top)+0.75rem)] pb-[calc(env(safe-area-inset-bottom)+0.75rem)] sm:px-6 sm:pt-5 sm:pb-6 lg:px-8">
         {!industry ? (
           <main className="mt-3 grid min-h-0 flex-1 overflow-y-auto pb-1 sm:mt-4 sm:pb-0">
-            <IndustryOnboarding onComplete={handleOnboardingComplete} />
+            <IndustryOnboarding
+              templates={templates ?? undefined}
+              onComplete={handleOnboardingComplete}
+            />
           </main>
         ) : (
           <>
             <div className="hidden lg:block">
-              <Header hint={theme.hint} industry={activeIndustry} connectionState={socket.state} />
+              <Header hint={theme.hint} templateLabel={templateLabel} connectionState={socket.state} />
             </div>
 
             <main className="mt-3 flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto pb-1 sm:mt-4 sm:pb-0 lg:grid lg:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)] lg:overflow-hidden lg:pb-0">
               <div className="lg:hidden">
                 <Header
                   hint={theme.hint}
-                  industry={activeIndustry}
+                  templateLabel={templateLabel}
                   connectionState={socket.state}
                 />
               </div>

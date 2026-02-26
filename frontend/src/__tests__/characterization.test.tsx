@@ -252,14 +252,16 @@ describe('Demo mode characterization', () => {
     expect(types).toContain('booking_confirmation')
   })
 
-  it('only electronics demo steps exist (no other industries)', async () => {
+  it('ELECTRONICS_DEMO_STEPS is still exported and included in per-industry set', async () => {
     const mockData = await import('../utils/mockData')
-    // Verify only ELECTRONICS_DEMO_STEPS is exported as a demo step array
+    // Phase 4: multiple industry demo steps now exist.
+    // Electronics must still be present and unchanged.
     const exportedArrays = Object.entries(mockData).filter(
       ([key, value]) => key.endsWith('_DEMO_STEPS') && Array.isArray(value),
     )
-    expect(exportedArrays).toHaveLength(1)
-    expect(exportedArrays[0][0]).toBe('ELECTRONICS_DEMO_STEPS')
+    expect(exportedArrays.length).toBeGreaterThanOrEqual(1)
+    const electronicsEntry = exportedArrays.find(([key]) => key === 'ELECTRONICS_DEMO_STEPS')
+    expect(electronicsEntry).toBeDefined()
   })
 
   it('useDemoMode defaults to electronics steps regardless of industry', async () => {

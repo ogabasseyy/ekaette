@@ -91,6 +91,11 @@ export interface SessionStartedMessage {
   voiceChangeRequiresReconnect?: boolean
   manualVadActive?: boolean
   vadMode?: 'auto' | 'manual'
+  // Canonical fields (Phase 4+)
+  tenantId?: string
+  industryTemplateId?: string
+  capabilities?: string[]
+  registryVersion?: string
 }
 
 export interface MemoryRecallMessage {
@@ -188,3 +193,26 @@ export type TransportMode = 'backend-proxy' | 'direct-live'
 // ═══ Industry ═══
 
 export type Industry = 'electronics' | 'hotel' | 'automotive' | 'fashion'
+
+// ═══ Registry Types (Phase 4+) ═══
+
+export type IndustryTemplateId = string
+export type CompanyId = string
+
+export interface IndustryTemplateMeta {
+  id: IndustryTemplateId
+  label: string
+  category: string
+  description: string
+  defaultVoice: string
+  theme: { accent: string; accentSoft: string; title: string; hint: string }
+  capabilities: string[]
+  status: 'active' | 'beta' | 'disabled'
+}
+
+export interface OnboardingConfigResponse {
+  tenantId: string
+  templates: IndustryTemplateMeta[]
+  companies: Array<{ id: CompanyId; templateId: IndustryTemplateId; displayName: string }>
+  defaults: { templateId: IndustryTemplateId; companyId: CompanyId }
+}
