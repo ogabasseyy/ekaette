@@ -30,6 +30,16 @@ from app.configs.registry_schema import (
     validate_template,
     validate_theme,
 )
+from app.configs import REGISTRY_SCHEMA_VERSION
+
+
+def _new_write_ops() -> dict[str, int]:
+    return {
+        "created": 0,
+        "updated": 0,
+        "unchanged": 0,
+        "failed": 0,
+    }
 
 
 # ═══ seed-templates ═══
@@ -45,20 +55,34 @@ def seed_templates(
     """
     written = 0
     errors: list[str] = []
+    operations = _new_write_ops()
 
     for template in templates:
-        validation_errors = validate_template(template)
+        normalized_template = dict(template)
+        normalized_template.setdefault("schema_version", REGISTRY_SCHEMA_VERSION)
+        validation_errors = validate_template(normalized_template)
         if validation_errors:
-            template_id = template.get("id", "<unknown>")
+            template_id = normalized_template.get("id", "<unknown>")
             errors.append(f"template '{template_id}': {'; '.join(validation_errors)}")
+            operations["failed"] += 1
             continue
 
-        template_id = template["id"]
+        template_id = normalized_template["id"]
         doc_ref = db.collection("industry_templates").document(template_id)
-        doc_ref.set(dict(template))
+        existing_doc = doc_ref.get()
+        if getattr(existing_doc, "exists", False):
+            existing_data = existing_doc.to_dict() if hasattr(existing_doc, "to_dict") else {}
+            if existing_data == normalized_template:
+                operations["unchanged"] += 1
+                continue
+            op = "updated"
+        else:
+            op = "created"
+        doc_ref.set(normalized_template)
+        operations[op] += 1
         written += 1
 
-    return {"written": written, "errors": errors}
+    return {"written": written, "errors": errors, "operations": operations}
 
 
 # ═══ provision-company ═══
@@ -76,6 +100,7 @@ def provision_company(
     company_id = normalized_company.get("company_id")
     if isinstance(company_id, str) and company_id.strip():
         normalized_company.setdefault("display_name", company_id)
+    normalized_company.setdefault("schema_version", REGISTRY_SCHEMA_VERSION)
     normalized_company.setdefault("overview", "")
     normalized_company.setdefault("facts", {})
     normalized_company.setdefault("links", [])
@@ -86,7 +111,11 @@ def provision_company(
 
     validation_errors = validate_company(normalized_company)
     if validation_errors:
-        return {"success": False, "errors": validation_errors}
+        return {
+            "success": False,
+            "errors": validation_errors,
+            "operation": "failed",
+        }
 
     tenant_id = normalized_company["tenant_id"]
     company_id = normalized_company["company_id"]
@@ -99,6 +128,7 @@ def provision_company(
         return {
             "success": False,
             "errors": [f"template '{template_id}' not found in industry_templates"],
+            "operation": "failed",
         }
 
     # Validate capability overrides if present
@@ -109,7 +139,7 @@ def provision_company(
         if cap_overrides:
             cap_errors = validate_capability_overrides(cap_overrides, template_caps)
             if cap_errors:
-                return {"success": False, "errors": cap_errors}
+                return {"success": False, "errors": cap_errors, "operation": "failed"}
 
     doc_ref = (
         db.collection("tenants")
@@ -117,9 +147,17 @@ def provision_company(
         .collection("companies")
         .document(company_id)
     )
+    existing_doc = doc_ref.get()
+    if getattr(existing_doc, "exists", False):
+        existing_data = existing_doc.to_dict() if hasattr(existing_doc, "to_dict") else {}
+        if existing_data == normalized_company:
+            return {"success": True, "errors": [], "operation": "unchanged"}
+        operation = "updated"
+    else:
+        operation = "created"
     doc_ref.set(normalized_company)
 
-    return {"success": True, "errors": []}
+    return {"success": True, "errors": [], "operation": operation}
 
 
 # ═══ import-knowledge ═══
@@ -138,12 +176,14 @@ def import_knowledge(
     """
     written = 0
     errors: list[str] = []
+    operations = _new_write_ops()
 
     for entry in entries:
         validation_errors = validate_knowledge_entry(entry)
         if validation_errors:
             entry_id = entry.get("id", "<unknown>")
             errors.append(f"entry '{entry_id}': {'; '.join(validation_errors)}")
+            operations["failed"] += 1
             continue
 
         entry_id = entry["id"]
@@ -155,10 +195,21 @@ def import_knowledge(
             .collection("knowledge")
             .document(entry_id)
         )
-        doc_ref.set(dict(entry))
+        normalized_entry = dict(entry)
+        existing_doc = doc_ref.get()
+        if getattr(existing_doc, "exists", False):
+            existing_data = existing_doc.to_dict() if hasattr(existing_doc, "to_dict") else {}
+            if existing_data == normalized_entry:
+                operations["unchanged"] += 1
+                continue
+            op = "updated"
+        else:
+            op = "created"
+        doc_ref.set(normalized_entry)
+        operations[op] += 1
         written += 1
 
-    return {"written": written, "errors": errors}
+    return {"written": written, "errors": errors, "operations": operations}
 
 
 # ═══ validate ═══
@@ -356,6 +407,7 @@ def main(argv: list[str] | None = None) -> None:
                 "company_id": args.company,
                 "tenant_id": args.tenant,
                 "industry_template_id": args.template,
+                "schema_version": REGISTRY_SCHEMA_VERSION,
             }
         result = provision_company(db, company_data)
         print(json.dumps(result, indent=2))

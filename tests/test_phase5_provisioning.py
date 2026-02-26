@@ -9,6 +9,8 @@ Tests for:
 from __future__ import annotations
 
 import json
+import sys
+import types
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -125,10 +127,33 @@ class _FakeDocRef:
         return _FakeCollection(self._db, f"{self._path}/{name}")
 
 
+def _install_fake_cli_modules(monkeypatch: pytest.MonkeyPatch, db: FakeFirestoreDB) -> None:
+    """Install fake google.cloud.firestore and dotenv modules for CLI tests."""
+    google_mod = types.ModuleType("google")
+    cloud_mod = types.ModuleType("google.cloud")
+    firestore_mod = types.ModuleType("google.cloud.firestore")
+    dotenv_mod = types.ModuleType("dotenv")
+
+    class _FakeClient:
+        def __new__(cls, *args: Any, **kwargs: Any) -> FakeFirestoreDB:  # type: ignore[override]
+            return db
+
+    firestore_mod.Client = _FakeClient  # type: ignore[attr-defined]
+    cloud_mod.firestore = firestore_mod  # type: ignore[attr-defined]
+    google_mod.cloud = cloud_mod  # type: ignore[attr-defined]
+    dotenv_mod.load_dotenv = lambda *args, **kwargs: None  # type: ignore[attr-defined]
+
+    monkeypatch.setitem(sys.modules, "google", google_mod)
+    monkeypatch.setitem(sys.modules, "google.cloud", cloud_mod)
+    monkeypatch.setitem(sys.modules, "google.cloud.firestore", firestore_mod)
+    monkeypatch.setitem(sys.modules, "dotenv", dotenv_mod)
+
+
 # ═══ Test Data ═══
 
 
 ELECTRONICS_TEMPLATE = {
+    "schema_version": 1,
     "id": "electronics",
     "label": "Electronics & Gadgets",
     "category": "retail",
@@ -148,6 +173,7 @@ ELECTRONICS_TEMPLATE = {
 }
 
 HOTEL_TEMPLATE = {
+    "schema_version": 1,
     "id": "hotel",
     "label": "Hotels & Hospitality",
     "category": "hospitality",
@@ -167,6 +193,7 @@ HOTEL_TEMPLATE = {
 }
 
 EKAETTE_ELECTRONICS_COMPANY = {
+    "schema_version": 1,
     "company_id": "ekaette-electronics",
     "tenant_id": "public",
     "industry_template_id": "electronics",
@@ -226,6 +253,26 @@ class TestRegistrySchemaValidation:
 
         errors = validate_company(EKAETTE_ELECTRONICS_COMPANY)
         assert errors == []
+
+    def test_validate_template_rejects_unsupported_schema_version(self):
+        """Templates with unsupported schema_version fail validation."""
+        from app.configs.registry_schema import validate_template
+
+        invalid = dict(ELECTRONICS_TEMPLATE)
+        invalid["schema_version"] = 99
+        errors = validate_template(invalid)
+
+        assert any("unsupported schema_version" in err for err in errors)
+
+    def test_validate_company_rejects_missing_schema_version(self):
+        """Companies must include schema_version."""
+        from app.configs.registry_schema import validate_company
+
+        invalid = dict(EKAETTE_ELECTRONICS_COMPANY)
+        invalid.pop("schema_version", None)
+        errors = validate_company(invalid)
+
+        assert any("schema_version" in err for err in errors)
 
     def test_validate_company_capability_overrides_against_template(self):
         """Capability overrides must reference capabilities the template knows about."""
@@ -300,6 +347,7 @@ class TestSeedTemplates:
 
         assert result["written"] == 2
         assert result["errors"] == []
+        assert result["operations"]["created"] == 2
         # Verify docs written to Firestore
         elec = db.get_doc("industry_templates/electronics")
         assert elec is not None
@@ -316,6 +364,19 @@ class TestSeedTemplates:
 
         assert result["written"] == 1
         assert len(result["errors"]) > 0
+        assert result["operations"]["failed"] == 1
+
+    def test_seed_templates_reports_unchanged_on_idempotent_rerun(self):
+        """Re-seeding identical template payloads should report unchanged, not rewrite."""
+        from scripts.registry import seed_templates
+
+        db = FakeFirestoreDB()
+        first = seed_templates(db, [ELECTRONICS_TEMPLATE])
+        second = seed_templates(db, [ELECTRONICS_TEMPLATE])
+
+        assert first["operations"]["created"] == 1
+        assert second["written"] == 0
+        assert second["operations"]["unchanged"] == 1
 
 
 class TestProvisionCompany:
@@ -332,6 +393,7 @@ class TestProvisionCompany:
         result = provision_company(db, EKAETTE_ELECTRONICS_COMPANY)
 
         assert result["success"] is True
+        assert result["operation"] == "created"
         company = db.get_doc("tenants/public/companies/ekaette-electronics")
         assert company is not None
         assert company["display_name"] == "Ekaette Devices Hub"
@@ -345,6 +407,7 @@ class TestProvisionCompany:
 
         assert result["success"] is False
         assert len(result["errors"]) > 0
+        assert result["operation"] == "failed"
 
     def test_provision_company_applies_defaults_for_minimal_payload(self):
         """provision-company writes normalized defaults even when caller passes only required fields."""
@@ -354,6 +417,7 @@ class TestProvisionCompany:
         db.set_doc("industry_templates/electronics", ELECTRONICS_TEMPLATE)
 
         result = provision_company(db, {
+            "schema_version": 1,
             "company_id": "minimal-company",
             "tenant_id": "public",
             "industry_template_id": "electronics",
@@ -365,6 +429,19 @@ class TestProvisionCompany:
         assert written["display_name"] == "minimal-company"
         assert written["status"] == "active"
         assert written["connectors"] == {}
+
+    def test_provision_company_reports_unchanged_on_idempotent_rerun(self):
+        """Provisioning the same normalized payload twice should report unchanged."""
+        from scripts.registry import provision_company
+
+        db = FakeFirestoreDB()
+        db.set_doc("industry_templates/electronics", ELECTRONICS_TEMPLATE)
+
+        first = provision_company(db, EKAETTE_ELECTRONICS_COMPANY)
+        second = provision_company(db, EKAETTE_ELECTRONICS_COMPANY)
+
+        assert first["success"] is True and first["operation"] == "created"
+        assert second["success"] is True and second["operation"] == "unchanged"
 
 
 class TestImportKnowledge:
@@ -389,6 +466,7 @@ class TestImportKnowledge:
 
         assert result["written"] == 2
         assert result["errors"] == []
+        assert result["operations"]["created"] == 2
         kb1 = db.get_doc("tenants/public/companies/ekaette-electronics/knowledge/kb-1")
         assert kb1 is not None
         assert kb1["title"] == "Hours"
@@ -412,6 +490,21 @@ class TestImportKnowledge:
 
         assert result["written"] == 1
         assert len(result["errors"]) > 0
+        assert result["operations"]["failed"] == 1
+
+    def test_import_knowledge_reports_unchanged_on_idempotent_rerun(self):
+        """Importing identical entries twice should report unchanged on the second run."""
+        from scripts.registry import import_knowledge
+
+        db = FakeFirestoreDB()
+        entries = [{"id": "kb-1", "title": "Hours", "text": "Open 9-5.", "tags": ["support"]}]
+
+        first = import_knowledge(db, tenant_id="public", company_id="ekaette-electronics", entries=entries)
+        second = import_knowledge(db, tenant_id="public", company_id="ekaette-electronics", entries=entries)
+
+        assert first["operations"]["created"] == 1
+        assert second["written"] == 0
+        assert second["operations"]["unchanged"] == 1
 
 
 class TestValidateCommand:
@@ -711,3 +804,162 @@ class TestMigrateTenantScoped:
         assert db.get_doc(
             "tenants/public/companies/ekaette-electronics/catalog_items/prod-iphone-15-pro"
         ) is None
+
+    def test_verify_migration_detects_missing_targets(self):
+        """verify_migration must detect corruption/missing destination docs."""
+        from scripts.migrate_to_tenant_scoped import verify_migration
+
+        db = FakeFirestoreDB()
+        db.set_doc("company_profiles/ekaette-electronics", {
+            "industry": "electronics",
+            "name": "Ekaette Devices Hub",
+        })
+        # Intentionally do not write target company doc.
+
+        result = verify_migration(db, tenant_id="public", collections=["profiles"])
+
+        assert result["success"] is False
+        assert result["checked"] == 1
+        assert any("missing target tenants/public/companies/ekaette-electronics" in e for e in result["errors"])
+
+
+class TestMigrateTenantScopedCLI:
+    """CLI-level safety checks for dry-run summaries, resume, and verify."""
+
+    def test_main_dry_run_prints_diff_summary_and_skips_writes(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ):
+        from scripts import migrate_to_tenant_scoped as migrate_cli
+
+        db = FakeFirestoreDB()
+        db.set_doc("company_profiles/ekaette-electronics", {
+            "industry": "electronics",
+            "name": "Ekaette Devices Hub",
+            "overview": "Trade-in focused electronics store.",
+            "facts": {},
+            "links": [],
+            "system_connectors": {},
+        })
+        _install_fake_cli_modules(monkeypatch, db)
+
+        migrate_cli.main(["--tenant", "public", "--dry-run", "--collections", "profiles"])
+
+        out = capsys.readouterr().out
+        assert "Dry run complete (no writes performed)." in out
+        assert '"section": "profiles"' in out
+        assert '"dryRun": true' in out
+        assert '"operations"' in out
+        assert '"sampleIds"' in out
+        assert db.get_doc("tenants/public/companies/ekaette-electronics") is None
+
+    def test_main_resume_creates_and_uses_checkpoint(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        tmp_path: pytest.TempPathFactory,
+    ):
+        from scripts import migrate_to_tenant_scoped as migrate_cli
+
+        db = FakeFirestoreDB()
+        db.set_doc("company_profiles/ekaette-electronics", {
+            "industry": "electronics",
+            "name": "Ekaette Devices Hub",
+            "overview": "Trade-in focused electronics store.",
+            "facts": {},
+            "links": [],
+            "system_connectors": {},
+        })
+        checkpoint_file = tmp_path / "resume-checkpoint.json"
+        _install_fake_cli_modules(monkeypatch, db)
+
+        # First run writes and records checkpoint.
+        migrate_cli.main([
+            "--tenant", "public",
+            "--resume",
+            "--checkpoint-file", str(checkpoint_file),
+            "--collections", "profiles",
+        ])
+        assert checkpoint_file.exists()
+        payload = json.loads(checkpoint_file.read_text())
+        assert payload["meta"]["tenant_id"] == "public"
+        assert "profiles" in payload["completed"]
+        assert "ekaette-electronics" in payload["completed"]["profiles"]
+
+        # Remove target doc to prove resume skip is checkpoint-driven (not only idempotent target check).
+        db._store.pop("tenants/public/companies/ekaette-electronics", None)
+        migrate_cli.main([
+            "--tenant", "public",
+            "--resume",
+            "--checkpoint-file", str(checkpoint_file),
+            "--collections", "profiles",
+        ])
+        out = capsys.readouterr().out
+        assert '"resume_skipped": 1' in out
+        assert db.get_doc("tenants/public/companies/ekaette-electronics") is None
+
+    def test_main_resume_rejects_checkpoint_tenant_mismatch(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        tmp_path: pytest.TempPathFactory,
+    ):
+        from scripts import migrate_to_tenant_scoped as migrate_cli
+
+        db = FakeFirestoreDB()
+        _install_fake_cli_modules(monkeypatch, db)
+
+        checkpoint_file = tmp_path / "mismatch-checkpoint.json"
+        checkpoint_file.write_text(json.dumps({
+            "meta": {"tenant_id": "other-tenant", "company_id": ""},
+            "completed": {"profiles": ["ekaette-electronics"]},
+        }))
+
+        with pytest.raises(SystemExit) as excinfo:
+            migrate_cli.main([
+                "--tenant", "public",
+                "--resume",
+                "--checkpoint-file", str(checkpoint_file),
+                "--collections", "profiles",
+            ])
+        assert excinfo.value.code == 1
+        out = capsys.readouterr().out
+        assert "invalid checkpoint file" in out
+        assert "tenant_id mismatch" in out
+
+    def test_main_verify_flag_exits_on_mismatch(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ):
+        from scripts import migrate_to_tenant_scoped as migrate_cli
+
+        db = FakeFirestoreDB()
+        # Source docs present, but we run --verify without running migrations first.
+        db.set_doc("company_profiles/ekaette-electronics", {
+            "industry": "electronics",
+            "name": "Ekaette Devices Hub",
+        })
+        _install_fake_cli_modules(monkeypatch, db)
+        monkeypatch.setattr(
+            migrate_cli,
+            "verify_migration",
+            lambda *args, **kwargs: {
+                "success": False,
+                "checked": 1,
+                "errors": ["[profiles] missing target tenants/public/companies/ekaette-electronics"],
+            },
+        )
+
+        with pytest.raises(SystemExit) as excinfo:
+            migrate_cli.main([
+                "--tenant", "public",
+                "--verify",
+                "--collections", "profiles",
+            ])
+        assert excinfo.value.code == 1
+        out = capsys.readouterr().out
+        assert "Verification summary:" in out
+        assert '"success": false' in out.lower()
+        assert "missing target tenants/public/companies/ekaette-electronics" in out
