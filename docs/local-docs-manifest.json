@@ -1,0 +1,41 @@
+{
+  "files": [
+    {
+      "last_reviewed_commit": "33c87f1c39ea6527a95289d9c2c81fc6e8c7c896",
+      "last_reviewed_date": "2026-02-26",
+      "path": "Ekaette_Architecture.md",
+      "phase_marker": "phase7-cutover-plus-2026-addendum",
+      "purpose": "Canonical architecture narrative (local ignored doc)",
+      "sha256": "521f3247a92c1f0743238d9ea167f4fa35d07054108dac995f086075cb2a8035"
+    },
+    {
+      "last_reviewed_commit": "33c87f1c39ea6527a95289d9c2c81fc6e8c7c896",
+      "last_reviewed_date": "2026-02-26",
+      "path": "Ekaette_Architecture.html",
+      "phase_marker": "phase7-cutover-plus-2026-addendum",
+      "purpose": "Rendered architecture reference (local ignored doc)",
+      "sha256": "744f3288be7c6d7ef573c84260fbb5fdbac9b6eec0bb093da19be8ad7cb3e57b"
+    },
+    {
+      "last_reviewed_commit": "33c87f1c39ea6527a95289d9c2c81fc6e8c7c896",
+      "last_reviewed_date": "2026-02-26",
+      "path": "Ekaette_Build_Plan_v3.md",
+      "phase_marker": "phase7-cutover-plus-2026-addendum",
+      "purpose": "Build and execution plan (local ignored doc)",
+      "sha256": "df9748bde171baa5e4888b29cdc7fb5e014c04201f8fcae4ba4b3e6f6574063b"
+    },
+    {
+      "last_reviewed_commit": "33c87f1c39ea6527a95289d9c2c81fc6e8c7c896",
+      "last_reviewed_date": "2026-02-26",
+      "path": "Ekaette_Setup_Guide.md",
+      "phase_marker": "phase7-cutover-plus-2026-addendum",
+      "purpose": "Operator setup guide (local ignored doc)",
+      "sha256": "97f05c9ce58785843b44f95de69a8071a2bf2187e5359415a1c67fc4705f7210"
+    }
+  ],
+  "generated_by": "scripts/check_local_docs.py",
+  "generated_date": "2026-02-26",
+  "last_reviewed_commit": "33c87f1c39ea6527a95289d9c2c81fc6e8c7c896",
+  "phase_marker": "phase7-cutover-plus-2026-addendum",
+  "version": 1
+}
