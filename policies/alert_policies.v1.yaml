@@ -1,0 +1,63 @@
+{
+  "policyVersion": "v1",
+  "alerts": [
+    {
+      "id": "registry_miss_spike",
+      "severity": "warning",
+      "metric": "registry_miss_total",
+      "window": "5m",
+      "condition": {
+        "operator": "gt",
+        "threshold": 25
+      },
+      "description": "Registry misses exceeded expected baseline in a 5 minute window."
+    },
+    {
+      "id": "runtime_bootstrap_error_rate",
+      "severity": "critical",
+      "metric": "http_error_rate",
+      "window": "10m",
+      "condition": {
+        "operator": "gt",
+        "threshold": 2.0,
+        "labels": {
+          "path": "/api/v1/runtime/bootstrap"
+        }
+      },
+      "description": "Runtime bootstrap endpoint error rate breached rollback threshold."
+    },
+    {
+      "id": "token_registry_miss_rate",
+      "severity": "critical",
+      "metric": "token_registry_miss_rate",
+      "window": "10m",
+      "condition": {
+        "operator": "gt",
+        "threshold": 2.0
+      },
+      "description": "Token issuance registry misses breached rollback threshold."
+    },
+    {
+      "id": "websocket_session_started_failures",
+      "severity": "critical",
+      "metric": "ws_session_started_failure_rate",
+      "window": "10m",
+      "condition": {
+        "operator": "gt",
+        "threshold": 2.0
+      },
+      "description": "WebSocket startup failures breached rollback threshold."
+    },
+    {
+      "id": "connector_test_failures",
+      "severity": "warning",
+      "metric": "connector_test_failure_total",
+      "window": "15m",
+      "condition": {
+        "operator": "gt",
+        "threshold": 10
+      },
+      "description": "Connector test failures are elevated and may indicate provider outages."
+    }
+  ]
+}

@@ -3,6 +3,15 @@
 ## Scope
 This document defines the minimum operational gates required for registry-first production rollout.
 
+Tracked policy templates:
+- `policies/observability_slos.v1.yaml`
+- `policies/alert_policies.v1.yaml`
+
+Enforcement points:
+- `python -m scripts.release_gate --strict`
+- `scripts/deploy_cloud_run.sh` (pre-deploy gate, enabled by default)
+- `.github/workflows/ci.yml` (strict release-gate step on `main`/`dev`)
+
 ## SLO Targets (Initial)
 These are starting targets for staging and production. Tune after observing real traffic, but do not ship without targets.
 

@@ -2,7 +2,7 @@
 # Pin versions for reproducible builds
 
 # Core framework
-google-adk==1.25.1
+google-adk==1.26.0
 google-genai==1.64.0
 google-cloud-aiplatform==1.139.0
 fastapi==0.133.0
@@ -14,6 +14,11 @@ greenlet==3.2.4
 google-cloud-firestore==2.23.0
 google-cloud-storage==3.9.0
 
+# Africa's Talking
+africastalking==2.0.2
+httpx>=0.28.1,<0.29
+
 # Environment
 python-dotenv==1.2.1
 python-multipart==0.0.22
+pydantic-settings==2.11.0

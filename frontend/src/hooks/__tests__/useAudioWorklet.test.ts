@@ -1,6 +1,6 @@
 import { act, renderHook } from '@testing-library/react'
 import { useRef } from 'react'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { useAudioWorklet } from '../useAudioWorklet'
 
 // Helper to create the ref that useAudioWorklet expects

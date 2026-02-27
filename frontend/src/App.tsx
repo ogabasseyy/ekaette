@@ -38,6 +38,7 @@ import type {
   OnboardingCompanyMeta,
   OnboardingConfigResponse,
   ProductRecommendation,
+  RuntimeBootstrapResponse,
   SessionStartedMessage,
   TelemetryMessage,
   TransportMode,
@@ -48,6 +49,7 @@ const INDUSTRY_STORAGE_KEY = 'ekaette:onboarding:industry'
 const TEMPLATE_STORAGE_KEY = 'ekaette:onboarding:templateId'
 const COMPANY_STORAGE_KEY = 'ekaette:onboarding:companyId'
 const TENANT_STORAGE_KEY = 'ekaette:onboarding:tenantId'
+const FORCE_ONBOARDING_SELECTION_KEY = 'ekaette:onboarding:forceSelection'
 
 // ═══ Hardcoded Fallbacks (legacy compat, used until registry fetch is wired) ═══
 
@@ -127,6 +129,20 @@ function clearStoredOnboardingSelection(): void {
   window.localStorage.removeItem(COMPANY_STORAGE_KEY)
 }
 
+function readForceOnboardingSelection(): boolean {
+  if (typeof window === 'undefined') return false
+  return window.localStorage.getItem(FORCE_ONBOARDING_SELECTION_KEY) === '1'
+}
+
+function setForceOnboardingSelection(value: boolean): void {
+  if (typeof window === 'undefined') return
+  if (value) {
+    window.localStorage.setItem(FORCE_ONBOARDING_SELECTION_KEY, '1')
+    return
+  }
+  window.localStorage.removeItem(FORCE_ONBOARDING_SELECTION_KEY)
+}
+
 function readDemoModeFlag(): boolean {
   if (typeof window === 'undefined') return false
   if (window.location.search.includes('demo=1')) return true
@@ -203,6 +219,7 @@ interface DebugEventItem {
 }
 
 type OnboardingConfigStatus = 'idle' | 'loading' | 'ready' | 'compat' | 'error'
+type RuntimeBootstrapStatus = 'idle' | 'loading' | 'ready' | 'compat' | 'error'
 
 function formatDebugTime(ts: number): string {
   const date = new Date(ts)
@@ -215,6 +232,22 @@ function formatDebugTime(ts: number): string {
 function formatMs(value: number | null | undefined): string {
   if (value == null || !Number.isFinite(value)) return 'n/a'
   return `${Math.round(value)}ms`
+}
+
+function isRuntimeBootstrapResponse(
+  value: unknown,
+): value is RuntimeBootstrapResponse {
+  if (typeof value !== 'object' || value === null) return false
+  const data = value as Partial<RuntimeBootstrapResponse> & Record<string, unknown>
+  return (
+    typeof data.apiVersion === 'string' &&
+    typeof data.tenantId === 'string' &&
+    typeof data.companyId === 'string' &&
+    typeof data.industryTemplateId === 'string' &&
+    typeof data.industry === 'string' &&
+    typeof data.voice === 'string' &&
+    Array.isArray(data.capabilities)
+  )
 }
 
 function App() {
@@ -237,6 +270,9 @@ function App() {
   const [onboardingConfigStatus, setOnboardingConfigStatus] =
     useState<OnboardingConfigStatus>('idle')
   const [onboardingConfigError, setOnboardingConfigError] = useState<string | null>(null)
+  const [runtimeBootstrapStatus, setRuntimeBootstrapStatus] =
+    useState<RuntimeBootstrapStatus>('idle')
+  const [runtimeBootstrapError, setRuntimeBootstrapError] = useState<string | null>(null)
   const [onboardingReloadNonce, setOnboardingReloadNonce] = useState(0)
   const userId = 'demo-user'
   const [sessionId, setSessionId] = useState<string>(() => createClientSessionId())
@@ -251,6 +287,8 @@ function App() {
         parseStoredIndustry(window.localStorage.getItem(INDUSTRY_STORAGE_KEY)),
     )
   })
+  const [manualOnboardingOverride, setManualOnboardingOverride] =
+    useState(readForceOnboardingSelection)
   const [debugOpen, setDebugOpen] = useState(() => import.meta.env.DEV)
   const [debugEvents, setDebugEvents] = useState<DebugEventItem[]>([])
   const [playbackStats, setPlaybackStats] = useState<PlaybackStats | null>(null)
@@ -261,10 +299,20 @@ function App() {
   const activeIndustry = industry ?? 'electronics'
   const demoModeEnabled = useMemo(() => readDemoModeFlag(), [])
   const transportMode = useMemo(() => resolveTransportMode(), [])
+  const endUserOnboardingEnabled =
+    String(import.meta.env.VITE_END_USER_ONBOARDING_ENABLED ?? '').toLowerCase() === 'true'
   const allowOnboardingCompatFallback =
     import.meta.env.DEV ||
     demoModeEnabled ||
     String(import.meta.env.VITE_ONBOARDING_COMPAT_FALLBACK ?? '').toLowerCase() === 'true'
+  const forceManualOnboarding = endUserOnboardingEnabled || manualOnboardingOverride
+  const showRuntimeBootstrapLoading = !forceManualOnboarding && runtimeBootstrapStatus === 'loading'
+  const showRuntimeBootstrapError =
+    !forceManualOnboarding &&
+    runtimeBootstrapStatus === 'error' &&
+    !allowOnboardingCompatFallback
+  const canRenderOnboardingSelection =
+    forceManualOnboarding || runtimeBootstrapStatus === 'compat' || runtimeBootstrapStatus === 'idle'
   const tenantId = tenantSelection ?? String(import.meta.env.VITE_TENANT_ID ?? 'public')
   const templates = onboardingConfig?.templates ?? null
   const companies = onboardingConfig?.companies ?? null
@@ -458,6 +506,96 @@ function App() {
   )
 
   useEffect(() => {
+    if (forceManualOnboarding) {
+      setRuntimeBootstrapStatus('compat')
+      setRuntimeBootstrapError(null)
+      return
+    }
+    let disposed = false
+    const controller = new AbortController()
+
+    async function loadRuntimeBootstrap() {
+      setRuntimeBootstrapStatus('loading')
+      setRuntimeBootstrapError(null)
+      try {
+        const response = await fetch(
+          `/api/v1/runtime/bootstrap?tenantId=${encodeURIComponent(tenantId)}`,
+          {
+            signal: controller.signal,
+            headers: { Accept: 'application/json' },
+          },
+        )
+        const payload =
+          response.headers.get('content-type')?.includes('application/json') === true
+            ? ((await response.json()) as Record<string, unknown>)
+            : null
+
+        if (!response.ok) {
+          if (disposed) return
+          const message =
+            (payload?.error as string | undefined) ??
+            `Runtime bootstrap request failed (${response.status})`
+          setRuntimeBootstrapError(message)
+          setRuntimeBootstrapStatus(allowOnboardingCompatFallback ? 'compat' : 'error')
+          return
+        }
+
+        if (!isRuntimeBootstrapResponse(payload)) {
+          if (disposed) return
+          setRuntimeBootstrapError('Invalid runtime bootstrap payload')
+          setRuntimeBootstrapStatus(allowOnboardingCompatFallback ? 'compat' : 'error')
+          return
+        }
+
+        const bootstrap = payload
+        if (disposed) return
+        const nextTemplate =
+          (bootstrap.industryTemplateId && bootstrap.industryTemplateId.trim()) ||
+          (bootstrap.industry && bootstrap.industry.trim()) ||
+          'electronics'
+        const nextCompany = bootstrap.companyId?.trim() || ''
+        const nextTenant = bootstrap.tenantId?.trim() || tenantId
+
+        setIndustry(nextTemplate)
+        setCompanySelection(nextCompany || null)
+        setTenantSelection(nextTenant)
+        setStartupSelectionPromptOpen(false)
+        setRuntimeBootstrapStatus('ready')
+        setRuntimeBootstrapError(null)
+
+        if (typeof window !== 'undefined') {
+          window.localStorage.setItem(INDUSTRY_STORAGE_KEY, nextTemplate)
+          window.localStorage.setItem(TEMPLATE_STORAGE_KEY, nextTemplate)
+          if (nextCompany) {
+            window.localStorage.setItem(COMPANY_STORAGE_KEY, nextCompany)
+          } else {
+            window.localStorage.removeItem(COMPANY_STORAGE_KEY)
+          }
+          window.localStorage.setItem(TENANT_STORAGE_KEY, nextTenant)
+        }
+      } catch {
+        if (disposed) return
+        setRuntimeBootstrapError('Unable to initialize runtime setup')
+        setRuntimeBootstrapStatus(allowOnboardingCompatFallback ? 'compat' : 'error')
+      }
+    }
+
+    void loadRuntimeBootstrap()
+    return () => {
+      disposed = true
+      controller.abort()
+    }
+  }, [
+    allowOnboardingCompatFallback,
+    forceManualOnboarding,
+    onboardingReloadNonce,
+    tenantId,
+  ])
+
+  useEffect(() => {
+    const shouldLoadOnboardingConfig = canRenderOnboardingSelection
+    if (!shouldLoadOnboardingConfig) return
+
     let disposed = false
     const controller = new AbortController()
 
@@ -494,7 +632,12 @@ function App() {
       disposed = true
       controller.abort()
     }
-  }, [allowOnboardingCompatFallback, onboardingReloadNonce, tenantId])
+  }, [
+    allowOnboardingCompatFallback,
+    canRenderOnboardingSelection,
+    onboardingReloadNonce,
+    tenantId,
+  ])
 
   useEffect(() => {
     if (!onboardingConfig || !industry || companySelection) return
@@ -758,6 +901,8 @@ function App() {
   )
 
   const handleOnboardingComplete = useCallback((selection: { templateId: string; companyId: string }) => {
+    setManualOnboardingOverride(false)
+    setForceOnboardingSelection(false)
     setIndustry(selection.templateId)
     setCompanySelection(selection.companyId)
     setTenantSelection(tenantId)
@@ -805,11 +950,15 @@ function App() {
   }, [socket.clearMessages])
 
   const handleContinueWithLastSetup = useCallback(() => {
+    setManualOnboardingOverride(false)
+    setForceOnboardingSelection(false)
     setStartupSelectionPromptOpen(false)
     setCallError(null)
   }, [])
 
   const handleStartFreshCall = useCallback(() => {
+    setManualOnboardingOverride(false)
+    setForceOnboardingSelection(false)
     if (isConnected || socket.state === 'connecting' || socket.state === 'reconnecting') {
       socket.sendActivityEnd()
       if (!demoModeEnabled) {
@@ -830,6 +979,8 @@ function App() {
   ])
 
   const handleReselectIndustry = useCallback(() => {
+    setManualOnboardingOverride(true)
+    setForceOnboardingSelection(true)
     if (isConnected || socket.state === 'connecting' || socket.state === 'reconnecting') {
       socket.sendActivityEnd()
       if (!demoModeEnabled) {
@@ -863,6 +1014,43 @@ function App() {
         {!industry ? (
           <main className="mt-3 grid min-h-0 flex-1 overflow-y-auto pb-1 sm:mt-4 sm:pb-0">
             <div className="mx-auto flex w-full max-w-3xl flex-col gap-3">
+              {showRuntimeBootstrapLoading ? (
+                <section className="panel-glass w-full px-4 py-5 sm:px-7 sm:py-8">
+                  <p className="text-[0.58rem] text-muted-foreground uppercase tracking-[0.24em] sm:text-[0.64rem] sm:tracking-[0.3em]">
+                    Runtime Setup
+                  </p>
+                  <h1 className="mt-2 font-display text-white text-xl leading-tight sm:text-3xl">
+                    Preparing your workspace
+                  </h1>
+                  <p className="mt-2 max-w-2xl text-muted-foreground text-xs leading-relaxed sm:text-sm">
+                    Loading company and industry configuration.
+                  </p>
+                </section>
+              ) : null}
+
+              {showRuntimeBootstrapError ? (
+                <section className="panel-glass w-full px-4 py-5 sm:px-7 sm:py-8">
+                  <p className="text-[0.58rem] text-muted-foreground uppercase tracking-[0.24em] sm:text-[0.64rem] sm:tracking-[0.3em]">
+                    Runtime Setup
+                  </p>
+                  <h1 className="mt-2 font-display text-white text-xl leading-tight sm:text-3xl">
+                    Runtime Setup Unavailable
+                  </h1>
+                  <p className="mt-2 max-w-2xl text-muted-foreground text-xs leading-relaxed sm:text-sm">
+                    {runtimeBootstrapError ?? 'Unable to initialize runtime configuration.'}
+                  </p>
+                  <div className="mt-6 flex justify-stretch sm:justify-end">
+                    <button
+                      type="button"
+                      onClick={handleRetryOnboardingConfig}
+                      className="w-full rounded-full border border-primary/50 bg-primary/10 px-5 py-2.5 font-semibold text-primary text-sm transition hover:bg-primary/15 sm:w-auto sm:py-2"
+                    >
+                      Retry
+                    </button>
+                  </div>
+                </section>
+              ) : null}
+
               {onboardingConfigStatus === 'compat' ? (
                 <div className="panel-glass px-4 py-3 text-xs text-muted-foreground sm:px-5">
                   Using local compatibility onboarding because backend onboarding config is
@@ -893,13 +1081,17 @@ function App() {
                   </div>
                 </section>
               ) : (
-                <IndustryOnboarding
-                  templates={templates ?? undefined}
-                  companies={companies ?? undefined}
-                  defaultTemplateId={onboardingConfig?.defaults.templateId ?? industry}
-                  defaultCompanyId={onboardingConfig?.defaults.companyId ?? companySelection}
-                  onComplete={handleOnboardingComplete}
-                />
+                <>
+                  {canRenderOnboardingSelection ? (
+                    <IndustryOnboarding
+                      templates={templates ?? undefined}
+                      companies={companies ?? undefined}
+                      defaultTemplateId={onboardingConfig?.defaults.templateId ?? industry}
+                      defaultCompanyId={onboardingConfig?.defaults.companyId ?? companySelection}
+                      onComplete={handleOnboardingComplete}
+                    />
+                  ) : null}
+                </>
               )}
             </div>
           </main>

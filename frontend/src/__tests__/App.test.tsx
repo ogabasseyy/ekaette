@@ -72,6 +72,7 @@ async function dismissStartupSelectionPromptIfPresent() {
 }
 
 const INDUSTRY_STORAGE_KEY = 'ekaette:onboarding:industry'
+const FORCE_ONBOARDING_SELECTION_KEY = 'ekaette:onboarding:forceSelection'
 
 describe('App', () => {
   beforeEach(() => {
@@ -91,12 +92,81 @@ describe('App', () => {
     vi.restoreAllMocks()
   })
 
-  it('renders IndustryOnboarding when no industry in localStorage', () => {
+  it('renders runtime bootstrap loading state when no industry in localStorage', () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
+      return await new Promise<Response>(() => {})
+    })
     render(<App />)
+    expect(screen.getByText('Preparing your workspace')).toBeInTheDocument()
+  })
+
+  it('applies runtime bootstrap response and skips onboarding', async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            apiVersion: 'v1',
+            tenantId: 'public',
+            companyId: 'ekaette-telecom',
+            industryTemplateId: 'telecom',
+            industry: 'telecom',
+            voice: 'Charon',
+            capabilities: ['policy_qa'],
+            onboardingRequired: false,
+            sessionPolicy: {
+              industryLocked: true,
+              companyLocked: true,
+              switchRequiresDisconnect: true,
+            },
+          }),
+          {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          },
+        ),
+      )
+
+    render(<App />)
+
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/v1/runtime/bootstrap?tenantId=public',
+      expect.objectContaining({
+        headers: { Accept: 'application/json' },
+      }),
+    )
+    expect(screen.queryByText('Choose Your Service Industry')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /start call/i })).toBeInTheDocument()
+  })
+
+  it('falls back to compatibility onboarding when runtime bootstrap fails', async () => {
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('network down'))
+
+    render(<App />)
+
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
     expect(screen.getByText('Choose Your Service Industry')).toBeInTheDocument()
+    expect(
+      screen.getByText(
+        'Using local compatibility onboarding because backend onboarding config is unavailable.',
+      ),
+    ).toBeInTheDocument()
   })
 
   it('renders main layout after industry is stored', () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
+      return await new Promise<Response>(() => {})
+    })
     window.localStorage.setItem(INDUSTRY_STORAGE_KEY, 'electronics')
     render(<App />)
     expect(screen.getByText(/Continue with your last workspace\?/i)).toBeInTheDocument()
@@ -118,6 +188,81 @@ describe('App', () => {
     expect(window.localStorage.getItem('ekaette:onboarding:industry')).toBeNull()
     expect(window.localStorage.getItem('ekaette:onboarding:templateId')).toBeNull()
     expect(window.localStorage.getItem('ekaette:onboarding:companyId')).toBeNull()
+  })
+
+  it('keeps onboarding open when re-select happens before bootstrap response returns', async () => {
+    window.localStorage.setItem(INDUSTRY_STORAGE_KEY, 'electronics')
+    window.localStorage.setItem('ekaette:onboarding:templateId', 'electronics')
+    window.localStorage.setItem('ekaette:onboarding:companyId', 'ekaette-electronics')
+
+    let resolveBootstrap: ((response: Response) => void) | null = null
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async input => {
+      const url = String(input)
+      if (url.startsWith('/api/v1/runtime/bootstrap')) {
+        return await new Promise<Response>(resolve => {
+          resolveBootstrap = resolve
+        })
+      }
+      if (url.startsWith('/api/onboarding/config')) {
+        return new Response('unavailable', { status: 503 })
+      }
+      throw new Error(`Unexpected fetch URL: ${url}`)
+    })
+
+    render(<App />)
+    const resetButton = screen.getByRole('button', { name: /re-select industry/i })
+    await act(async () => {
+      resetButton.click()
+    })
+
+    await act(async () => {
+      resolveBootstrap?.(
+        new Response(
+          JSON.stringify({
+            apiVersion: 'v1',
+            tenantId: 'public',
+            companyId: 'ekaette-electronics',
+            industryTemplateId: 'electronics',
+            industry: 'electronics',
+            voice: 'Aoede',
+            capabilities: ['catalog_search'],
+            onboardingRequired: false,
+            sessionPolicy: {
+              industryLocked: true,
+              companyLocked: true,
+              switchRequiresDisconnect: true,
+            },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+      )
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/v1/runtime/bootstrap?tenantId=public',
+      expect.objectContaining({ headers: { Accept: 'application/json' } }),
+    )
+    expect(screen.getByText('Choose Your Service Industry')).toBeInTheDocument()
+    expect(window.localStorage.getItem('ekaette:onboarding:industry')).toBeNull()
+  })
+
+  it('respects persisted force-selection flag after refresh', async () => {
+    window.localStorage.setItem(FORCE_ONBOARDING_SELECTION_KEY, '1')
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+
+    render(<App />)
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(screen.getByText('Choose Your Service Industry')).toBeInTheDocument()
+    expect(fetchMock).not.toHaveBeenCalledWith(
+      expect.stringContaining('/api/v1/runtime/bootstrap'),
+      expect.anything(),
+    )
   })
 
   it('includes company_id in WebSocket URL when connecting', async () => {

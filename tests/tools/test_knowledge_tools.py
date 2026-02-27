@@ -229,6 +229,14 @@ class TestQueryCompanySystem:
                         "crm": {
                             "provider": "salesforce",
                             "secret_ref": "projects/demo/secrets/sf/versions/latest",
+                            "runtime_policy": {
+                                "timeoutSeconds": 2.0,
+                                "maxRetries": 1,
+                                "allowedHosts": ["api.salesforce.com"],
+                            },
+                            "config": {
+                                "endpoint": "https://api.salesforce.com/services/data",
+                            },
                         }
                     }
                 },
@@ -238,6 +246,57 @@ class TestQueryCompanySystem:
         result = await query_company_system("crm", "lookup_guest", tool_context=ctx)
         assert "error" in result
         assert result["provider"] == "salesforce"
+        assert result["code"] == "CONNECTOR_PROVIDER_NOT_IMPLEMENTED"
+
+    @pytest.mark.asyncio
+    async def test_non_mock_provider_without_runtime_policy_fails_closed(self):
+        from app.tools.knowledge_tools import query_company_system
+
+        ctx = _tool_context_with_state(
+            {
+                "app:company_id": "acme-hotel",
+                "app:company_profile": {
+                    "system_connectors": {
+                        "crm": {
+                            "provider": "salesforce",
+                            "secret_ref": "projects/demo/secrets/sf/versions/latest",
+                        }
+                    }
+                },
+            }
+        )
+
+        result = await query_company_system("crm", "lookup_guest", tool_context=ctx)
+        assert result["code"] == "CONNECTOR_RUNTIME_POLICY_MISSING"
+
+    @pytest.mark.asyncio
+    async def test_non_mock_provider_enforces_egress_allowlist(self):
+        from app.tools.knowledge_tools import query_company_system
+
+        ctx = _tool_context_with_state(
+            {
+                "app:company_id": "acme-hotel",
+                "app:company_profile": {
+                    "system_connectors": {
+                        "crm": {
+                            "provider": "salesforce",
+                            "secret_ref": "projects/demo/secrets/sf/versions/latest",
+                            "runtime_policy": {
+                                "timeoutSeconds": 2.0,
+                                "maxRetries": 1,
+                                "allowedHosts": ["api.salesforce.com"],
+                            },
+                            "config": {
+                                "endpoint": "https://evil.example.com/api",
+                            },
+                        }
+                    }
+                },
+            }
+        )
+
+        result = await query_company_system("crm", "lookup_guest", tool_context=ctx)
+        assert result["code"] == "CONNECTOR_EGRESS_HOST_NOT_ALLOWED"
 
     @pytest.mark.asyncio
     async def test_prefers_connector_manifest_over_profile_connectors(self):

@@ -222,3 +222,20 @@ export interface OnboardingConfigResponse {
   companies: OnboardingCompanyMeta[]
   defaults: { templateId: IndustryTemplateId; companyId: CompanyId }
 }
+
+export interface RuntimeBootstrapResponse {
+  apiVersion: 'v1'
+  tenantId: string
+  companyId: string
+  industryTemplateId: string
+  industry: string
+  voice: string
+  capabilities: string[]
+  registryVersion?: string
+  onboardingRequired: boolean
+  sessionPolicy: {
+    industryLocked: boolean
+    companyLocked: boolean
+    switchRequiresDisconnect: boolean
+  }
+}

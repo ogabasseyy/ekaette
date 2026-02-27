@@ -7,6 +7,10 @@ import re
 from typing import Any
 
 from google.adk.tools.tool_context import ToolContext
+from app.configs.host_allowlist import (
+    extract_connector_endpoint_host,
+    host_matches_allowlist,
+)
 
 
 def _profile_from_state(tool_context: ToolContext | None) -> dict[str, Any]:
@@ -375,4 +379,90 @@ def _dispatch_connector(
             "code": "CONNECTOR_SECRET_REF_MISSING",
         }
 
-    return None
+    runtime_policy = connector.get("runtime_policy")
+    if not isinstance(runtime_policy, dict):
+        return {
+            "error": (
+                f"Connector '{system}' provider '{provider}' is missing runtime_policy."
+            ),
+            "company_id": company_id,
+            "system": system,
+            "action": action,
+            "provider": provider,
+            "code": "CONNECTOR_RUNTIME_POLICY_MISSING",
+        }
+
+    timeout_seconds_raw = runtime_policy.get("timeoutSeconds")
+    max_retries_raw = runtime_policy.get("maxRetries")
+    try:
+        timeout_seconds = float(timeout_seconds_raw)
+    except (TypeError, ValueError):
+        timeout_seconds = 0.0
+    try:
+        max_retries = int(max_retries_raw)
+    except (TypeError, ValueError):
+        max_retries = -1
+
+    if timeout_seconds <= 0 or max_retries < 0:
+        return {
+            "error": (
+                f"Connector '{system}' provider '{provider}' has invalid runtime_policy."
+            ),
+            "company_id": company_id,
+            "system": system,
+            "action": action,
+            "provider": provider,
+            "code": "CONNECTOR_RUNTIME_POLICY_INVALID",
+            "runtime_policy": runtime_policy,
+        }
+
+    allowed_hosts = runtime_policy.get("allowedHosts")
+    normalized_allowed_hosts = (
+        [str(item).strip().lower() for item in allowed_hosts if str(item).strip()]
+        if isinstance(allowed_hosts, list)
+        else []
+    )
+    if normalized_allowed_hosts:
+        endpoint_host = extract_connector_endpoint_host(connector)
+        if not endpoint_host:
+            return {
+                "error": (
+                    f"Connector '{system}' provider '{provider}' requires endpoint host configuration."
+                ),
+                "company_id": company_id,
+                "system": system,
+                "action": action,
+                "provider": provider,
+                "code": "CONNECTOR_EGRESS_HOST_REQUIRED",
+                "allowed_hosts": normalized_allowed_hosts,
+            }
+        if not host_matches_allowlist(endpoint_host, normalized_allowed_hosts):
+            return {
+                "error": (
+                    f"Connector '{system}' provider '{provider}' endpoint host is not allowed."
+                ),
+                "company_id": company_id,
+                "system": system,
+                "action": action,
+                "provider": provider,
+                "code": "CONNECTOR_EGRESS_HOST_NOT_ALLOWED",
+                "endpoint_host": endpoint_host,
+                "allowed_hosts": normalized_allowed_hosts,
+            }
+
+    return {
+        "error": (
+            f"Provider '{provider}' is not implemented for connector '{system}'. "
+            "Use provider='mock' for now."
+        ),
+        "company_id": company_id,
+        "system": system,
+        "action": action,
+        "provider": provider,
+        "code": "CONNECTOR_PROVIDER_NOT_IMPLEMENTED",
+        "runtime_policy": {
+            "timeoutSeconds": timeout_seconds,
+            "maxRetries": max_retries,
+            "allowedHosts": normalized_allowed_hosts,
+        },
+    }

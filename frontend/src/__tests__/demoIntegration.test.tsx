@@ -1,7 +1,6 @@
 import { act, render, screen } from '@testing-library/react'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from '../App'
-import { ELECTRONICS_DEMO_STEPS } from '../utils/mockData'
 
 // Pre-warm dynamic imports so React.lazy resolves immediately under fake timers
 beforeAll(async () => {

@@ -32,6 +32,7 @@ load_dotenv()
 from app.agents.ekaette_router.agent import ekaette_router  # noqa: E402
 from app.agents.tool_scheduling import install_tool_response_scheduling_patch  # noqa: E402
 from app.api.v1.admin import admin_router  # noqa: E402
+from app.api.v1.at import at_router  # noqa: E402
 from app.api.v1.admin import settings as admin_settings  # noqa: E402
 from app.api.v1.admin.auth import _extract_admin_auth_context  # noqa: E402
 from app.api.v1.admin.service_companies import _resolve_company_for_bootstrap  # noqa: E402
@@ -777,6 +778,7 @@ async def get_runtime_bootstrap(request: Request):
 
 
 app.include_router(admin_router)
+app.include_router(at_router)
 
 
 
