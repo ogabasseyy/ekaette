@@ -7,7 +7,9 @@ import json
 import logging
 import os
 import re
+import sys
 import time
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import warnings
@@ -17,6 +19,7 @@ from fastapi import FastAPI, File, Request, UploadFile, WebSocket, WebSocketDisc
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
+
 from google import genai
 from google.adk.agents.live_request_queue import LiveRequestQueue
 from google.adk.agents.run_config import RunConfig, StreamingMode
@@ -28,6 +31,19 @@ load_dotenv()
 
 from app.agents.ekaette_router.agent import ekaette_router  # noqa: E402
 from app.agents.tool_scheduling import install_tool_response_scheduling_patch  # noqa: E402
+from app.api.v1.admin import admin_router  # noqa: E402
+from app.api.v1.admin import settings as admin_settings  # noqa: E402
+from app.api.v1.admin.auth import _extract_admin_auth_context  # noqa: E402
+from app.api.v1.admin.service_companies import _resolve_company_for_bootstrap  # noqa: E402
+from app.api.v1.admin.shared import (  # noqa: E402
+    build_admin_observability_fields,
+    format_observability_fields,
+    sync_runtime_clients as sync_admin_runtime_clients,
+)
+from app.api.v1.public import core_helpers as public_core  # noqa: E402
+from app.api.v1.public import http_endpoints as public_http  # noqa: E402
+from app.api.v1.public import settings as public_settings  # noqa: E402
+from app.api.v1.realtime import ws_stream as realtime_ws  # noqa: E402
 from app.configs import RegistrySchemaVersionError  # noqa: E402
 from app.configs.company_loader import (  # noqa: E402
     build_company_session_state,
@@ -41,7 +57,12 @@ from app.configs.industry_loader import (  # noqa: E402
     create_industry_config_client,
     load_industry_config,
 )
+from app.configs.host_allowlist import (  # noqa: E402
+    extract_connector_endpoint_host,
+    host_matches_allowlist,
+)
 from app.configs.model_resolver import get_live_model_candidates  # noqa: E402
+from app.configs.compaction_factory import create_app as create_adk_app  # noqa: E402
 from app.configs.session_factory import create_session_service, get_effective_app_name  # noqa: E402
 from app.memory.memory_factory import create_memory_service  # noqa: E402
 from app.observability import registry_log_context  # noqa: E402
@@ -67,56 +88,82 @@ APP_NAME = os.getenv("APP_NAME", "ekaette")
 # For ADK session operations — maps to Agent Engine ID when using vertex backend.
 SESSION_APP_NAME = get_effective_app_name()
 
-app = FastAPI(title="Ekaette")
+session_service = None
+industry_config_client = None
+company_config_client = None
+memory_service = None
+runner = None
+TOKEN_CLIENT = None
+_PUBLIC_RUNTIME_WIRED = False
+_REALTIME_RUNTIME_WIRED = False
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global session_service, industry_config_client, company_config_client, memory_service, runner, TOKEN_CLIENT
+
+    if session_service is None:
+        session_service = create_session_service()
+    if industry_config_client is None:
+        industry_config_client = create_industry_config_client()
+    if company_config_client is None:
+        company_config_client = create_company_config_client()
+    if memory_service is None:
+        memory_service = create_memory_service()
+    if runner is None:
+        adk_app = create_adk_app(name=SESSION_APP_NAME, root_agent=ekaette_router)
+        runner = Runner(
+            app=adk_app,
+            session_service=session_service,
+            memory_service=memory_service,
+        )
+    app.state.session_service = session_service
+    app.state.industry_config_client = industry_config_client
+    app.state.company_config_client = company_config_client
+    app.state.memory_service = memory_service
+    app.state.runner = runner
+    app.state.token_client = TOKEN_CLIENT
+    sync_admin_runtime_clients(
+        industry_client=industry_config_client,
+        company_client=company_config_client,
+    )
+    # Prime runtime wiring at startup when sync mode resolves to startup.
+    _sync_public_runtime()
+    _sync_realtime_runtime()
+    yield
+
+
+app = FastAPI(title="Ekaette", lifespan=lifespan)
 
 
 def _parse_allowlist(raw_origins: str) -> list[str]:
-    """Parse comma-delimited origins into a clean list."""
-    return [origin.strip() for origin in raw_origins.split(",") if origin.strip()]
+    return public_core.parse_allowlist(raw_origins)
 
 
 # ═══ CORS Middleware — explicit allowlist, no wildcard ═══
-ALLOWED_ORIGINS = _parse_allowlist(
-    os.getenv(
-        "ALLOWED_ORIGINS",
-        "http://localhost:5173,http://127.0.0.1:5173,http://localhost:8000,http://127.0.0.1:8000",
-    )
-)
-ALLOWED_ORIGIN_SET = set(ALLOWED_ORIGINS)
+ALLOWED_ORIGINS = list(public_settings.ALLOWED_ORIGINS)
+ALLOWED_ORIGIN_SET = set(public_settings.ALLOWED_ORIGIN_SET)
 
 
 def _is_origin_allowed(origin: str | None) -> bool:
-    """Validate HTTP Origin against explicit allowlist.
-
-    Returns True when origin is None (same-origin fetch proxied by Vite/nginx
-    won't carry an Origin header — only cross-origin browser requests do).
-    """
-    if origin is None:
-        return True
-    return origin in ALLOWED_ORIGIN_SET
+    return public_core.is_origin_allowed(origin, ALLOWED_ORIGIN_SET)
 
 
 def _is_websocket_origin_allowed(origin: str | None) -> bool:
-    """Validate WebSocket Origin with a stricter policy than HTTP endpoints.
-
-    Browsers usually send Origin for WebSocket handshakes. Missing Origin is
-    rejected by default in production, but can be allowed explicitly for
-    non-browser clients or reverse-proxy environments.
-    """
-    if origin is None:
-        return bool(globals().get("ALLOW_MISSING_WS_ORIGIN", False))
-    return origin in ALLOWED_ORIGIN_SET
+    return public_core.is_websocket_origin_allowed(
+        origin,
+        ALLOWED_ORIGIN_SET,
+        allow_missing_ws_origin=bool(globals().get("ALLOW_MISSING_WS_ORIGIN", False)),
+    )
 
 
 # Regex pattern for characters that enable log injection (newlines + control chars).
 _LOG_UNSAFE_RE = re.compile(r"[\r\n\x00-\x1f\x7f]")
+_WS_PATH_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 
 
 def _sanitize_log(value: str | None) -> str:
-    """Strip newlines and control characters from user-supplied values before logging."""
-    if value is None:
-        return "<none>"
-    return _LOG_UNSAFE_RE.sub("", value)[:200]
+    return public_core.sanitize_log(value, _LOG_UNSAFE_RE)
 
 app.add_middleware(
     CORSMiddleware,
@@ -125,6 +172,81 @@ app.add_middleware(
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["Content-Type", "Authorization"],
 )
+
+
+@app.middleware("http")
+async def admin_auth_middleware(request: Request, call_next):
+    is_admin_path = request.url.path.startswith("/api/v1/admin/")
+    tenant_id = ""
+    path_parts: list[str] = []
+    company_id = ""
+    if is_admin_path:
+        tenant_id = _normalize_tenant_id(
+            request.query_params.get("tenantId"),
+            default=_normalize_tenant_id(request.headers.get("x-tenant-id"), default="public"),
+        )
+        path_parts = request.url.path.strip("/").split("/")
+        company_id = path_parts[4] if len(path_parts) >= 5 and path_parts[3] == "companies" else ""
+    if is_admin_path:
+        context, error_response = _extract_admin_auth_context(request)
+        if error_response:
+            result_code = ""
+            try:
+                raw_body = getattr(error_response, "body", b"")
+                if isinstance(raw_body, (bytes, bytearray)) and raw_body:
+                    parsed = json.loads(raw_body.decode("utf-8"))
+                    if isinstance(parsed, dict) and isinstance(parsed.get("code"), str):
+                        result_code = parsed["code"]
+            except Exception:
+                result_code = ""
+            fields = build_admin_observability_fields(
+                tenant_id=tenant_id,
+                company_id=company_id or None,
+                industry_template_id=None,
+                route=request.url.path,
+                method=request.method,
+                auth_mode=admin_settings.ADMIN_AUTH_MODE,
+                idempotency_scope=f"{request.method.lower()}:{request.url.path}",
+                idempotency_state="fresh",
+                result_code=result_code,
+                status_code=error_response.status_code,
+            )
+            logger.info("admin_request %s", format_observability_fields(fields))
+            return error_response
+        if context is not None:
+            request.state.admin_auth_context = context
+
+    response = await call_next(request)
+
+    if is_admin_path:
+        idempotency_state = (
+            "replayed" if response.headers.get("Idempotency-Replayed") == "true" else "fresh"
+        )
+        idempotency_scope = f"{request.method.lower()}:{request.url.path}"
+        result_code = ""
+        try:
+            raw_body = getattr(response, "body", b"")
+            if isinstance(raw_body, (bytes, bytearray)) and raw_body:
+                parsed = json.loads(raw_body.decode("utf-8"))
+                if isinstance(parsed, dict) and isinstance(parsed.get("code"), str):
+                    result_code = parsed["code"]
+        except Exception:
+            result_code = ""
+        fields = build_admin_observability_fields(
+            tenant_id=tenant_id,
+            company_id=company_id or None,
+            industry_template_id=None,
+            route=request.url.path,
+            method=request.method,
+            auth_mode=admin_settings.ADMIN_AUTH_MODE,
+            idempotency_scope=idempotency_scope,
+            idempotency_state=idempotency_state,
+            result_code=result_code,
+            status_code=response.status_code,
+        )
+        logger.info("admin_request %s", format_observability_fields(fields))
+
+    return response
 
 
 class TokenRequestPayload(BaseModel):
@@ -151,15 +273,8 @@ class TokenRequestPayload(BaseModel):
 
 
 # Upload security constraints
-MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_BYTES", str(10 * 1024 * 1024)))
-ALLOWED_UPLOAD_MIME_TYPES = set(
-    _parse_allowlist(
-        os.getenv(
-            "ALLOWED_UPLOAD_MIME_TYPES",
-            "image/jpeg,image/png,image/webp,image/heic,image/heif",
-        )
-    )
-)
+MAX_UPLOAD_BYTES = public_settings.MAX_UPLOAD_BYTES
+ALLOWED_UPLOAD_MIME_TYPES = set(public_settings.ALLOWED_UPLOAD_MIME_TYPES)
 
 
 def _validate_upload_bytes(mime_type: str, data: bytes) -> None:
@@ -190,31 +305,21 @@ def _extract_server_message_from_state_delta(
 
 
 def _usage_int(usage: object, *names: str) -> int:
-    """Extract positive integer token counts from usage metadata shapes."""
-    for name in names:
-        value = getattr(usage, name, None)
-        if isinstance(value, (int, float)) and value > 0:
-            return int(value)
-    return 0
+    return public_core.usage_int(usage, *names)
 
 
 def _voice_for_industry(industry: str) -> str:
-    voice_map = {
-        "electronics": "Aoede",
-        "hotel": "Puck",
-        "automotive": "Charon",
-        "fashion": "Kore",
-    }
-    key = (industry or "").strip().lower()
-    return voice_map.get(key, "Aoede")
+    return public_core.voice_for_industry(industry)
 
 
 DEFAULT_COMPANY_ID = (
-    os.getenv("DEFAULT_COMPANY_ID", "default").strip().lower() or "default"
+    public_settings.DEFAULT_COMPANY_ID
 )
 _COMPANY_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]{1,63}$")
 _TENANT_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]{1,63}$")
 _TEMPLATE_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]{1,127}$")
+_CONNECTOR_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]{1,79}$")
+KNOWLEDGE_IMPORT_MAX_BYTES = public_settings.KNOWLEDGE_IMPORT_MAX_BYTES
 
 
 def _normalize_company_id(raw_value: object) -> str:
@@ -253,31 +358,39 @@ def _normalize_template_id(raw_value: object) -> str | None:
     return normalized
 
 
+def _normalize_company_id_strict(raw_value: object) -> str | None:
+    """Sanitize company ID without default fallback (for strict API paths)."""
+    if not isinstance(raw_value, str):
+        return None
+    normalized = raw_value.strip().lower()
+    if not normalized:
+        return None
+    if not _COMPANY_ID_PATTERN.fullmatch(normalized):
+        return None
+    return normalized
+
+
+def _normalize_connector_id(raw_value: object) -> str | None:
+    if not isinstance(raw_value, str):
+        return None
+    normalized = raw_value.strip().lower()
+    if not normalized:
+        return None
+    if not _CONNECTOR_ID_PATTERN.fullmatch(normalized):
+        return None
+    return normalized
+
+
 def _native_audio_live_config(
     industry: str,
     voice_override: str | None = None,
 ) -> dict[str, object]:
-    """Shared native-audio config used by token and websocket paths."""
-    voice = voice_override if voice_override else _voice_for_industry(industry)
-    return {
-        "response_modalities": ["AUDIO"],
-        "input_audio_transcription": types.AudioTranscriptionConfig(),
-        "output_audio_transcription": types.AudioTranscriptionConfig(),
-        "session_resumption": types.SessionResumptionConfig(),
-        "context_window_compression": types.ContextWindowCompressionConfig(
-            trigger_tokens=80000,
-            sliding_window=types.SlidingWindow(target_tokens=40000),
-        ),
-        "enable_affective_dialog": True,
-        "proactivity": types.ProactivityConfig(proactive_audio=True),
-        "speech_config": types.SpeechConfig(
-            voice_config=types.VoiceConfig(
-                prebuilt_voice_config=types.PrebuiltVoiceConfig(
-                    voice_name=voice,
-                )
-            ),
-        ),
-    }
+    return public_core.native_audio_live_config(
+        industry=industry,
+        voice_override=voice_override,
+        types_module=types,
+        voice_for_industry_fn=_voice_for_industry,
+    )
 
 
 def _registry_enabled() -> bool:
@@ -328,21 +441,10 @@ def _registry_mismatch_response(
     requested_template_id: str | None,
     resolved_template_id: str | None,
 ) -> JSONResponse | None:
-    """Return a strict mismatch response when configured to reject conflicts."""
-    if not _registry_require_company_template_match():
-        return None
-    if not requested_template_id or not resolved_template_id:
-        return None
-    if requested_template_id == resolved_template_id:
-        return None
-    return JSONResponse(
-        status_code=409,
-        content={
-            "error": "industryTemplateId does not match company configuration",
-            "code": "TEMPLATE_COMPANY_MISMATCH",
-            "requestedIndustryTemplateId": requested_template_id,
-            "resolvedIndustryTemplateId": resolved_template_id,
-        },
+    return public_core.registry_mismatch_response(
+        requested_template_id=requested_template_id,
+        resolved_template_id=resolved_template_id,
+        require_company_template_match=_registry_require_company_template_match(),
     )
 
 
@@ -351,82 +453,17 @@ def _legacy_industry_alias_from_registry_config(
     *,
     fallback: str,
 ) -> str:
-    """Derive a backward-compatible legacy industry alias from registry config.
-
-    Current frontend/runtime compatibility still expects legacy ids like
-    `electronics`, `hotel`, `automotive`, `fashion`. Future templates may use
-    more specific IDs (for example `aviation-support`), so we derive a stable
-    legacy alias without exposing broad non-legacy categories like `retail`.
-    """
-    if config is None:
-        return fallback
-
-    known_legacy = {"electronics", "hotel", "automotive", "fashion"}
-
-    explicit_alias = getattr(config, "legacy_industry_alias", None)
-    if isinstance(explicit_alias, str):
-        alias = explicit_alias.strip().lower()
-        if alias:
-            return alias
-
-    template_id = getattr(config, "industry_template_id", None)
-    if isinstance(template_id, str):
-        normalized_template = template_id.strip().lower()
-        if normalized_template in known_legacy:
-            return normalized_template
-        if "-" in normalized_template:
-            prefix = normalized_template.split("-", 1)[0].strip()
-            if prefix:
-                return prefix
-
-    category = getattr(config, "template_category", None)
-    if isinstance(category, str):
-        normalized_category = category.strip().lower()
-        if normalized_category in known_legacy:
-            return normalized_category
-        # For new verticals (for example telecom/aviation), category often *is*
-        # the desired legacy alias.
-        if normalized_category in {"telecom", "aviation"}:
-            return normalized_category
-
-    return fallback
+    return public_core.legacy_industry_alias_from_registry_config(
+        config,
+        fallback=fallback,
+    )
 
 
 def _canonical_state_updates_from_registry(config: object) -> dict[str, object]:
-    """Extract registry-derived session keys (canonical + compatibility aliases)."""
-    if config is None:
-        return {}
-
-    keys = (
-        "app:industry",
-        "app:industry_config",
-        "app:greeting",
-        "app:voice",
-        "app:tenant_id",
-        "app:industry_template_id",
-        "app:capabilities",
-        "app:enabled_agents",
-        "app:ui_theme",
-        "app:connector_manifest",
-        "app:registry_version",
-    )
-
     try:
-        from app.configs.registry_loader import build_session_state_from_registry
-
-        registry_state = build_session_state_from_registry(config)
+        return public_core.canonical_state_updates_from_registry(config)
     except Exception:
         return {}
-
-    updates = {k: registry_state[k] for k in keys if k in registry_state}
-    fallback_industry = (
-        str(getattr(config, "industry_template_id", "") or "").strip().lower() or "electronics"
-    )
-    updates["app:industry"] = _legacy_industry_alias_from_registry_config(
-        config,
-        fallback=fallback_industry,
-    )
-    return updates
 
 
 def _build_session_started_message(
@@ -438,67 +475,42 @@ def _build_session_started_message(
     manual_vad_active: bool,
     session_state: dict[str, object] | None,
 ) -> dict[str, object]:
-    """Build a consistent session_started payload for all websocket code paths."""
-    payload: dict[str, object] = {
-        "type": "session_started",
-        "sessionId": session_id,
-        "industry": industry,
-        "companyId": company_id,
-        "voice": voice,
-        "manualVadActive": manual_vad_active,
-        "vadMode": "manual" if manual_vad_active else "auto",
-    }
-    if not isinstance(session_state, dict):
-        return payload
-
-    tenant = session_state.get("app:tenant_id")
-    if isinstance(tenant, str) and tenant:
-        payload["tenantId"] = tenant
-    template_id = session_state.get("app:industry_template_id")
-    if isinstance(template_id, str) and template_id:
-        payload["industryTemplateId"] = template_id
-    caps = session_state.get("app:capabilities")
-    if isinstance(caps, list):
-        payload["capabilities"] = caps
-    registry_version = session_state.get("app:registry_version")
-    if isinstance(registry_version, str) and registry_version:
-        payload["registryVersion"] = registry_version
-    return payload
+    return public_core.build_session_started_message(
+        session_id=session_id,
+        industry=industry,
+        company_id=company_id,
+        voice=voice,
+        manual_vad_active=manual_vad_active,
+        session_state=session_state,
+    )
 
 
 def _append_canonical_lock_fields(
     payload: dict[str, object],
     session_state: dict[str, object] | None,
 ) -> dict[str, object]:
-    """Attach canonical lock metadata to lock/error responses when present."""
-    if not isinstance(session_state, dict):
-        return payload
-    tenant = session_state.get("app:tenant_id")
-    if isinstance(tenant, str) and tenant:
-        payload["tenantId"] = tenant
-    template_id = session_state.get("app:industry_template_id")
-    if isinstance(template_id, str) and template_id:
-        payload["industryTemplateId"] = template_id
-    registry_version = session_state.get("app:registry_version")
-    if isinstance(registry_version, str) and registry_version:
-        payload["registryVersion"] = registry_version
-    return payload
+    return public_core.append_canonical_lock_fields(payload, session_state)
 
 
-# ═══ Session Service ═══
-session_service = create_session_service()
-industry_config_client = create_industry_config_client()
-company_config_client = create_company_config_client()
-
-# ═══ Memory Service ═══
-memory_service = create_memory_service()
-
-# ═══ Runner ═══
-runner = Runner(
-    app_name=SESSION_APP_NAME,
-    agent=ekaette_router,
-    session_service=session_service,
-    memory_service=memory_service,
+# ═══ Session/Runner Singletons (initialized in lifespan, with test-safe fallback) ═══
+if session_service is None:
+    session_service = create_session_service()
+if industry_config_client is None:
+    industry_config_client = create_industry_config_client()
+if company_config_client is None:
+    company_config_client = create_company_config_client()
+if memory_service is None:
+    memory_service = create_memory_service()
+if runner is None:
+    _adk_app = create_adk_app(name=SESSION_APP_NAME, root_agent=ekaette_router)
+    runner = Runner(
+        app=_adk_app,
+        session_service=session_service,
+        memory_service=memory_service,
+    )
+sync_admin_runtime_clients(
+    industry_client=industry_config_client,
+    company_client=company_config_client,
 )
 
 
@@ -512,28 +524,30 @@ async def health():
 
 # ═══ Rate Limiting (simple in-memory, per-IP+endpoint) ═══
 _rate_limit_buckets: dict[str, list[float]] = {}
-TOKEN_RATE_LIMIT = int(os.getenv("TOKEN_RATE_LIMIT", "10"))  # requests/minute
-UPLOAD_RATE_LIMIT = int(os.getenv("UPLOAD_RATE_LIMIT", "20"))  # requests/minute
-RATE_LIMIT_WINDOW = int(os.getenv("RATE_LIMIT_WINDOW", "60"))  # seconds
+TOKEN_RATE_LIMIT = public_settings.TOKEN_RATE_LIMIT  # requests/minute
+UPLOAD_RATE_LIMIT = public_settings.UPLOAD_RATE_LIMIT  # requests/minute
+RATE_LIMIT_WINDOW = public_settings.RATE_LIMIT_WINDOW  # seconds
+RATE_LIMIT_MAX_BUCKETS = public_settings.RATE_LIMIT_MAX_BUCKETS
+_rate_limit_last_global_prune = 0.0
 
 
 def _check_rate_limit(client_ip: str, bucket: str, limit: int) -> bool:
-    """Return True if request is within per-IP/per-endpoint rate limit."""
-    now = time.time()
-    key = f"{bucket}:{client_ip}"
-    timestamps = _rate_limit_buckets.get(key, [])
-    timestamps = [t for t in timestamps if now - t < RATE_LIMIT_WINDOW]
-    if len(timestamps) >= limit:
-        _rate_limit_buckets[key] = timestamps
-        return False
-    timestamps.append(now)
-    _rate_limit_buckets[key] = timestamps
-    return True
+    global _rate_limit_last_global_prune
+    allowed, updated_last_prune = public_core.check_rate_limit(
+        client_ip=client_ip,
+        bucket=bucket,
+        limit=limit,
+        window_seconds=RATE_LIMIT_WINDOW,
+        max_buckets=RATE_LIMIT_MAX_BUCKETS,
+        buckets=_rate_limit_buckets,
+        last_global_prune=_rate_limit_last_global_prune,
+    )
+    _rate_limit_last_global_prune = updated_last_prune
+    return allowed
 
 
 def _client_ip_from_request(request: Request) -> str:
-    """Resolve client IP safely from FastAPI request."""
-    return request.client.host if request.client else "unknown"
+    return public_core.client_ip_from_request(request)
 
 
 def _origin_or_reject(origin: str | None, *, endpoint: str) -> JSONResponse | None:
@@ -561,46 +575,32 @@ def _tenant_allowed(tenant_id: str) -> bool:
     return not TOKEN_ALLOWED_TENANTS or tenant_id in TOKEN_ALLOWED_TENANTS
 
 
-ALLOW_MISSING_WS_ORIGIN = _env_flag("ALLOW_MISSING_WS_ORIGIN", "false")
+ALLOW_MISSING_WS_ORIGIN = public_settings.ALLOW_MISSING_WS_ORIGIN
+
 
 
 # ═══ Ephemeral Token Endpoint ═══
-GEMINI_API_KEY = os.getenv("GOOGLE_API_KEY", "")
-TOKEN_MAX_USES = int(os.getenv("TOKEN_MAX_USES", "1"))
-TOKEN_TTL_SECONDS = int(os.getenv("TOKEN_TTL_SECONDS", "300"))
-TOKEN_NEW_SESSION_TTL_SECONDS = int(
-    os.getenv("TOKEN_NEW_SESSION_TTL_SECONDS", "600")
+GEMINI_API_KEY = public_settings.GEMINI_API_KEY
+TOKEN_MAX_USES = public_settings.TOKEN_MAX_USES
+TOKEN_TTL_SECONDS = public_settings.TOKEN_TTL_SECONDS
+TOKEN_NEW_SESSION_TTL_SECONDS = public_settings.TOKEN_NEW_SESSION_TTL_SECONDS
+TOKEN_ALLOWED_TENANTS = set(public_settings.TOKEN_ALLOWED_TENANTS)
+MANUAL_VAD = public_settings.MANUAL_VAD
+AUTO_VAD_PREFIX_PADDING_MS = public_settings.AUTO_VAD_PREFIX_PADDING_MS
+AUTO_VAD_SILENCE_DURATION_MS = public_settings.AUTO_VAD_SILENCE_DURATION_MS
+SILENCE_NUDGE_SECONDS = public_settings.SILENCE_NUDGE_SECONDS
+SILENCE_NUDGE_MAX = public_settings.SILENCE_NUDGE_MAX
+SILENCE_NUDGE_BACKOFF_MULTIPLIER = public_settings.SILENCE_NUDGE_BACKOFF_MULTIPLIER
+SILENCE_NUDGE_MAX_INTERVAL_SECONDS = public_settings.SILENCE_NUDGE_MAX_INTERVAL_SECONDS
+DEBUG_TELEMETRY = public_settings.DEBUG_TELEMETRY
+TOKEN_PRICE_PROMPT_PER_MILLION = public_settings.TOKEN_PRICE_PROMPT_PER_MILLION
+TOKEN_PRICE_COMPLETION_PER_MILLION = public_settings.TOKEN_PRICE_COMPLETION_PER_MILLION
+REGISTRY_ENABLED = public_settings.REGISTRY_ENABLED
+REGISTRY_REQUIRE_COMPANY_TEMPLATE_MATCH = public_settings.REGISTRY_REQUIRE_COMPANY_TEMPLATE_MATCH
+LIVE_MODEL_CANDIDATES = public_settings.build_live_model_candidates(
+    ekaette_router.model,
+    get_live_model_candidates(),
 )
-TOKEN_ALLOWED_TENANTS = set(
-    _parse_allowlist(os.getenv("TOKEN_ALLOWED_TENANTS", "public"))
-)
-MANUAL_VAD = _env_flag("MANUAL_VAD", "false")
-AUTO_VAD_PREFIX_PADDING_MS = int(os.getenv("AUTO_VAD_PREFIX_PADDING_MS", "80"))
-AUTO_VAD_SILENCE_DURATION_MS = int(os.getenv("AUTO_VAD_SILENCE_DURATION_MS", "320"))
-SILENCE_NUDGE_SECONDS = int(os.getenv("SILENCE_NUDGE_SECONDS", "8"))
-SILENCE_NUDGE_MAX = int(os.getenv("SILENCE_NUDGE_MAX", "2"))
-SILENCE_NUDGE_BACKOFF_MULTIPLIER = float(
-    os.getenv("SILENCE_NUDGE_BACKOFF_MULTIPLIER", "1.8")
-)
-SILENCE_NUDGE_MAX_INTERVAL_SECONDS = int(
-    os.getenv("SILENCE_NUDGE_MAX_INTERVAL_SECONDS", "30")
-)
-DEBUG_TELEMETRY = _env_flag("DEBUG_TELEMETRY", "false")
-TOKEN_PRICE_PROMPT_PER_MILLION = float(
-    os.getenv("TOKEN_PRICE_PROMPT_PER_MILLION_USD", "0")
-)
-TOKEN_PRICE_COMPLETION_PER_MILLION = float(
-    os.getenv("TOKEN_PRICE_COMPLETION_PER_MILLION_USD", "0")
-)
-LIVE_MODEL_CANDIDATES = [
-    model
-    for model in [ekaette_router.model, *get_live_model_candidates()]
-    if model
-]
-_seen_models: set[str] = set()
-LIVE_MODEL_CANDIDATES = [
-    model for model in LIVE_MODEL_CANDIDATES if not (model in _seen_models or _seen_models.add(model))
-]
 
 
 def _build_manual_realtime_input_config() -> object | None:
@@ -691,212 +691,74 @@ TOKEN_CLIENT = (
 )
 
 
+def _effective_runtime_sync_mode() -> str:
+    """Resolve runtime sync mode with test-safe defaults.
+
+    Modes:
+    - request: configure runtime wiring on every request/connection.
+    - startup: configure once at startup (or first request fallback).
+    - auto: request mode under pytest, startup mode otherwise.
+    """
+    raw = os.getenv("RUNTIME_SYNC_MODE", "auto").strip().lower()
+    if raw not in {"auto", "request", "startup"}:
+        raw = "auto"
+    if raw == "auto":
+        return "request" if "pytest" in sys.modules else "startup"
+    return raw
+
+
+def _sync_public_runtime() -> None:
+    """Sync public HTTP runtime dependencies into extracted module handlers."""
+    global _PUBLIC_RUNTIME_WIRED
+    mode = _effective_runtime_sync_mode()
+    if mode == "startup" and _PUBLIC_RUNTIME_WIRED:
+        return
+    public_http.configure_runtime(
+        logger=logger,
+        _origin_or_reject=_origin_or_reject,
+        _client_ip_from_request=_client_ip_from_request,
+        _check_rate_limit=_check_rate_limit,
+        TOKEN_RATE_LIMIT=TOKEN_RATE_LIMIT,
+        RATE_LIMIT_WINDOW=RATE_LIMIT_WINDOW,
+        TOKEN_ALLOWED_TENANTS=TOKEN_ALLOWED_TENANTS,
+        registry_log_context=registry_log_context,
+        _registry_enabled=_registry_enabled,
+        TOKEN_CLIENT=TOKEN_CLIENT,
+        TOKEN_TTL_SECONDS=TOKEN_TTL_SECONDS,
+        TOKEN_NEW_SESSION_TTL_SECONDS=TOKEN_NEW_SESSION_TTL_SECONDS,
+        _normalize_tenant_id=_normalize_tenant_id,
+        _normalize_company_id=_normalize_company_id,
+        _normalize_template_id=_normalize_template_id,
+        _resolve_registry_runtime_config=_resolve_registry_runtime_config,
+        RegistrySchemaVersionError=RegistrySchemaVersionError,
+        _registry_mismatch_response=_registry_mismatch_response,
+        _sanitize_log=_sanitize_log,
+        _native_audio_live_config=_native_audio_live_config,
+        REALTIME_INPUT_CONFIG=REALTIME_INPUT_CONFIG,
+        LIVE_MODEL_CANDIDATES=LIVE_MODEL_CANDIDATES,
+        types=types,
+        TOKEN_MAX_USES=TOKEN_MAX_USES,
+        _legacy_industry_alias_from_registry_config=_legacy_industry_alias_from_registry_config,
+        MANUAL_VAD_ACTIVE=MANUAL_VAD_ACTIVE,
+        _voice_for_industry=_voice_for_industry,
+        industry_config_client=industry_config_client,
+        _tenant_allowed=_tenant_allowed,
+        _resolve_company_for_bootstrap=_resolve_company_for_bootstrap,
+        MAX_UPLOAD_BYTES=MAX_UPLOAD_BYTES,
+        ALLOWED_UPLOAD_MIME_TYPES=ALLOWED_UPLOAD_MIME_TYPES,
+        UPLOAD_RATE_LIMIT=UPLOAD_RATE_LIMIT,
+        _validate_upload_bytes=_validate_upload_bytes,
+    )
+    _PUBLIC_RUNTIME_WIRED = True
+
+
 @app.post("/api/token")
 async def create_ephemeral_token(
     payload: TokenRequestPayload,
     request: Request,
 ):
-    """Issue a constrained short-lived Gemini Live API auth token."""
-    blocked_origin = _origin_or_reject(request.headers.get("origin"), endpoint="api_token")
-    if blocked_origin:
-        return blocked_origin
-
-    client_ip = _client_ip_from_request(request)
-    if not _check_rate_limit(client_ip, "token", TOKEN_RATE_LIMIT):
-        return JSONResponse(
-            status_code=429,
-            content={"error": "Rate limit exceeded", "retryAfter": RATE_LIMIT_WINDOW},
-            headers={"Retry-After": str(RATE_LIMIT_WINDOW)},
-        )
-
-    if TOKEN_ALLOWED_TENANTS and payload.tenant_id not in TOKEN_ALLOWED_TENANTS:
-        logger.warning(
-            "Token request rejected (tenant forbidden) %s",
-            registry_log_context(
-                tenant_id=payload.tenant_id,
-                registry_mode=_registry_enabled(),
-                source="api_token",
-            ),
-        )
-        return JSONResponse(
-            status_code=403,
-            content={"error": "Tenant not allowed"},
-        )
-
-    if TOKEN_CLIENT is None:
-        return JSONResponse(
-            status_code=500,
-            content={"error": "Server API key not configured"},
-        )
-
-    expires_at = datetime.now(timezone.utc) + timedelta(seconds=TOKEN_TTL_SECONDS)
-    new_session_expires_at = datetime.now(timezone.utc) + timedelta(
-        seconds=TOKEN_NEW_SESSION_TTL_SECONDS
-    )
-    normalized_tenant_id = _normalize_tenant_id(payload.tenant_id, default="public")
-    normalized_company_id = _normalize_company_id(payload.company_id)
-    requested_template_id = _normalize_template_id(payload.industry_template_id)
-    requested_industry = (payload.industry or "electronics").strip().lower() or "electronics"
-
-    try:
-        registry_config = await _resolve_registry_runtime_config(
-            tenant_id=normalized_tenant_id,
-            company_id=normalized_company_id,
-        )
-    except RegistrySchemaVersionError as exc:
-        logger.warning(
-            "Token request rejected (registry schema version) %s details=%s",
-            registry_log_context(
-                tenant_id=normalized_tenant_id,
-                company_id=normalized_company_id,
-                registry_mode=_registry_enabled(),
-                source="api_token",
-            ),
-            exc,
-        )
-        return JSONResponse(
-            status_code=503,
-            content={
-                "error": "Unsupported registry schema version",
-                "code": getattr(exc, "code", "REGISTRY_SCHEMA_VERSION_UNSUPPORTED"),
-                "tenantId": normalized_tenant_id,
-                "companyId": normalized_company_id,
-                "details": str(exc),
-            },
-        )
-    if _registry_enabled() and registry_config is None:
-        logger.warning(
-            "Token request rejected (registry config missing) %s",
-            registry_log_context(
-                tenant_id=normalized_tenant_id,
-                company_id=normalized_company_id,
-                registry_mode=True,
-                source="api_token",
-            ),
-        )
-        return JSONResponse(
-            status_code=404,
-            content={
-                "error": "Company configuration not found in registry",
-                "code": "REGISTRY_CONFIG_NOT_FOUND",
-                "tenantId": normalized_tenant_id,
-                "companyId": normalized_company_id,
-            },
-        )
-    if registry_config is not None:
-        mismatch_response = _registry_mismatch_response(
-            requested_template_id=requested_template_id,
-            resolved_template_id=getattr(registry_config, "industry_template_id", None),
-        )
-        if mismatch_response is not None:
-            logger.warning(
-                "Token request rejected (template/company mismatch) %s requested_template_id=%s resolved_template_id=%s",
-                registry_log_context(
-                    tenant_id=normalized_tenant_id,
-                    company_id=normalized_company_id,
-                    industry_template_id=getattr(registry_config, "industry_template_id", None),
-                    registry_version=getattr(registry_config, "registry_version", None),
-                    registry_mode=True,
-                    source="api_token",
-                ),
-                _sanitize_log(requested_template_id),
-                _sanitize_log(getattr(registry_config, "industry_template_id", None)),
-            )
-            return mismatch_response
-
-    resolved_voice = (
-        getattr(registry_config, "voice", None)
-        if isinstance(getattr(registry_config, "voice", None), str)
-        else None
-    )
-    live_connect_config_kwargs = _native_audio_live_config(
-        requested_industry,
-        voice_override=resolved_voice,
-    )
-    if REALTIME_INPUT_CONFIG is not None:
-        live_connect_config_kwargs["realtime_input_config"] = REALTIME_INPUT_CONFIG
-
-    auth_token = None
-    selected_model = LIVE_MODEL_CANDIDATES[0]
-    last_exc: Exception | None = None
-    for index, candidate_model in enumerate(LIVE_MODEL_CANDIDATES):
-        try:
-            live_constraints = types.LiveConnectConstraints(
-                model=candidate_model,
-                config=types.LiveConnectConfig(**live_connect_config_kwargs),
-            )
-            auth_token = await TOKEN_CLIENT.aio.auth_tokens.create(
-                config=types.CreateAuthTokenConfig(
-                    uses=TOKEN_MAX_USES,
-                    expire_time=expires_at,
-                    new_session_expire_time=new_session_expires_at,
-                    live_connect_constraints=live_constraints,
-                )
-            )
-            selected_model = candidate_model
-            if index > 0:
-                logger.warning(
-                    "Token creation fell back to model '%s' after primary failure",
-                    candidate_model,
-                )
-            break
-        except Exception as exc:
-            last_exc = exc
-            logger.warning(
-                "Token creation failed for model '%s': %s",
-                candidate_model,
-                exc,
-            )
-            continue
-
-    if auth_token is None:
-        logger.error("Token creation failed for all model candidates: %s", last_exc)
-        return JSONResponse(
-            status_code=502,
-            content={"error": "Failed to create ephemeral token"},
-        )
-
-    if not auth_token.name:
-        return JSONResponse(
-            status_code=502,
-            content={"error": "Token response was empty"},
-        )
-
-    resolved_legacy_industry = requested_industry
-    if registry_config is not None:
-        resolved_legacy_industry = _legacy_industry_alias_from_registry_config(
-            registry_config,
-            fallback=requested_industry,
-        )
-
-    response: dict[str, object] = {
-        "token": auth_token.name,
-        "expiresAt": expires_at.isoformat(),
-        "maxUses": TOKEN_MAX_USES,
-        "industry": resolved_legacy_industry,
-        "companyId": normalized_company_id,
-        "tenantId": normalized_tenant_id,
-        "userId": payload.user_id,
-        "model": selected_model,
-        "fallbackModelUsed": selected_model != LIVE_MODEL_CANDIDATES[0],
-        "manualVadActive": MANUAL_VAD_ACTIVE,
-        "vadMode": "manual" if MANUAL_VAD_ACTIVE else "auto",
-    }
-
-    # Phase 2 canonical fields (registry path) + voice resolution.
-    response["voice"] = resolved_voice or _voice_for_industry(resolved_legacy_industry)
-    if registry_config is not None:
-        template_id = getattr(registry_config, "industry_template_id", None)
-        capabilities = getattr(registry_config, "capabilities", None)
-        registry_version = getattr(registry_config, "registry_version", None)
-        if isinstance(template_id, str) and template_id:
-            response["industryTemplateId"] = template_id
-        if isinstance(capabilities, list):
-            response["capabilities"] = capabilities
-        if isinstance(registry_version, str) and registry_version:
-            response["registryVersion"] = registry_version
-
-    return response
+    _sync_public_runtime()
+    return await public_http.create_ephemeral_token(payload, request)
 
 
 # ═══ Onboarding Config Endpoint ═══
@@ -904,64 +766,18 @@ async def create_ephemeral_token(
 
 @app.get("/api/onboarding/config")
 async def get_onboarding_config(request: Request):
-    """Return industry templates + companies for the onboarding UI."""
-    blocked_origin = _origin_or_reject(request.headers.get("origin"), endpoint="api_onboarding")
-    if blocked_origin:
-        return blocked_origin
+    _sync_public_runtime()
+    return await public_http.get_onboarding_config(request)
 
-    tenant_id = request.query_params.get("tenantId")
-    if not tenant_id:
-        logger.warning(
-            "Onboarding config request rejected (missing tenantId) %s",
-            registry_log_context(registry_mode=_registry_enabled(), source="api_onboarding"),
-        )
-        return JSONResponse(
-            status_code=400,
-            content={"error": "Missing required query parameter: tenantId"},
-        )
-    normalized_tenant_id = _normalize_tenant_id(tenant_id, default="public")
-    if not _tenant_allowed(normalized_tenant_id):
-        logger.warning(
-            "Onboarding config request rejected (tenant forbidden) %s",
-            registry_log_context(
-                tenant_id=normalized_tenant_id,
-                registry_mode=_registry_enabled(),
-                source="api_onboarding",
-            ),
-        )
-        return JSONResponse(
-            status_code=403,
-            content={
-                "error": "Tenant not allowed",
-                "tenantId": normalized_tenant_id,
-            },
-        )
 
-    from app.configs.registry_loader import RegistryDataMissingError, build_onboarding_config
+@app.get("/api/v1/runtime/bootstrap")
+async def get_runtime_bootstrap(request: Request):
+    _sync_public_runtime()
+    return await public_http.get_runtime_bootstrap(request)
 
-    try:
-        config = await build_onboarding_config(industry_config_client, normalized_tenant_id)
-    except RegistryDataMissingError as exc:
-        logger.warning(
-            "Onboarding config unavailable %s code=%s details=%s",
-            registry_log_context(
-                tenant_id=normalized_tenant_id,
-                registry_mode=_registry_enabled(),
-                source="api_onboarding",
-            ),
-            getattr(exc, "code", "REGISTRY_ONBOARDING_CONFIG_NOT_FOUND"),
-            exc,
-        )
-        return JSONResponse(
-            status_code=503,
-            content={
-                "error": "Registry onboarding config unavailable",
-                "code": getattr(exc, "code", "REGISTRY_ONBOARDING_CONFIG_NOT_FOUND"),
-                "tenantId": normalized_tenant_id,
-                "details": str(exc),
-            },
-        )
-    return config
+
+app.include_router(admin_router)
+
 
 
 @app.post("/api/upload/validate")
@@ -969,54 +785,75 @@ async def validate_upload(
     request: Request,
     file: UploadFile = File(...),
 ):
-    """Validate upload MIME and file size before any storage write."""
-    blocked_origin = _origin_or_reject(
-        request.headers.get("origin"), endpoint="api_upload_validate"
-    )
-    if blocked_origin:
-        return blocked_origin
-
-    client_ip = _client_ip_from_request(request)
-    if not _check_rate_limit(client_ip, "upload", UPLOAD_RATE_LIMIT):
-        return JSONResponse(
-            status_code=429,
-            content={"error": "Rate limit exceeded", "retryAfter": RATE_LIMIT_WINDOW},
-            headers={"Retry-After": str(RATE_LIMIT_WINDOW)},
-        )
-
-    mime_type = file.content_type or "application/octet-stream"
-    data = await file.read(MAX_UPLOAD_BYTES + 1)
-
-    try:
-        _validate_upload_bytes(mime_type, data)
-    except ValueError as exc:
-        code = str(exc)
-        if code == "UPLOAD_TOO_LARGE":
-            return JSONResponse(
-                status_code=413,
-                content={"error": "Upload exceeds max size", "maxBytes": MAX_UPLOAD_BYTES},
-            )
-        if code == "MIME_TYPE_NOT_ALLOWED":
-            return JSONResponse(
-                status_code=415,
-                content={
-                    "error": "MIME type not allowed",
-                    "allowedMimeTypes": sorted(ALLOWED_UPLOAD_MIME_TYPES),
-                },
-            )
-        return JSONResponse(status_code=400, content={"error": "Invalid upload payload"})
-    finally:
-        await file.close()
-
-    return {
-        "status": "ok",
-        "filename": file.filename,
-        "mimeType": mime_type,
-        "sizeBytes": len(data),
-    }
+    _sync_public_runtime()
+    return await public_http.validate_upload(request, file)
 
 
 # ═══ WebSocket Endpoint ═══
+
+
+def _sync_realtime_runtime() -> None:
+    """Sync websocket runtime dependencies into the extracted realtime module."""
+    global _REALTIME_RUNTIME_WIRED
+    mode = _effective_runtime_sync_mode()
+    if mode == "startup" and _REALTIME_RUNTIME_WIRED:
+        return
+    realtime_ws.configure_runtime(
+        _WS_PATH_ID_RE=_WS_PATH_ID_RE,
+        _is_websocket_origin_allowed=_is_websocket_origin_allowed,
+        _sanitize_log=_sanitize_log,
+        logger=logger,
+        ekaette_router=ekaette_router,
+        _normalize_template_id=_normalize_template_id,
+        _normalize_tenant_id=_normalize_tenant_id,
+        _tenant_allowed=_tenant_allowed,
+        registry_log_context=registry_log_context,
+        _registry_enabled=_registry_enabled,
+        _normalize_company_id=_normalize_company_id,
+        DEFAULT_COMPANY_ID=DEFAULT_COMPANY_ID,
+        session_service=session_service,
+        SESSION_APP_NAME=SESSION_APP_NAME,
+        load_industry_config=load_industry_config,
+        industry_config_client=industry_config_client,
+        build_session_state=build_session_state,
+        load_company_profile=load_company_profile,
+        company_config_client=company_config_client,
+        load_company_knowledge=load_company_knowledge,
+        build_company_session_state=build_company_session_state,
+        _resolve_registry_runtime_config=_resolve_registry_runtime_config,
+        RegistrySchemaVersionError=RegistrySchemaVersionError,
+        _canonical_state_updates_from_registry=_canonical_state_updates_from_registry,
+        async_save_session_state=async_save_session_state,
+        _registry_mismatch_response=_registry_mismatch_response,
+        _voice_for_industry=_voice_for_industry,
+        MANUAL_VAD_ACTIVE=MANUAL_VAD_ACTIVE,
+        REALTIME_INPUT_CONFIG=REALTIME_INPUT_CONFIG,
+        _native_audio_live_config=_native_audio_live_config,
+        RunConfig=RunConfig,
+        StreamingMode=StreamingMode,
+        types=types,
+        _build_session_started_message=_build_session_started_message,
+        LiveRequestQueue=LiveRequestQueue,
+        SILENCE_NUDGE_SECONDS=SILENCE_NUDGE_SECONDS,
+        SILENCE_NUDGE_BACKOFF_MULTIPLIER=SILENCE_NUDGE_BACKOFF_MULTIPLIER,
+        SILENCE_NUDGE_MAX_INTERVAL_SECONDS=SILENCE_NUDGE_MAX_INTERVAL_SECONDS,
+        SILENCE_NUDGE_MAX=SILENCE_NUDGE_MAX,
+        WebSocketDisconnect=WebSocketDisconnect,
+        _append_canonical_lock_fields=_append_canonical_lock_fields,
+        _extract_server_message_from_state_delta=_extract_server_message_from_state_delta,
+        TOKEN_PRICE_PROMPT_PER_MILLION=TOKEN_PRICE_PROMPT_PER_MILLION,
+        TOKEN_PRICE_COMPLETION_PER_MILLION=TOKEN_PRICE_COMPLETION_PER_MILLION,
+        DEBUG_TELEMETRY=DEBUG_TELEMETRY,
+        _usage_int=_usage_int,
+        _check_rate_limit=_check_rate_limit,
+        _validate_upload_bytes=_validate_upload_bytes,
+        MAX_UPLOAD_BYTES=MAX_UPLOAD_BYTES,
+        UPLOAD_RATE_LIMIT=UPLOAD_RATE_LIMIT,
+        cache_latest_image=cache_latest_image,
+        runner=runner,
+    )
+    _REALTIME_RUNTIME_WIRED = True
+
 
 @app.websocket("/ws/{user_id}/{session_id}")
 async def websocket_endpoint(
@@ -1025,977 +862,8 @@ async def websocket_endpoint(
     session_id: str,
 ) -> None:
     """WebSocket endpoint for bidirectional streaming with ADK."""
-    origin = websocket.headers.get("origin")
-    ws_origin_allowed = _is_websocket_origin_allowed(origin)
-    if origin is None:
-        if ws_origin_allowed:
-            logger.debug("WebSocket accepted without Origin header by policy")
-        else:
-            logger.debug("WebSocket missing Origin header rejected by policy")
-    if not ws_origin_allowed:
-        logger.warning("Rejected WebSocket origin: %s", _sanitize_log(origin))
-        await websocket.close(code=1008, reason="Origin not allowed")
-        return
-
-    logger.debug("WebSocket connection request: user_id=%s, session_id=%s", _sanitize_log(user_id), _sanitize_log(session_id))
-    await websocket.accept()
-    logger.debug("WebSocket connection accepted")
-    client_ip = websocket.client.host if websocket.client else "unknown"
-
-    # ═══ Session Init ═══
-    model_name = ekaette_router.model
-    is_native_audio = "native-audio" in model_name.lower()
-
-    # Parse onboarding context from query params.
-    requested_industry = websocket.query_params.get("industry", "electronics")
-    if not isinstance(requested_industry, str):
-        requested_industry = "electronics"
-    industry = requested_industry.strip().lower() or "electronics"
-    requested_template_id = _normalize_template_id(
-        websocket.query_params.get("industry_template_id")
-        or websocket.query_params.get("industryTemplateId")
-    )
-    tenant_id = _normalize_tenant_id(
-        websocket.query_params.get("tenant_id")
-        or websocket.query_params.get("tenantId"),
-        default="public",
-    )
-    if not _tenant_allowed(tenant_id):
-        logger.warning(
-            "WebSocket startup rejected (tenant forbidden) %s",
-            registry_log_context(
-                tenant_id=tenant_id,
-                registry_mode=_registry_enabled(),
-                source="ws_startup",
-            ),
-        )
-        await websocket.send_text(json.dumps({
-            "type": "error",
-            "code": "TENANT_FORBIDDEN",
-            "message": "Tenant not allowed",
-            "tenantId": tenant_id,
-        }))
-        await websocket.close(code=1008, reason="Tenant not allowed")
-        return
-
-    requested_company = websocket.query_params.get(
-        "company_id",
-        websocket.query_params.get("companyId", DEFAULT_COMPANY_ID),
-    )
-    company_id = _normalize_company_id(requested_company)
-
-    uses_vertex_sessions = session_service.__class__.__name__ == "VertexAiSessionService"
-    resolved_session_id = session_id
-
-    session = await session_service.get_session(
-        app_name=SESSION_APP_NAME, user_id=user_id, session_id=resolved_session_id
-    )
-    registry_config = None
-    if session:
-        if isinstance(getattr(session, "id", None), str) and session.id:
-            resolved_session_id = session.id
-        # Session resumption should preserve prior selected industry.
-        resumed_industry = session.state.get("app:industry")
-        if isinstance(resumed_industry, str) and resumed_industry.strip():
-            industry = resumed_industry.strip().lower()
-
-        resumed_company = session.state.get("app:company_id")
-        if isinstance(resumed_company, str) and resumed_company.strip():
-            company_id = _normalize_company_id(resumed_company)
-
-        resumed_tenant = session.state.get("app:tenant_id")
-        if isinstance(resumed_tenant, str) and resumed_tenant.strip():
-            tenant_id = _normalize_tenant_id(resumed_tenant, default=tenant_id)
-
-        state_updates: dict[str, object] = {}
-        if "app:industry_config" not in session.state:
-            industry_config = await load_industry_config(industry_config_client, industry)
-            state_updates.update(build_session_state(industry_config, industry))
-
-        if (
-            "app:company_profile" not in session.state
-            or "app:company_knowledge" not in session.state
-            or "app:company_id" not in session.state
-        ):
-            if _registry_enabled():
-                company_profile = await load_company_profile(
-                    company_config_client, company_id, tenant_id=tenant_id
-                )
-                company_knowledge = await load_company_knowledge(
-                    company_config_client, company_id, tenant_id=tenant_id
-                )
-            else:
-                company_profile = await load_company_profile(company_config_client, company_id)
-                company_knowledge = await load_company_knowledge(company_config_client, company_id)
-            state_updates.update(
-                build_company_session_state(
-                    company_id=company_id,
-                    profile=company_profile,
-                    knowledge=company_knowledge,
-                )
-            )
-
-        if _registry_enabled() and (
-            "app:tenant_id" not in session.state
-            or "app:industry_template_id" not in session.state
-            or "app:capabilities" not in session.state
-            or "app:registry_version" not in session.state
-        ):
-            try:
-                registry_config = await _resolve_registry_runtime_config(
-                    tenant_id=tenant_id,
-                    company_id=company_id,
-                )
-            except RegistrySchemaVersionError as exc:
-                logger.warning(
-                    "WebSocket startup rejected (registry schema version, resumed session) %s details=%s",
-                    registry_log_context(
-                        tenant_id=tenant_id,
-                        company_id=company_id,
-                        registry_mode=True,
-                        source="ws_startup",
-                    ),
-                    exc,
-                )
-                await websocket.send_text(json.dumps({
-                    "type": "error",
-                    "code": getattr(exc, "code", "REGISTRY_SCHEMA_VERSION_UNSUPPORTED"),
-                    "message": "Unsupported registry schema version",
-                    "tenantId": tenant_id,
-                    "companyId": company_id,
-                    "details": str(exc),
-                }))
-                await websocket.close(code=1011)
-                return
-            if registry_config is not None:
-                state_updates.update(_canonical_state_updates_from_registry(registry_config))
-
-        if state_updates:
-            await async_save_session_state(
-                session_service,
-                app_name=SESSION_APP_NAME,
-                user_id=user_id,
-                session_id=resolved_session_id,
-                state_updates=state_updates,
-            )
-    else:
-        if _registry_enabled():
-            try:
-                registry_config = await _resolve_registry_runtime_config(
-                    tenant_id=tenant_id,
-                    company_id=company_id,
-                )
-            except RegistrySchemaVersionError as exc:
-                logger.warning(
-                    "WebSocket startup rejected (registry schema version, fresh session) %s details=%s",
-                    registry_log_context(
-                        tenant_id=tenant_id,
-                        company_id=company_id,
-                        registry_mode=True,
-                        source="ws_startup",
-                    ),
-                    exc,
-                )
-                await websocket.send_text(json.dumps({
-                    "type": "error",
-                    "code": getattr(exc, "code", "REGISTRY_SCHEMA_VERSION_UNSUPPORTED"),
-                    "message": "Unsupported registry schema version",
-                    "tenantId": tenant_id,
-                    "companyId": company_id,
-                    "details": str(exc),
-                }))
-                await websocket.close(code=1011)
-                return
-            if registry_config is not None:
-                # In strict mode, reject explicit template/company mismatches.
-                if requested_template_id is not None:
-                    mismatch_response = _registry_mismatch_response(
-                        requested_template_id=requested_template_id,
-                        resolved_template_id=getattr(registry_config, "industry_template_id", None),
-                    )
-                    if mismatch_response is not None:
-                        logger.warning(
-                            "WebSocket startup rejected (template/company mismatch) %s requested_template_id=%s resolved_template_id=%s",
-                            registry_log_context(
-                                tenant_id=tenant_id,
-                                company_id=company_id,
-                                industry_template_id=getattr(registry_config, "industry_template_id", None),
-                                registry_version=getattr(registry_config, "registry_version", None),
-                                registry_mode=True,
-                                source="ws_startup",
-                            ),
-                            _sanitize_log(requested_template_id),
-                            _sanitize_log(getattr(registry_config, "industry_template_id", None)),
-                        )
-                        body = mismatch_response.body
-                        if isinstance(body, bytes):
-                            try:
-                                body = json.loads(body.decode("utf-8"))
-                            except Exception:
-                                body = {"error": "Template/company mismatch"}
-                        if isinstance(body, dict):
-                            body.setdefault("tenantId", tenant_id)
-                            body.setdefault("companyId", company_id)
-                        await websocket.send_text(json.dumps(body))
-                        await websocket.close(code=1008)
-                        return
-
-                resolved_template_id = getattr(registry_config, "industry_template_id", None)
-                if isinstance(resolved_template_id, str) and resolved_template_id:
-                    industry = resolved_template_id
-            else:
-                logger.warning(
-                    "WebSocket startup rejected (registry config missing) %s",
-                    registry_log_context(
-                        tenant_id=tenant_id,
-                        company_id=company_id,
-                        registry_mode=True,
-                        source="ws_startup",
-                    ),
-                )
-                await websocket.send_text(json.dumps({
-                    "type": "error",
-                    "code": "REGISTRY_CONFIG_NOT_FOUND",
-                    "message": "Company configuration not found in registry",
-                    "tenantId": tenant_id,
-                    "companyId": company_id,
-                }))
-                await websocket.close(code=1008)
-                return
-
-        # Load onboarding context and build initial state
-        industry_config = await load_industry_config(
-            industry_config_client,
-            industry,
-        )
-        if _registry_enabled():
-            company_profile = await load_company_profile(
-                company_config_client,
-                company_id,
-                tenant_id=tenant_id,
-            )
-            company_knowledge = await load_company_knowledge(
-                company_config_client,
-                company_id,
-                tenant_id=tenant_id,
-            )
-        else:
-            company_profile = await load_company_profile(company_config_client, company_id)
-            company_knowledge = await load_company_knowledge(
-                company_config_client, company_id
-            )
-
-        initial_state = build_session_state(industry_config, industry)
-        initial_state.update(
-            build_company_session_state(
-                company_id=company_id,
-                profile=company_profile,
-                knowledge=company_knowledge,
-            )
-        )
-        if registry_config is not None:
-            initial_state.update(_canonical_state_updates_from_registry(registry_config))
-        create_kwargs: dict[str, object] = {
-            "app_name": SESSION_APP_NAME,
-            "user_id": user_id,
-            "state": initial_state,
-        }
-        # Vertex sessions currently auto-generate server-side IDs.
-        if not uses_vertex_sessions:
-            create_kwargs["session_id"] = resolved_session_id
-        created_session = await session_service.create_session(
-            **create_kwargs,
-        )
-        if (
-            uses_vertex_sessions
-            and isinstance(getattr(created_session, "id", None), str)
-            and created_session.id
-        ):
-            resolved_session_id = created_session.id
-
-    # Collect the final session state for voice + canonical fields.
-    _ss: dict[str, object] = session.state if session else initial_state
-
-    # Use locked session aliases when available.
-    locked_industry = _ss.get("app:industry") if isinstance(_ss.get("app:industry"), str) else None
-    session_industry = (locked_industry or industry).strip().lower() if isinstance((locked_industry or industry), str) else industry
-
-    # Voice: prefer state override, fall back to industry map.
-    _voice = _ss.get("app:voice") if isinstance(_ss.get("app:voice"), str) else None
-    session_voice = _voice or _voice_for_industry(session_industry)
-
-    if is_native_audio:
-        run_config_kwargs: dict[str, object] = {
-            "streaming_mode": StreamingMode.BIDI,
-            **_native_audio_live_config(industry, voice_override=_voice),
-        }
-        if REALTIME_INPUT_CONFIG is not None:
-            run_config_kwargs["realtime_input_config"] = REALTIME_INPUT_CONFIG
-        run_config = RunConfig(**run_config_kwargs)
-    else:
-        run_config = RunConfig(
-            streaming_mode=StreamingMode.BIDI,
-            response_modalities=["TEXT"],
-            session_resumption=types.SessionResumptionConfig(),
-        )
-
-    logger.debug(
-        "Model: %s, native_audio=%s, industry=%s, company_id=%s, voice=%s",
-        model_name,
-        is_native_audio,
-        _sanitize_log(industry),
-        _sanitize_log(company_id),
-        _voice_for_industry(industry),
-    )
-
-    manual_vad_active = MANUAL_VAD_ACTIVE and is_native_audio
-
-    # Notify client with the canonical session ID.
-    await websocket.send_text(json.dumps(_build_session_started_message(
-        session_id=resolved_session_id,
-        industry=session_industry,
-        company_id=company_id,
-        voice=session_voice,
-        manual_vad_active=manual_vad_active,
-        session_state=_ss,
-    )))
-
-    live_request_queue = LiveRequestQueue()
-    session_alive = asyncio.Event()
-    session_alive.set()
-
-    def _reset_silence_nudge_schedule(now: float) -> tuple[float, float]:
-        base_interval = max(1.0, float(SILENCE_NUDGE_SECONDS))
-        return now + base_interval, base_interval
-
-    def _next_silence_nudge_interval(current_interval: float) -> float:
-        multiplier = max(1.0, float(SILENCE_NUDGE_BACKOFF_MULTIPLIER))
-        grown = max(current_interval + 1.0, current_interval * multiplier)
-        max_interval = max(1.0, float(SILENCE_NUDGE_MAX_INTERVAL_SECONDS))
-        return min(grown, max_interval)
-
-    # Silence nudge state — shared between upstream_task and silence_nudge_task.
-    last_client_activity = time.monotonic()
-    silence_nudge_count = 0
-    agent_busy = False
-    silence_nudge_due_at, silence_nudge_interval = _reset_silence_nudge_schedule(
-        last_client_activity
-    )
-
-    # ═══ Bidi-Streaming Tasks ═══
-
-    async def keepalive_task() -> None:
-        """Send periodic pings to detect dead connections and prevent proxy timeouts."""
-        while session_alive.is_set():
-            try:
-                await asyncio.sleep(25)
-                if not session_alive.is_set():
-                    break
-                await websocket.send_text(json.dumps({
-                    "type": "ping",
-                    "ts": int(time.time() * 1000),
-                }))
-            except Exception:
-                break  # WebSocket closed; stop keepalive
-
-    async def upstream_task() -> None:
-        """Receives from WebSocket, sends to LiveRequestQueue."""
-        nonlocal last_client_activity
-        nonlocal silence_nudge_count
-        nonlocal silence_nudge_due_at
-        nonlocal silence_nudge_interval
-        nonlocal agent_busy
-        while True:
-            message = await websocket.receive()
-            message_type = message.get("type")
-            if message_type == "websocket.disconnect":
-                raise WebSocketDisconnect(code=message.get("code", 1000))
-
-            audio_data = message.get("bytes")
-            text_data = message.get("text")
-
-            # Binary frames: audio data
-            if audio_data is not None:
-                now = time.monotonic()
-                last_client_activity = now
-                silence_nudge_count = 0
-                agent_busy = True
-                silence_nudge_due_at, silence_nudge_interval = _reset_silence_nudge_schedule(
-                    now
-                )
-                audio_blob = types.Blob(
-                    mime_type="audio/pcm;rate=16000", data=audio_data
-                )
-                live_request_queue.send_realtime(audio_blob)
-
-            # Text frames: JSON messages
-            elif text_data is not None:
-                try:
-                    json_message = json.loads(text_data)
-                except json.JSONDecodeError:
-                    await websocket.send_text(
-                        json.dumps(
-                            {
-                                "type": "error",
-                                "code": "INVALID_JSON",
-                                "message": "Malformed JSON payload",
-                            }
-                        )
-                    )
-                    continue
-
-                # Any valid client JSON message counts as activity.
-                msg_type = json_message.get("type", "")
-                if msg_type in ("text", "image", "negotiate") or (
-                    msg_type == "activity_start" and manual_vad_active
-                ):
-                    now = time.monotonic()
-                    last_client_activity = now
-                    silence_nudge_count = 0
-                    if msg_type in ("text", "image", "negotiate"):
-                        agent_busy = True
-                    silence_nudge_due_at, silence_nudge_interval = _reset_silence_nudge_schedule(
-                        now
-                    )
-
-                if msg_type == "text":
-                    content = types.Content(
-                        parts=[types.Part(text=json_message["text"])]
-                    )
-                    live_request_queue.send_content(content)
-
-                elif msg_type == "image":
-                    mime_type = json_message.get("mimeType", "image/jpeg")
-                    if not _check_rate_limit(client_ip, "upload", UPLOAD_RATE_LIMIT):
-                        await websocket.send_text(json.dumps({
-                            "type": "error",
-                            "code": "RATE_LIMIT_EXCEEDED",
-                            "message": "Upload rate limit exceeded",
-                        }))
-                        continue
-
-                    image_b64 = json_message.get("data")
-                    if not isinstance(image_b64, str):
-                        await websocket.send_text(json.dumps({
-                            "type": "error",
-                            "code": "INVALID_IMAGE_PAYLOAD",
-                            "message": "Image payload must be base64 string",
-                        }))
-                        continue
-
-                    try:
-                        image_data = base64.b64decode(image_b64, validate=True)
-                    except (binascii.Error, ValueError):
-                        await websocket.send_text(json.dumps({
-                            "type": "error",
-                            "code": "INVALID_BASE64_IMAGE",
-                            "message": "Image payload is not valid base64",
-                        }))
-                        continue
-
-                    try:
-                        _validate_upload_bytes(mime_type, image_data)
-                    except ValueError as exc:
-                        code = str(exc)
-                        if code == "UPLOAD_TOO_LARGE":
-                            await websocket.send_text(json.dumps({
-                                "type": "error",
-                                "code": "UPLOAD_TOO_LARGE",
-                                "message": f"Image exceeds {MAX_UPLOAD_BYTES} bytes",
-                            }))
-                            continue
-                        if code == "MIME_TYPE_NOT_ALLOWED":
-                            await websocket.send_text(json.dumps({
-                                "type": "error",
-                                "code": "MIME_TYPE_NOT_ALLOWED",
-                                "message": "Unsupported image MIME type",
-                            }))
-                            continue
-                        await websocket.send_text(json.dumps({
-                            "type": "error",
-                            "code": "INVALID_UPLOAD",
-                            "message": "Invalid upload payload",
-                        }))
-                        continue
-
-                    cache_latest_image(
-                        user_id=user_id,
-                        session_id=resolved_session_id,
-                        image_data=image_data,
-                        mime_type=mime_type,
-                    )
-                    await websocket.send_text(json.dumps({
-                        "type": "image_received",
-                        "status": "analyzing",
-                    }))
-
-                    image_blob = types.Blob(
-                        mime_type=mime_type, data=image_data
-                    )
-                    live_request_queue.send_realtime(image_blob)
-                    live_request_queue.send_content(
-                        types.Content(
-                            parts=[types.Part(
-                                text=(
-                                    "Customer uploaded a device photo. "
-                                    "Transfer to vision_agent and call "
-                                    "analyze_device_image_tool now."
-                                )
-                            )]
-                        )
-                    )
-
-                elif msg_type == "config":
-                    requested_industry = json_message.get("industry", industry)
-                    if not isinstance(requested_industry, str):
-                        requested_industry = industry
-                    requested_industry = requested_industry.strip().lower() or industry
-
-                    requested_company = _normalize_company_id(
-                        json_message.get(
-                            "companyId",
-                            json_message.get("company_id", company_id),
-                        )
-                    )
-
-                    if requested_industry != session_industry:
-                        await websocket.send_text(json.dumps(_append_canonical_lock_fields({
-                            "type": "error",
-                            "code": "INDUSTRY_LOCKED",
-                            "message": (
-                                "Industry is set during onboarding and cannot be changed "
-                                "during an active session."
-                            ),
-                            "industry": session_industry,
-                            "companyId": company_id,
-                            "requestedIndustry": requested_industry,
-                        }, _ss)))
-                    elif requested_company != company_id:
-                        await websocket.send_text(json.dumps(_append_canonical_lock_fields({
-                            "type": "error",
-                            "code": "COMPANY_LOCKED",
-                            "message": (
-                                "Company profile is selected during onboarding and cannot "
-                                "be changed during an active session."
-                            ),
-                            "companyId": company_id,
-                            "requestedCompanyId": requested_company,
-                            "industry": session_industry,
-                        }, _ss)))
-                    else:
-                        current_voice = (
-                            _ss.get("app:voice")
-                            if isinstance(_ss.get("app:voice"), str)
-                            else None
-                        ) or _voice_for_industry(session_industry)
-                        await websocket.send_text(json.dumps(_build_session_started_message(
-                            session_id=resolved_session_id,
-                            industry=session_industry,
-                            company_id=company_id,
-                            voice=current_voice,
-                            manual_vad_active=manual_vad_active,
-                            session_state=_ss,
-                        )))
-
-                elif msg_type == "negotiate":
-                    action = json_message.get("action", "counter")
-                    amount = json_message.get("counterOffer", 0)
-                    content = types.Content(
-                        parts=[types.Part(
-                            text=f"Customer negotiation: {action}. Counter-offer amount: {amount}"
-                        )]
-                    )
-                    live_request_queue.send_content(content)
-
-                elif msg_type == "activity_start":
-                    if manual_vad_active and hasattr(live_request_queue, "send_activity_start"):
-                        live_request_queue.send_activity_start()
-
-                elif msg_type == "activity_end":
-                    if manual_vad_active and hasattr(live_request_queue, "send_activity_end"):
-                        live_request_queue.send_activity_end()
-
-                elif msg_type == "client_ping":
-                    client_ts = json_message.get("clientTs")
-                    seq = json_message.get("seq")
-                    await websocket.send_text(json.dumps({
-                        "type": "client_pong",
-                        "seq": seq,
-                        "clientTs": client_ts,
-                        "serverTs": int(time.time() * 1000),
-                    }))
-
-                else:
-                    await websocket.send_text(json.dumps({
-                        "type": "error",
-                        "code": "UNSUPPORTED_MESSAGE_TYPE",
-                        "message": "Unsupported client message type",
-                    }))
-
-    async def downstream_task() -> None:
-        """Receives Events from run_live(), transforms to ServerMessages.
-
-        Turn-state tracking: the server owns transcription lifecycle.
-        Input partials stream while the user speaks; a final (partial=false)
-        is emitted when the agent begins responding or the turn completes.
-        This keeps the protocol correct regardless of frontend implementation.
-        """
-        nonlocal last_client_activity
-        nonlocal silence_nudge_due_at
-        nonlocal silence_nudge_interval
-        nonlocal agent_busy
-        current_agent = "ekaette_router"
-        last_input_text = ""
-        last_output_text = ""
-        receiving_input = False
-        input_finalized = False   # late-partial suppression
-        output_finalized = False  # late-partial suppression
-        last_structured_message_id = 0
-        session_prompt_tokens = 0
-        session_completion_tokens = 0
-        session_total_tokens = 0
-        session_cost_usd = 0.0
-
-        async def _finalize_input() -> None:
-            """Send a non-partial input transcription to close the user's turn."""
-            nonlocal last_input_text, receiving_input, input_finalized
-            if receiving_input and last_input_text:
-                await websocket.send_text(json.dumps({
-                    "type": "transcription",
-                    "role": "user",
-                    "text": last_input_text,
-                    "partial": False,
-                }))
-            last_input_text = ""
-            receiving_input = False
-            input_finalized = True
-
-        async def _finalize_output() -> None:
-            """Send a non-partial output transcription to close the agent's turn."""
-            nonlocal last_output_text, output_finalized
-            if last_output_text:
-                await websocket.send_text(json.dumps({
-                    "type": "transcription",
-                    "role": "agent",
-                    "text": last_output_text,
-                    "partial": False,
-                }))
-            last_output_text = ""
-            output_finalized = True
-
-        async for event in runner.run_live(
-            user_id=user_id,
-            session_id=resolved_session_id,
-            live_request_queue=live_request_queue,
-            run_config=run_config,
-        ):
-            try:
-                # ─── Audio + Text content ───
-                if event.content and event.content.parts:
-                    for part in event.content.parts:
-                        # Audio → binary WebSocket frame (lowest latency)
-                        if (
-                            part.inline_data
-                            and part.inline_data.data
-                            and part.inline_data.mime_type
-                            and "audio" in part.inline_data.mime_type
-                        ):
-                            agent_busy = True
-                            audio_bytes = part.inline_data.data
-                            if isinstance(audio_bytes, str):
-                                audio_bytes = base64.b64decode(audio_bytes)
-                            await websocket.send_bytes(audio_bytes)
-
-                        # Text → transcription (text-mode fallback only)
-                        elif part.text and not is_native_audio:
-                            agent_busy = True
-                            await websocket.send_text(json.dumps({
-                                "type": "transcription",
-                                "role": "agent",
-                                "text": part.text,
-                                "partial": not bool(event.turn_complete),
-                            }))
-
-                # ─── Input transcription (user's speech → text) ───
-                if event.input_transcription:
-                    text = getattr(event.input_transcription, "text", None)
-                    finished = getattr(event.input_transcription, "finished", False)
-                    if text:
-                        if input_finalized and not finished:
-                            # Suppress late partials after input was already finalized
-                            pass
-                        else:
-                            if input_finalized:
-                                # New final after prior finalization → new utterance
-                                input_finalized = False
-                            last_input_text = text
-                            receiving_input = True
-                            is_partial = not finished
-                            await websocket.send_text(json.dumps({
-                                "type": "transcription",
-                                "role": "user",
-                                "text": text,
-                                "partial": is_partial,
-                            }))
-                            if finished:
-                                last_input_text = ""
-                                receiving_input = False
-                                input_finalized = True
-
-                # ─── Output transcription (agent's speech → text) ───
-                if event.output_transcription:
-                    text = getattr(event.output_transcription, "text", None)
-                    finished = getattr(event.output_transcription, "finished", False)
-                    if text:
-                        agent_busy = True
-                        if output_finalized and not finished:
-                            # Suppress late partials after output was already finalized
-                            pass
-                        else:
-                            if output_finalized:
-                                output_finalized = False
-                            # Agent started responding → finalize user's input
-                            if receiving_input:
-                                await _finalize_input()
-                            last_output_text = text
-                            is_partial = not finished
-                            await websocket.send_text(json.dumps({
-                                "type": "transcription",
-                                "role": "agent",
-                                "text": text,
-                                "partial": is_partial,
-                            }))
-                            if finished:
-                                last_output_text = ""
-                                output_finalized = True
-
-                # ─── Interrupted → finalize + clear playback ───
-                if event.interrupted:
-                    await _finalize_input()
-                    await _finalize_output()
-                    agent_busy = False
-                    await websocket.send_text(json.dumps({
-                        "type": "interrupted",
-                        "interrupted": True,
-                    }))
-
-                # ─── Agent transfer ───
-                if event.actions and event.actions.transfer_to_agent:
-                    new_agent = event.actions.transfer_to_agent
-                    if not isinstance(new_agent, str) or not new_agent.strip():
-                        logger.debug("Ignoring invalid transfer target: %r", new_agent)
-                    elif new_agent == current_agent:
-                        logger.debug(
-                            "Suppressing no-op agent_transfer (already on %s)", new_agent
-                        )
-                    else:
-                        await websocket.send_text(json.dumps({
-                            "type": "agent_transfer",
-                            "from": current_agent,
-                            "to": new_agent,
-                        }))
-                        current_agent = new_agent
-                        await websocket.send_text(json.dumps({
-                            "type": "agent_status",
-                            "agent": new_agent,
-                            "status": "active",
-                        }))
-
-                # ─── Structured ServerMessages from callbacks/state delta ───
-                state_delta = event.actions.state_delta if event.actions else None
-                structured = _extract_server_message_from_state_delta(state_delta)
-                if structured:
-                    raw_id = structured.get("id", 0)
-                    try:
-                        structured_id = int(raw_id)
-                    except (TypeError, ValueError):
-                        structured_id = 0
-
-                    if structured_id > last_structured_message_id:
-                        payload = {k: v for k, v in structured.items() if k != "id"}
-                        await websocket.send_text(json.dumps(payload))
-                        last_structured_message_id = structured_id
-
-                # ─── Turn complete → finalize output + status ───
-                if event.turn_complete:
-                    await _finalize_input()
-                    await _finalize_output()
-                    # Anchor silence nudges to when the agent actually finishes,
-                    # not when the user last spoke. This avoids check-in nudges
-                    # racing right after a long agent response.
-                    now = time.monotonic()
-                    agent_busy = False
-                    if now >= last_client_activity:
-                        silence_nudge_due_at = now + max(1.0, float(silence_nudge_interval))
-                    # Reset suppression flags for the next turn
-                    input_finalized = False
-                    output_finalized = False
-                    await websocket.send_text(json.dumps({
-                        "type": "agent_status",
-                        "agent": event.author or current_agent,
-                        "status": "idle",
-                    }))
-
-                # ─── Usage metadata ───
-                if event.usage_metadata:
-                    logger.debug("Token usage: %s", event.usage_metadata)
-                    prompt_tokens = _usage_int(
-                        event.usage_metadata, "prompt_token_count", "prompt_tokens"
-                    )
-                    completion_tokens = _usage_int(
-                        event.usage_metadata,
-                        "candidates_token_count",
-                        "completion_token_count",
-                        "completion_tokens",
-                    )
-                    total_tokens = _usage_int(
-                        event.usage_metadata, "total_token_count", "total_tokens"
-                    )
-                    if total_tokens <= 0:
-                        total_tokens = prompt_tokens + completion_tokens
-
-                    if total_tokens > 0:
-                        session_prompt_tokens += prompt_tokens
-                        session_completion_tokens += completion_tokens
-                        session_total_tokens += total_tokens
-                        session_cost_usd += (
-                            (prompt_tokens / 1_000_000) * TOKEN_PRICE_PROMPT_PER_MILLION
-                            + (completion_tokens / 1_000_000) * TOKEN_PRICE_COMPLETION_PER_MILLION
-                        )
-
-                        if DEBUG_TELEMETRY:
-                            await websocket.send_text(
-                                json.dumps(
-                                    {
-                                        "type": "telemetry",
-                                        "promptTokens": prompt_tokens,
-                                        "completionTokens": completion_tokens,
-                                        "totalTokens": total_tokens,
-                                        "sessionPromptTokens": session_prompt_tokens,
-                                        "sessionCompletionTokens": session_completion_tokens,
-                                        "sessionTotalTokens": session_total_tokens,
-                                        "sessionCostUsd": round(session_cost_usd, 6),
-                                    }
-                                )
-                            )
-
-                # ─── Session resumption token ───
-                if event.live_session_resumption_update:
-                    logger.debug("Session resumption token received")
-                    token_val = getattr(
-                        event.live_session_resumption_update, "token", None
-                    )
-                    if isinstance(token_val, str) and token_val:
-                        await websocket.send_text(json.dumps({
-                            "type": "session_ending",
-                            "reason": "session_resumption",
-                            "resumptionToken": token_val,
-                        }))
-
-                # ─── GoAway ───
-                go_away = getattr(event, "go_away", None)
-                if go_away is not None:
-                    time_left = getattr(go_away, "time_left", None)
-                    logger.warning("GoAway received, timeLeft=%s", time_left)
-                    await websocket.send_text(json.dumps({
-                        "type": "session_ending",
-                        "reason": "go_away",
-                        "timeLeftMs": int(time_left.total_seconds() * 1000)
-                        if time_left is not None
-                        else None,
-                    }))
-
-            except Exception as e:
-                logger.error("Error processing downstream event: %s", e, exc_info=True)
-
-        # Live API session ended naturally (timeout / GoAway completion).
-        # Notify client so it can decide to reconnect gracefully.
-        logger.info("downstream_task: run_live loop ended for session %s", _sanitize_log(resolved_session_id))
-        try:
-            await websocket.send_text(json.dumps({
-                "type": "session_ending",
-                "reason": "live_session_ended",
-            }))
-        except Exception:
-            pass  # Client already disconnected; safe to ignore
-
-    async def silence_nudge_task() -> None:
-        """Nudge the model when the customer has been silent too long.
-
-        Checks roughly every second. After ``SILENCE_NUDGE_SECONDS`` of no
-        client audio/text activity, injects a system hint so the model can
-        proactively check in. Each later nudge waits longer than the previous
-        one (progressive backoff), up to ``SILENCE_NUDGE_MAX_INTERVAL_SECONDS``.
-        Stops after ``SILENCE_NUDGE_MAX`` nudges per silence period (reset when
-        client speaks again).
-        """
-        nonlocal silence_nudge_count, silence_nudge_due_at, silence_nudge_interval, agent_busy
-        if SILENCE_NUDGE_SECONDS <= 0:
-            return  # disabled
-        while session_alive.is_set():
-            await asyncio.sleep(1)
-            if not session_alive.is_set():
-                break
-            now = time.monotonic()
-            if now < silence_nudge_due_at:
-                continue
-            if agent_busy:
-                continue
-            if silence_nudge_count >= SILENCE_NUDGE_MAX:
-                continue
-            silence_nudge_count += 1
-            ordinal = silence_nudge_count
-            if ordinal == 1:
-                hint = (
-                    "[System: the customer has been silent for several seconds. "
-                    "Gently check if they are still there. Keep it brief and natural.]"
-                )
-            else:
-                hint = (
-                    "[System: the customer is still silent after your last check-in. "
-                    "Say something like 'I'll be right here whenever you're ready' "
-                    "and then wait quietly. Do not check in again.]"
-                )
-            try:
-                live_request_queue.send_content(
-                    types.Content(parts=[types.Part(text=hint)])
-                )
-            except Exception:
-                break  # queue closed
-            silence_nudge_interval = _next_silence_nudge_interval(silence_nudge_interval)
-            silence_nudge_due_at = now + silence_nudge_interval
-
-    try:
-        upstream = asyncio.create_task(upstream_task(), name="upstream_task")
-        downstream = asyncio.create_task(downstream_task(), name="downstream_task")
-        keepalive = asyncio.create_task(keepalive_task(), name="keepalive_task")
-        nudge = asyncio.create_task(silence_nudge_task(), name="silence_nudge_task")
-        streaming_tasks = {upstream, downstream}
-
-        # The bidi session should end when either streaming side finishes:
-        # if downstream ends naturally (for example, Live session ends), we
-        # must cancel upstream rather than waiting forever for client input.
-        done, pending = await asyncio.wait(
-            streaming_tasks, return_when=asyncio.FIRST_COMPLETED
-        )
-
-        for task in done:
-            exc = task.exception()
-            if exc and not isinstance(exc, WebSocketDisconnect):
-                raise exc
-
-        for task in pending | {keepalive, nudge}:
-            task.cancel()
-        remaining = pending | {keepalive, nudge}
-        if remaining:
-            await asyncio.gather(*remaining, return_exceptions=True)
-    except WebSocketDisconnect:
-        logger.debug("Client disconnected normally")
-    except Exception as e:
-        logger.error(f"Streaming error: {e}", exc_info=True)
-    finally:
-        session_alive.clear()
-        live_request_queue.close()
+    _sync_realtime_runtime()
+    await realtime_ws.websocket_endpoint(websocket, user_id, session_id)
 
 
 # ═══ Static File Serving (built frontend) ═══
