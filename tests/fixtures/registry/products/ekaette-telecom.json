@@ -1,0 +1,122 @@
+[
+  {
+    "id": "prod-samsung-a15",
+    "name": "Samsung Galaxy A15",
+    "price": 125000,
+    "currency": "NGN",
+    "category": "smartphones",
+    "brand": "Samsung",
+    "in_stock": true,
+    "features": ["6.5-inch AMOLED", "50MP camera", "5000mAh battery", "Dual SIM"],
+    "description": "Affordable Samsung smartphone with large AMOLED display.",
+    "data_tier": "demo"
+  },
+  {
+    "id": "prod-tecno-spark-20-pro",
+    "name": "Tecno Spark 20 Pro+",
+    "price": 95000,
+    "currency": "NGN",
+    "category": "smartphones",
+    "brand": "Tecno",
+    "in_stock": true,
+    "features": ["108MP camera", "8GB RAM", "256GB storage", "33W fast charge"],
+    "description": "Feature-packed budget phone with flagship-level camera.",
+    "data_tier": "demo"
+  },
+  {
+    "id": "prod-iphone-se-3",
+    "name": "iPhone SE (3rd Gen)",
+    "price": 350000,
+    "currency": "NGN",
+    "category": "smartphones",
+    "brand": "Apple",
+    "in_stock": true,
+    "features": ["A15 Bionic", "4.7-inch Retina", "Touch ID", "5G"],
+    "description": "Most affordable iPhone with flagship-class performance.",
+    "data_tier": "demo"
+  },
+  {
+    "id": "prod-sim-starter-pack",
+    "name": "Ekaette SIM Starter Pack",
+    "price": 500,
+    "currency": "NGN",
+    "category": "sim_kits",
+    "brand": "Ekaette Telecom",
+    "in_stock": true,
+    "features": ["4G/5G ready", "Free 1GB data", "Nationwide coverage", "Instant activation"],
+    "description": "New SIM card with 1GB welcome data and nationwide coverage.",
+    "data_tier": "demo"
+  },
+  {
+    "id": "prod-mifi-router-huawei",
+    "name": "Huawei E5577 MiFi Router",
+    "price": 28000,
+    "currency": "NGN",
+    "category": "routers",
+    "brand": "Huawei",
+    "in_stock": true,
+    "features": ["4G LTE", "1500mAh battery", "10 devices", "Micro SD slot"],
+    "description": "Portable 4G router for internet on the go.",
+    "data_tier": "demo"
+  },
+  {
+    "id": "prod-home-router-5g",
+    "name": "Ekaette 5G Home Router",
+    "price": 85000,
+    "currency": "NGN",
+    "category": "routers",
+    "brand": "Ekaette Telecom",
+    "in_stock": false,
+    "features": ["5G NR", "Wi-Fi 6", "64 devices", "Ethernet port"],
+    "description": "High-speed 5G home internet router with Wi-Fi 6.",
+    "data_tier": "demo"
+  },
+  {
+    "id": "prod-data-plan-30gb",
+    "name": "30GB Monthly Data Plan",
+    "price": 5000,
+    "currency": "NGN",
+    "category": "data_plans",
+    "brand": "Ekaette Telecom",
+    "in_stock": true,
+    "features": ["30GB data", "30-day validity", "Rollover unused", "Night bonus 10GB"],
+    "description": "Monthly data plan with generous allowance and rollover.",
+    "data_tier": "demo"
+  },
+  {
+    "id": "prod-data-plan-100gb",
+    "name": "100GB Premium Data Plan",
+    "price": 12000,
+    "currency": "NGN",
+    "category": "data_plans",
+    "brand": "Ekaette Telecom",
+    "in_stock": true,
+    "features": ["100GB data", "30-day validity", "Unlimited social media", "5G access"],
+    "description": "Premium monthly plan for heavy data users with 5G access.",
+    "data_tier": "demo"
+  },
+  {
+    "id": "prod-usb-dongle-4g",
+    "name": "4G USB Dongle",
+    "price": 15000,
+    "currency": "NGN",
+    "category": "routers",
+    "brand": "ZTE",
+    "in_stock": true,
+    "features": ["4G LTE", "Plug and play", "150Mbps", "External antenna port"],
+    "description": "Compact USB modem for laptop internet connectivity.",
+    "data_tier": "demo"
+  },
+  {
+    "id": "prod-screen-protector-universal",
+    "name": "Universal Tempered Glass Screen Protector",
+    "price": 2500,
+    "currency": "NGN",
+    "category": "accessories",
+    "brand": "TechShield",
+    "in_stock": true,
+    "features": ["9H hardness", "Anti-fingerprint", "Easy install kit", "Bubble-free"],
+    "description": "Premium tempered glass screen protector for most smartphones.",
+    "data_tier": "demo"
+  }
+]

@@ -114,6 +114,26 @@ class TestDedupBeforeAgentCallback:
         result = await dedup_before_agent(callback_context=callback_context)
         assert result is None  # Root agent is never suppressed
 
+    @pytest.mark.asyncio
+    async def test_dedup_only_handles_dedup_not_isolation_policy(self):
+        """Isolation policy is enforced elsewhere (callbacks), not in dedup."""
+        from app.agents.dedup import dedup_before_agent
+
+        state = {
+            "app:industry_template_id": "hotel",
+            "app:enabled_agents": ["booking_agent", "support_agent"],
+        }
+        callback_context = SimpleNamespace(
+            agent_name="catalog_agent",
+            state=state,
+            user_content=types.Content(parts=[types.Part(text="I want a TV")]),
+            session=SimpleNamespace(events=[]),
+        )
+
+        result = await dedup_before_agent(callback_context=callback_context)
+
+        assert result is None
+
 
 class TestTelemetryAfterAgentCallback:
     """Test token/cost telemetry logging."""

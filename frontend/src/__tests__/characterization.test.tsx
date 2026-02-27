@@ -12,7 +12,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { getLastSocket, setStoredIndustry } from './test-helpers'
 import type { Industry } from '../types'
 
+async function dismissStartupSelectionPromptIfPresent() {
+  const continueButton = screen.queryByRole('button', { name: /continue with last setup/i })
+  if (!continueButton) return
+  await act(async () => {
+    continueButton.click()
+  })
+}
+
 async function startCallAndGetSocket() {
+  await dismissStartupSelectionPromptIfPresent()
   const micButton = screen.getByRole('button', { name: /start call/i })
   await act(async () => {
     micButton.click()
@@ -92,6 +101,7 @@ describe('Hardcoded industry maps (pre-migration baseline)', () => {
       setStoredIndustry(industry)
       const App = (await import('../App')).default
       const { container } = render(<App />)
+      await dismissStartupSelectionPromptIfPresent()
 
       expect(screen.getByText(expectedTitle)).toBeInTheDocument()
       expect(screen.getAllByText(expectedHint).length).toBeGreaterThanOrEqual(1)
@@ -220,6 +230,7 @@ describe('WebSocket connection characterization', () => {
 
     const App = (await import('../App')).default
     render(<App />)
+    await dismissStartupSelectionPromptIfPresent()
 
     const ws = await startCallAndGetSocket()
     expect(ws.url).toContain('industry=hotel')
@@ -230,6 +241,7 @@ describe('WebSocket connection characterization', () => {
 
     const App = (await import('../App')).default
     render(<App />)
+    await dismissStartupSelectionPromptIfPresent()
 
     const ws = await startCallAndGetSocket()
     expect(ws.url).toContain('company_id=ekaette-automotive')

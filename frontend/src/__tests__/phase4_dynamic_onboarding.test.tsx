@@ -356,7 +356,16 @@ describe('App dynamic onboarding integration', () => {
     })
   }
 
+  async function dismissStartupSelectionPromptIfPresent() {
+    const continueButton = screen.queryByRole('button', { name: /continue with last setup/i })
+    if (!continueButton) return
+    await act(async () => {
+      continueButton.click()
+    })
+  }
+
   async function connectCall() {
+    await dismissStartupSelectionPromptIfPresent()
     const micButton = screen.getByRole('button', { name: /start call/i })
     await act(async () => {
       micButton.click()

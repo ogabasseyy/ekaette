@@ -1,6 +1,7 @@
 import { act, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { DemoStep } from '../../utils/mockData'
+import { DEMO_STEPS_BY_TEMPLATE, ELECTRONICS_DEMO_STEPS } from '../../utils/mockData'
 import { useDemoMode } from '../useDemoMode'
 
 const STEPS: DemoStep[] = [
@@ -149,5 +150,106 @@ describe('useDemoMode', () => {
     expect(result.current.messages[1].type).toBe('transcription')
     expect(result.current.messages[2].type).toBe('agent_status')
     expect(onEmit).toHaveBeenCalledTimes(5)
+  })
+
+  it('emits error message type from custom steps', () => {
+    const errorSteps: DemoStep[] = [
+      {
+        delayMs: 0,
+        message: { type: 'session_started', sessionId: 's1', industry: 'electronics' },
+      },
+      {
+        delayMs: 100,
+        message: { type: 'error', code: 'TOOL_ERROR', message: 'Something went wrong' },
+      },
+    ]
+    const onEmit = vi.fn()
+    const { result } = renderHook(() => useDemoMode({ steps: errorSteps, onEmit }))
+
+    act(() => {
+      result.current.play()
+      vi.advanceTimersByTime(0)
+    })
+    act(() => {
+      vi.advanceTimersByTime(100)
+    })
+
+    expect(result.current.messages).toHaveLength(2)
+    expect(result.current.messages[1].type).toBe('error')
+    expect(onEmit).toHaveBeenCalledTimes(2)
+  })
+
+  it('emits memory_recall message type from custom steps', () => {
+    const memorySteps: DemoStep[] = [
+      {
+        delayMs: 0,
+        message: { type: 'session_started', sessionId: 's1', industry: 'electronics' },
+      },
+      {
+        delayMs: 100,
+        message: { type: 'memory_recall', customerName: 'Ada', previousInteractions: 5 },
+      },
+    ]
+    const onEmit = vi.fn()
+    const { result } = renderHook(() => useDemoMode({ steps: memorySteps, onEmit }))
+
+    act(() => {
+      result.current.play()
+      vi.advanceTimersByTime(0)
+    })
+    act(() => {
+      vi.advanceTimersByTime(100)
+    })
+
+    expect(result.current.messages).toHaveLength(2)
+    expect(result.current.messages[1].type).toBe('memory_recall')
+  })
+
+  it('completes full electronics 10-step demo', () => {
+    const onEmit = vi.fn()
+    const { result } = renderHook(() =>
+      useDemoMode({ steps: ELECTRONICS_DEMO_STEPS, onEmit }),
+    )
+
+    act(() => {
+      result.current.play()
+      vi.advanceTimersByTime(0)
+    })
+
+    // Advance through all delays (steps at 0, 400, 800, 1200, 1600, 2000, 2400, 2800, 3200, 3600)
+    for (let i = 1; i < ELECTRONICS_DEMO_STEPS.length; i += 1) {
+      act(() => {
+        vi.advanceTimersByTime(400)
+      })
+    }
+
+    expect(result.current.messages).toHaveLength(ELECTRONICS_DEMO_STEPS.length)
+    expect(onEmit).toHaveBeenCalledTimes(ELECTRONICS_DEMO_STEPS.length)
+    expect(result.current.isPlaying).toBe(false)
+
+    // Verify message types in order
+    const expectedTypes = ELECTRONICS_DEMO_STEPS.map(s => s.message.type)
+    const actualTypes = result.current.messages.map(m => m.type)
+    expect(actualTypes).toEqual(expectedTypes)
+  })
+
+  it('resolves template-specific steps by industryTemplateId', () => {
+    const templateIds = Object.keys(DEMO_STEPS_BY_TEMPLATE)
+
+    for (const templateId of templateIds) {
+      const { result } = renderHook(() => useDemoMode({ industryTemplateId: templateId }))
+
+      act(() => {
+        result.current.play()
+        vi.advanceTimersByTime(0)
+      })
+
+      expect(result.current.messages.length).toBeGreaterThanOrEqual(1)
+      expect(result.current.messages[0].type).toBe('session_started')
+
+      act(() => {
+        result.current.reset()
+      })
+    }
   })
 })

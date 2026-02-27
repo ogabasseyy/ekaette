@@ -4,11 +4,15 @@ from types import SimpleNamespace
 
 import pytest
 from google.adk.models.llm_request import LlmRequest
+from google.genai import types
 
 from app.agents.callbacks import (
+    AGENT_NOT_ENABLED_ERROR_CODE,
     _company_instruction,
     after_tool_emit_messages,
+    before_agent_isolation_guard,
     before_model_inject_config,
+    before_tool_capability_guard_and_log,
     queue_server_message,
 )
 
@@ -166,3 +170,100 @@ class TestAfterToolEmitMessages:
         assert message["type"] == "booking_confirmation"
         assert message["confirmationId"] == "EKT-ABC12345"
         assert message["time"] == "10:00"
+
+    @pytest.mark.asyncio
+    async def test_preserves_structured_error_payload(self):
+        tool = SimpleNamespace(name="transfer_to_agent")
+        ctx = SimpleNamespace(state={}, agent_name="ekaette_router")
+        result = {
+            "error": "agent_not_enabled",
+            "code": AGENT_NOT_ENABLED_ERROR_CODE,
+            "message": "Blocked",
+            "agentName": "catalog_agent",
+            "allowedAgents": ["booking_agent", "support_agent"],
+            "industryTemplateId": "hotel",
+        }
+
+        await after_tool_emit_messages(tool, {"agent_name": "catalog_agent"}, ctx, result)
+
+        message = ctx.state["temp:last_server_message"]
+        assert message["type"] == "error"
+        assert message["code"] == AGENT_NOT_ENABLED_ERROR_CODE
+        assert message["agentName"] == "catalog_agent"
+        assert message["allowedAgents"] == ["booking_agent", "support_agent"]
+
+
+class TestAgentIsolationGuards:
+    @pytest.mark.asyncio
+    async def test_before_agent_isolation_guard_blocks_disallowed_sub_agent(self):
+        state: dict[str, object] = {
+            "app:industry_template_id": "hotel",
+            "app:tenant_id": "baci",
+            "app:enabled_agents": ["booking_agent", "support_agent"],
+        }
+        callback_context = SimpleNamespace(
+            agent_name="catalog_agent",
+            state=state,
+        )
+
+        blocked = await before_agent_isolation_guard(callback_context)
+
+        assert blocked is not None
+        assert isinstance(blocked, types.Content)
+        message = state["temp:last_server_message"]
+        assert message["type"] == "error"
+        assert message["code"] == AGENT_NOT_ENABLED_ERROR_CODE
+        assert message["agentName"] == "catalog_agent"
+        assert message["allowedAgents"] == ["booking_agent", "support_agent"]
+        assert message["tenantId"] == "baci"
+        assert message["industryTemplateId"] == "hotel"
+
+    @pytest.mark.asyncio
+    async def test_before_tool_composed_guard_blocks_disallowed_transfer(self):
+        tool = SimpleNamespace(name="transfer_to_agent")
+        ctx = SimpleNamespace(
+            state={
+                "app:industry_template_id": "hotel",
+                "app:enabled_agents": ["booking_agent", "support_agent"],
+            },
+            agent_name="ekaette_router",
+        )
+
+        result = await before_tool_capability_guard_and_log(
+            tool,
+            {"agent_name": "catalog_agent"},
+            ctx,
+        )
+
+        assert isinstance(result, dict)
+        assert result["error"] == "agent_not_enabled"
+        assert result["code"] == AGENT_NOT_ENABLED_ERROR_CODE
+        assert result["agentName"] == "catalog_agent"
+        assert result["allowedAgents"] == ["booking_agent", "support_agent"]
+
+    @pytest.mark.asyncio
+    async def test_before_agent_isolation_guard_supports_mapping_like_state(self):
+        class FakeState:
+            def __init__(self, data: dict[str, object]):
+                self._data = dict(data)
+
+            def get(self, key: str, default: object = None) -> object:
+                return self._data.get(key, default)
+
+            def __setitem__(self, key: str, value: object) -> None:
+                self._data[key] = value
+
+            def __getitem__(self, key: str) -> object:
+                return self._data[key]
+
+        state = FakeState({
+            "app:industry_template_id": "hotel",
+            "app:enabled_agents": ["booking_agent", "support_agent"],
+        })
+        callback_context = SimpleNamespace(agent_name="catalog_agent", state=state)
+
+        blocked = await before_agent_isolation_guard(callback_context)
+
+        assert blocked is not None
+        message = state["temp:last_server_message"]
+        assert message["code"] == AGENT_NOT_ENABLED_ERROR_CODE

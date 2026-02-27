@@ -1,6 +1,6 @@
 import { act, renderHook } from '@testing-library/react'
 import { useRef } from 'react'
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useAudioWorklet } from '../useAudioWorklet'
 
 // Helper to create the ref that useAudioWorklet expects
@@ -13,6 +13,12 @@ function renderAudioWorklet() {
 }
 
 describe('useAudioWorklet', () => {
+  const OriginalAudioContext = globalThis.AudioContext
+
+  afterEach(() => {
+    globalThis.AudioContext = OriginalAudioContext
+    vi.restoreAllMocks()
+  })
   it('startRecording creates AudioContext at 16kHz', async () => {
     const { result } = renderAudioWorklet()
 
@@ -91,6 +97,109 @@ describe('useAudioWorklet', () => {
       value: { getUserMedia: original },
       configurable: true,
     })
+  })
+
+  it('recovers when addModule fails', async () => {
+    // Override AudioContext to have addModule throw
+    class FailingModuleContext {
+      sampleRate: number
+      state = 'running'
+      constructor(options?: { sampleRate?: number }) {
+        this.sampleRate = options?.sampleRate ?? 44100
+      }
+      async resume() {
+        this.state = 'running'
+      }
+      createMediaStreamSource() {
+        return { connect: () => {} }
+      }
+      get audioWorklet() {
+        return {
+          addModule: async () => {
+            throw new Error('Failed to load worklet module')
+          },
+        }
+      }
+      async close() {
+        this.state = 'closed'
+      }
+    }
+    globalThis.AudioContext = FailingModuleContext as unknown as typeof AudioContext
+
+    const { result } = renderAudioWorklet()
+
+    await act(async () => {
+      await result.current.worklet.startRecording()
+    })
+
+    expect(result.current.worklet.error).toBe('Failed to load worklet module')
+  })
+
+  it('handles initPlayer failure gracefully', async () => {
+    class FailingPlayerContext {
+      sampleRate: number
+      state = 'running'
+      constructor(options?: { sampleRate?: number }) {
+        this.sampleRate = options?.sampleRate ?? 44100
+      }
+      async resume() {
+        this.state = 'running'
+      }
+      createMediaStreamSource() {
+        return { connect: () => {} }
+      }
+      get audioWorklet() {
+        return {
+          addModule: async () => {
+            throw new Error('Player worklet load failed')
+          },
+        }
+      }
+      async close() {
+        this.state = 'closed'
+      }
+    }
+    globalThis.AudioContext = FailingPlayerContext as unknown as typeof AudioContext
+
+    const { result } = renderAudioWorklet()
+
+    await act(async () => {
+      await result.current.worklet.initPlayer()
+    })
+
+    expect(result.current.worklet.error).toBe('Player worklet load failed')
+  })
+
+  it('resumes suspended AudioContext on start (Safari fix)', async () => {
+    const resumeSpy = vi.fn().mockResolvedValue(undefined)
+
+    class SuspendedContext {
+      sampleRate: number
+      state = 'suspended'
+      constructor(options?: { sampleRate?: number }) {
+        this.sampleRate = options?.sampleRate ?? 44100
+      }
+      resume = resumeSpy
+      createMediaStreamSource() {
+        return { connect: () => {} }
+      }
+      get audioWorklet() {
+        return { addModule: async () => {} }
+      }
+      async close() {
+        this.state = 'closed'
+      }
+    }
+    globalThis.AudioContext = SuspendedContext as unknown as typeof AudioContext
+
+    const { result } = renderAudioWorklet()
+
+    await act(async () => {
+      await result.current.worklet.startRecording()
+    })
+
+    expect(resumeSpy).toHaveBeenCalled()
+    expect(result.current.worklet.error).toBeNull()
   })
 
   it('forwards recorder chunks to callback', async () => {

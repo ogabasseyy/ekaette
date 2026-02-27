@@ -1,0 +1,30 @@
+[
+  {
+    "id": "kb-fashion-returns",
+    "title": "Return and exchange policy",
+    "text": "Returns are accepted within 14 days for unworn items with tags attached. Exchange for a different size is free. Refunds are processed to original payment method within 5 business days. Sale items are final sale.",
+    "tags": ["returns", "policy", "exchange"],
+    "source": "seed"
+  },
+  {
+    "id": "kb-fashion-sizing",
+    "title": "Sizing and fit assistance",
+    "text": "Our virtual stylists can help with sizing and fit recommendations over voice or chat. We carry Nigerian sizes (S-3XL) and international sizes. Custom tailoring is available for select items at an additional fee (2-5 business days).",
+    "tags": ["sizing", "styling", "fit"],
+    "source": "seed"
+  },
+  {
+    "id": "kb-fashion-delivery",
+    "title": "Delivery and shipping",
+    "text": "Same-day delivery in Lagos for orders placed before 3 PM (NGN 2,000). Next-day delivery to Abuja and Port Harcourt (NGN 3,000). Nationwide delivery within 3-5 business days (NGN 3,500). Free shipping on orders above NGN 50,000.",
+    "tags": ["delivery", "shipping", "policy"],
+    "source": "seed"
+  },
+  {
+    "id": "kb-fashion-styling",
+    "title": "Personal styling service",
+    "text": "Book a free 30-minute virtual styling session with our fashion consultants. They can suggest outfits for events, help build a capsule wardrobe, or assist with color/pattern coordination. Available Mon-Sat 10 AM - 6 PM.",
+    "tags": ["styling", "consultation", "service"],
+    "source": "seed"
+  }
+]

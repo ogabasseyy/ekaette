@@ -1,0 +1,30 @@
+[
+  {
+    "id": "kb-elec-hours",
+    "title": "Support hours",
+    "text": "Customer support is available daily from 9 AM to 7 PM (WAT). Online chat is available 24/7.",
+    "tags": ["support", "hours"],
+    "source": "seed"
+  },
+  {
+    "id": "kb-elec-pickup",
+    "title": "Pickup policy",
+    "text": "Same-day pickup is available for confirmed bookings made before 2 PM. Next-day pickup is guaranteed for all other bookings. Riders deliver within Lagos and Abuja metro areas only.",
+    "tags": ["pickup", "policy", "delivery"],
+    "source": "seed"
+  },
+  {
+    "id": "kb-elec-warranty",
+    "title": "Trade-in warranty",
+    "text": "All trade-in devices come with a 30-day quality guarantee. If the device condition is misgraded, customers can request a free re-evaluation within 14 days of trade-in.",
+    "tags": ["warranty", "policy", "trade-in"],
+    "source": "seed"
+  },
+  {
+    "id": "kb-elec-payment",
+    "title": "Payment methods",
+    "text": "We accept bank transfers, debit cards, USSD, and cash on pickup. Mobile money (OPay, PalmPay) is accepted for amounts under NGN 500,000. International cards are supported for online orders.",
+    "tags": ["payment", "policy"],
+    "source": "seed"
+  }
+]

@@ -20,6 +20,7 @@ from typing import Any
 
 from app.configs import RegistryDataMissingError  # noqa: F401 — re-export
 from app.configs import RegistrySchemaVersionError
+from app.configs.agent_policy import resolve_enabled_agents_from_template
 from app.configs import registry_enabled as _registry_enabled
 from app.configs import sanitize_log as _sanitize_log
 from app.configs import validate_registry_schema_version
@@ -46,6 +47,7 @@ class ResolvedRegistryConfig:
     greeting: str
     connector_manifest: dict[str, Any]
     registry_version: str
+    enabled_agents: list[str] | None = None
 
 
 async def load_industry_template(
@@ -251,6 +253,8 @@ async def resolve_registry_config(
     # Resolve capabilities
     capabilities = _resolve_capabilities(template, company)
 
+    enabled_agents = resolve_enabled_agents_from_template(template, capabilities)
+
     # Resolve connectors
     connector_manifest = _dict_or_empty(company.get("connectors"))
 
@@ -272,11 +276,12 @@ async def resolve_registry_config(
         greeting=greeting,
         connector_manifest=connector_manifest,
         registry_version=_compute_registry_version(template, company),
+        enabled_agents=enabled_agents,
     )
     logger.debug(
         "registry_loader: resolved config tenant_id=%s company_id=%s "
         "industry_template_id=%s registry_version=%s template_schema_version=%s "
-        "company_schema_version=%s source=registry capabilities=%s",
+        "company_schema_version=%s source=registry capabilities=%s enabled_agents=%s",
         _sanitize_log(tenant_id),
         _sanitize_log(company_id),
         _sanitize_log(template_id),
@@ -284,6 +289,7 @@ async def resolve_registry_config(
         template.get("schema_version"),
         company.get("schema_version"),
         capabilities,
+        enabled_agents,
     )
     return resolved
 
@@ -322,6 +328,7 @@ def build_session_state_from_registry(
         "app:tenant_id": config.tenant_id,
         "app:industry_template_id": config.industry_template_id,
         "app:capabilities": list(config.capabilities),
+        "app:enabled_agents": list(getattr(config, "enabled_agents", []) or []),
         "app:ui_theme": dict(config.theme),
         "app:connector_manifest": dict(config.connector_manifest),
         "app:registry_version": config.registry_version,

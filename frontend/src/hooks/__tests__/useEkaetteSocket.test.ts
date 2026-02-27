@@ -1,7 +1,7 @@
 import { act, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ServerMessage } from '../../types'
-import { useEkaetteSocket } from '../useEkaetteSocket'
+import { SocketConnectError, useEkaetteSocket } from '../useEkaetteSocket'
 
 interface MockSocket {
   url: string
@@ -81,6 +81,65 @@ describe('useEkaetteSocket', () => {
     })
 
     expect(result.current.state).toBe('connected')
+  })
+
+  it('rejects connect promise with typed timeout error when websocket never opens', async () => {
+    const OriginalWebSocket = globalThis.WebSocket
+
+    class NeverOpenWebSocket {
+      static CONNECTING = 0
+      static OPEN = 1
+      static CLOSING = 2
+      static CLOSED = 3
+      url: string
+      readyState = NeverOpenWebSocket.CONNECTING
+      binaryType = 'blob'
+      sent: Array<string | ArrayBuffer> = []
+      onopen: ((ev: Event) => void) | null = null
+      onclose: ((ev: CloseEvent) => void) | null = null
+      onerror: ((ev: Event) => void) | null = null
+      onmessage: ((ev: MessageEvent) => void) | null = null
+
+      constructor(url: string) {
+        this.url = url
+      }
+
+      send(data: string | ArrayBuffer) {
+        this.sent.push(data)
+      }
+
+      close() {
+        this.readyState = NeverOpenWebSocket.CLOSED
+        this.onclose?.(new CloseEvent('close'))
+      }
+    }
+
+    globalThis.WebSocket = NeverOpenWebSocket as unknown as typeof WebSocket
+    try {
+      const { result } = renderHook(() => useEkaetteSocket('user1', 'session1'))
+      let connectPromise!: Promise<void>
+
+      act(() => {
+        connectPromise = result.current.connect({ timeoutMs: 100 })
+      })
+      const connectErrorPromise = connectPromise.catch((error: unknown) => error)
+
+      await act(async () => {
+        vi.advanceTimersByTime(101)
+        await Promise.resolve()
+      })
+
+      const connectError = await connectErrorPromise
+      expect(connectError).toBeInstanceOf(SocketConnectError)
+      expect(connectError).toMatchObject({
+        code: 'CONNECT_TIMEOUT',
+        retryable: true,
+        message: 'WebSocket connection timeout',
+      })
+      expect(result.current.state).toBe('disconnected')
+    } finally {
+      globalThis.WebSocket = OriginalWebSocket
+    }
   })
 
   it('routes JSON messages to messages array', async () => {
@@ -484,6 +543,147 @@ describe('useEkaetteSocket', () => {
       message => message.type === 'error' && message.code === 'RAPID_DISCONNECT',
     )
     expect(rapid).toBeDefined()
+  })
+
+  it('stores interrupted message in messages array', async () => {
+    const { result } = renderHook(() => useEkaetteSocket('user1', 'session1'))
+    act(() => {
+      result.current.connect()
+    })
+    await act(async () => {
+      vi.advanceTimersByTime(1)
+    })
+
+    const ws = getLastSocket()
+    act(() => {
+      ws.onmessage?.(
+        new MessageEvent('message', {
+          data: JSON.stringify({
+            type: 'transcription',
+            role: 'agent',
+            text: 'I was saying something',
+            partial: true,
+          }),
+        }),
+      )
+    })
+    act(() => {
+      ws.onmessage?.(
+        new MessageEvent('message', {
+          data: JSON.stringify({
+            type: 'interrupted',
+            interrupted: true,
+          }),
+        }),
+      )
+    })
+
+    const interrupted = result.current.messages.find(m => m.type === 'interrupted')
+    expect(interrupted).toBeDefined()
+    expect(interrupted?.type).toBe('interrupted')
+  })
+
+  it('triggers onSessionEnding callback on session_ending message', async () => {
+    const { result } = renderHook(() => useEkaetteSocket('user1', 'session1'))
+    const endingReasons: string[] = []
+    result.current.onSessionEnding.current = reason => {
+      endingReasons.push(reason)
+    }
+
+    act(() => {
+      result.current.connect()
+    })
+    await act(async () => {
+      vi.advanceTimersByTime(1)
+    })
+
+    const ws = getLastSocket()
+    act(() => {
+      ws.onmessage?.(
+        new MessageEvent('message', {
+          data: JSON.stringify({
+            type: 'session_ending',
+            reason: 'go_away',
+          }),
+        }),
+      )
+    })
+
+    expect(endingReasons).toEqual(['go_away'])
+    const ending = result.current.messages.find(m => m.type === 'session_ending')
+    expect(ending).toBeDefined()
+  })
+
+  it('updates manualVadActive from session_started and enables activity messages', async () => {
+    const { result } = renderHook(() => useEkaetteSocket('user1', 'session1'))
+    act(() => {
+      result.current.connect()
+    })
+    await act(async () => {
+      vi.advanceTimersByTime(1)
+    })
+
+    const ws = getLastSocket()
+    const sentBefore = ws.sent.length
+    act(() => {
+      result.current.sendActivityStart()
+    })
+    expect(ws.sent.length).toBe(sentBefore)
+
+    act(() => {
+      ws.onmessage?.(
+        new MessageEvent('message', {
+          data: JSON.stringify({
+            type: 'session_started',
+            sessionId: 'session1',
+            industry: 'electronics',
+            manualVadActive: true,
+            vadMode: 'manual',
+          }),
+        }),
+      )
+    })
+
+    act(() => {
+      result.current.sendActivityStart()
+    })
+    expect(JSON.parse(ws.sent.at(-1) as string)).toEqual({ type: 'activity_start' })
+  })
+
+  it('ignores malformed JSON messages without throwing', async () => {
+    const { result } = renderHook(() => useEkaetteSocket('user1', 'session1'))
+    act(() => {
+      result.current.connect()
+    })
+    await act(async () => {
+      vi.advanceTimersByTime(1)
+    })
+
+    const ws = getLastSocket()
+    act(() => {
+      ws.onmessage?.(new MessageEvent('message', { data: '{invalid json' }))
+    })
+    act(() => {
+      ws.onmessage?.(new MessageEvent('message', { data: '{}' }))
+    })
+    act(() => {
+      ws.onmessage?.(new MessageEvent('message', { data: '"just a string"' }))
+    })
+
+    act(() => {
+      ws.onmessage?.(
+        new MessageEvent('message', {
+          data: JSON.stringify({
+            type: 'transcription',
+            role: 'agent',
+            text: 'Still working',
+            partial: false,
+          }),
+        }),
+      )
+    })
+    expect(result.current.messages).toHaveLength(1)
+    expect(result.current.messages[0].type).toBe('transcription')
   })
 
   it('tracks sendAudio drops when disconnected and backpressure when websocket is open', async () => {

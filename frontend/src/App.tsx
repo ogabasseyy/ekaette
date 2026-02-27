@@ -22,7 +22,7 @@ import { VoicePanel } from './components/layout/VoicePanel'
 import { ImagePreview } from './components/media/ImagePreview'
 import { type PlaybackStats, useAudioWorklet } from './hooks/useAudioWorklet'
 import { useDemoMode } from './hooks/useDemoMode'
-import { useEkaetteSocket } from './hooks/useEkaetteSocket'
+import { SocketConnectError, useEkaetteSocket } from './hooks/useEkaetteSocket'
 import {
   normalizeTranscriptMessages,
   sanitizeTranscriptForDisplay,
@@ -106,6 +106,10 @@ const DEFAULT_THEME: ThemeConfig = {
   hint: 'AI-powered customer service.',
 }
 
+function createClientSessionId(): string {
+  return `session-${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`
+}
+
 function parseStoredIndustry(value: string | null): string | null {
   if (!value || !value.trim()) return null
   return value
@@ -114,6 +118,13 @@ function parseStoredIndustry(value: string | null): string | null {
 function parseStoredValue(value: string | null): string | null {
   if (!value || !value.trim()) return null
   return value.trim()
+}
+
+function clearStoredOnboardingSelection(): void {
+  if (typeof window === 'undefined') return
+  window.localStorage.removeItem(INDUSTRY_STORAGE_KEY)
+  window.localStorage.removeItem(TEMPLATE_STORAGE_KEY)
+  window.localStorage.removeItem(COMPANY_STORAGE_KEY)
 }
 
 function readDemoModeFlag(): boolean {
@@ -228,11 +239,18 @@ function App() {
   const [onboardingConfigError, setOnboardingConfigError] = useState<string | null>(null)
   const [onboardingReloadNonce, setOnboardingReloadNonce] = useState(0)
   const userId = 'demo-user'
-  const [sessionId] = useState(() => `session-${Date.now()}`)
+  const [sessionId, setSessionId] = useState<string>(() => createClientSessionId())
   const [isStarting, setIsStarting] = useState(false)
   const [callError, setCallError] = useState<string | null>(null)
   const [elapsedSeconds, setElapsedSeconds] = useState(0)
   const [errorToast, setErrorToast] = useState<ErrorMessage | null>(null)
+  const [startupSelectionPromptOpen, setStartupSelectionPromptOpen] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false
+    return Boolean(
+      parseStoredValue(window.localStorage.getItem(TEMPLATE_STORAGE_KEY)) ??
+        parseStoredIndustry(window.localStorage.getItem(INDUSTRY_STORAGE_KEY)),
+    )
+  })
   const [debugOpen, setDebugOpen] = useState(() => import.meta.env.DEV)
   const [debugEvents, setDebugEvents] = useState<DebugEventItem[]>([])
   const [playbackStats, setPlaybackStats] = useState<PlaybackStats | null>(null)
@@ -261,6 +279,12 @@ function App() {
   }, [activeIndustry, companies, companySelection, fallbackCompanyId])
   const theme = resolveTheme(activeIndustry, templates)
   const templateLabel = resolveTemplateLabel(activeIndustry, templates)
+  const selectedCompanyLabel = useMemo(() => {
+    if (!companyId) return 'Not selected'
+    const match = companies?.find(company => company.id === companyId)
+    return match?.displayName ?? companyId
+  }, [companies, companyId])
+  const showStartupSelectionPrompt = Boolean(industry) && startupSelectionPromptOpen
 
   const socket = useEkaetteSocket(userId, sessionId, {
     demoMode: demoModeEnabled,
@@ -333,15 +357,7 @@ function App() {
   const socketStateRef = useRef(socket.state)
   const processedCountRef = useRef(0)
   const wasConnectedRef = useRef(false)
-  const connectWaitTimerRef = useRef<number | null>(null)
   const isMountedRef = useRef(true)
-
-  const clearConnectWaitTimer = useCallback(() => {
-    if (connectWaitTimerRef.current != null) {
-      window.clearInterval(connectWaitTimerRef.current)
-      connectWaitTimerRef.current = null
-    }
-  }, [])
 
   // Single-pass message extraction (js-combine-iterations)
   const derived = useMemo(() => {
@@ -604,9 +620,8 @@ function App() {
     isMountedRef.current = true
     return () => {
       isMountedRef.current = false
-      clearConnectWaitTimer()
     }
-  }, [clearConnectWaitTimer])
+  }, [])
 
   useEffect(() => {
     socket.onAudioData.current = (data: ArrayBuffer) => {
@@ -698,40 +713,29 @@ function App() {
     setCallError(null)
     try {
       if (demoModeEnabled) {
-        socket.connect()
+        await socket.connect()
         demo.reset()
         demo.play()
         return
       }
-      socket.connect()
+      const connectPromise = socket.connect()
       await audio.recoverAudioContexts()
-      await new Promise<void>((resolve, reject) => {
-        const startedAt = Date.now()
-        clearConnectWaitTimer()
-        connectWaitTimerRef.current = window.setInterval(() => {
-          if (socketStateRef.current === 'connected') {
-            clearConnectWaitTimer()
-            resolve()
-            return
-          }
-          if (Date.now() - startedAt > 5000) {
-            clearConnectWaitTimer()
-            reject(new Error('WebSocket connection timeout'))
-          }
-        }, 50)
-      })
+      await connectPromise
       await audio.initPlayer()
       await audio.startRecording()
     } catch (error) {
       if (isMountedRef.current) {
-        setCallError(error instanceof Error ? error.message : 'Call start failed')
+        if (error instanceof SocketConnectError) {
+          setCallError(error.message)
+        } else {
+          setCallError(error instanceof Error ? error.message : 'Call start failed')
+        }
       }
       socket.disconnect()
       if (!demoModeEnabled) {
         audio.stop()
       }
     } finally {
-      clearConnectWaitTimer()
       if (isMountedRef.current) {
         setIsStarting(false)
       }
@@ -788,6 +792,66 @@ function App() {
     setOnboardingReloadNonce(value => value + 1)
   }, [])
 
+  const resetClientUiState = useCallback(() => {
+    processedCountRef.current = 0
+    socket.clearMessages()
+    setElapsedSeconds(0)
+    setCallError(null)
+    setErrorToast(null)
+    setDebugEvents([])
+    setPlaybackStats(null)
+    lastPlaybackUnderrunsRef.current = 0
+    lastPlaybackDebugAtRef.current = 0
+  }, [socket.clearMessages])
+
+  const handleContinueWithLastSetup = useCallback(() => {
+    setStartupSelectionPromptOpen(false)
+    setCallError(null)
+  }, [])
+
+  const handleStartFreshCall = useCallback(() => {
+    if (isConnected || socket.state === 'connecting' || socket.state === 'reconnecting') {
+      socket.sendActivityEnd()
+      if (!demoModeEnabled) {
+        audio.stop()
+      }
+      socket.disconnect()
+    }
+    resetClientUiState()
+    setSessionId(createClientSessionId())
+    setStartupSelectionPromptOpen(false)
+  }, [
+    audio.stop,
+    demoModeEnabled,
+    isConnected,
+    resetClientUiState,
+    socket,
+    socket.state,
+  ])
+
+  const handleReselectIndustry = useCallback(() => {
+    if (isConnected || socket.state === 'connecting' || socket.state === 'reconnecting') {
+      socket.sendActivityEnd()
+      if (!demoModeEnabled) {
+        audio.stop()
+      }
+      socket.disconnect()
+    }
+    resetClientUiState()
+    setSessionId(createClientSessionId())
+    setIndustry(null)
+    setCompanySelection(null)
+    clearStoredOnboardingSelection()
+    setStartupSelectionPromptOpen(false)
+  }, [
+    audio.stop,
+    demoModeEnabled,
+    isConnected,
+    resetClientUiState,
+    socket,
+    socket.state,
+  ])
+
   return (
     <div
       className="app-shell h-screen min-h-screen overflow-hidden text-foreground supports-[height:100dvh]:h-dvh supports-[height:100dvh]:min-h-dvh"
@@ -838,6 +902,62 @@ function App() {
                 />
               )}
             </div>
+          </main>
+        ) : showStartupSelectionPrompt ? (
+          <main className="mt-3 grid min-h-0 flex-1 overflow-y-auto pb-1 sm:mt-4 sm:pb-0">
+            <section className="panel-glass mx-auto w-full max-w-3xl px-4 py-5 sm:px-7 sm:py-8">
+              <p className="text-[0.58rem] text-[color:var(--industry-accent)] uppercase tracking-[0.24em] sm:text-[0.64rem] sm:tracking-[0.3em]">
+                Resume Setup
+              </p>
+              <h1 className="mt-2 font-display text-white text-xl leading-tight sm:text-3xl">
+                Continue with your last workspace?
+              </h1>
+              <p className="mt-2 max-w-2xl text-muted-foreground text-xs leading-relaxed sm:text-sm">
+                We found a previous onboarding selection in this browser. Choose whether to keep
+                it, start a fresh call, or re-select your industry before connecting.
+              </p>
+
+              <div className="mt-5 grid gap-3 sm:grid-cols-2">
+                <div className="rounded-2xl border border-border/70 bg-card/40 px-4 py-4">
+                  <p className="text-[0.62rem] text-muted-foreground uppercase tracking-[0.16em]">
+                    Industry
+                  </p>
+                  <p className="mt-1 font-semibold text-white">{templateLabel}</p>
+                </div>
+                <div className="rounded-2xl border border-border/70 bg-card/40 px-4 py-4">
+                  <p className="text-[0.62rem] text-muted-foreground uppercase tracking-[0.16em]">
+                    Company
+                  </p>
+                  <p className="mt-1 font-semibold text-white">{selectedCompanyLabel}</p>
+                </div>
+              </div>
+
+              <div className="mt-6 grid gap-2 sm:grid-cols-[1fr_1fr]">
+                <button
+                  type="button"
+                  onClick={handleContinueWithLastSetup}
+                  className="rounded-full bg-[color:var(--industry-accent)] px-5 py-2.5 font-semibold text-black text-sm transition hover:brightness-110 sm:py-2"
+                >
+                  Continue With Last Setup
+                </button>
+                <button
+                  type="button"
+                  onClick={handleStartFreshCall}
+                  className="rounded-full border border-primary/50 bg-primary/10 px-5 py-2.5 font-semibold text-primary text-sm transition hover:bg-primary/15 sm:py-2"
+                >
+                  Start Fresh Call
+                </button>
+              </div>
+              <div className="mt-3 flex justify-stretch sm:justify-end">
+                <button
+                  type="button"
+                  onClick={handleReselectIndustry}
+                  className="w-full rounded-full border border-border/70 bg-card/40 px-5 py-2.5 font-medium text-foreground text-sm transition hover:border-primary/40 hover:bg-card/60 sm:w-auto sm:py-2"
+                >
+                  Re-select Industry
+                </button>
+              </div>
+            </section>
           </main>
         ) : (
           <>

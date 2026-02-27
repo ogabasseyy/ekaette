@@ -1,0 +1,30 @@
+[
+  {
+    "id": "kb-telecom-plans",
+    "title": "Data plan comparison guide",
+    "text": "Starter: 5GB/NGN 1,500 (7 days). Standard: 30GB/NGN 5,000 (30 days, includes 10GB night bonus). Premium: 100GB/NGN 12,000 (30 days, unlimited social, 5G). Enterprise: Unlimited/NGN 25,000 (30 days, static IP, priority support).",
+    "tags": ["plans", "data", "pricing"],
+    "source": "seed"
+  },
+  {
+    "id": "kb-telecom-porting",
+    "title": "Number porting process",
+    "text": "Port your existing number to Ekaette Telecom in 24 hours. Send PORT to 3232 from your current network, then visit any Ekaette store with your NIN and current SIM. Service is free. You keep your number and contacts.",
+    "tags": ["porting", "number", "migration"],
+    "source": "seed"
+  },
+  {
+    "id": "kb-telecom-rollover",
+    "title": "Data rollover policy",
+    "text": "Unused data on Standard and Premium plans rolls over to the next billing cycle (max 1 rollover cycle). Starter plan data does not roll over. Rollover data is used after your new allocation is exhausted.",
+    "tags": ["rollover", "data", "policy"],
+    "source": "seed"
+  },
+  {
+    "id": "kb-telecom-roaming",
+    "title": "International roaming",
+    "text": "Roaming is available in 45+ countries. Activate via *123*9# or the Ekaette app. Daily roaming packs: Africa (NGN 1,000/500MB), Global (NGN 3,000/1GB). Calls received while roaming: NGN 100/min. Auto-roaming alerts are sent on arrival.",
+    "tags": ["roaming", "international", "travel"],
+    "source": "seed"
+  }
+]

@@ -1,7 +1,7 @@
 """ekaette_router — Root Agent with Multi-Agent Dispatch.
 
 S11 additions:
-- before_agent_callback: dedup mitigation for ADK Bug #3395
+- before_agent_callback: industry isolation + dedup mitigation for ADK Bug #3395
 - after_agent_callback: memory save + token telemetry
 - generate_content_config: thinking budget (256 for fast routing)
 """
@@ -17,11 +17,12 @@ from google.genai import types
 from app.agents.callbacks import (
     after_model_valuation_sanity,
     after_tool_emit_messages,
+    before_agent_isolation_guard_and_dedup,
     before_model_inject_config,
     before_tool_capability_guard_and_log,
     on_tool_error_emit,
 )
-from app.agents.dedup import dedup_before_agent, telemetry_after_agent
+from app.agents.dedup import telemetry_after_agent
 from app.configs.model_resolver import resolve_live_model_id
 from app.agents.vision_agent.agent import vision_agent
 from app.agents.valuation_agent.agent import valuation_agent
@@ -181,7 +182,7 @@ ekaette_router = Agent(
         catalog_agent,
         support_agent,
     ],
-    before_agent_callback=dedup_before_agent,
+    before_agent_callback=before_agent_isolation_guard_and_dedup,
     before_model_callback=before_model_inject_config,
     after_model_callback=after_model_valuation_sanity,
     before_tool_callback=before_tool_capability_guard_and_log,

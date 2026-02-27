@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "id": "fashion",
+  "label": "Fashion & Retail",
+  "category": "retail",
+  "description": "Catalog recommendations and consultation workflows.",
+  "default_voice": "Kore",
+  "greeting_policy": "Hey there! Let me help you find your perfect style.",
+  "theme": {
+    "accent": "oklch(74% 0.2 20)",
+    "accentSoft": "oklch(74% 0.2 20 / 0.15)",
+    "title": "Fashion Client Studio",
+    "hint": "Catalog recommendations and consultation workflows."
+  },
+  "capabilities": ["catalog_lookup", "policy_qa"],
+  "enabled_agents": ["catalog_agent", "support_agent"],
+  "connectors_supported": ["erp"],
+  "status": "active"
+}

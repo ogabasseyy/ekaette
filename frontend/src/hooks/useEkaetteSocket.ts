@@ -12,12 +12,31 @@ import type { ClientMessage, ConnectionState, ServerMessage, TransportMode } fro
 const MAX_RECONNECT_ATTEMPTS = 3
 const BASE_RECONNECT_DELAY = 1000
 const MAX_MESSAGES = 500
+const DEFAULT_CONNECT_TIMEOUT_MS = 15000
 const HEARTBEAT_INTERVAL_MS = 5000
 const HEARTBEAT_TIMEOUT_MS = 15000
 const AUDIO_TX_BACKPRESSURE_BYTES = 256 * 1024
 const AUDIO_RX_GAP_SUSPECT_MS = 220
 const DEBUG_METRICS_FLUSH_MS = 200
 const IS_TEST_ENV = import.meta.env.MODE === 'test'
+
+export type SocketConnectErrorCode = 'CONNECT_TIMEOUT' | 'CONNECT_FAILED' | 'CONNECT_CANCELLED'
+
+export class SocketConnectError extends Error {
+  readonly code: SocketConnectErrorCode
+  readonly retryable: boolean
+
+  constructor(
+    code: SocketConnectErrorCode,
+    message: string,
+    options: { retryable?: boolean } = {},
+  ) {
+    super(message)
+    this.name = 'SocketConnectError'
+    this.code = code
+    this.retryable = options.retryable ?? code !== 'CONNECT_CANCELLED'
+  }
+}
 
 export interface SocketDebugMetrics {
   transport: TransportMode
@@ -41,7 +60,7 @@ interface UseEkaetteSocketReturn {
   state: ConnectionState
   messages: ServerMessage[]
   debugMetrics: SocketDebugMetrics
-  connect: () => void
+  connect: (options?: ConnectOptions) => Promise<void>
   disconnect: () => void
   sendAudio: (data: ArrayBuffer) => void
   sendText: (text: string) => void
@@ -61,6 +80,18 @@ interface UseEkaetteSocketOptions {
   companyId?: string
   tenantId?: string
   transportMode?: TransportMode
+  connectTimeoutMs?: number
+}
+
+interface ConnectOptions {
+  timeoutMs?: number
+}
+
+interface PendingConnectRequest {
+  promise: Promise<void>
+  resolve: () => void
+  reject: (error: SocketConnectError) => void
+  timeoutTimer: ReturnType<typeof setTimeout> | null
 }
 
 interface EphemeralTokenResponse {
@@ -163,6 +194,7 @@ export function useEkaetteSocket(
   const companyId = options.companyId ?? ''
   const tenantId = options.tenantId ?? 'public'
   const transportMode = options.transportMode ?? 'backend-proxy'
+  const defaultConnectTimeoutMs = options.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS
 
   const wsRef = useRef<WebSocket | null>(null)
   const directSessionRef = useRef<DirectLiveSession | null>(null)
@@ -192,6 +224,7 @@ export function useEkaetteSocket(
   const receivingDirectInputRef = useRef(false)
   const lastConnectTimeRef = useRef(0)
   const rapidFailCountRef = useRef(0)
+  const pendingConnectRef = useRef<PendingConnectRequest | null>(null)
 
   const flushDebugMetrics = useCallback((force = false) => {
     if (IS_TEST_ENV) {
@@ -229,7 +262,38 @@ export function useEkaetteSocket(
     [flushDebugMetrics],
   )
 
+  const resolvePendingConnect = useCallback(() => {
+    const pending = pendingConnectRef.current
+    if (!pending) {
+      return
+    }
+    pendingConnectRef.current = null
+    if (pending.timeoutTimer) {
+      clearTimeout(pending.timeoutTimer)
+      pending.timeoutTimer = null
+    }
+    pending.resolve()
+  }, [])
+
+  const rejectPendingConnect = useCallback((error: SocketConnectError) => {
+    const pending = pendingConnectRef.current
+    if (!pending) {
+      return
+    }
+    pendingConnectRef.current = null
+    if (pending.timeoutTimer) {
+      clearTimeout(pending.timeoutTimer)
+      pending.timeoutTimer = null
+    }
+    pending.reject(error)
+  }, [])
+
   const cleanup = useCallback(() => {
+    const pending = pendingConnectRef.current
+    if (pending?.timeoutTimer) {
+      clearTimeout(pending.timeoutTimer)
+      pending.timeoutTimer = null
+    }
     if (reconnectTimerRef.current) {
       clearTimeout(reconnectTimerRef.current)
       reconnectTimerRef.current = null
@@ -276,6 +340,49 @@ export function useEkaetteSocket(
     }
     setDebugMetrics(debugMetricsRef.current)
   }, [])
+
+  const createPendingConnect = useCallback(
+    (timeoutMs: number) => {
+      if (pendingConnectRef.current) {
+        return pendingConnectRef.current.promise
+      }
+
+      let resolvePromise: (() => void) | null = null
+      let rejectPromise: ((error: SocketConnectError) => void) | null = null
+
+      const promise = new Promise<void>((resolve, reject) => {
+        resolvePromise = resolve
+        rejectPromise = error => reject(error)
+      })
+
+      const pending: PendingConnectRequest = {
+        promise,
+        resolve: () => {
+          resolvePromise?.()
+        },
+        reject: (error: SocketConnectError) => {
+          rejectPromise?.(error)
+        },
+        timeoutTimer: null,
+      }
+      pendingConnectRef.current = pending
+
+      if (timeoutMs > 0 && Number.isFinite(timeoutMs)) {
+        pending.timeoutTimer = setTimeout(() => {
+          if (pendingConnectRef.current !== pending) {
+            return
+          }
+          shouldReconnectRef.current = false
+          setState('disconnected')
+          cleanup()
+          rejectPendingConnect(new SocketConnectError('CONNECT_TIMEOUT', 'WebSocket connection timeout'))
+        }, timeoutMs)
+      }
+
+      return promise
+    },
+    [cleanup, rejectPendingConnect],
+  )
 
   const startProxyHeartbeat = useCallback(() => {
     if (IS_TEST_ENV) {
@@ -461,6 +568,12 @@ export function useEkaetteSocket(
     }
     if (reconnectAttemptRef.current >= MAX_RECONNECT_ATTEMPTS) {
       setState('disconnected')
+      rejectPendingConnect(
+        new SocketConnectError(
+          'CONNECT_FAILED',
+          'Unable to establish WebSocket connection',
+        ),
+      )
       return
     }
     setState('reconnecting')
@@ -469,7 +582,7 @@ export function useEkaetteSocket(
     reconnectTimerRef.current = setTimeout(() => {
       connectInternalRef.current()
     }, delay)
-  }, [demoMode])
+  }, [demoMode, rejectPendingConnect])
 
   const requestEphemeralToken = useCallback(async (): Promise<EphemeralTokenResponse> => {
     const response = await fetch('/api/token', {
@@ -680,6 +793,7 @@ export function useEkaetteSocket(
       }, true)
       startProxyHeartbeat()
       setState('connected')
+      resolvePendingConnect()
     }
 
     ws.onclose = () => {
@@ -711,6 +825,12 @@ export function useEkaetteSocket(
         })
         setState('disconnected')
         rapidFailCountRef.current = 0
+        rejectPendingConnect(
+          new SocketConnectError(
+            'CONNECT_FAILED',
+            'Connection keeps dropping. Please try again later.',
+          ),
+        )
         return
       }
 
@@ -753,6 +873,8 @@ export function useEkaetteSocket(
     handleJsonMessage,
     industry,
     mutateDebugMetrics,
+    rejectPendingConnect,
+    resolvePendingConnect,
     scheduleReconnect,
     startProxyHeartbeat,
     userId,
@@ -805,6 +927,7 @@ export function useEkaetteSocket(
           })
           manualVadEnabledRef.current = Boolean(tokenPayload.manualVadActive)
           setState('connected')
+          resolvePendingConnect()
         },
         onmessage: (message: unknown) => {
           handleDirectLiveMessage(message as LiveServerMessage)
@@ -843,12 +966,14 @@ export function useEkaetteSocket(
     industry,
     mutateDebugMetrics,
     requestEphemeralToken,
+    resolvePendingConnect,
     scheduleReconnect,
   ])
 
   const connectInternal = useCallback(() => {
     if (demoMode) {
       setState('connected')
+      resolvePendingConnect()
       return
     }
 
@@ -872,7 +997,14 @@ export function useEkaetteSocket(
     }
 
     connectBackendProxy()
-  }, [connectBackendProxy, connectDirectLive, demoMode, emitDirectFallbackMessage, transportMode])
+  }, [
+    connectBackendProxy,
+    connectDirectLive,
+    demoMode,
+    emitDirectFallbackMessage,
+    resolvePendingConnect,
+    transportMode,
+  ])
 
   useEffect(() => {
     currentSessionIdRef.current = sessionId
@@ -882,17 +1014,30 @@ export function useEkaetteSocket(
     connectInternalRef.current = connectInternal
   }, [connectInternal])
 
-  const connect = useCallback(() => {
+  const connect = useCallback((connectOptions: ConnectOptions = {}) => {
+    if (state === 'connected') {
+      return Promise.resolve()
+    }
+    if (pendingConnectRef.current) {
+      return pendingConnectRef.current.promise
+    }
+
     reconnectAttemptRef.current = 0
     rapidFailCountRef.current = 0
+    const timeoutMs = connectOptions.timeoutMs ?? defaultConnectTimeoutMs
+    const pendingConnect = createPendingConnect(timeoutMs)
     connectInternal()
-  }, [connectInternal])
+    return pendingConnect
+  }, [connectInternal, createPendingConnect, defaultConnectTimeoutMs, state])
 
   const disconnect = useCallback(() => {
     shouldReconnectRef.current = false
     setState('disconnected')
+    rejectPendingConnect(
+      new SocketConnectError('CONNECT_CANCELLED', 'Connection cancelled', { retryable: false }),
+    )
     cleanup()
-  }, [cleanup])
+  }, [cleanup, rejectPendingConnect])
 
   const sendJson = useCallback(
     (message: ClientMessage) => {

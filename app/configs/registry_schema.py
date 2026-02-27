@@ -177,3 +177,74 @@ def validate_theme(data: Any) -> list[str]:
             errors.append(f"theme.{field} must be a string if present")
 
     return errors
+
+
+# ═══ Product Validation ═══
+
+_PRODUCT_REQUIRED_STRINGS = ("id", "name", "category")
+
+
+def validate_product(data: Any) -> list[str]:
+    """Validate a product/catalog item document. Returns list of error strings."""
+    if not isinstance(data, dict):
+        return ["product must be a dict"]
+
+    errors: list[str] = []
+
+    for field in _PRODUCT_REQUIRED_STRINGS:
+        value = data.get(field)
+        if not isinstance(value, str) or not value.strip():
+            errors.append(f"missing or empty required string field: {field}")
+
+    price = data.get("price")
+    if not isinstance(price, (int, float)) or price < 0:
+        errors.append("missing or invalid required field: price (must be a non-negative number)")
+
+    currency = data.get("currency")
+    if not isinstance(currency, str) or not currency.strip():
+        errors.append("missing or empty required string field: currency")
+
+    in_stock = data.get("in_stock")
+    if not isinstance(in_stock, bool):
+        errors.append("missing or invalid required field: in_stock (must be a boolean)")
+
+    data_tier = data.get("data_tier")
+    if data_tier is not None and not isinstance(data_tier, str):
+        errors.append("data_tier must be a string if present")
+
+    return errors
+
+
+# ═══ Booking Slot Validation ═══
+
+_SLOT_REQUIRED_STRINGS = ("id", "date", "time")
+
+
+def validate_booking_slot(data: Any) -> list[str]:
+    """Validate a booking slot document. Returns list of error strings."""
+    import re
+
+    if not isinstance(data, dict):
+        return ["booking_slot must be a dict"]
+
+    errors: list[str] = []
+
+    for field in _SLOT_REQUIRED_STRINGS:
+        value = data.get(field)
+        if not isinstance(value, str) or not value.strip():
+            errors.append(f"missing or empty required string field: {field}")
+
+    date_val = data.get("date")
+    if isinstance(date_val, str) and date_val.strip():
+        if not re.match(r"^\d{4}-\d{2}-\d{2}$", date_val.strip()):
+            errors.append("date must be in YYYY-MM-DD format")
+
+    available = data.get("available")
+    if not isinstance(available, bool):
+        errors.append("missing or invalid required field: available (must be a boolean)")
+
+    data_tier = data.get("data_tier")
+    if data_tier is not None and not isinstance(data_tier, str):
+        errors.append("data_tier must be a string if present")
+
+    return errors

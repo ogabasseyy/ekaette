@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import logging
 from types import SimpleNamespace
 
 import pytest
@@ -150,6 +151,64 @@ class TestWebSocketEndpoint:
                 assert payload["companyId"] == "ekaette-hotel"
                 ws.close(code=1000)
 
+    def test_ws_missing_origin_rejected_by_default(self, app):
+        with TestClient(app) as tc:
+            with pytest.raises(Exception) as excinfo:
+                with tc.websocket_connect("/ws/user_123/session_abc"):
+                    pass
+        # Starlette raises WebSocketDisconnect; assert close code explicitly.
+        assert getattr(excinfo.value, "code", None) == 1008
+
+    def test_ws_missing_origin_can_be_allowed_by_policy(
+        self, app, main_module, monkeypatch, caplog
+    ):
+        class _FakeSessionService:
+            async def get_session(self, *, app_name, user_id, session_id):
+                return SimpleNamespace(
+                    id=session_id,
+                    state={
+                        "app:industry": "electronics",
+                        "app:industry_config": {
+                            "name": "Electronics & Gadgets",
+                            "voice": "Aoede",
+                        },
+                        "app:company_id": "ekaette-electronics",
+                        "app:company_profile": {},
+                        "app:company_knowledge": [],
+                    },
+                )
+
+        async def _fake_run_live(**kwargs):
+            yield SimpleNamespace(
+                content=None,
+                input_transcription=None,
+                output_transcription=None,
+                interrupted=False,
+                actions=None,
+                turn_complete=False,
+                usage_metadata=None,
+                live_session_resumption_update=None,
+                author="ekaette_router",
+            )
+            await asyncio.sleep(0)
+
+        monkeypatch.setattr(main_module, "ALLOW_MISSING_WS_ORIGIN", True)
+        monkeypatch.setattr(main_module, "session_service", _FakeSessionService())
+        monkeypatch.setattr(main_module, "runner", SimpleNamespace(run_live=_fake_run_live))
+        monkeypatch.setattr(main_module, "_registry_enabled", lambda: False)
+
+        caplog.set_level(logging.DEBUG, logger=main_module.__name__)
+        with TestClient(app) as tc:
+            with tc.websocket_connect(
+                "/ws/user_123/session_abc?industry=electronics&companyId=ekaette-electronics"
+            ) as ws:
+                payload = json.loads(ws.receive_text())
+                assert payload["type"] == "session_started"
+                assert payload["industry"] == "electronics"
+                ws.close(code=1000)
+
+        assert "WebSocket accepted without Origin header by policy" in caplog.text
+
 
 class TestSecurityHelpers:
     """Test allowlist parsing and origin validation helpers."""
@@ -164,8 +223,18 @@ class TestSecurityHelpers:
     def test_is_origin_allowed_false_for_unknown_origin(self, main_module):
         assert main_module._is_origin_allowed("http://evil.example.com") is False
 
-    def test_is_origin_allowed_false_when_origin_missing(self, main_module):
-        assert main_module._is_origin_allowed(None) is False
+    def test_is_origin_allowed_true_when_origin_missing(self, main_module):
+        """None origin = same-origin proxy request (Vite/nginx), always allowed."""
+        assert main_module._is_origin_allowed(None) is True
+
+    def test_websocket_origin_allowed_false_when_origin_missing_by_default(self, main_module):
+        assert main_module._is_websocket_origin_allowed(None) is False
+
+    def test_websocket_origin_allowed_true_when_origin_missing_if_enabled(
+        self, main_module, monkeypatch
+    ):
+        monkeypatch.setattr(main_module, "ALLOW_MISSING_WS_ORIGIN", True)
+        assert main_module._is_websocket_origin_allowed(None) is True
 
 
 class TestStructuredMessageExtraction:
@@ -308,6 +377,53 @@ class TestTokenEndpoint:
         assert first.status_code == 200
         assert second.status_code == 429
 
+    @pytest.mark.asyncio
+    async def test_token_logs_debug_when_origin_missing(
+        self, client, main_module, monkeypatch, caplog
+    ):
+        fake_client = _FakeTokenClient()
+        monkeypatch.setattr(main_module, "TOKEN_CLIENT", fake_client)
+        monkeypatch.setattr(main_module, "TOKEN_ALLOWED_TENANTS", {"public"})
+        monkeypatch.setattr(main_module, "_registry_enabled", lambda: False)
+        caplog.set_level(logging.DEBUG, logger=main_module.__name__)
+
+        response = await client.post(
+            "/api/token",
+            json={"userId": "user_123", "tenantId": "public", "industry": "electronics"},
+        )
+        assert response.status_code == 200
+        assert "HTTP request accepted without Origin header endpoint=api_token" in caplog.text
+
+
+class TestOnboardingConfigEndpoint:
+    @pytest.mark.asyncio
+    async def test_onboarding_config_allows_missing_origin_and_logs_debug(
+        self, client, main_module, monkeypatch, caplog
+    ):
+        from app.configs import registry_loader as registry_loader_module
+
+        async def _fake_build_onboarding_config(db, tenant_id):
+            return {
+                "tenantId": tenant_id,
+                "templates": [],
+                "companies": [],
+                "defaults": {},
+                "uiPolicies": {},
+                "version": "test",
+            }
+
+        monkeypatch.setattr(main_module, "_registry_enabled", lambda: False)
+        monkeypatch.setattr(main_module, "TOKEN_ALLOWED_TENANTS", {"public"})
+        monkeypatch.setattr(
+            registry_loader_module, "build_onboarding_config", _fake_build_onboarding_config
+        )
+        caplog.set_level(logging.DEBUG, logger=main_module.__name__)
+
+        response = await client.get("/api/onboarding/config?tenantId=public")
+        assert response.status_code == 200
+        assert response.json()["tenantId"] == "public"
+        assert "HTTP request accepted without Origin header endpoint=api_onboarding" in caplog.text
+
 
 class TestUploadValidationEndpoint:
     @pytest.mark.asyncio
@@ -411,23 +527,52 @@ class _NewSessionService:
         return SimpleNamespace(id=session_id, state=state or {})
 
 
+async def _stub_industry_config_loader(_db, industry: str):
+    return {
+        "name": industry.title(),
+        "voice": "Aoede",
+        "greeting": f"Welcome to {industry}.",
+    }
+
+
+async def _stub_company_profile_loader(_db, company_id: str, *, tenant_id=None):
+    return {
+        "name": company_id,
+        "overview": "Test company",
+        "system_connectors": {"catalog": {"provider": "mock"}},
+    }
+
+
+async def _stub_company_knowledge_loader(_db, company_id: str, *, tenant_id=None):
+    return []
+
+
 def _run_ws_with_events(events, app, main_module, monkeypatch):
     """Connect a test WS, yield events via fake run_live, return JSON messages.
 
     Appends a turn_complete sentinel so the reader can stop after receiving
     the corresponding agent_status/idle message.
+
+    Safety: some code paths may end the Live loop and close the websocket
+    without emitting the idle sentinel (for example, session_ending / error).
+    The helper treats those terminal messages, or a websocket disconnect, as
+    valid end conditions to avoid hanging the suite.
     """
     # Append sentinel turn_complete so downstream sends agent_status idle
     sentinel = _empty_event(turn_complete=True, author="ekaette_router")
     full_events = list(events) + [sentinel]
 
-    async def _fake_run_live(**kwargs):
+    async def _fake_run_live(*args, **kwargs):
         for ev in full_events:
             yield ev
         await asyncio.sleep(0)
 
     monkeypatch.setattr(main_module, "session_service", _NewSessionService())
-    monkeypatch.setattr(main_module, "runner", SimpleNamespace(run_live=_fake_run_live))
+    monkeypatch.setattr(type(main_module.runner), "run_live", _fake_run_live)
+    monkeypatch.setattr(main_module, "_registry_enabled", lambda: False)
+    monkeypatch.setattr(main_module, "load_industry_config", _stub_industry_config_loader)
+    monkeypatch.setattr(main_module, "load_company_profile", _stub_company_profile_loader)
+    monkeypatch.setattr(main_module, "load_company_knowledge", _stub_company_knowledge_loader)
 
     messages: list[dict] = []
     with TestClient(app) as tc:
@@ -437,7 +582,10 @@ def _run_ws_with_events(events, app, main_module, monkeypatch):
         ) as ws:
             # Read until we see the sentinel's agent_status idle
             while True:
-                raw = ws.receive_text()
+                try:
+                    raw = ws.receive_text()
+                except Exception:
+                    break
                 msg = json.loads(raw)
                 if msg.get("type") == "session_started":
                     continue
@@ -447,6 +595,8 @@ def _run_ws_with_events(events, app, main_module, monkeypatch):
                     msg.get("type") == "agent_status"
                     and msg.get("status") == "idle"
                 ):
+                    break
+                if msg.get("type") in {"session_ending", "error"}:
                     break
             ws.close(code=1000)
     return messages
@@ -560,14 +710,18 @@ class TestTurnCompleteResetsFlags:
         ]
 
         # Use custom reader that collects past the first idle sentinel
-        async def _fake_run_live(**kwargs):
+        async def _fake_run_live(*args, **kwargs):
             sentinel = _empty_event(turn_complete=True, author="ekaette_router")
             for ev in list(events) + [sentinel]:
                 yield ev
             await asyncio.sleep(0)
 
         monkeypatch.setattr(main_module, "session_service", _NewSessionService())
-        monkeypatch.setattr(main_module, "runner", SimpleNamespace(run_live=_fake_run_live))
+        monkeypatch.setattr(type(main_module.runner), "run_live", _fake_run_live)
+        monkeypatch.setattr(main_module, "_registry_enabled", lambda: False)
+        monkeypatch.setattr(main_module, "load_industry_config", _stub_industry_config_loader)
+        monkeypatch.setattr(main_module, "load_company_profile", _stub_company_profile_loader)
+        monkeypatch.setattr(main_module, "load_company_knowledge", _stub_company_knowledge_loader)
 
         messages: list[dict] = []
         idle_count = 0
@@ -577,7 +731,10 @@ class TestTurnCompleteResetsFlags:
                 headers={"origin": "http://localhost:5173"},
             ) as ws:
                 while True:
-                    raw = ws.receive_text()
+                    try:
+                        raw = ws.receive_text()
+                    except Exception:
+                        break
                     msg = json.loads(raw)
                     if msg.get("type") == "session_started":
                         continue
@@ -586,6 +743,8 @@ class TestTurnCompleteResetsFlags:
                         idle_count += 1
                         if idle_count >= 2:
                             break
+                    if msg.get("type") in {"session_ending", "error"}:
+                        break
                 ws.close(code=1000)
 
         ts = [m for m in messages if m.get("type") == "transcription"]

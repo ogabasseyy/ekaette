@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "company_id": "ekaette-electronics",
+  "tenant_id": "public",
+  "industry_template_id": "electronics",
+  "display_name": "Ekaette Electronics",
+  "overview": "Trade-ins, valuation, negotiation, pickup booking.",
+  "facts": {
+    "flagship_product": "iPhone trade-ins",
+    "locations": "Lagos, Abuja"
+  },
+  "links": [],
+  "connectors": {},
+  "capability_overrides": {},
+  "ui_overrides": {},
+  "status": "active"
+}

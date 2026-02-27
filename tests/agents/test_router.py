@@ -92,6 +92,13 @@ class TestEkaetteRouterAgent:
         assert ekaette_router.after_tool_callback is not None
         assert ekaette_router.on_tool_error_callback is not None
 
+    def test_router_uses_isolation_and_dedup_before_agent_callback(self):
+        """Root router should enforce industry isolation before dedup mitigation."""
+        from app.agents.callbacks import before_agent_isolation_guard_and_dedup
+        from app.agents.ekaette_router.agent import ekaette_router
+
+        assert ekaette_router.before_agent_callback is before_agent_isolation_guard_and_dedup
+
     def test_agent_has_preload_memory_tool(self):
         """Root agent includes PreloadMemoryTool in tool list."""
         from app.agents.ekaette_router.agent import ekaette_router

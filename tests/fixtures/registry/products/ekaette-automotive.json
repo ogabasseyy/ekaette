@@ -1,0 +1,122 @@
+[
+  {
+    "id": "prod-toyota-camry-2024",
+    "name": "Toyota Camry 2024",
+    "price": 15000000,
+    "currency": "NGN",
+    "category": "sedans",
+    "brand": "Toyota",
+    "in_stock": true,
+    "features": ["2.5L engine", "Toyota Safety Sense", "JBL audio", "Leather seats"],
+    "description": "Best-selling sedan with legendary Toyota reliability.",
+    "data_tier": "demo"
+  },
+  {
+    "id": "prod-toyota-rav4-2024",
+    "name": "Toyota RAV4 2024",
+    "price": 22000000,
+    "currency": "NGN",
+    "category": "suvs",
+    "brand": "Toyota",
+    "in_stock": true,
+    "features": ["AWD available", "2.5L Dynamic Force", "Apple CarPlay", "Blind Spot Monitor"],
+    "description": "Versatile compact SUV for city and adventure.",
+    "data_tier": "demo"
+  },
+  {
+    "id": "prod-honda-civic-2024",
+    "name": "Honda Civic 2024",
+    "price": 12500000,
+    "currency": "NGN",
+    "category": "sedans",
+    "brand": "Honda",
+    "in_stock": true,
+    "features": ["1.5L Turbo", "Honda Sensing", "Bose audio", "Wireless CarPlay"],
+    "description": "Sporty and efficient sedan with advanced safety features.",
+    "data_tier": "demo"
+  },
+  {
+    "id": "prod-mercedes-c300-2024",
+    "name": "Mercedes-Benz C300 2024",
+    "price": 38000000,
+    "currency": "NGN",
+    "category": "luxury",
+    "brand": "Mercedes-Benz",
+    "in_stock": false,
+    "features": ["2.0L Turbo + EQ Boost", "MBUX infotainment", "Burmester audio", "AMG Line"],
+    "description": "Luxury compact sedan with cutting-edge technology.",
+    "data_tier": "demo"
+  },
+  {
+    "id": "prod-brake-pad-set-ceramic",
+    "name": "Ceramic Brake Pad Set (Front)",
+    "price": 35000,
+    "currency": "NGN",
+    "category": "parts",
+    "brand": "Bosch",
+    "in_stock": true,
+    "features": ["Low dust", "Quiet operation", "Universal fit"],
+    "description": "Premium ceramic brake pads for most sedan and SUV models.",
+    "data_tier": "demo"
+  },
+  {
+    "id": "prod-engine-oil-5w30",
+    "name": "Mobil 1 5W-30 Full Synthetic (5L)",
+    "price": 18000,
+    "currency": "NGN",
+    "category": "parts",
+    "brand": "Mobil",
+    "in_stock": true,
+    "features": ["Full synthetic", "10,000km interval", "Thermal protection"],
+    "description": "Premium full synthetic engine oil for extended drain intervals.",
+    "data_tier": "demo"
+  },
+  {
+    "id": "prod-battery-din-75",
+    "name": "Bosch DIN 75 Car Battery",
+    "price": 65000,
+    "currency": "NGN",
+    "category": "parts",
+    "brand": "Bosch",
+    "in_stock": true,
+    "features": ["75Ah", "12V", "Maintenance-free", "2-year warranty"],
+    "description": "Reliable maintenance-free battery for most vehicles.",
+    "data_tier": "demo"
+  },
+  {
+    "id": "prod-dashcam-viofo-a229",
+    "name": "VIOFO A229 Pro Dashcam",
+    "price": 85000,
+    "currency": "NGN",
+    "category": "accessories",
+    "brand": "VIOFO",
+    "in_stock": true,
+    "features": ["4K front", "Dual channel", "GPS", "Night vision"],
+    "description": "High-resolution dashcam with front and rear recording.",
+    "data_tier": "demo"
+  },
+  {
+    "id": "prod-tire-bridgestone-205",
+    "name": "Bridgestone Turanza T005 205/55R16",
+    "price": 42000,
+    "currency": "NGN",
+    "category": "parts",
+    "brand": "Bridgestone",
+    "in_stock": false,
+    "features": ["205/55R16", "Wet grip A-rated", "Low noise", "60,000km treadlife"],
+    "description": "Premium touring tire for sedans with excellent wet performance.",
+    "data_tier": "demo"
+  },
+  {
+    "id": "prod-car-cover-universal",
+    "name": "WeatherShield Universal Car Cover",
+    "price": 25000,
+    "currency": "NGN",
+    "category": "accessories",
+    "brand": "WeatherShield",
+    "in_stock": true,
+    "features": ["UV protection", "Waterproof", "Breathable", "Elastic hem"],
+    "description": "All-weather car cover with sun and rain protection.",
+    "data_tier": "demo"
+  }
+]

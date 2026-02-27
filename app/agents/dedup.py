@@ -107,12 +107,12 @@ async def dedup_before_agent(
         None to proceed normally, or Content to skip this agent invocation.
     """
     agent_name = callback_context.agent_name
+    state = callback_context.state
 
     # Never suppress the root agent
     if agent_name == ROOT_AGENT_NAME:
         return None
 
-    state = callback_context.state
     last_agent = state.get("temp:dedup_last_agent")
     last_ts = state.get("temp:dedup_last_ts")
     last_signature = state.get("temp:dedup_last_signature")

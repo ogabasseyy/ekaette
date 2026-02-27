@@ -45,10 +45,10 @@ function sendServerMessage(ws: MockSocket, message: ServerMessage) {
 
 /**
  * Establish WebSocket connection through the App UI.
- * Must interleave timer advancement with React re-renders so that
- * socketStateRef gets updated before the polling interval checks it.
+ * The socket mock opens on setTimeout(0), then we flush audio startup microtasks.
  */
 async function connectCall() {
+  await dismissStartupSelectionPromptIfPresent()
   const micButton = screen.getByRole('button', { name: /start call/i })
   await act(async () => {
     micButton.click()
@@ -57,14 +57,17 @@ async function connectCall() {
   await act(async () => {
     vi.advanceTimersByTime(1)
   })
-  // Allow React to re-render (updates socketStateRef.current)
-  // Then fire the polling setInterval (50ms) which checks connection state
-  await act(async () => {
-    vi.advanceTimersByTime(100)
-  })
   // Flush remaining microtasks from audio.initPlayer/startRecording
   await act(async () => {
     await Promise.resolve()
+  })
+}
+
+async function dismissStartupSelectionPromptIfPresent() {
+  const continueButton = screen.queryByRole('button', { name: /continue with last setup/i })
+  if (!continueButton) return
+  await act(async () => {
+    continueButton.click()
   })
 }
 
@@ -96,13 +99,32 @@ describe('App', () => {
   it('renders main layout after industry is stored', () => {
     window.localStorage.setItem(INDUSTRY_STORAGE_KEY, 'electronics')
     render(<App />)
-    expect(screen.queryByText('Choose Your Service Industry')).not.toBeInTheDocument()
-    expect(screen.getByText('Electronics Trade Desk')).toBeInTheDocument()
+    expect(screen.getByText(/Continue with your last workspace\?/i)).toBeInTheDocument()
+    expect(screen.queryByText('Electronics Trade Desk')).not.toBeInTheDocument()
+  })
+
+  it('can re-select industry from startup prompt and clears persisted onboarding selection', async () => {
+    window.localStorage.setItem(INDUSTRY_STORAGE_KEY, 'electronics')
+    window.localStorage.setItem('ekaette:onboarding:templateId', 'electronics')
+    window.localStorage.setItem('ekaette:onboarding:companyId', 'ekaette-electronics')
+    render(<App />)
+
+    const resetButton = screen.getByRole('button', { name: /re-select industry/i })
+    await act(async () => {
+      resetButton.click()
+    })
+
+    expect(screen.getByText('Choose Your Service Industry')).toBeInTheDocument()
+    expect(window.localStorage.getItem('ekaette:onboarding:industry')).toBeNull()
+    expect(window.localStorage.getItem('ekaette:onboarding:templateId')).toBeNull()
+    expect(window.localStorage.getItem('ekaette:onboarding:companyId')).toBeNull()
   })
 
   it('includes company_id in WebSocket URL when connecting', async () => {
     window.localStorage.setItem(INDUSTRY_STORAGE_KEY, 'electronics')
     render(<App />)
+
+    await dismissStartupSelectionPromptIfPresent()
 
     const micButton = screen.getByRole('button', { name: /start call/i })
     await act(async () => {
@@ -356,6 +378,7 @@ describe('App', () => {
   it('accepts messages that arrive before websocket open without crashing', async () => {
     window.localStorage.setItem(INDUSTRY_STORAGE_KEY, 'electronics')
     render(<App />)
+    await dismissStartupSelectionPromptIfPresent()
 
     const micButton = screen.getByRole('button', { name: /start call/i })
     await act(async () => {
@@ -417,6 +440,7 @@ describe('App', () => {
     globalThis.WebSocket = NeverOpenWebSocket as unknown as typeof WebSocket
     try {
       render(<App />)
+      await dismissStartupSelectionPromptIfPresent()
       const micButton = screen.getByRole('button', { name: /start call/i })
       await act(async () => {
         micButton.click()
@@ -425,7 +449,7 @@ describe('App', () => {
       const ws = getLastSocket()
       await act(async () => {
         ws.onerror?.(new Event('error'))
-        vi.advanceTimersByTime(5100)
+        vi.advanceTimersByTime(15100)
         await Promise.resolve()
       })
 
@@ -477,6 +501,7 @@ describe('App', () => {
     window.localStorage.setItem(INDUSTRY_STORAGE_KEY, 'electronics')
     window.history.replaceState({}, '', '/?demo=1')
     render(<App />)
+    await dismissStartupSelectionPromptIfPresent()
 
     const startButton = screen.getByRole('button', { name: /start call/i })
     await act(async () => {

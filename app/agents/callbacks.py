@@ -14,6 +14,12 @@ from google.adk.tools.base_tool import BaseTool
 from google.adk.tools.tool_context import ToolContext
 from google.genai import types
 
+from app.agents.dedup import dedup_before_agent
+from app.configs.agent_policy import (
+    KNOWN_SUB_AGENT_NAMES,
+    resolve_enabled_agents_from_state,
+)
+
 logger = logging.getLogger(__name__)
 
 _PRICE_PATTERN = re.compile(r"\b\d[\d,]{2,}\b")
@@ -35,6 +41,8 @@ TOOL_CAPABILITY_MAP: dict[str, str] = {
     "query_company_system": "connector_dispatch",
 }
 
+AGENT_NOT_ENABLED_ERROR_CODE = "AGENT_NOT_ENABLED"
+
 
 def _next_server_message_id(state: State) -> int:
     """Return monotonically increasing ID for websocket server messages."""
@@ -53,6 +61,132 @@ def queue_server_message(state: State, payload: dict[str, Any]) -> None:
     message["id"] = message_id
     state["temp:server_message_seq"] = message_id
     state["temp:last_server_message"] = message
+
+
+def _state_get(state: Any, key: str, default: Any = None) -> Any:
+    getter = getattr(state, "get", None)
+    if callable(getter):
+        try:
+            return getter(key, default)
+        except TypeError:
+            value = getter(key)
+            return default if value is None else value
+    return default
+
+
+def _industry_scope_label(state: Any) -> str:
+    template_id = _state_get(state, "app:industry_template_id")
+    if isinstance(template_id, str) and template_id.strip():
+        return template_id.strip()
+    industry = _state_get(state, "app:industry")
+    if isinstance(industry, str) and industry.strip():
+        return industry.strip()
+    return "current"
+
+
+def _agent_not_enabled_message(scope_label: str, agent_name: str) -> str:
+    return (
+        f"This {scope_label} session is isolated and cannot switch to '{agent_name}'. "
+        "I can only use the agents enabled for the current industry."
+    )
+
+
+def _agent_not_enabled_payload(
+    *,
+    state: Any,
+    agent_name: str,
+    allowed_agents: list[str],
+) -> dict[str, Any]:
+    scope_label = _industry_scope_label(state)
+    payload: dict[str, Any] = {
+        "type": "error",
+        "code": AGENT_NOT_ENABLED_ERROR_CODE,
+        "message": _agent_not_enabled_message(scope_label, agent_name),
+        "agentName": agent_name,
+        "allowedAgents": list(allowed_agents),
+    }
+    tenant = _state_get(state, "app:tenant_id")
+    if isinstance(tenant, str) and tenant:
+        payload["tenantId"] = tenant
+    template_id = _state_get(state, "app:industry_template_id")
+    if isinstance(template_id, str) and template_id:
+        payload["industryTemplateId"] = template_id
+    return payload
+
+
+def _agent_not_enabled_content(scope_label: str, agent_name: str) -> types.Content:
+    return types.Content(
+        role="model",
+        parts=[types.Part(text=_agent_not_enabled_message(scope_label, agent_name))],
+    )
+
+
+def _requested_transfer_agent_name(args: dict[str, Any]) -> str | None:
+    raw = args.get("agent_name", args.get("agentName"))
+    if isinstance(raw, str) and raw.strip():
+        return raw.strip()
+    return None
+
+
+def _is_transfer_tool_name(tool_name: str) -> bool:
+    return tool_name == "transfer_to_agent" or tool_name.startswith("transfer_to_")
+
+
+def _tool_transfer_target_agent_name(tool_name: str, args: dict[str, Any]) -> str | None:
+    if not _is_transfer_tool_name(tool_name):
+        return None
+    requested = _requested_transfer_agent_name(args)
+    if requested:
+        return requested
+    if tool_name.startswith("transfer_to_"):
+        candidate = tool_name.removeprefix("transfer_to_").strip()
+        if candidate in KNOWN_SUB_AGENT_NAMES:
+            return candidate
+    return None
+
+
+async def before_agent_isolation_guard(
+    callback_context: CallbackContext,
+) -> types.Content | None:
+    """Block sub-agent invocations not enabled for the current industry session."""
+    agent_name = callback_context.agent_name
+    if agent_name == "ekaette_router":
+        return None
+
+    state = callback_context.state
+    if state is None or not hasattr(state, "get"):
+        return None
+
+    enabled_agents = resolve_enabled_agents_from_state(state)
+    if enabled_agents is None or agent_name in enabled_agents:
+        return None
+
+    scope_label = _industry_scope_label(state)
+    logger.warning(
+        "agent_isolation_blocked phase=before_agent agent=%s industry=%s enabled_agents=%s",
+        agent_name,
+        scope_label,
+        enabled_agents,
+    )
+    queue_server_message(
+        state,
+        _agent_not_enabled_payload(
+            state=state,
+            agent_name=agent_name,
+            allowed_agents=enabled_agents,
+        ),
+    )
+    return _agent_not_enabled_content(scope_label, agent_name)
+
+
+async def before_agent_isolation_guard_and_dedup(
+    callback_context: CallbackContext,
+) -> types.Content | None:
+    """Compose isolation guard and dedup mitigation for router sub-agent transfers."""
+    blocked = await before_agent_isolation_guard(callback_context)
+    if blocked is not None:
+        return blocked
+    return await dedup_before_agent(callback_context)
 
 
 def _response_text(llm_response: LlmResponse) -> str:
@@ -126,6 +260,8 @@ def _company_instruction(
     if knowledge_topics:
         parts.append("Knowledge topics: " + "; ".join(knowledge_topics) + ".")
     return " ".join(parts)
+
+
 async def before_model_inject_config(
     callback_context: CallbackContext,
     llm_request: LlmRequest,
@@ -268,6 +404,38 @@ async def before_tool_capability_guard(
     }
 
 
+async def before_tool_agent_transfer_guard(
+    tool: BaseTool,
+    args: dict[str, Any],
+    tool_context: ToolContext,
+) -> dict[str, Any] | None:
+    """Block transfer-to-agent tool calls that violate session isolation policy."""
+    tool_name = str(getattr(tool, "name", "") or "")
+    target_agent = _tool_transfer_target_agent_name(tool_name, args)
+    if target_agent is None:
+        return None
+
+    enabled_agents = resolve_enabled_agents_from_state(tool_context.state)
+    if enabled_agents is None or target_agent in enabled_agents:
+        return None
+
+    logger.warning(
+        "agent_isolation_blocked phase=before_tool caller=%s tool=%s target_agent=%s enabled_agents=%s",
+        tool_context.agent_name,
+        tool_name,
+        target_agent,
+        enabled_agents,
+    )
+    payload = _agent_not_enabled_payload(
+        state=tool_context.state,
+        agent_name=target_agent,
+        allowed_agents=enabled_agents,
+    )
+    payload["error"] = "agent_not_enabled"
+    payload["tool"] = tool_name
+    return payload
+
+
 async def before_tool_log(
     tool: BaseTool,
     args: dict[str, Any],
@@ -296,11 +464,62 @@ async def before_tool_capability_guard_and_log(
     Returning a dict short-circuits the tool call in ADK. Logging is skipped when
     the tool is blocked so denied operations do not emit a misleading tool_start.
     """
+    blocked = await before_tool_agent_transfer_guard(tool, args, tool_context)
+    if blocked is not None:
+        return blocked
     blocked = await before_tool_capability_guard(tool, args, tool_context)
     if blocked is not None:
         return blocked
     await before_tool_log(tool, args, tool_context)
     return None
+
+
+def _tool_error_server_message(effective_result: dict[str, Any]) -> dict[str, Any]:
+    """Normalize tool callback error payloads into structured server messages."""
+    code_raw = effective_result.get("code")
+    code = str(code_raw).strip() if isinstance(code_raw, str) and code_raw.strip() else ""
+    error_raw = effective_result.get("error")
+    message_raw = effective_result.get("message")
+
+    if code:
+        message = (
+            str(message_raw).strip()
+            if isinstance(message_raw, str) and str(message_raw).strip()
+            else str(error_raw or "Tool error")
+        )
+        payload: dict[str, Any] = {
+            "type": "error",
+            "code": code,
+            "message": message,
+        }
+        for key in (
+            "agentName",
+            "allowedAgents",
+            "tenantId",
+            "industryTemplateId",
+            "tool",
+            "required",
+        ):
+            if key in effective_result:
+                payload[key] = effective_result[key]
+        return payload
+
+    if error_raw == "capability_not_enabled":
+        payload = {
+            "type": "error",
+            "code": "CAPABILITY_NOT_ENABLED",
+            "message": "This action is not enabled for the current session.",
+        }
+        for key in ("tool", "required"):
+            if key in effective_result:
+                payload[key] = effective_result[key]
+        return payload
+
+    return {
+        "type": "error",
+        "code": "TOOL_ERROR",
+        "message": str(error_raw),
+    }
 
 
 def _format_product_description(product: dict[str, Any]) -> str:
@@ -335,14 +554,7 @@ async def after_tool_emit_messages(
         return None
 
     if effective_result.get("error"):
-        queue_server_message(
-            tool_context.state,
-            {
-                "type": "error",
-                "code": "TOOL_ERROR",
-                "message": str(effective_result["error"]),
-            },
-        )
+        queue_server_message(tool_context.state, _tool_error_server_message(effective_result))
         return None
 
     if tool.name == "analyze_device_image_tool":

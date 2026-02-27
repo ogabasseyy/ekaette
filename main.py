@@ -77,13 +77,34 @@ def _parse_allowlist(raw_origins: str) -> list[str]:
 
 # ═══ CORS Middleware — explicit allowlist, no wildcard ═══
 ALLOWED_ORIGINS = _parse_allowlist(
-    os.getenv("ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:8000")
+    os.getenv(
+        "ALLOWED_ORIGINS",
+        "http://localhost:5173,http://127.0.0.1:5173,http://localhost:8000,http://127.0.0.1:8000",
+    )
 )
 ALLOWED_ORIGIN_SET = set(ALLOWED_ORIGINS)
 
 
 def _is_origin_allowed(origin: str | None) -> bool:
-    """Validate browser Origin against explicit allowlist."""
+    """Validate HTTP Origin against explicit allowlist.
+
+    Returns True when origin is None (same-origin fetch proxied by Vite/nginx
+    won't carry an Origin header — only cross-origin browser requests do).
+    """
+    if origin is None:
+        return True
+    return origin in ALLOWED_ORIGIN_SET
+
+
+def _is_websocket_origin_allowed(origin: str | None) -> bool:
+    """Validate WebSocket Origin with a stricter policy than HTTP endpoints.
+
+    Browsers usually send Origin for WebSocket handshakes. Missing Origin is
+    rejected by default in production, but can be allowed explicitly for
+    non-browser clients or reverse-proxy environments.
+    """
+    if origin is None:
+        return bool(globals().get("ALLOW_MISSING_WS_ORIGIN", False))
     return origin in ALLOWED_ORIGIN_SET
 
 
@@ -384,6 +405,7 @@ def _canonical_state_updates_from_registry(config: object) -> dict[str, object]:
         "app:tenant_id",
         "app:industry_template_id",
         "app:capabilities",
+        "app:enabled_agents",
         "app:ui_theme",
         "app:connector_manifest",
         "app:registry_version",
@@ -514,8 +536,18 @@ def _client_ip_from_request(request: Request) -> str:
     return request.client.host if request.client else "unknown"
 
 
-def _origin_or_reject(origin: str | None) -> JSONResponse | None:
-    """Return a 403 response when origin is missing/invalid."""
+def _origin_or_reject(origin: str | None, *, endpoint: str) -> JSONResponse | None:
+    """Return a 403 response when HTTP origin is invalid.
+
+    Missing Origin is accepted for same-origin proxy/server-to-server traffic
+    and logged at debug level for observability.
+    """
+    if origin is None:
+        logger.debug(
+            "HTTP request accepted without Origin header endpoint=%s",
+            _sanitize_log(endpoint),
+        )
+        return None
     if not _is_origin_allowed(origin):
         return JSONResponse(
             status_code=403,
@@ -527,6 +559,9 @@ def _origin_or_reject(origin: str | None) -> JSONResponse | None:
 def _tenant_allowed(tenant_id: str) -> bool:
     """Check tenant against allowed list used for external-facing endpoints."""
     return not TOKEN_ALLOWED_TENANTS or tenant_id in TOKEN_ALLOWED_TENANTS
+
+
+ALLOW_MISSING_WS_ORIGIN = _env_flag("ALLOW_MISSING_WS_ORIGIN", "false")
 
 
 # ═══ Ephemeral Token Endpoint ═══
@@ -662,7 +697,7 @@ async def create_ephemeral_token(
     request: Request,
 ):
     """Issue a constrained short-lived Gemini Live API auth token."""
-    blocked_origin = _origin_or_reject(request.headers.get("origin"))
+    blocked_origin = _origin_or_reject(request.headers.get("origin"), endpoint="api_token")
     if blocked_origin:
         return blocked_origin
 
@@ -870,7 +905,7 @@ async def create_ephemeral_token(
 @app.get("/api/onboarding/config")
 async def get_onboarding_config(request: Request):
     """Return industry templates + companies for the onboarding UI."""
-    blocked_origin = _origin_or_reject(request.headers.get("origin"))
+    blocked_origin = _origin_or_reject(request.headers.get("origin"), endpoint="api_onboarding")
     if blocked_origin:
         return blocked_origin
 
@@ -935,7 +970,9 @@ async def validate_upload(
     file: UploadFile = File(...),
 ):
     """Validate upload MIME and file size before any storage write."""
-    blocked_origin = _origin_or_reject(request.headers.get("origin"))
+    blocked_origin = _origin_or_reject(
+        request.headers.get("origin"), endpoint="api_upload_validate"
+    )
     if blocked_origin:
         return blocked_origin
 
@@ -989,7 +1026,13 @@ async def websocket_endpoint(
 ) -> None:
     """WebSocket endpoint for bidirectional streaming with ADK."""
     origin = websocket.headers.get("origin")
-    if not _is_origin_allowed(origin):
+    ws_origin_allowed = _is_websocket_origin_allowed(origin)
+    if origin is None:
+        if ws_origin_allowed:
+            logger.debug("WebSocket accepted without Origin header by policy")
+        else:
+            logger.debug("WebSocket missing Origin header rejected by policy")
+    if not ws_origin_allowed:
         logger.warning("Rejected WebSocket origin: %s", _sanitize_log(origin))
         await websocket.close(code=1008, reason="Origin not allowed")
         return
@@ -1929,8 +1972,11 @@ async def websocket_endpoint(
         nudge = asyncio.create_task(silence_nudge_task(), name="silence_nudge_task")
         streaming_tasks = {upstream, downstream}
 
+        # The bidi session should end when either streaming side finishes:
+        # if downstream ends naturally (for example, Live session ends), we
+        # must cancel upstream rather than waiting forever for client input.
         done, pending = await asyncio.wait(
-            streaming_tasks, return_when=asyncio.FIRST_EXCEPTION
+            streaming_tasks, return_when=asyncio.FIRST_COMPLETED
         )
 
         for task in done:

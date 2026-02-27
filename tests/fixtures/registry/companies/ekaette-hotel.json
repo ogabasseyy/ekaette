@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "company_id": "ekaette-hotel",
+  "tenant_id": "public",
+  "industry_template_id": "hotel",
+  "display_name": "Ekaette Hotels",
+  "overview": "Reservations, room search, and guest support.",
+  "facts": {
+    "rooms": 120,
+    "location": "Victoria Island, Lagos"
+  },
+  "links": [],
+  "connectors": {},
+  "capability_overrides": {},
+  "ui_overrides": {},
+  "status": "active"
+}

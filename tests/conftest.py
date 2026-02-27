@@ -147,3 +147,74 @@ def electronics_session_state():
 def hotel_session_state():
     """Pre-built session state for hotel industry."""
     return make_session_state("hotel", "ekaette-hotel")
+
+
+# ═══ Factory Fixtures (2026 pattern) ═══
+
+
+@pytest.fixture
+def product_factory():
+    """Factory fixture for generating valid product dicts with overrides."""
+    _counter = 0
+
+    def _make(**overrides):
+        nonlocal _counter
+        _counter += 1
+        defaults = {
+            "id": f"prod-test-{_counter}",
+            "name": f"Test Product {_counter}",
+            "price": 100000,
+            "currency": "NGN",
+            "category": "test",
+            "brand": "TestBrand",
+            "in_stock": True,
+            "features": ["feature-a"],
+            "data_tier": "demo",
+        }
+        defaults.update(overrides)
+        return defaults
+
+    return _make
+
+
+@pytest.fixture
+def booking_slot_factory():
+    """Factory fixture for generating valid booking slot dicts with overrides."""
+    _counter = 0
+
+    def _make(**overrides):
+        nonlocal _counter
+        _counter += 1
+        defaults = {
+            "id": f"slot-test-{_counter}",
+            "date": "2026-03-15",
+            "time": f"{10 + (_counter % 8):02d}:00",
+            "location": "Lagos - Ikeja",
+            "available": True,
+            "data_tier": "demo",
+        }
+        defaults.update(overrides)
+        return defaults
+
+    return _make
+
+
+@pytest.fixture
+def knowledge_entry_factory():
+    """Factory fixture for generating valid knowledge entry dicts with overrides."""
+    _counter = 0
+
+    def _make(**overrides):
+        nonlocal _counter
+        _counter += 1
+        defaults = {
+            "id": f"kb-test-{_counter}",
+            "title": f"Test Knowledge {_counter}",
+            "text": f"Test knowledge content for entry {_counter}.",
+            "tags": ["test"],
+            "source": "factory",
+        }
+        defaults.update(overrides)
+        return defaults
+
+    return _make

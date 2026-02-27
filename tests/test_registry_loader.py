@@ -523,9 +523,34 @@ class TestBuildSessionStateFromRegistry:
         assert state["app:tenant_id"] == "public"
         assert state["app:industry_template_id"] == "electronics"
         assert state["app:capabilities"] == ["catalog_lookup", "valuation_tradein"]
+        assert state["app:enabled_agents"] == []
         assert state["app:ui_theme"]["accent"] == "oklch(74% 0.21 158)"
         assert state["app:connector_manifest"] == {"crm": {"provider": "mock"}}
         assert state["app:registry_version"] == "v1-test"
+
+    def test_persists_enabled_agents_when_present(self):
+        from app.configs.registry_loader import (
+            ResolvedRegistryConfig,
+            build_session_state_from_registry,
+        )
+
+        config = ResolvedRegistryConfig(
+            tenant_id="public",
+            company_id="acme-hotel",
+            industry_template_id="hotel",
+            template_category="hospitality",
+            template_label="Hotels & Hospitality",
+            capabilities=["booking_reservations", "policy_qa"],
+            voice="Puck",
+            theme={"accent": "oklch(78% 0.15 55)", "title": "Hospitality Concierge"},
+            greeting="Welcome to our hotel!",
+            connector_manifest={},
+            registry_version="v1-test",
+            enabled_agents=["booking_agent", "support_agent"],
+        )
+        state = build_session_state_from_registry(config)
+
+        assert state["app:enabled_agents"] == ["booking_agent", "support_agent"]
 
     def test_industry_config_has_expected_shape(self):
         """The legacy app:industry_config should mirror LOCAL_INDUSTRY_CONFIGS shape."""
