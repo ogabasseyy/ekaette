@@ -64,6 +64,7 @@ def native_audio_live_config(
     *,
     industry: str,
     voice_override: str | None,
+    speech_language_code: str | None,
     types_module: object,
     voice_for_industry_fn,
 ) -> dict[str, object]:
@@ -81,6 +82,7 @@ def native_audio_live_config(
         "enable_affective_dialog": True,
         "proactivity": types_module.ProactivityConfig(proactive_audio=True),
         "speech_config": types_module.SpeechConfig(
+            language_code=speech_language_code or None,
             voice_config=types_module.VoiceConfig(
                 prebuilt_voice_config=types_module.PrebuiltVoiceConfig(
                     voice_name=voice,

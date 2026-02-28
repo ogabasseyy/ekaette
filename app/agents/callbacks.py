@@ -208,6 +208,45 @@ def _industry_instruction(industry_config: dict[str, Any], *, include_greeting: 
     return line
 
 
+def _first_turn_greeting_instruction(
+    *,
+    industry_config: dict[str, Any],
+    company_profile: dict[str, Any],
+    state: State,
+) -> str:
+    """Build strict first-turn greeting guidance with company personalization."""
+    company_name_raw = company_profile.get("name") if isinstance(company_profile, dict) else ""
+    company_name = str(company_name_raw).strip() if isinstance(company_name_raw, str) else ""
+    if not company_name:
+        company_name = "our service desk"
+
+    greeting_raw = industry_config.get("greeting") if isinstance(industry_config, dict) else ""
+    greeting = str(greeting_raw).strip() if isinstance(greeting_raw, str) else ""
+    if not greeting:
+        greeting = "How can I help you today?"
+
+    customer_name = ""
+    for key in ("user:name", "user:first_name", "app:customer_name", "temp:customer_name"):
+        value = state.get(key)
+        if not isinstance(value, str):
+            continue
+        normalized = " ".join(value.split()).strip()
+        if normalized:
+            customer_name = normalized[:60]
+            break
+
+    if customer_name:
+        template = f"Welcome back, {customer_name}, to {company_name}. {greeting}"
+    else:
+        template = f"Welcome to {company_name}. {greeting}"
+
+    return (
+        "First-turn greeting policy: This is the first spoken response in the session. "
+        f"Use this greeting template intent: '{template}'. "
+        "Keep it short and end with exactly one actionable question."
+    )
+
+
 def _company_instruction(
     company_id: str,
     company_profile: dict[str, Any],
@@ -259,6 +298,10 @@ def _company_instruction(
         parts.append("Facts: " + "; ".join(fact_pairs) + ".")
     if knowledge_topics:
         parts.append("Knowledge topics: " + "; ".join(knowledge_topics) + ".")
+    parts.append(
+        "Trust policy: For company-specific claims, ground responses in company facts, "
+        "knowledge topics, or system query results. If data is unavailable, say so clearly."
+    )
     return " ".join(parts)
 
 
@@ -276,11 +319,23 @@ async def before_model_inject_config(
 
     already_greeted = bool(callback_context.state.get("temp:greeted", False))
 
+    company_profile = callback_context.state.get("app:company_profile")
+    if not isinstance(company_profile, dict):
+        company_profile = {}
+
     industry_config = callback_context.state.get("app:industry_config")
     if isinstance(industry_config, dict):
-        instruction_lines.append(
-            _industry_instruction(industry_config, include_greeting=not already_greeted)
-        )
+        instruction_lines.append(_industry_instruction(industry_config, include_greeting=False))
+        if not already_greeted:
+            instruction_lines.append(
+                _first_turn_greeting_instruction(
+                    industry_config=industry_config,
+                    company_profile=company_profile,
+                    state=callback_context.state,
+                )
+            )
+
+    has_runtime_context = isinstance(industry_config, dict)
 
     if already_greeted:
         instruction_lines.append(
@@ -288,13 +343,10 @@ async def before_model_inject_config(
             "session. Do NOT greet again (no hello/hi/good morning). Continue "
             "directly with the answer or next question."
         )
+        has_runtime_context = True
 
     company_id_raw = callback_context.state.get("app:company_id")
     company_id = company_id_raw if isinstance(company_id_raw, str) else "default"
-
-    company_profile = callback_context.state.get("app:company_profile")
-    if not isinstance(company_profile, dict):
-        company_profile = {}
 
     company_knowledge_raw = callback_context.state.get("app:company_knowledge")
     company_knowledge: list[dict[str, Any]] = []
@@ -306,6 +358,13 @@ async def before_model_inject_config(
     company_line = _company_instruction(company_id, company_profile, company_knowledge)
     if company_line:
         instruction_lines.append(company_line)
+        has_runtime_context = True
+
+    if has_runtime_context:
+        instruction_lines.append(
+            "Latency policy: Before any tool call or agent transfer, first send one brief "
+            "acknowledgement (for example 'Checking that now.'), then proceed."
+        )
 
     if not instruction_lines:
         return None

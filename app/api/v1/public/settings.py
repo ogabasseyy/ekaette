@@ -46,6 +46,7 @@ class PublicRuntimeSettings(BaseSettings):
     token_allowed_tenants: str = Field(default="public", alias="TOKEN_ALLOWED_TENANTS")
 
     manual_vad: bool = Field(default=False, alias="MANUAL_VAD")
+    speech_language_code: str = Field(default="en-US", alias="SPEECH_LANGUAGE_CODE")
     auto_vad_prefix_padding_ms: int = Field(default=80, alias="AUTO_VAD_PREFIX_PADDING_MS")
     auto_vad_silence_duration_ms: int = Field(default=320, alias="AUTO_VAD_SILENCE_DURATION_MS")
     silence_nudge_seconds: int = Field(default=8, alias="SILENCE_NUDGE_SECONDS")
@@ -96,6 +97,7 @@ TOKEN_NEW_SESSION_TTL_SECONDS = int(_cfg.token_new_session_ttl_seconds)
 TOKEN_ALLOWED_TENANTS = set(_parse_allowlist(_cfg.token_allowed_tenants))
 
 MANUAL_VAD = bool(_cfg.manual_vad)
+SPEECH_LANGUAGE_CODE = (_cfg.speech_language_code or "").strip()
 AUTO_VAD_PREFIX_PADDING_MS = int(_cfg.auto_vad_prefix_padding_ms)
 AUTO_VAD_SILENCE_DURATION_MS = int(_cfg.auto_vad_silence_duration_ms)
 SILENCE_NUDGE_SECONDS = int(_cfg.silence_nudge_seconds)

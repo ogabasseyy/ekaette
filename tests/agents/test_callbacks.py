@@ -81,6 +81,87 @@ class TestBeforeModelInjectConfig:
         assert "rooms=120" in system_instruction
         assert "Late checkout policy" in system_instruction
 
+    @pytest.mark.asyncio
+    async def test_first_turn_greeting_uses_company_name_template(self):
+        callback_context = SimpleNamespace(
+            state={
+                "app:industry_config": {
+                    "name": "Hotels & Hospitality",
+                    "greeting": "Good day! How can I help with your stay today?",
+                },
+                "app:company_profile": {
+                    "name": "Acme Grand Hotel",
+                },
+            }
+        )
+        llm_request = LlmRequest(model="gemini-test", contents=[])
+
+        await before_model_inject_config(callback_context, llm_request)
+
+        system_instruction = str(llm_request.config.system_instruction)
+        assert "First-turn greeting policy" in system_instruction
+        assert "Welcome to Acme Grand Hotel." in system_instruction
+        assert "end with exactly one actionable question" in system_instruction
+
+    @pytest.mark.asyncio
+    async def test_first_turn_greeting_uses_returning_customer_variant(self):
+        callback_context = SimpleNamespace(
+            state={
+                "user:name": "Ada",
+                "app:industry_config": {
+                    "name": "Electronics & Gadgets",
+                    "greeting": "Welcome! I can help with trade-ins and purchases.",
+                },
+                "app:company_profile": {
+                    "name": "Ekaette Devices Hub",
+                },
+            }
+        )
+        llm_request = LlmRequest(model="gemini-test", contents=[])
+
+        await before_model_inject_config(callback_context, llm_request)
+
+        system_instruction = str(llm_request.config.system_instruction)
+        assert "Welcome back, Ada, to Ekaette Devices Hub." in system_instruction
+
+    @pytest.mark.asyncio
+    async def test_first_turn_greeting_falls_back_when_company_missing(self):
+        callback_context = SimpleNamespace(
+            state={
+                "app:industry_config": {
+                    "name": "General",
+                    "greeting": "Hello! How can I help you today?",
+                },
+                "app:company_profile": {},
+            }
+        )
+        llm_request = LlmRequest(model="gemini-test", contents=[])
+
+        await before_model_inject_config(callback_context, llm_request)
+
+        system_instruction = str(llm_request.config.system_instruction)
+        assert "Welcome to our service desk." in system_instruction
+
+    @pytest.mark.asyncio
+    async def test_does_not_emit_first_turn_greeting_when_already_greeted(self):
+        callback_context = SimpleNamespace(
+            state={
+                "temp:greeted": True,
+                "app:industry_config": {
+                    "name": "Hotels & Hospitality",
+                    "greeting": "Welcome!",
+                },
+                "app:company_profile": {"name": "Acme Grand Hotel"},
+            }
+        )
+        llm_request = LlmRequest(model="gemini-test", contents=[])
+
+        await before_model_inject_config(callback_context, llm_request)
+
+        system_instruction = str(llm_request.config.system_instruction)
+        assert "First-turn greeting policy" not in system_instruction
+        assert "Do NOT greet again" in system_instruction
+
 
 class TestCompanyInstructionBuilder:
     def test_company_instruction_includes_core_sections(self):
@@ -129,6 +210,7 @@ class TestCompanyInstructionBuilder:
         assert "Overview='" in text
         assert "Facts:" in text
         assert "Knowledge topics:" in text
+        assert "Trust policy:" in text
         assert text.endswith(".")
 
 

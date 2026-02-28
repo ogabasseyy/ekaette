@@ -389,6 +389,7 @@ def _native_audio_live_config(
     return public_core.native_audio_live_config(
         industry=industry,
         voice_override=voice_override,
+        speech_language_code=SPEECH_LANGUAGE_CODE,
         types_module=types,
         voice_for_industry_fn=_voice_for_industry,
     )
@@ -587,6 +588,7 @@ TOKEN_TTL_SECONDS = public_settings.TOKEN_TTL_SECONDS
 TOKEN_NEW_SESSION_TTL_SECONDS = public_settings.TOKEN_NEW_SESSION_TTL_SECONDS
 TOKEN_ALLOWED_TENANTS = set(public_settings.TOKEN_ALLOWED_TENANTS)
 MANUAL_VAD = public_settings.MANUAL_VAD
+SPEECH_LANGUAGE_CODE = public_settings.SPEECH_LANGUAGE_CODE
 AUTO_VAD_PREFIX_PADDING_MS = public_settings.AUTO_VAD_PREFIX_PADDING_MS
 AUTO_VAD_SILENCE_DURATION_MS = public_settings.AUTO_VAD_SILENCE_DURATION_MS
 SILENCE_NUDGE_SECONDS = public_settings.SILENCE_NUDGE_SECONDS
