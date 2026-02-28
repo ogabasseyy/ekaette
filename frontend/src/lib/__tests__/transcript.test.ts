@@ -3,6 +3,7 @@ import type { TranscriptMessage } from '../transcript'
 import {
   mergePartialText,
   normalizeTranscriptMessages,
+  preferFinalTranscriptMessages,
   sanitizeTranscriptForDisplay,
 } from '../transcript'
 
@@ -336,5 +337,33 @@ describe('sanitizeTranscriptForDisplay', () => {
     const result = sanitizeTranscriptForDisplay(messages, { preferredUserScript: 'latin' })
     expect(result).toHaveLength(3)
     expect(result.some(msg => msg.partial && msg.text === 'जीत')).toBe(false)
+  })
+})
+
+describe('preferFinalTranscriptMessages', () => {
+  it('returns only final transcript messages when finals are present', () => {
+    const messages: TranscriptMessage[] = [
+      { type: 'transcription', role: 'user', text: 'Hi', partial: true },
+      { type: 'transcription', role: 'user', text: 'Hi there', partial: false },
+      { type: 'transcription', role: 'agent', text: 'Checking now', partial: true },
+      { type: 'transcription', role: 'agent', text: 'Checking now.', partial: false },
+    ]
+
+    const result = preferFinalTranscriptMessages(messages)
+    expect(result).toHaveLength(2)
+    expect(result.every(message => !message.partial)).toBe(true)
+  })
+
+  it('keeps the newest partial when no final transcript exists yet', () => {
+    const messages: TranscriptMessage[] = [
+      { type: 'transcription', role: 'user', text: 'I', partial: true },
+      { type: 'transcription', role: 'user', text: "I'm", partial: true },
+      { type: 'transcription', role: 'user', text: "I'm thinking", partial: true },
+    ]
+
+    const result = preferFinalTranscriptMessages(messages)
+    expect(result).toHaveLength(1)
+    expect(result[0].partial).toBe(true)
+    expect(result[0].text).toBe("I'm thinking")
   })
 })

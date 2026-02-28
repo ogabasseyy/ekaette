@@ -99,6 +99,7 @@ interface EphemeralTokenResponse {
   model?: string
   industry?: string
   companyId?: string
+  voice?: string
   manualVadActive?: boolean
   vadMode?: 'auto' | 'manual'
 }
@@ -610,6 +611,7 @@ export function useEkaetteSocket(
       model: payload.model,
       industry: payload.industry,
       companyId: payload.companyId,
+      voice: typeof payload.voice === 'string' ? payload.voice : undefined,
       manualVadActive:
         typeof payload.manualVadActive === 'boolean' ? payload.manualVadActive : undefined,
       vadMode:
@@ -900,6 +902,8 @@ export function useEkaetteSocket(
     const selectedModel =
       tokenPayload.model ??
       String(import.meta.env.VITE_LIVE_MODEL_ID ?? 'gemini-2.5-flash-native-audio-preview-12-2025')
+    const speechLanguageCode =
+      String(import.meta.env.VITE_SPEECH_LANGUAGE_CODE ?? 'en-US').trim() || 'en-US'
 
     const session = await ai.live.connect({
       model: selectedModel,
@@ -907,6 +911,24 @@ export function useEkaetteSocket(
         responseModalities: [Modality.AUDIO],
         inputAudioTranscription: {},
         outputAudioTranscription: {},
+        sessionResumption: {},
+        contextWindowCompression: {
+          triggerTokens: 80000,
+          slidingWindow: { targetTokens: 40000 },
+        },
+        proactivity: { proactiveAudio: true },
+        speechConfig: {
+          languageCode: speechLanguageCode,
+          ...(tokenPayload.voice
+            ? {
+                voiceConfig: {
+                  prebuiltVoiceConfig: {
+                    voiceName: tokenPayload.voice,
+                  },
+                },
+              }
+            : {}),
+        },
       },
       callbacks: {
         onopen: () => {

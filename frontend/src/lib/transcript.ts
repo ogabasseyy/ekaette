@@ -381,3 +381,17 @@ export function normalizeTranscriptMessages(messages: TranscriptMessage[]): Tran
 
   return normalized
 }
+
+export function preferFinalTranscriptMessages(messages: TranscriptMessage[]): TranscriptMessage[] {
+  const finals = messages.filter(message => !message.partial)
+  if (finals.length > 0) {
+    return finals
+  }
+  for (let idx = messages.length - 1; idx >= 0; idx -= 1) {
+    const candidate = messages[idx]
+    if (candidate.partial) {
+      return [candidate]
+    }
+  }
+  return []
+}

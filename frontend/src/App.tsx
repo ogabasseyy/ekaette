@@ -25,6 +25,7 @@ import { useDemoMode } from './hooks/useDemoMode'
 import { SocketConnectError, useEkaetteSocket } from './hooks/useEkaetteSocket'
 import {
   normalizeTranscriptMessages,
+  preferFinalTranscriptMessages,
   sanitizeTranscriptForDisplay,
   type TranscriptMessage,
 } from './lib/transcript'
@@ -313,6 +314,9 @@ function App() {
     !allowOnboardingCompatFallback
   const canRenderOnboardingSelection =
     forceManualOnboarding || runtimeBootstrapStatus === 'compat' || runtimeBootstrapStatus === 'idle'
+  const showOnboardingConfigLoading =
+    canRenderOnboardingSelection &&
+    (onboardingConfigStatus === 'idle' || onboardingConfigStatus === 'loading')
   const tenantId = tenantSelection ?? String(import.meta.env.VITE_TENANT_ID ?? 'public')
   const templates = onboardingConfig?.templates ?? null
   const companies = onboardingConfig?.companies ?? null
@@ -476,6 +480,10 @@ function App() {
       typeof navigator !== 'undefined' ? navigator.language || navigator.languages?.[0] || '' : ''
     return /^en\b/i.test(lang)
   }, [])
+  const preferFinalTranscriptDisplay = useMemo(
+    () => String(import.meta.env.VITE_TRANSCRIPT_PREFER_FINAL ?? 'true').toLowerCase() !== 'false',
+    [],
+  )
 
   const displayTranscriptMessages = useMemo(() => {
     // Filter obvious wrong-script anomalies before normalization so they don't
@@ -484,10 +492,13 @@ function App() {
       preferredUserScript: preferLatinTranscriptDisplay ? 'latin' : null,
     })
     const normalized = normalizeTranscriptMessages(sanitizedRaw)
-    return sanitizeTranscriptForDisplay(normalized, {
+    const displayReady = sanitizeTranscriptForDisplay(normalized, {
       preferredUserScript: preferLatinTranscriptDisplay ? 'latin' : null,
     })
-  }, [derived.transcripts, preferLatinTranscriptDisplay])
+    return preferFinalTranscriptDisplay
+      ? preferFinalTranscriptMessages(displayReady)
+      : displayReady
+  }, [derived.transcripts, preferFinalTranscriptDisplay, preferLatinTranscriptDisplay])
   const rawTranscriptTail = useMemo(
     () => (debugOpen ? socket.messages.filter(msg => msg.type === 'transcription').slice(-10) : []),
     [socket.messages, debugOpen],
@@ -1058,6 +1069,20 @@ function App() {
                 </div>
               ) : null}
 
+              {showOnboardingConfigLoading ? (
+                <section className="panel-glass w-full px-4 py-5 sm:px-7 sm:py-8">
+                  <p className="text-[0.58rem] text-muted-foreground uppercase tracking-[0.24em] sm:text-[0.64rem] sm:tracking-[0.3em]">
+                    Onboarding
+                  </p>
+                  <h1 className="mt-2 font-display text-white text-xl leading-tight sm:text-3xl">
+                    Loading onboarding options
+                  </h1>
+                  <p className="mt-2 max-w-2xl text-muted-foreground text-xs leading-relaxed sm:text-sm">
+                    Fetching available industries and companies for your tenant.
+                  </p>
+                </section>
+              ) : null}
+
               {onboardingConfigStatus === 'error' && !allowOnboardingCompatFallback ? (
                 <section className="panel-glass w-full px-4 py-5 sm:px-7 sm:py-8">
                   <p className="text-[0.58rem] text-muted-foreground uppercase tracking-[0.24em] sm:text-[0.64rem] sm:tracking-[0.3em]">
@@ -1082,7 +1107,7 @@ function App() {
                 </section>
               ) : (
                 <>
-                  {canRenderOnboardingSelection ? (
+                  {canRenderOnboardingSelection && !showOnboardingConfigLoading ? (
                     <IndustryOnboarding
                       templates={templates ?? undefined}
                       companies={companies ?? undefined}

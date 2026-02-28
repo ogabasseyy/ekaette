@@ -265,6 +265,94 @@ describe('App', () => {
     )
   })
 
+  it('does not flash local fallback industries before backend onboarding config resolves', async () => {
+    window.localStorage.setItem(FORCE_ONBOARDING_SELECTION_KEY, '1')
+
+    let resolveOnboarding: ((response: Response) => void) | null = null
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async input => {
+      const url = String(input)
+      if (url.startsWith('/api/onboarding/config')) {
+        return await new Promise<Response>(resolve => {
+          resolveOnboarding = resolve
+        })
+      }
+      throw new Error(`Unexpected fetch URL: ${url}`)
+    })
+
+    render(<App />)
+
+    expect(screen.getByText('Loading onboarding options')).toBeInTheDocument()
+    expect(screen.queryByText('Choose Your Service Industry')).not.toBeInTheDocument()
+
+    await act(async () => {
+      resolveOnboarding?.(
+        new Response(
+          JSON.stringify({
+            tenantId: 'public',
+            templates: [
+              {
+                id: 'electronics',
+                label: 'Electronics',
+                category: 'retail',
+                description: 'Trade-ins and device support.',
+                defaultVoice: 'Aoede',
+                theme: {
+                  accent: 'oklch(74% 0.21 158)',
+                  accentSoft: 'oklch(62% 0.14 172)',
+                  title: 'Electronics Trade Desk',
+                  hint: 'Inspect. Value. Negotiate. Book pickup.',
+                },
+                capabilities: ['catalog_search'],
+                status: 'active',
+              },
+              {
+                id: 'telecom',
+                label: 'Telecom',
+                category: 'telecommunications',
+                description: 'Plans, upgrades, and service support.',
+                defaultVoice: 'Charon',
+                theme: {
+                  accent: 'oklch(69% 0.19 275)',
+                  accentSoft: 'oklch(63% 0.13 258)',
+                  title: 'Telecom Service Desk',
+                  hint: 'Plan support and upgrade workflows.',
+                },
+                capabilities: ['plan_compare'],
+                status: 'active',
+              },
+            ],
+            companies: [
+              {
+                id: 'ekaette-electronics',
+                tenantId: 'public',
+                templateId: 'electronics',
+                displayName: 'Ekaette Electronics',
+                status: 'active',
+              },
+              {
+                id: 'ekaette-telecom',
+                tenantId: 'public',
+                templateId: 'telecom',
+                displayName: 'Ekaette Telecom',
+                status: 'active',
+              },
+            ],
+            defaults: {
+              templateId: 'electronics',
+              companyId: 'ekaette-electronics',
+            },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+      )
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(screen.getByText('Choose Your Service Industry')).toBeInTheDocument()
+    expect(screen.getByRole('radio', { name: /telecom/i })).toBeInTheDocument()
+  })
+
   it('includes company_id in WebSocket URL when connecting', async () => {
     window.localStorage.setItem(INDUSTRY_STORAGE_KEY, 'electronics')
     render(<App />)
