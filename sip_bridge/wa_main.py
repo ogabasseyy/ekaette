@@ -34,6 +34,36 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
+# Network helpers
+# ---------------------------------------------------------------------------
+
+
+def _detect_local_ip() -> str:
+    """Detect the host's routable IP address (not 127.0.0.1).
+
+    Uses a UDP connect trick to find the default route's source IP without
+    actually sending any traffic.  Falls back to gethostbyname if that fails.
+    """
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            # Connect to a public IP (doesn't send traffic for UDP)
+            s.connect(("8.8.8.8", 80))
+            ip = s.getsockname()[0]
+        finally:
+            s.close()
+        if ip and ip != "0.0.0.0":
+            return ip
+    except OSError:
+        pass
+    try:
+        return socket.gethostbyname(socket.gethostname())
+    except socket.gaierror:
+        logger.warning("Could not detect local IP, falling back to 127.0.0.1")
+        return "127.0.0.1"
+
+
+# ---------------------------------------------------------------------------
 # WaSIPServer — TLS SIP server for WhatsApp Business Calling
 # ---------------------------------------------------------------------------
 
@@ -179,14 +209,7 @@ class WaSIPServer:
         # IP allowlist check
         if not self._check_ip_allowed(peer[0]):
             logger.warning("Blocked IP %s", peer[0])
-            return SipMessage(
-                first_line="SIP/2.0 403 Forbidden",
-                headers={
-                    "call-id": msg.headers.get("call-id", ""),
-                    "content-length": "0",
-                },
-                body="",
-            )
+            return self._error_response("SIP/2.0 403 Forbidden", msg)
 
         method = msg.method
         if method == "INVITE":
@@ -196,14 +219,23 @@ class WaSIPServer:
         elif method == "ACK":
             return None  # ACK has no response
         else:
-            return SipMessage(
-                first_line="SIP/2.0 405 Method Not Allowed",
-                headers={
-                    "call-id": msg.headers.get("call-id", ""),
-                    "content-length": "0",
-                },
-                body="",
-            )
+            return self._error_response("SIP/2.0 405 Method Not Allowed", msg)
+
+    @staticmethod
+    def _error_response(status_line: str, msg: SipMessage) -> SipMessage:
+        """Build a SIP error response with mandatory Via/From/To/CSeq headers."""
+        return SipMessage(
+            first_line=status_line,
+            headers={
+                "via": msg.headers.get("via", ""),
+                "from": msg.headers.get("from", ""),
+                "to": msg.headers.get("to", ""),
+                "call-id": msg.headers.get("call-id", ""),
+                "cseq": msg.headers.get("cseq", ""),
+                "content-length": "0",
+            },
+            body="",
+        )
 
     def _check_ip_allowed(self, ip: str) -> bool:
         """Check if source IP is in the allowlist."""
@@ -227,14 +259,7 @@ class WaSIPServer:
 
         # Concurrency limit
         if len(self.active_sessions) >= self.max_concurrent_calls:
-            return SipMessage(
-                first_line="SIP/2.0 503 Service Unavailable",
-                headers={
-                    "call-id": call_id,
-                    "content-length": "0",
-                },
-                body="",
-            )
+            return self._error_response("SIP/2.0 503 Service Unavailable", invite)
 
         # Check for Proxy-Authorization header
         auth_value = invite.headers.get("proxy-authorization", "")
@@ -265,11 +290,7 @@ class WaSIPServer:
                 if auth_params.get("nonce") != pending.get("nonce"):
                     logger.warning("Nonce mismatch for call %s", call_id)
                     self._pending_challenges.pop(call_id, None)
-                    return SipMessage(
-                        first_line="SIP/2.0 403 Forbidden",
-                        headers={"call-id": call_id, "content-length": "0"},
-                        body="",
-                    )
+                    return self._error_response("SIP/2.0 403 Forbidden", invite)
             except Exception:
                 pass  # parse failure handled by verify_digest below
 
@@ -281,11 +302,7 @@ class WaSIPServer:
             method="INVITE",
         ):
             self._pending_challenges.pop(call_id, None)
-            return SipMessage(
-                first_line="SIP/2.0 403 Forbidden",
-                headers={"call-id": call_id, "content-length": "0"},
-                body="",
-            )
+            return self._error_response("SIP/2.0 403 Forbidden", invite)
 
         # Auth passed — parse remote SDP and create session
         self._pending_challenges.pop(call_id, None)
@@ -293,20 +310,13 @@ class WaSIPServer:
 
         local_ip = self.config.sip_host
         if local_ip == "0.0.0.0":
-            local_ip = "127.0.0.1"
+            local_ip = _detect_local_ip()
 
         # Validate remote media endpoint before allocating resources
         media_ip = remote_sdp.get("media_ip", "")
         media_port = remote_sdp.get("media_port", 0)
         if not media_ip or not media_port:
-            return SipMessage(
-                first_line="SIP/2.0 488 Not Acceptable Here",
-                headers={
-                    "call-id": call_id,
-                    "content-length": "0",
-                },
-                body="",
-            )
+            return self._error_response("SIP/2.0 488 Not Acceptable Here", invite)
 
         # Bind a local UDP socket for media — OS assigns a free port
         media_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -349,7 +359,8 @@ class WaSIPServer:
                 _owns_transport=True,
             )
             self.active_sessions[call_id] = session
-            asyncio.create_task(session.run())
+            task = asyncio.create_task(session.run())
+            task.add_done_callback(lambda _t, cid=call_id: self._cleanup_session(cid))
 
             logger.info("WA INVITE accepted", extra={"call_id": call_id})
             return resp
@@ -357,14 +368,7 @@ class WaSIPServer:
             # Close the socket to prevent leaks on SDP/SRTP errors
             media_sock.close()
             logger.exception("INVITE processing failed", extra={"call_id": call_id})
-            return SipMessage(
-                first_line="SIP/2.0 488 Not Acceptable Here",
-                headers={
-                    "call-id": call_id,
-                    "content-length": "0",
-                },
-                body="",
-            )
+            return self._error_response("SIP/2.0 488 Not Acceptable Here", invite)
 
     @staticmethod
     def _create_codec_bridge(remote_sdp: dict) -> Any:
@@ -390,6 +394,12 @@ class WaSIPServer:
             receiver = SRTPContext(key_material=remote_key, is_sender=False)
             return sender, receiver
         return None, None
+
+    def _cleanup_session(self, call_id: str) -> None:
+        """Remove a session from active_sessions after it finishes."""
+        session = self.active_sessions.pop(call_id, None)
+        if session:
+            logger.info("Session ended, cleaned up", extra={"call_id": call_id})
 
     def _handle_bye(self, bye: SipMessage) -> SipMessage:
         """Handle BYE: terminate active session."""

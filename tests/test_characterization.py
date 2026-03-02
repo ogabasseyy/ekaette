@@ -581,8 +581,8 @@ class TestBookingToolsNoCompanyScopingBaseline:
         )
 
     @pytest.mark.asyncio
-    async def test_create_booking_uses_transactional_write(self):
-        """create_booking uses Firestore transactions (upgraded from batch writes in Phase 3).
+    async def test_create_booking_returns_error_when_db_unavailable(self):
+        """create_booking returns a controlled error when Firestore is unavailable.
 
         The original Phase 0 characterization test validated batch-write behavior.
         After the Critical fix to prevent double-booking via @firestore.transactional,

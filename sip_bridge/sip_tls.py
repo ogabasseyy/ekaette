@@ -55,7 +55,14 @@ _MAX_HEADER_COUNT = 100
 
 @dataclass
 class SipMessage:
-    """Parsed SIP request or response."""
+    """Parsed SIP request or response.
+
+    NOTE: headers is a flat dict, so repeated headers (e.g. multiple Via
+    lines per RFC 3261 Section 8.1.1.7) will be collapsed to the last value.
+    TODO: migrate to list[tuple[str, str]] or defaultdict(list) to preserve
+    duplicate headers — requires updating all call sites that do dict-style
+    access (msg.headers["via"], msg.headers.get(...), etc.).
+    """
 
     first_line: str
     headers: dict[str, str] = field(default_factory=dict)
@@ -192,7 +199,12 @@ def serialize_message(msg: SipMessage) -> bytes:
     """Serialize a SipMessage to bytes for sending over TLS.
 
     Header names are title-cased for wire compatibility.
+    Always recalculates Content-Length to match the actual body size.
     """
+    # Recalculate Content-Length to ensure it matches the actual body
+    body_bytes = msg.body.encode("utf-8")
+    msg.headers["content-length"] = str(len(body_bytes))
+
     lines: list[str] = [msg.first_line]
 
     for name, value in msg.headers.items():
@@ -201,7 +213,7 @@ def serialize_message(msg: SipMessage) -> bytes:
         lines.append(f"{wire_name}: {value}")
 
     header_block = "\r\n".join(lines) + "\r\n\r\n"
-    return header_block.encode("utf-8") + msg.body.encode("utf-8")
+    return header_block.encode("utf-8") + body_bytes
 
 
 # ---------------------------------------------------------------------------
@@ -220,9 +232,12 @@ def create_tls_context(
     For server mode: requires certfile + keyfile.
     """
     if server_side:
+        if not certfile or not keyfile:
+            raise ValueError(
+                "certfile and keyfile are required for server-side TLS"
+            )
         ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        if certfile and keyfile:
-            ctx.load_cert_chain(certfile, keyfile)
+        ctx.load_cert_chain(certfile, keyfile)
     else:
         ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
 

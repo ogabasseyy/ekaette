@@ -9,6 +9,8 @@ from __future__ import annotations
 import asyncio
 from unittest.mock import patch, AsyncMock
 
+import pytest
+
 
 # ── Bridge Restart During Active Call ──
 
@@ -16,6 +18,7 @@ from unittest.mock import patch, AsyncMock
 class TestBridgeRestart:
     """Session handles bridge process restart gracefully."""
 
+    @pytest.mark.asyncio
     async def test_session_shutdown_cleans_up(self) -> None:
         """Shutdown signal causes clean task teardown."""
         from sip_bridge.session import CallSession
@@ -34,6 +37,7 @@ class TestBridgeRestart:
         assert s._shutdown.is_set()
         assert s.frames_received == 0  # No frames fed
 
+    @pytest.mark.asyncio
     async def test_session_survives_inbound_queue_full(self) -> None:
         """Full inbound queue drops frames without crashing."""
         from sip_bridge.session import CallSession, INBOUND_QUEUE_SIZE
@@ -54,6 +58,7 @@ class TestBridgeRestart:
 class TestGeminiDisconnect:
     """Handle upstream Gemini Live WebSocket failures."""
 
+    @pytest.mark.asyncio
     async def test_gemini_client_close_is_idempotent(self) -> None:
         """Closing an already-closed client doesn't crash."""
         from sip_bridge.gemini_live_client import GeminiLiveClient
@@ -65,6 +70,7 @@ class TestGeminiDisconnect:
         # Close without connecting — should not raise
         await client.close()
 
+    @pytest.mark.asyncio
     async def test_send_audio_before_connect_is_noop(self) -> None:
         """Sending audio before connect is a safe no-op."""
         from sip_bridge.gemini_live_client import GeminiLiveClient
@@ -76,6 +82,7 @@ class TestGeminiDisconnect:
         # Should not raise — returns silently when not connected
         await client.send_audio(b"\x00" * 160)
 
+    @pytest.mark.asyncio
     async def test_receive_audio_before_connect_returns_none(self) -> None:
         """Receiving audio before connect returns None (safe)."""
         from sip_bridge.gemini_live_client import GeminiLiveClient

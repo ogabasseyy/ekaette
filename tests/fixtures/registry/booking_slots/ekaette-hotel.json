@@ -1,7 +1,7 @@
 [
   {
     "id": "slot-hotel-0301-standard",
-    "date": "2026-03-01",
+    "date": "2027-03-01",
     "time": "14:00",
     "location": "Main Building",
     "slot_type": "Standard Room",
@@ -10,7 +10,7 @@
   },
   {
     "id": "slot-hotel-0301-deluxe",
-    "date": "2026-03-01",
+    "date": "2027-03-01",
     "time": "14:00",
     "location": "Main Building",
     "slot_type": "Deluxe Room",
@@ -19,7 +19,7 @@
   },
   {
     "id": "slot-hotel-0308-standard",
-    "date": "2026-03-08",
+    "date": "2027-03-08",
     "time": "14:00",
     "location": "Main Building",
     "slot_type": "Standard Room",
@@ -28,7 +28,7 @@
   },
   {
     "id": "slot-hotel-0308-ocean",
-    "date": "2026-03-08",
+    "date": "2027-03-08",
     "time": "14:00",
     "location": "Ocean Wing",
     "slot_type": "Ocean View Room",
@@ -37,7 +37,7 @@
   },
   {
     "id": "slot-hotel-0315-suite",
-    "date": "2026-03-15",
+    "date": "2027-03-15",
     "time": "14:00",
     "location": "Executive Floor",
     "slot_type": "Suite",
@@ -46,7 +46,7 @@
   },
   {
     "id": "slot-hotel-0315-deluxe",
-    "date": "2026-03-15",
+    "date": "2027-03-15",
     "time": "14:00",
     "location": "Main Building",
     "slot_type": "Deluxe Room",
@@ -55,7 +55,7 @@
   },
   {
     "id": "slot-hotel-0322-standard",
-    "date": "2026-03-22",
+    "date": "2027-03-22",
     "time": "14:00",
     "location": "Main Building",
     "slot_type": "Standard Room",
@@ -64,7 +64,7 @@
   },
   {
     "id": "slot-hotel-0322-ocean",
-    "date": "2026-03-22",
+    "date": "2027-03-22",
     "time": "14:00",
     "location": "Ocean Wing",
     "slot_type": "Ocean View Room",
@@ -73,7 +73,7 @@
   },
   {
     "id": "slot-hotel-0329-suite",
-    "date": "2026-03-29",
+    "date": "2027-03-29",
     "time": "14:00",
     "location": "Executive Floor",
     "slot_type": "Suite",
@@ -82,7 +82,7 @@
   },
   {
     "id": "slot-hotel-0329-deluxe",
-    "date": "2026-03-29",
+    "date": "2027-03-29",
     "time": "14:00",
     "location": "Main Building",
     "slot_type": "Deluxe Room",

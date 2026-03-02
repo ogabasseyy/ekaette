@@ -15,6 +15,7 @@ algorithms for interoperability with SIP infrastructure.
 from __future__ import annotations
 
 import hashlib
+import hmac
 import os
 import re
 import time
@@ -188,7 +189,7 @@ def verify_digest(
         )
     except (ValueError, TypeError):
         return False
-    return expected_response == params.get("response")
+    return hmac.compare_digest(expected_response, params.get("response", ""))
 
 
 def build_auth_header(

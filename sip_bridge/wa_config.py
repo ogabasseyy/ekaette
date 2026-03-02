@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from pathlib import Path
 
 
 @dataclass(slots=True, frozen=True)
@@ -81,5 +82,14 @@ class WhatsAppBridgeConfig:
             errors.append(
                 "WA_TLS_CERTFILE and WA_TLS_KEYFILE are required in production "
                 "(non-sandbox) mode — SIP over TLS is mandatory"
+            )
+        # Verify TLS cert/key files actually exist on disk
+        if self.tls_certfile and not Path(self.tls_certfile).exists():
+            errors.append(
+                f"WA_TLS_CERTFILE={self.tls_certfile!r} does not exist"
+            )
+        if self.tls_keyfile and not Path(self.tls_keyfile).exists():
+            errors.append(
+                f"WA_TLS_KEYFILE={self.tls_keyfile!r} does not exist"
             )
         return errors

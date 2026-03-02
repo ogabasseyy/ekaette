@@ -148,9 +148,7 @@ class SIPProtocol(asyncio.DatagramProtocol):
             if first_line.startswith("INVITE"):
                 self._handle_invite(message, addr)
             elif first_line.startswith("BYE"):
-                call_id = self._extract_call_id(message)
-                if call_id:
-                    self.server.handle_bye(call_id)
+                self._handle_bye(message, addr)
             # ACK, OPTIONS, etc. are acknowledged but not processed
         except Exception:
             logger.exception("SIP message parse error")
@@ -212,6 +210,31 @@ class SIPProtocol(asyncio.DatagramProtocol):
             local_rtp_port=local_rtp_port,
         )
         asyncio.create_task(session.run())
+
+    def _handle_bye(self, message: str, addr: tuple[str, int]) -> None:
+        """Parse BYE, send 200 OK, then tear down session."""
+        parsed = parse_sip_request(message)
+        headers = parsed["headers"]
+        call_id = headers.get("Call-ID", "")
+        if not call_id:
+            return
+
+        transport = self.server._transport
+        if transport:
+            config = self.server.config
+            user_part = (
+                config.sip_username.split("@", 1)[0]
+                if "@" in config.sip_username
+                else config.sip_username
+            )
+            contact_uri = f"<sip:{user_part}@{config.sip_public_ip}:{config.sip_port}>"
+            ok_response = build_sip_response(
+                200, "OK", headers, sdp_body=None, contact_uri=contact_uri,
+            )
+            transport.sendto(ok_response.encode("utf-8"), addr)
+            logger.info("200 OK for BYE sent", extra={"call_id": call_id})
+
+        self.server.handle_bye(call_id)
 
     @staticmethod
     def _extract_call_id(message: str) -> str | None:

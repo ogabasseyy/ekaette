@@ -4,11 +4,9 @@ import os
 from unittest.mock import MagicMock, patch
 
 import pytest
-import warnings
-
-warnings.filterwarnings("ignore", message=".*EXPERIMENTAL.*")
 
 
+@pytest.mark.filterwarnings("ignore::UserWarning")
 class TestCreateCompactionConfig:
     """Test compaction config creation with env-driven switching."""
 
@@ -163,6 +161,7 @@ class TestCreateCompactionConfig:
         assert config.token_threshold is None
 
 
+@pytest.mark.filterwarnings("ignore::UserWarning")
 class TestCreateApp:
     """Test ADK App construction with compaction config."""
 
@@ -227,6 +226,7 @@ class TestCreateApp:
         assert app.name == "ekaette"
 
 
+@pytest.mark.filterwarnings("ignore::UserWarning")
 class TestCreateSummarizer:
     """Test LLM summarizer creation."""
 

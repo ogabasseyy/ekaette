@@ -35,18 +35,18 @@ class TestCodecBridgeABC:
     def test_abc_has_rtp_payload_type(self):
         from sip_bridge.codec_bridge import CodecBridge
 
-        # Should be declared as abstract or class attribute
-        assert "rtp_payload_type" in dir(CodecBridge) or True  # checked on instances
+        # Verified on concrete subclass instances
+        assert hasattr(CodecBridge, "rtp_payload_type") or "rtp_payload_type" in dir(CodecBridge)
 
     def test_abc_has_rtp_clock_rate(self):
         from sip_bridge.codec_bridge import CodecBridge
 
-        assert "rtp_clock_rate" in dir(CodecBridge) or True
+        assert hasattr(CodecBridge, "rtp_clock_rate") or "rtp_clock_rate" in dir(CodecBridge)
 
     def test_abc_has_frame_duration_ms(self):
         from sip_bridge.codec_bridge import CodecBridge
 
-        assert "frame_duration_ms" in dir(CodecBridge) or True
+        assert hasattr(CodecBridge, "frame_duration_ms") or "frame_duration_ms" in dir(CodecBridge)
 
 
 # --- G711CodecBridge tests ---

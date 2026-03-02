@@ -1,5 +1,6 @@
 """Shared test fixtures for Ekaette backend tests."""
 
+import copy
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -106,11 +107,11 @@ def make_session_state(
     """
     from app.configs.industry_loader import LOCAL_INDUSTRY_CONFIGS
 
-    config = LOCAL_INDUSTRY_CONFIGS.get(industry, {
+    config = copy.deepcopy(LOCAL_INDUSTRY_CONFIGS.get(industry, {
         "name": industry.title(),
         "voice": "Aoede",
         "greeting": f"Welcome to {industry}.",
-    })
+    }))
 
     state: dict[str, object] = {
         "app:industry": industry,

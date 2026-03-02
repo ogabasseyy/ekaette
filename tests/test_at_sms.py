@@ -146,8 +146,11 @@ class TestSMSSend:
         )
         assert resp.status_code == 200
         # Verify the message sent via provider was truncated
-        sent_msg = mock_send.call_args[1].get("message") or mock_send.call_args[0][0]
+        call_kwargs = mock_send.call_args[1]
+        sent_msg = call_kwargs.get("message", call_kwargs.get("msg"))
+        assert sent_msg is not None, "message kwarg not found in send_sms call"
         assert len(sent_msg) <= 160
+        assert sent_msg.endswith("...")
 
     @patch("app.api.v1.at.providers.send_sms", new_callable=AsyncMock)
     def test_send_sms_provider_error_returns_502(
