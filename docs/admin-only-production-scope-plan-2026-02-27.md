@@ -1,6 +1,7 @@
 # Admin-Only Provisioning + Zero End-User Onboarding (2026 Production-Complete, v2)
 
 ## Summary
+
 This is the upgraded, decision-complete plan with all 2026 production controls added.
 
 - End-user app skips onboarding and uses server bootstrap.
@@ -11,6 +12,7 @@ This is the upgraded, decision-complete plan with all 2026 production controls a
 ## Important Changes / Additions to Public APIs / Interfaces / Types
 
 ## 1. API versioning strategy (new, explicit)
+
 All new endpoints are versioned from day 1:
 - `/api/v1/runtime/bootstrap`
 - `/api/v1/admin/...`
@@ -23,7 +25,9 @@ Version policy:
   - `schemaVersion` where relevant (template/company/connectors)
 
 ## 2. Runtime bootstrap endpoint (v1)
+
 ### `GET /api/v1/runtime/bootstrap`
+
 Returns authoritative runtime context:
 - `apiVersion`
 - `tenantId`
@@ -43,6 +47,7 @@ Error contract:
 - `503 REGISTRY_CONFIG_NOT_FOUND`
 
 ## 3. Admin API surface (v1)
+
 All endpoints require tenant-admin role and tenant ownership checks.
 
 - Company config:
@@ -71,6 +76,7 @@ All endpoints require tenant-admin role and tenant ownership checks.
   - `DELETE /api/v1/admin/companies/{companyId}/connectors/{connectorId}`
 
 ## 4. Idempotency keys for mutating admin APIs (new)
+
 For write/import endpoints:
 - Require `Idempotency-Key` header.
 - Server stores key hash + request fingerprint + result for TTL window (24h).
@@ -78,6 +84,7 @@ For write/import endpoints:
 - Same key with different payload returns `409 IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_PAYLOAD`.
 
 ## 5. Interface/type additions
+
 Add/standardize:
 - `RuntimeBootstrapResponseV1`
 - `AdminCompanyV1`
@@ -89,6 +96,7 @@ Add/standardize:
 ## Security + Auth Architecture (Required Controls)
 
 ## A. Auth model contract (OIDC/JWT)
+
 Use JWT claims contract:
 - `sub` -> user id
 - `tenant_id` -> tenant scope
@@ -106,6 +114,7 @@ Session/token lifecycle:
 - WebSocket authenticates before session bootstrap; no trust in query params.
 
 ## B. CSRF policy (explicit)
+
 If browser cookie auth is used for admin APIs:
 - CSRF token required for mutating requests.
 - `SameSite=Lax/Strict` + secure cookies in prod.
@@ -113,6 +122,7 @@ If bearer tokens only:
 - CSRF not required, but enforce strict CORS + origin policy + auth headers.
 
 ## C. Connector/MCP security controls
+
 - Allowlist only: no arbitrary MCP URLs in v1.
 - `secretRef` required for non-mock providers.
 - No raw secrets in Firestore/config/logs.
@@ -120,6 +130,7 @@ If bearer tokens only:
 - Per-provider capability ceilings enforced server-side.
 
 ## D. Egress/network controls
+
 - Outbound destination allowlist by provider.
 - Per-provider:
   - timeout budgets
@@ -128,6 +139,7 @@ If bearer tokens only:
 - Hard fail-closed if provider policy unavailable.
 
 ## E. Policy-as-code (new)
+
 Store provider allowlist and capability policies as versioned config:
 - `policies/mcp_providers.v1.json`
 - `policies/capability_matrix.v1.yaml`
@@ -139,6 +151,7 @@ Changes require:
 ## Data Governance + Compliance Controls
 
 ## A. PII classification
+
 Classify stored data:
 - P0 secrets (Secret Manager only)
 - P1 customer identifiers
@@ -146,6 +159,7 @@ Classify stored data:
 Annotate collections and fields in docs.
 
 ## B. Retention/deletion
+
 Define retention per data class:
 - transcripts/events (for example 30/90 days as decided)
 - knowledge docs (until deleted by admin)
@@ -153,6 +167,7 @@ Define retention per data class:
 Add scheduled purge jobs and legal-hold override path.
 
 ## C. Tenant data export/delete workflows
+
 Admin endpoints or internal runbooks for:
 - tenant export
 - tenant/company deletion
@@ -161,16 +176,19 @@ Admin endpoints or internal runbooks for:
 ## DR / Reliability Controls
 
 ## A. RTO/RPO targets (explicit)
+
 Initial targets:
 - RTO: 2 hours
 - RPO: 15 minutes
 
 ## B. Backup/restore drills
+
 - Monthly restore validation in non-prod from latest snapshot.
 - Quarterly game-day for partial tenant restore.
 - Track outcomes and action items.
 
 ## C. Incident runbooks
+
 Add runbooks for:
 - registry outage
 - onboarding/token failure spikes
@@ -180,6 +198,7 @@ Add runbooks for:
 ## Operational Readiness (SLOs, Metrics, Alerts)
 
 ## SLOs
+
 - `/api/v1/runtime/bootstrap`
   - p95 <= 300ms
   - error rate <1% / 15m
@@ -194,6 +213,7 @@ Add runbooks for:
   - p95 <= 100ms
 
 ## Mandatory metric/log labels
+
 - `tenant_id`
 - `company_id`
 - `industry_template_id`
@@ -205,6 +225,7 @@ Add runbooks for:
 - `trace_id`
 
 ## Alerts (minimum)
+
 - registry miss spikes
 - bootstrap/token 5xx/4xx spikes
 - websocket startup failure spikes
@@ -212,6 +233,7 @@ Add runbooks for:
 - policy validation failures at deploy time
 
 ## End-User UX Decision (Final)
+
 End users do not complete setup onboarding.
 
 Production behavior:
@@ -230,6 +252,7 @@ Admin-only setup owns:
 ## Implementation Plan (Decision-Complete)
 
 ## Phase 1 — API and auth foundations
+
 1. Add `/api/v1/runtime/bootstrap`.
 2. Introduce `AuthContext` extraction middleware.
 3. Enforce JWT claim contract (`tenant_id`, roles/scopes).
@@ -237,6 +260,7 @@ Admin-only setup owns:
 5. Add idempotency-key middleware/store for mutating admin APIs.
 
 ## Phase 2 — Admin backend APIs
+
 1. Implement company CRUD.
 2. Implement knowledge import/list/delete.
 3. Implement products/slots import and demo purge wrappers.
@@ -245,6 +269,7 @@ Admin-only setup owns:
 6. Add policy-as-code loaders + validators.
 
 ## Phase 3 — Admin frontend
+
 1. Build `/admin` routes/pages.
 2. Company profile/template forms.
 3. Knowledge import UI (text/url/file).
@@ -253,18 +278,21 @@ Admin-only setup owns:
 6. Publish/validate workflow with blocking errors.
 
 ## Phase 4 — End-user frontend cutover
+
 1. Remove onboarding gate from primary user flow.
 2. Add bootstrap gate + loading/error states.
 3. Add minimal company-picker fallback when needed.
 4. Keep dev-only compat onboarding behind explicit flag.
 
 ## Phase 5 — Governance + reliability
+
 1. Add retention/deletion jobs + endpoints/runbooks.
 2. Add backup/restore validation scripts and schedules.
 3. Add SLO dashboards and alert policies.
 4. Add rollout gates and rollback triggers.
 
 ## Phase 6 — Docs + runbooks + policy files
+
 1. Update architecture/build/setup docs.
 2. Add schema versioning and API versioning docs.
 3. Add security policy docs (authz, CSRF, connector policy).
@@ -273,6 +301,7 @@ Admin-only setup owns:
 ## Test Cases and Scenarios
 
 ## Backend tests
+
 1. Authz/ownership:
 - `/api/v1/runtime/bootstrap` tenant mismatch -> `403`
 - `/api/token` non-owned company -> `404`
@@ -297,6 +326,7 @@ Admin-only setup owns:
 - tenant delete/export workflows scoped correctly
 
 ## Frontend tests
+
 1. End-user app:
 - bypasses onboarding and uses bootstrap
 - company picker only when required
@@ -310,6 +340,7 @@ Admin-only setup owns:
 - existing voice/transcript/socket behavior unaffected by onboarding removal
 
 ## Integration/E2E
+
 1. Admin configures new company + connector, publishes.
 2. End-user logs in and starts live session without onboarding.
 3. Tamper attempts via query/body are rejected.
@@ -349,6 +380,7 @@ Rollback action:
 ## Execution Tracker (as of 2026-02-27)
 
 ### Completed foundations
+
 - [x] Registry-first cutover defaults and fail-closed behavior in backend paths.
 - [x] Canonical template parity fixtures for all six templates (`electronics`, `hotel`, `automotive`, `fashion`, `telecom`, `aviation-support`).
 - [x] Schema/version controls (`schema_version` enforcement + loader validation).
@@ -414,6 +446,7 @@ Rollback action:
   - test coverage in `tests/test_release_gate.py`
 
 ### Recently completed (this plan scope)
+
 - [x] SLO/alert policy templates added:
   - `policies/observability_slos.v1.yaml`
   - `policies/alert_policies.v1.json`
@@ -427,6 +460,7 @@ Rollback action:
   - `.github/workflows/ci.yml` includes `python -m scripts.release_gate --strict`.
 
 ### Immediate next milestones
+
 1. Run staged smoke and publish operator execution receipts.
 2. Execute one production-like governance drill and archive result artifact.
 3. Run full backend + frontend regression once before release tag.

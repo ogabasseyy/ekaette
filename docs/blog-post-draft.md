@@ -11,7 +11,7 @@ cover_image: https://YOUR_COVER_IMAGE_URL/cover-1000x420.png
 
 I built **Ekaette**, a multimodal AI customer service agent where customers can speak naturally, show products on camera, negotiate prices by voice, and book appointments — all in one real-time conversation. Built with Google ADK, Gemini Live API, FastAPI, React 19, and deployed on Cloud Run.
 
-[Try the live demo](https://ekaette-XXXXX.run.app) | [GitHub Repository](https://github.com/YOUR_USERNAME/ekaette) | [Devpost Submission](https://devpost.com/software/ekaette)
+[Try the live demo](https://ekaette-233619833678.us-central1.run.app) | [GitHub Repository](https://github.com/ogabasseyy/ekaette) | [Devpost Submission](https://devpost.com/software/ekaette)
 
 ---
 
@@ -117,8 +117,8 @@ The biggest UX threat to a voice-first app is silence. Agent transfers take 5-10
 
 ## Try It Yourself
 
-- **Live Demo**: [https://ekaette-XXXXX.run.app](https://ekaette-XXXXX.run.app)
-- **GitHub**: [https://github.com/YOUR_USERNAME/ekaette](https://github.com/YOUR_USERNAME/ekaette)
+- **Live Demo**: [https://ekaette-233619833678.us-central1.run.app](https://ekaette-233619833678.us-central1.run.app)
+- **GitHub**: [https://github.com/ogabasseyy/ekaette](https://github.com/ogabasseyy/ekaette)
 - **Devpost**: [https://devpost.com/software/ekaette](https://devpost.com/software/ekaette)
 
 The full source is open — clone it, swap in your Gemini API key, and you'll have a working multimodal voice agent in minutes.

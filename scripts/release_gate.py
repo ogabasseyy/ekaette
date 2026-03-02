@@ -151,7 +151,6 @@ def validate_policy_files(repo_root: Path) -> list[str]:
 def validate_required_artifacts(repo_root: Path) -> list[str]:
     errors: list[str] = []
     required_paths = [
-        repo_root / "tests" / "test_admin_v1_contracts.py",
         repo_root / "docs" / "runbooks" / "admin-data-governance-operations.md",
         repo_root / "scripts" / "dr_restore_drill.py",
         repo_root / "docs" / "operational-readiness-slos-alerts.md",

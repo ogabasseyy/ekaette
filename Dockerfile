@@ -1,5 +1,5 @@
 # ─── Stage 1: Build frontend ───
-FROM node:24-slim AS frontend-build
+FROM node:24-slim@sha256:b4687aef2571c632a1953695ce4d61d6462a7eda471fe6e272eebf0418f276ba AS frontend-build
 WORKDIR /app/frontend
 RUN corepack enable && corepack prepare pnpm@latest --activate
 COPY frontend/package.json frontend/pnpm-lock.yaml ./
@@ -8,7 +8,7 @@ COPY frontend/ .
 RUN pnpm run build
 
 # ─── Stage 2: Python runtime ───
-FROM python:3.13.12-slim
+FROM python:3.13.12-slim@sha256:a208155746991fb5c4baf3c501401c3fee09e814ab0e5121a0f53b2ca659e0e2
 
 # System deps for grpc / crypto wheels
 RUN apt-get update && apt-get install -y --no-install-recommends \

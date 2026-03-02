@@ -11,8 +11,7 @@
 
 > **Ekaette** transforms customer service through real-time multimodal AI conversations — customers speak naturally, show products via camera, negotiate prices, and book appointments, all in one voice call. Built for the [Gemini Live Agent Challenge](https://geminiliveagentchallenge.devpost.com/).
 
-<!-- TODO: Replace with your actual URLs before submission -->
-[Live Demo](https://ekaette-XXXXX.run.app) | [Demo Video](https://youtube.com/watch?v=XXXXX) | [Blog Post](https://dev.to/bassey/building-ekaette-XXXXX) | [Devpost](https://devpost.com/software/ekaette)
+[Live Demo](https://ekaette-233619833678.us-central1.run.app) | [Demo Video](https://youtube.com/watch?v=XXXXX) | [Blog Post](https://dev.to/bassey/building-ekaette-XXXXX) | [Devpost](https://devpost.com/software/ekaette)
 
 ---
 
@@ -104,6 +103,7 @@ For the full architecture with all data flows, memory tiers, and latency mitigat
 ## Key Features
 
 ### Multi-Agent Orchestration
+
 Six specialized agents coordinated by Google ADK, with LLM-driven routing:
 
 | Agent | Role | Model |
@@ -116,6 +116,7 @@ Six specialized agents coordinated by Google ADK, with LLM-driven routing:
 | **support_agent** | FAQs, general inquiries (Google Search grounding) | Gemini 3 Flash |
 
 ### Real-Time Voice Streaming
+
 Bidirectional PCM audio via Gemini Live API with:
 - 16kHz capture / 24kHz playback (separate AudioContexts — no echo feedback)
 - Barge-in support (interrupt the agent mid-sentence)
@@ -123,11 +124,13 @@ Bidirectional PCM audio via Gemini Live API with:
 - Voice filler UX during agent transfers ("Let me take a closer look...")
 
 ### 3-Tier Memory Architecture
+
 1. **Session State** (Firestore) — within-call context with key prefixes (`user:`, `app:`, `temp:`)
 2. **Memory Bank** (Vertex AI Agent Engine) — cross-session long-term memory with Gemini-powered extraction and consolidation
 3. **Industry Knowledge** (Firestore configs) — shared pricing rubrics, voice personas, booking rules
 
 ### Multi-Industry Support
+
 Switch industries at onboarding — each gets its own voice persona, pricing rubric, and conversation style:
 - **Electronics**: Aoede voice, device trade-in + valuation flow
 - **Hotel**: Puck voice, room booking + concierge
@@ -135,6 +138,7 @@ Switch industries at onboarding — each gets its own voice persona, pricing rub
 - **Fashion**: Catalog recommendations + consultation
 
 ### Direct-Live Transport Mode
+
 Optional low-latency mode that fetches an ephemeral token from the backend and connects the browser directly to Gemini Live API — bypassing the backend WebSocket proxy for audio. Falls back automatically to backend-proxy if token generation fails.
 
 ---
@@ -142,6 +146,7 @@ Optional low-latency mode that fetches an ephemeral token from the backend and c
 ## Built With
 
 ### Backend
+
 | Technology | Version | Purpose |
 |---|---|---|
 | [Python](https://python.org) | 3.13 | Runtime |
@@ -152,6 +157,7 @@ Optional low-latency mode that fetches an ephemeral token from the backend and c
 | [google-genai](https://pypi.org/project/google-genai/) | 1.64.0 | Gemini SDK |
 
 ### Frontend
+
 | Technology | Version | Purpose |
 |---|---|---|
 | [React](https://react.dev) | 19 | UI framework |
@@ -161,6 +167,7 @@ Optional low-latency mode that fetches an ephemeral token from the backend and c
 | [@google/genai](https://www.npmjs.com/package/@google/genai) | 1.42+ | Direct-live ephemeral token transport |
 
 ### Infrastructure
+
 | Technology | Purpose |
 |---|---|
 | [Google Cloud Run](https://cloud.google.com/run) | Serverless container hosting (session affinity, 60min timeout) |
@@ -185,7 +192,7 @@ Optional low-latency mode that fetches an ephemeral token from the backend and c
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/YOUR_USERNAME/ekaette.git
+git clone https://github.com/ogabasseyy/ekaette.git
 cd ekaette
 
 # 2. Backend setup
@@ -323,15 +330,19 @@ ekaette/
 ## Challenges & Learnings
 
 ### AudioWorklet Echo Feedback
+
 The starter code connected the microphone recorder to `ctx.destination`, creating a mic → speaker → mic feedback loop. Fix: separate 16kHz (recorder) and 24kHz (player) AudioContexts, and never connect the recorder to output.
 
 ### ADK Bug #3395 — Duplicate Responses
+
 After multiple agent transfers, the ADK would replay earlier responses. Mitigated with a `before_agent_callback` that tracks content hashes and suppresses duplicates.
 
 ### Gemini Live API Session Limits
+
 Sessions are limited to ~10 minutes. Implemented session resumption with `SessionResumptionUpdate` tokens and context compression (trigger at 80k tokens, compress to 40k sliding window) for longer conversations.
 
 ### Voice Latency During Agent Transfers
+
 Agent transfers introduce 5-10 seconds of silence. Solved with voice filler instructions ("Let me take a closer look...") baked into the root agent, plus `NON_BLOCKING` tool behavior and `WHEN_IDLE` scheduling for tool results.
 
 ---
