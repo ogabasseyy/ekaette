@@ -6,7 +6,7 @@ import { IndustryOnboarding } from '../layout/IndustryOnboarding'
 describe('IndustryOnboarding', () => {
   it('renders all industry options', () => {
     render(<IndustryOnboarding onComplete={() => {}} />)
-    expect(screen.getByRole('radio', { name: /electronics/i })).toBeInTheDocument()
+    expect(screen.getByRole('radio', { name: /hardware/i })).toBeInTheDocument()
     expect(screen.getByRole('radio', { name: /hotel/i })).toBeInTheDocument()
     expect(screen.getByRole('radio', { name: /automotive/i })).toBeInTheDocument()
     expect(screen.getByRole('radio', { name: /fashion/i })).toBeInTheDocument()
@@ -18,7 +18,7 @@ describe('IndustryOnboarding', () => {
     render(<IndustryOnboarding onComplete={onComplete} />)
 
     await user.click(screen.getByRole('radio', { name: /hotel/i }))
-    await user.click(screen.getByRole('button', { name: /continue/i }))
+    await user.click(screen.getByRole('button', { name: /launch live desk/i }))
 
     expect(onComplete).toHaveBeenCalledWith({
       templateId: 'hotel',

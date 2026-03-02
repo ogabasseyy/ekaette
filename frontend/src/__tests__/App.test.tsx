@@ -8,6 +8,12 @@ beforeAll(async () => {
   await import('../components/cards/ValuationCard')
   await import('../components/cards/BookingConfirmationCard')
   await import('../components/cards/ProductCard')
+  // Wizard step components (lazy-loaded in VendorSetupWizard)
+  await import('../components/layout/wizard/StepIndustry')
+  await import('../components/layout/wizard/StepKnowledge')
+  await import('../components/layout/wizard/StepConnectors')
+  await import('../components/layout/wizard/StepCatalog')
+  await import('../components/layout/wizard/StepLaunch')
 })
 
 interface MockSocket {
@@ -48,7 +54,6 @@ function sendServerMessage(ws: MockSocket, message: ServerMessage) {
  * The socket mock opens on setTimeout(0), then we flush audio startup microtasks.
  */
 async function connectCall() {
-  await dismissStartupSelectionPromptIfPresent()
   const micButton = screen.getByRole('button', { name: /start call/i })
   await act(async () => {
     micButton.click()
@@ -63,16 +68,7 @@ async function connectCall() {
   })
 }
 
-async function dismissStartupSelectionPromptIfPresent() {
-  const continueButton = screen.queryByRole('button', { name: /continue with last setup/i })
-  if (!continueButton) return
-  await act(async () => {
-    continueButton.click()
-  })
-}
-
 const INDUSTRY_STORAGE_KEY = 'ekaette:onboarding:industry'
-const FORCE_ONBOARDING_SELECTION_KEY = 'ekaette:onboarding:forceSelection'
 
 describe('App', () => {
   beforeEach(() => {
@@ -84,6 +80,10 @@ describe('App', () => {
       }
     ).__lastMockWebSocket = undefined
     window.localStorage.clear()
+    window.localStorage.setItem(
+      'ekaette:privacy:consent',
+      JSON.stringify({ accepted: true, timestamp: '2026-01-01T00:00:00Z', version: '1.0' }),
+    )
   })
 
   afterEach(() => {
@@ -140,11 +140,11 @@ describe('App', () => {
         headers: { Accept: 'application/json' },
       }),
     )
-    expect(screen.queryByText('Choose Your Service Industry')).not.toBeInTheDocument()
+    expect(screen.queryByText('Configure Your Business')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: /start call/i })).toBeInTheDocument()
   })
 
-  it('falls back to compatibility onboarding when runtime bootstrap fails', async () => {
+  it('falls back to compatibility vendor setup when runtime bootstrap fails', async () => {
     vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('network down'))
 
     render(<App />)
@@ -155,209 +155,30 @@ describe('App', () => {
       await Promise.resolve()
     })
 
-    expect(screen.getByText('Choose Your Service Industry')).toBeInTheDocument()
+    // Wizard renders "Vendor Setup" label and step indicator; "Configure Your Business" was the old text
+    expect(screen.getByText('Vendor Setup')).toBeInTheDocument()
     expect(
       screen.getByText(
-        'Using local compatibility onboarding because backend onboarding config is unavailable.',
+        'Using local configuration because the backend setup service is unavailable.',
       ),
     ).toBeInTheDocument()
   })
 
-  it('renders main layout after industry is stored', () => {
+  it('renders main layout after industry is stored (skips to Live Desk)', () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
       return await new Promise<Response>(() => {})
     })
     window.localStorage.setItem(INDUSTRY_STORAGE_KEY, 'electronics')
     render(<App />)
-    expect(screen.getByText(/Continue with your last workspace\?/i)).toBeInTheDocument()
-    expect(screen.queryByText('Electronics Trade Desk')).not.toBeInTheDocument()
-  })
-
-  it('can re-select industry from startup prompt and clears persisted onboarding selection', async () => {
-    window.localStorage.setItem(INDUSTRY_STORAGE_KEY, 'electronics')
-    window.localStorage.setItem('ekaette:onboarding:templateId', 'electronics')
-    window.localStorage.setItem('ekaette:onboarding:companyId', 'ekaette-electronics')
-    render(<App />)
-
-    const resetButton = screen.getByRole('button', { name: /re-select industry/i })
-    await act(async () => {
-      resetButton.click()
-    })
-
-    expect(screen.getByText('Choose Your Service Industry')).toBeInTheDocument()
-    expect(window.localStorage.getItem('ekaette:onboarding:industry')).toBeNull()
-    expect(window.localStorage.getItem('ekaette:onboarding:templateId')).toBeNull()
-    expect(window.localStorage.getItem('ekaette:onboarding:companyId')).toBeNull()
-  })
-
-  it('keeps onboarding open when re-select happens before bootstrap response returns', async () => {
-    window.localStorage.setItem(INDUSTRY_STORAGE_KEY, 'electronics')
-    window.localStorage.setItem('ekaette:onboarding:templateId', 'electronics')
-    window.localStorage.setItem('ekaette:onboarding:companyId', 'ekaette-electronics')
-
-    let resolveBootstrap: ((response: Response) => void) | null = null
-    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async input => {
-      const url = String(input)
-      if (url.startsWith('/api/v1/runtime/bootstrap')) {
-        return await new Promise<Response>(resolve => {
-          resolveBootstrap = resolve
-        })
-      }
-      if (url.startsWith('/api/onboarding/config')) {
-        return new Response('unavailable', { status: 503 })
-      }
-      throw new Error(`Unexpected fetch URL: ${url}`)
-    })
-
-    render(<App />)
-    const resetButton = screen.getByRole('button', { name: /re-select industry/i })
-    await act(async () => {
-      resetButton.click()
-    })
-
-    await act(async () => {
-      resolveBootstrap?.(
-        new Response(
-          JSON.stringify({
-            apiVersion: 'v1',
-            tenantId: 'public',
-            companyId: 'ekaette-electronics',
-            industryTemplateId: 'electronics',
-            industry: 'electronics',
-            voice: 'Aoede',
-            capabilities: ['catalog_search'],
-            onboardingRequired: false,
-            sessionPolicy: {
-              industryLocked: true,
-              companyLocked: true,
-              switchRequiresDisconnect: true,
-            },
-          }),
-          { status: 200, headers: { 'Content-Type': 'application/json' } },
-        ),
-      )
-      await Promise.resolve()
-      await Promise.resolve()
-    })
-
-    expect(fetchMock).toHaveBeenCalledWith(
-      '/api/v1/runtime/bootstrap?tenantId=public',
-      expect.objectContaining({ headers: { Accept: 'application/json' } }),
-    )
-    expect(screen.getByText('Choose Your Service Industry')).toBeInTheDocument()
-    expect(window.localStorage.getItem('ekaette:onboarding:industry')).toBeNull()
-  })
-
-  it('respects persisted force-selection flag after refresh', async () => {
-    window.localStorage.setItem(FORCE_ONBOARDING_SELECTION_KEY, '1')
-    const fetchMock = vi.spyOn(globalThis, 'fetch')
-
-    render(<App />)
-    await act(async () => {
-      await Promise.resolve()
-      await Promise.resolve()
-    })
-
-    expect(screen.getByText('Choose Your Service Industry')).toBeInTheDocument()
-    expect(fetchMock).not.toHaveBeenCalledWith(
-      expect.stringContaining('/api/v1/runtime/bootstrap'),
-      expect.anything(),
-    )
-  })
-
-  it('does not flash local fallback industries before backend onboarding config resolves', async () => {
-    window.localStorage.setItem(FORCE_ONBOARDING_SELECTION_KEY, '1')
-
-    let resolveOnboarding: ((response: Response) => void) | null = null
-    vi.spyOn(globalThis, 'fetch').mockImplementation(async input => {
-      const url = String(input)
-      if (url.startsWith('/api/onboarding/config')) {
-        return await new Promise<Response>(resolve => {
-          resolveOnboarding = resolve
-        })
-      }
-      throw new Error(`Unexpected fetch URL: ${url}`)
-    })
-
-    render(<App />)
-
-    expect(screen.getByText('Loading onboarding options')).toBeInTheDocument()
-    expect(screen.queryByText('Choose Your Service Industry')).not.toBeInTheDocument()
-
-    await act(async () => {
-      resolveOnboarding?.(
-        new Response(
-          JSON.stringify({
-            tenantId: 'public',
-            templates: [
-              {
-                id: 'electronics',
-                label: 'Electronics',
-                category: 'retail',
-                description: 'Trade-ins and device support.',
-                defaultVoice: 'Aoede',
-                theme: {
-                  accent: 'oklch(74% 0.21 158)',
-                  accentSoft: 'oklch(62% 0.14 172)',
-                  title: 'Electronics Trade Desk',
-                  hint: 'Inspect. Value. Negotiate. Book pickup.',
-                },
-                capabilities: ['catalog_search'],
-                status: 'active',
-              },
-              {
-                id: 'telecom',
-                label: 'Telecom',
-                category: 'telecommunications',
-                description: 'Plans, upgrades, and service support.',
-                defaultVoice: 'Charon',
-                theme: {
-                  accent: 'oklch(69% 0.19 275)',
-                  accentSoft: 'oklch(63% 0.13 258)',
-                  title: 'Telecom Service Desk',
-                  hint: 'Plan support and upgrade workflows.',
-                },
-                capabilities: ['plan_compare'],
-                status: 'active',
-              },
-            ],
-            companies: [
-              {
-                id: 'ekaette-electronics',
-                tenantId: 'public',
-                templateId: 'electronics',
-                displayName: 'Ekaette Electronics',
-                status: 'active',
-              },
-              {
-                id: 'ekaette-telecom',
-                tenantId: 'public',
-                templateId: 'telecom',
-                displayName: 'Ekaette Telecom',
-                status: 'active',
-              },
-            ],
-            defaults: {
-              templateId: 'electronics',
-              companyId: 'ekaette-electronics',
-            },
-          }),
-          { status: 200, headers: { 'Content-Type': 'application/json' } },
-        ),
-      )
-      await Promise.resolve()
-      await Promise.resolve()
-    })
-
-    expect(screen.getByText('Choose Your Service Industry')).toBeInTheDocument()
-    expect(screen.getByRole('radio', { name: /telecom/i })).toBeInTheDocument()
+    // With startup prompt removed, stored industry goes straight to Live Desk
+    expect(screen.getByRole('button', { name: /start call/i })).toBeInTheDocument()
   })
 
   it('includes company_id in WebSocket URL when connecting', async () => {
     window.localStorage.setItem(INDUSTRY_STORAGE_KEY, 'electronics')
     render(<App />)
 
-    await dismissStartupSelectionPromptIfPresent()
+
 
     const micButton = screen.getByRole('button', { name: /start call/i })
     await act(async () => {
@@ -611,7 +432,7 @@ describe('App', () => {
   it('accepts messages that arrive before websocket open without crashing', async () => {
     window.localStorage.setItem(INDUSTRY_STORAGE_KEY, 'electronics')
     render(<App />)
-    await dismissStartupSelectionPromptIfPresent()
+
 
     const micButton = screen.getByRole('button', { name: /start call/i })
     await act(async () => {
@@ -673,7 +494,7 @@ describe('App', () => {
     globalThis.WebSocket = NeverOpenWebSocket as unknown as typeof WebSocket
     try {
       render(<App />)
-      await dismissStartupSelectionPromptIfPresent()
+  
       const micButton = screen.getByRole('button', { name: /start call/i })
       await act(async () => {
         micButton.click()
@@ -734,7 +555,7 @@ describe('App', () => {
     window.localStorage.setItem(INDUSTRY_STORAGE_KEY, 'electronics')
     window.history.replaceState({}, '', '/?demo=1')
     render(<App />)
-    await dismissStartupSelectionPromptIfPresent()
+
 
     const startButton = screen.getByRole('button', { name: /start call/i })
     await act(async () => {

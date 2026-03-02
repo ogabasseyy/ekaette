@@ -666,7 +666,10 @@ class TestCatalogToolsNoCompanyScopingBaseline:
         assert "error" not in result
         db.collection.assert_called_once_with("products")
         where_calls = [call.args for call in query.where.call_args_list]
-        assert ("category", "==", "smartphones") in where_calls
+        # Category filtering moved to client-side via _product_matches_category
+        # (supports fuzzy alias matching), so .where("category", ...) is no
+        # longer called on the Firestore query.
+        assert not any(args and args[0] == "category" for args in where_calls)
         assert not any(args and args[0] == "company_id" for args in where_calls), (
             "Phase 0 baseline: search_catalog should NOT filter by company_id yet. "
             "This should fail once Phase 3 company scoping is implemented."

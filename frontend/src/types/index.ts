@@ -239,3 +239,25 @@ export interface RuntimeBootstrapResponse {
     switchRequiresDisconnect: boolean
   }
 }
+
+// ═══ Vendor Setup Wizard ═══
+
+export type WizardStepId = 'industry' | 'knowledge' | 'connectors' | 'catalog' | 'launch'
+
+export type WizardStepStatus = 'pending' | 'active' | 'completed' | 'error'
+
+export type SeedItemStatus = 'pending' | 'seeding' | 'ready' | 'error'
+
+export interface SeedItemState {
+  label: string
+  detail: string
+  status: SeedItemStatus
+  errorMessage?: string
+}
+
+export interface SeedResults {
+  knowledge: number
+  connectors: number
+  products: number
+  bookingSlots: number
+}

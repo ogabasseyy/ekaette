@@ -6,7 +6,7 @@
  */
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from '../App'
 import { getLastSocket, sendServerMessage } from './test-helpers'
 
@@ -14,6 +14,18 @@ import type {
   IndustryTemplateMeta,
   OnboardingConfigResponse,
 } from '../types'
+
+// Pre-warm lazy-loaded wizard step components so React.lazy resolves under fake timers
+beforeAll(async () => {
+  await import('../components/layout/wizard/StepIndustry')
+  await import('../components/layout/wizard/StepKnowledge')
+  await import('../components/layout/wizard/StepConnectors')
+  await import('../components/layout/wizard/StepCatalog')
+  await import('../components/layout/wizard/StepLaunch')
+  await import('../components/cards/ValuationCard')
+  await import('../components/cards/BookingConfirmationCard')
+  await import('../components/cards/ProductCard')
+})
 
 // ═══ Test Fixtures ═══
 
@@ -223,7 +235,7 @@ describe('IndustryOnboarding dynamic templates', () => {
     )
 
     // All 3 templates from props should render
-    expect(screen.getByRole('radio', { name: /electronics/i })).toBeInTheDocument()
+    expect(screen.getByRole('radio', { name: /hardware/i })).toBeInTheDocument()
     expect(screen.getByRole('radio', { name: /hospitality/i })).toBeInTheDocument()
     expect(screen.getByRole('radio', { name: /telecom/i })).toBeInTheDocument()
   })
@@ -245,7 +257,7 @@ describe('IndustryOnboarding dynamic templates', () => {
 
     await user.click(screen.getByRole('radio', { name: /telecom/i }))
     await user.selectOptions(screen.getByLabelText(/choose company/i), 'ekaette-telecom')
-    await user.click(screen.getByRole('button', { name: /continue/i }))
+    await user.click(screen.getByRole('button', { name: /launch live desk/i }))
     expect(onComplete).toHaveBeenCalledWith({
       templateId: 'telecom',
       companyId: 'ekaette-telecom',
@@ -267,7 +279,7 @@ describe('IndustryOnboarding dynamic templates', () => {
       />,
     )
 
-    await user.click(screen.getByRole('button', { name: /continue/i }))
+    await user.click(screen.getByRole('button', { name: /launch live desk/i }))
     expect(onComplete).toHaveBeenCalledWith({
       templateId: 'electronics',
       companyId: 'ekaette-electronics',
@@ -320,6 +332,10 @@ describe('localStorage canonical tuple storage', () => {
 
   beforeEach(() => {
     window.localStorage.clear()
+    window.localStorage.setItem(
+      'ekaette:privacy:consent',
+      JSON.stringify({ accepted: true, timestamp: '2026-01-01T00:00:00Z', version: '1.0' }),
+    )
   })
 
   afterEach(() => {
@@ -341,6 +357,10 @@ describe('App dynamic onboarding integration', () => {
     ;(globalThis.WebSocket as unknown as { instances?: unknown[] }).instances = []
     ;(globalThis as { __lastMockWebSocket?: unknown }).__lastMockWebSocket = undefined
     window.localStorage.clear()
+    window.localStorage.setItem(
+      'ekaette:privacy:consent',
+      JSON.stringify({ accepted: true, timestamp: '2026-01-01T00:00:00Z', version: '1.0' }),
+    )
   })
 
   afterEach(() => {
@@ -353,19 +373,11 @@ describe('App dynamic onboarding integration', () => {
     await act(async () => {
       await Promise.resolve()
       await Promise.resolve()
-    })
-  }
-
-  async function dismissStartupSelectionPromptIfPresent() {
-    const continueButton = screen.queryByRole('button', { name: /continue with last setup/i })
-    if (!continueButton) return
-    await act(async () => {
-      continueButton.click()
+      await Promise.resolve()
     })
   }
 
   async function connectCall() {
-    await dismissStartupSelectionPromptIfPresent()
     const micButton = screen.getByRole('button', { name: /start call/i })
     await act(async () => {
       micButton.click()
@@ -400,8 +412,8 @@ describe('App dynamic onboarding integration', () => {
     render(<App />)
     await flushOnboardingFetch()
 
-    expect(screen.getByText(/using local compatibility onboarding/i)).toBeInTheDocument()
-    expect(screen.getByRole('radio', { name: /electronics/i })).toBeInTheDocument()
+    expect(screen.getByText(/using local configuration/i)).toBeInTheDocument()
+    expect(screen.getByRole('radio', { name: /hardware/i })).toBeInTheDocument()
     expect(screen.getByRole('radio', { name: /hotel/i })).toBeInTheDocument()
   })
 
@@ -414,12 +426,33 @@ describe('App dynamic onboarding integration', () => {
     render(<App />)
     await flushOnboardingFetch()
 
+    // Step 1 (Industry): select telecom + company, click "Next"
     await act(async () => {
       screen.getByRole('radio', { name: /telecom & mobile/i }).click()
-      fireEvent.change(screen.getByLabelText(/choose company/i), {
+      fireEvent.change(screen.getByLabelText(/company name/i), {
         target: { value: 'ekaette-telecom' },
       })
-      screen.getByRole('button', { name: /continue/i }).click()
+      screen.getByRole('button', { name: /next/i }).click()
+    })
+
+    // Step 2 (Knowledge): skip
+    await act(async () => {
+      screen.getByRole('button', { name: /skip/i }).click()
+    })
+
+    // Step 3 (Connectors): skip
+    await act(async () => {
+      screen.getByRole('button', { name: /skip/i }).click()
+    })
+
+    // Step 4 (Catalog): skip
+    await act(async () => {
+      screen.getByRole('button', { name: /skip/i }).click()
+    })
+
+    // Step 5 (Launch): click "Launch Live Desk"
+    await act(async () => {
+      screen.getByRole('button', { name: /launch live desk/i }).click()
     })
 
     expect(window.localStorage.getItem('ekaette:onboarding:templateId')).toBe('telecom')
@@ -464,6 +497,6 @@ describe('App dynamic onboarding integration', () => {
     expect(window.localStorage.getItem('ekaette:onboarding:templateId')).toBe('telecom')
     expect(window.localStorage.getItem('ekaette:onboarding:industry')).toBe('telecom')
     expect(window.localStorage.getItem('ekaette:onboarding:companyId')).toBe('ekaette-telecom')
-    expect(screen.getAllByText(/Industry: Telecom & Mobile/i).length).toBeGreaterThan(0)
+    expect(screen.getAllByText(/Telecom & Mobile/i).length).toBeGreaterThan(0)
   })
 })

@@ -96,6 +96,7 @@ interface PendingConnectRequest {
 
 interface EphemeralTokenResponse {
   token: string
+  wsToken?: string
   model?: string
   industry?: string
   companyId?: string
@@ -226,6 +227,7 @@ export function useEkaetteSocket(
   const lastConnectTimeRef = useRef(0)
   const rapidFailCountRef = useRef(0)
   const pendingConnectRef = useRef<PendingConnectRequest | null>(null)
+  const wsTokenRef = useRef<string | null>(null)
 
   const flushDebugMetrics = useCallback((force = false) => {
     if (IS_TEST_ENV) {
@@ -606,8 +608,12 @@ export function useEkaetteSocket(
       throw new Error('Token response missing token')
     }
 
+    const wsToken = typeof payload.wsToken === 'string' ? payload.wsToken : undefined
+    wsTokenRef.current = wsToken ?? null
+
     return {
       token: payload.token,
+      wsToken,
       model: payload.model,
       industry: payload.industry,
       companyId: payload.companyId,
@@ -744,7 +750,7 @@ export function useEkaetteSocket(
     setMessages([])
   }, [])
 
-  const connectBackendProxy = useCallback(() => {
+  const connectBackendProxy = useCallback(async () => {
     // Guard: prevent double-connect
     if (
       connectingRef.current ||
@@ -774,12 +780,26 @@ export function useEkaetteSocket(
     connectingRef.current = true
     setState('connecting')
 
+    // Fetch ephemeral token to obtain optional wsToken for WS auth.
+    try {
+      await requestEphemeralToken()
+    } catch {
+      // Token fetch is best-effort for backend-proxy; proceed without wsToken.
+    }
+    if (!shouldReconnectRef.current) {
+      connectingRef.current = false
+      return
+    }
+
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
     const industryQuery = encodeURIComponent(industry)
     const companyQuery = companyId ? `&company_id=${encodeURIComponent(companyId)}` : ''
     const tenantQuery = tenantId ? `&tenant_id=${encodeURIComponent(tenantId)}` : ''
+    const tokenQuery = wsTokenRef.current
+      ? `&token=${encodeURIComponent(wsTokenRef.current)}`
+      : ''
     const ws = new WebSocket(
-      `${protocol}//${window.location.host}/ws/${userId}/${currentSessionIdRef.current}?industry=${industryQuery}${companyQuery}${tenantQuery}`,
+      `${protocol}//${window.location.host}/ws/${userId}/${currentSessionIdRef.current}?industry=${industryQuery}${companyQuery}${tenantQuery}${tokenQuery}`,
     )
     ws.binaryType = 'arraybuffer'
     wsRef.current = ws
@@ -798,7 +818,7 @@ export function useEkaetteSocket(
       resolvePendingConnect()
     }
 
-    ws.onclose = () => {
+    ws.onclose = (event: CloseEvent) => {
       connectingRef.current = false
       wsRef.current = null
       if (heartbeatTimerRef.current) {
@@ -809,6 +829,12 @@ export function useEkaetteSocket(
       mutateDebugMetrics(draft => {
         draft.heartbeatPending = 0
       })
+
+      // Handle 4401: invalid/expired WS token — clear cached token so
+      // reconnect will fetch a fresh one via requestEphemeralToken.
+      if (event.code === 4401) {
+        wsTokenRef.current = null
+      }
 
       // Detect rapid failures: if connection lasted < 3s, increment counter.
       // After 3 rapid failures in a row, stop reconnecting to avoid loops.
@@ -876,9 +902,11 @@ export function useEkaetteSocket(
     industry,
     mutateDebugMetrics,
     rejectPendingConnect,
+    requestEphemeralToken,
     resolvePendingConnect,
     scheduleReconnect,
     startProxyHeartbeat,
+    tenantId,
     userId,
   ])
 
@@ -913,8 +941,8 @@ export function useEkaetteSocket(
         outputAudioTranscription: {},
         sessionResumption: {},
         contextWindowCompression: {
-          triggerTokens: 80000,
-          slidingWindow: { targetTokens: 40000 },
+          triggerTokens: '80000',
+          slidingWindow: { targetTokens: '40000' },
         },
         proactivity: { proactiveAudio: true },
         speechConfig: {
@@ -1013,12 +1041,12 @@ export function useEkaetteSocket(
         connectingRef.current = false
         activeTransportRef.current = 'backend-proxy'
         emitDirectFallbackMessage('Direct Live connect failed')
-        connectBackendProxy()
+        void connectBackendProxy()
       })
       return
     }
 
-    connectBackendProxy()
+    void connectBackendProxy()
   }, [
     connectBackendProxy,
     connectDirectLive,
@@ -1208,12 +1236,16 @@ export function useEkaetteSocket(
   )
 
   const sendActivityStart = useCallback(() => {
-    if (!manualVadEnabledRef.current) return
+    if (!manualVadEnabledRef.current) {
+      return
+    }
     sendJson({ type: 'activity_start' })
   }, [sendJson])
 
   const sendActivityEnd = useCallback(() => {
-    if (!manualVadEnabledRef.current) return
+    if (!manualVadEnabledRef.current) {
+      return
+    }
     sendJson({ type: 'activity_end' })
   }, [sendJson])
 

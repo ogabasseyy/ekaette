@@ -12,16 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { getLastSocket, setStoredIndustry } from './test-helpers'
 import type { Industry } from '../types'
 
-async function dismissStartupSelectionPromptIfPresent() {
-  const continueButton = screen.queryByRole('button', { name: /continue with last setup/i })
-  if (!continueButton) return
-  await act(async () => {
-    continueButton.click()
-  })
-}
-
 async function startCallAndGetSocket() {
-  await dismissStartupSelectionPromptIfPresent()
   const micButton = screen.getByRole('button', { name: /start call/i })
   await act(async () => {
     micButton.click()
@@ -43,6 +34,10 @@ describe('Hardcoded industry maps (pre-migration baseline)', () => {
     ;(globalThis.WebSocket as unknown as { instances?: unknown[] }).instances = []
     ;(globalThis as { __lastMockWebSocket?: unknown }).__lastMockWebSocket = undefined
     window.localStorage.clear()
+    window.localStorage.setItem(
+      'ekaette:privacy:consent',
+      JSON.stringify({ accepted: true, timestamp: '2026-01-01T00:00:00Z', version: '1.0' }),
+    )
   })
 
   afterEach(() => {
@@ -73,7 +68,7 @@ describe('Hardcoded industry maps (pre-migration baseline)', () => {
   it.each([
     [
       'electronics',
-      'Electronics Trade Desk',
+      'Hardware Trade Desk',
       'Inspect. Value. Negotiate. Book pickup.',
       'oklch(74% 0.21 158)',
     ],
@@ -101,7 +96,7 @@ describe('Hardcoded industry maps (pre-migration baseline)', () => {
       setStoredIndustry(industry)
       const App = (await import('../App')).default
       const { container } = render(<App />)
-      await dismissStartupSelectionPromptIfPresent()
+
 
       expect(screen.getByText(expectedTitle)).toBeInTheDocument()
       expect(screen.getAllByText(expectedHint).length).toBeGreaterThanOrEqual(1)
@@ -124,7 +119,7 @@ describe('IndustryOnboarding characterization', () => {
     )
     render(<IndustryOnboarding onComplete={() => {}} />)
 
-    expect(screen.getByRole('radio', { name: /electronics/i })).toBeInTheDocument()
+    expect(screen.getByRole('radio', { name: /hardware/i })).toBeInTheDocument()
     expect(screen.getByRole('radio', { name: /hotel/i })).toBeInTheDocument()
     expect(screen.getByRole('radio', { name: /automotive/i })).toBeInTheDocument()
     expect(screen.getByRole('radio', { name: /fashion/i })).toBeInTheDocument()
@@ -137,9 +132,9 @@ describe('IndustryOnboarding characterization', () => {
     const onComplete = vi.fn()
     render(<IndustryOnboarding onComplete={onComplete} />)
 
-    // Click continue without changing selection → should default to electronics
+    // Click Launch Live Desk without changing selection → should default to electronics
     const user = userEvent.setup()
-    await user.click(screen.getByRole('button', { name: /continue/i }))
+    await user.click(screen.getByRole('button', { name: /launch live desk/i }))
     expect(onComplete).toHaveBeenCalledWith({
       templateId: 'electronics',
       companyId: 'ekaette-electronics',
@@ -155,7 +150,7 @@ describe('IndustryOnboarding characterization', () => {
     render(<IndustryOnboarding onComplete={onComplete} />)
 
     await user.click(screen.getByRole('radio', { name: /hotel/i }))
-    await user.click(screen.getByRole('button', { name: /continue/i }))
+    await user.click(screen.getByRole('button', { name: /launch live desk/i }))
     expect(onComplete).toHaveBeenCalledWith({
       templateId: 'hotel',
       companyId: 'ekaette-hotel',
@@ -215,6 +210,10 @@ describe('WebSocket connection characterization', () => {
     ;(globalThis.WebSocket as unknown as { instances?: unknown[] }).instances = []
     ;(globalThis as { __lastMockWebSocket?: unknown }).__lastMockWebSocket = undefined
     window.localStorage.clear()
+    window.localStorage.setItem(
+      'ekaette:privacy:consent',
+      JSON.stringify({ accepted: true, timestamp: '2026-01-01T00:00:00Z', version: '1.0' }),
+    )
   })
 
   afterEach(() => {
@@ -230,7 +229,7 @@ describe('WebSocket connection characterization', () => {
 
     const App = (await import('../App')).default
     render(<App />)
-    await dismissStartupSelectionPromptIfPresent()
+
 
     const ws = await startCallAndGetSocket()
     expect(ws.url).toContain('industry=hotel')
@@ -241,7 +240,7 @@ describe('WebSocket connection characterization', () => {
 
     const App = (await import('../App')).default
     render(<App />)
-    await dismissStartupSelectionPromptIfPresent()
+
 
     const ws = await startCallAndGetSocket()
     expect(ws.url).toContain('company_id=ekaette-automotive')

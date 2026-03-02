@@ -17,6 +17,7 @@ from app.api.v1.realtime.runtime_cache import (
     bind_runtime_values,
     configure_runtime as configure_runtime_cache,
 )
+from app.tools.pii_redaction import redact_pii
 
 logger = logging.getLogger(__name__)
 
@@ -138,9 +139,7 @@ async def upstream_task(
 
             # Any valid client JSON message counts as activity.
             msg_type = json_message.get("type", "")
-            if msg_type in ("text", "image", "negotiate") or (
-                msg_type == "activity_start" and ctx.manual_vad_active
-            ):
+            if msg_type in ("text", "image", "negotiate", "activity_start"):
                 now = time.monotonic()
                 silence_state.last_client_activity = now
                 silence_state.silence_nudge_count = 0
@@ -389,7 +388,7 @@ async def downstream_task(
             await websocket.send_text(json.dumps({
                 "type": "transcription",
                 "role": "user",
-                "text": last_input_text,
+                "text": redact_pii(last_input_text),
                 "partial": False,
             }))
         last_input_text = ""
@@ -460,7 +459,7 @@ async def downstream_task(
                         await websocket.send_text(json.dumps({
                             "type": "transcription",
                             "role": "user",
-                            "text": text,
+                            "text": redact_pii(text),
                             "partial": is_partial,
                         }))
                         if finished:

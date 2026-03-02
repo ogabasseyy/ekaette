@@ -33,6 +33,7 @@ from app.agents.ekaette_router.agent import ekaette_router  # noqa: E402
 from app.agents.tool_scheduling import install_tool_response_scheduling_patch  # noqa: E402
 from app.api.v1.admin import admin_router  # noqa: E402
 from app.api.v1.at import at_router  # noqa: E402
+from app.api.v1.internal import internal_router  # noqa: E402
 from app.api.v1.admin import settings as admin_settings  # noqa: E402
 from app.api.v1.admin.auth import _extract_admin_auth_context  # noqa: E402
 from app.api.v1.admin.service_companies import _resolve_company_for_bootstrap  # noqa: E402
@@ -598,6 +599,8 @@ SILENCE_NUDGE_MAX_INTERVAL_SECONDS = public_settings.SILENCE_NUDGE_MAX_INTERVAL_
 DEBUG_TELEMETRY = public_settings.DEBUG_TELEMETRY
 TOKEN_PRICE_PROMPT_PER_MILLION = public_settings.TOKEN_PRICE_PROMPT_PER_MILLION
 TOKEN_PRICE_COMPLETION_PER_MILLION = public_settings.TOKEN_PRICE_COMPLETION_PER_MILLION
+WS_TOKEN_SECRET = public_settings.WS_TOKEN_SECRET
+WS_TOKEN_TTL_SECONDS = public_settings.WS_TOKEN_TTL_SECONDS
 REGISTRY_ENABLED = public_settings.REGISTRY_ENABLED
 REGISTRY_REQUIRE_COMPANY_TEMPLATE_MATCH = public_settings.REGISTRY_REQUIRE_COMPANY_TEMPLATE_MATCH
 LIVE_MODEL_CANDIDATES = public_settings.build_live_model_candidates(
@@ -781,6 +784,7 @@ async def get_runtime_bootstrap(request: Request):
 
 app.include_router(admin_router)
 app.include_router(at_router)
+app.include_router(internal_router)
 
 
 
@@ -837,6 +841,7 @@ def _sync_realtime_runtime() -> None:
         StreamingMode=StreamingMode,
         types=types,
         _build_session_started_message=_build_session_started_message,
+        WS_TOKEN_SECRET=WS_TOKEN_SECRET,
         LiveRequestQueue=LiveRequestQueue,
         SILENCE_NUDGE_SECONDS=SILENCE_NUDGE_SECONDS,
         SILENCE_NUDGE_BACKOFF_MULTIPLIER=SILENCE_NUDGE_BACKOFF_MULTIPLIER,

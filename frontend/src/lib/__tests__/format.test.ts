@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatDuration, formatNaira, prettyAgentName } from '../format'
+import { formatCompactNumber, formatDuration, formatNaira, formatPercent, prettyAgentName } from '../format'
 
 describe('formatDuration', () => {
   it('formats zero seconds as 00:00', () => {
@@ -61,5 +61,41 @@ describe('formatNaira', () => {
   it('formats large values with commas', () => {
     const result = formatNaira(1500000)
     expect(result).toContain('1,500,000')
+  })
+})
+
+describe('formatPercent', () => {
+  it('formats rate as percentage with one decimal', () => {
+    expect(formatPercent(0.5)).toBe('50.0%')
+  })
+
+  it('formats zero', () => {
+    expect(formatPercent(0)).toBe('0.0%')
+  })
+
+  it('formats 100%', () => {
+    expect(formatPercent(1)).toBe('100.0%')
+  })
+
+  it('rounds to one decimal place', () => {
+    expect(formatPercent(0.3456)).toBe('34.6%')
+  })
+})
+
+describe('formatCompactNumber', () => {
+  it('returns plain number for small values', () => {
+    expect(formatCompactNumber(42)).toBe('42')
+  })
+
+  it('formats thousands with K suffix', () => {
+    expect(formatCompactNumber(1500)).toBe('1.5K')
+  })
+
+  it('formats millions with M suffix', () => {
+    expect(formatCompactNumber(2500000)).toBe('2.5M')
+  })
+
+  it('formats zero', () => {
+    expect(formatCompactNumber(0)).toBe('0')
   })
 })

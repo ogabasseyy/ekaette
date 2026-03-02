@@ -19,7 +19,7 @@ export function Header({ hint, templateLabel, connectionState }: HeaderProps) {
           : 'Disconnected'
 
   return (
-    <header className="panel-glass flex shrink-0 flex-col gap-3 px-4 py-4 sm:gap-4 sm:px-5 sm:py-5 lg:flex-row lg:items-center lg:justify-between">
+    <header className="panel-glass header-panel flex shrink-0 flex-col gap-3 px-4 py-4 sm:gap-4 sm:px-5 sm:py-5 lg:flex-row lg:items-center lg:justify-between">
       <div className="space-y-1.5">
         <p className="text-[0.58rem] text-muted-foreground uppercase tracking-[0.28em] sm:text-[0.62rem] sm:tracking-[0.34em]">
           Baci Technologies
@@ -38,11 +38,8 @@ export function Header({ hint, templateLabel, connectionState }: HeaderProps) {
           {connectionLabel}
         </StatusBadge>
         <StatusBadge variant="muted" className="text-center sm:text-left">
-          Industry: {templateLabel}
+          {templateLabel}
         </StatusBadge>
-        <p className="px-1 text-[0.68rem] text-muted-foreground sm:basis-full sm:pt-0.5">
-          Onboarding is locked during active calls.
-        </p>
       </div>
     </header>
   )

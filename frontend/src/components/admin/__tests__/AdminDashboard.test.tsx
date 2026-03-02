@@ -194,4 +194,66 @@ describe('AdminDashboard', () => {
     const payload = JSON.parse(String(firstCall[1].body)) as Record<string, unknown>
     expect(payload.data_tier).toBe('demo')
   })
+
+  it('sends inventory sync payload for google sheets source', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      jsonResponse({
+        apiVersion: 'v1',
+        tenantId: 'public',
+        companyId: 'ekaette-electronics',
+        sourceType: 'google_sheets',
+        written: 2,
+      }),
+    )
+
+    render(<AdminDashboard />)
+    fireEvent.change(screen.getByLabelText(/google sheets url/i), {
+      target: { value: 'https://docs.google.com/spreadsheets/d/test/edit#gid=0' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: /sync inventory source/i }))
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+    })
+
+    const call = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(call[0]).toContain('/api/v1/admin/companies/ekaette-electronics/inventory/sync')
+    expect(call[1].method).toBe('POST')
+    const payload = JSON.parse(String(call[1].body)) as Record<string, unknown>
+    expect(payload.sourceType).toBe('google_sheets')
+    expect(payload.sourceUrl).toBe('https://docs.google.com/spreadsheets/d/test/edit#gid=0')
+  })
+
+  it('sends inventory sync config payload', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      jsonResponse({
+        apiVersion: 'v1',
+        tenantId: 'public',
+        companyId: 'ekaette-electronics',
+        configured: true,
+        inventorySync: {
+          auto_enabled: true,
+          interval_minutes: 30,
+        },
+      }),
+    )
+
+    render(<AdminDashboard />)
+    fireEvent.click(screen.getByLabelText(/enable auto sync schedule/i))
+    fireEvent.change(screen.getByLabelText(/interval minutes/i), {
+      target: { value: '30' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: /save sync config/i }))
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+    })
+
+    const call = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(call[0]).toContain('/api/v1/admin/companies/ekaette-electronics/inventory/sync/config')
+    expect(call[1].method).toBe('PUT')
+    const payload = JSON.parse(String(call[1].body)) as Record<string, unknown>
+    expect(payload.autoEnabled).toBe(true)
+    expect(payload.intervalMinutes).toBe(30)
+  })
 })

@@ -32,6 +32,18 @@ def get_runtime_value(name: str) -> Any:
     return value
 
 
+def get_runtime_value_safe(name: str, default: Any = None) -> Any:
+    """Resolve a runtime symbol by name, returning *default* if not configured."""
+    cached = _RUNTIME_CACHE.get(name, _MISSING)
+    if cached is not _MISSING:
+        return cached
+    if name not in _RUNTIME_VALUES:
+        return default
+    value = _RUNTIME_VALUES[name]
+    _RUNTIME_CACHE[name] = value
+    return value
+
+
 def bind_runtime_values(*names: str) -> tuple[Any, ...]:
     """Return a tuple of resolved runtime symbols in the same order as names."""
     return tuple(get_runtime_value(name) for name in names)

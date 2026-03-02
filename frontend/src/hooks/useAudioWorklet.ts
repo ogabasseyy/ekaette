@@ -7,14 +7,17 @@ interface UseAudioWorkletReturn {
   clearPlaybackBuffer: () => void
   recoverAudioContexts: () => Promise<void>
   stop: () => void
+  micCaptureDiagnostics: MicCaptureDiagnostics | null
   error: string | null
 }
 
 type SpeechActivityState = 'start' | 'end'
+export type NoiseCancellationLevel = 'off' | 'standard' | 'aggressive'
 
 interface UseAudioWorkletOptions {
   onSpeechActivity?: (state: SpeechActivityState) => void
   onPlaybackStats?: (stats: PlaybackStats) => void
+  noiseCancellationLevel?: NoiseCancellationLevel
 }
 
 export interface PlaybackStats {
@@ -24,6 +27,129 @@ export interface PlaybackStats {
   startupPrebufferSamples: number
   currentRebufferSamples: number
   underrunCount: number
+}
+
+interface MicConstraintSupport {
+  echoCancellation: boolean
+  noiseSuppression: boolean
+  autoGainControl: boolean
+}
+
+interface RecorderProcessorOptions {
+  denoiseEnabled: boolean
+  noiseGateFloor: number
+  noiseGateMultiplier: number
+  noiseGateResidualGain: number
+  highPassCutoffHz: number
+}
+
+interface RecorderDenoisePreset extends RecorderProcessorOptions {
+  captureProcessingEnabled: boolean
+}
+
+const RECORDER_DENOISE_PRESETS: Record<NoiseCancellationLevel, RecorderDenoisePreset> = {
+  off: {
+    denoiseEnabled: false,
+    noiseGateFloor: 0.002,
+    noiseGateMultiplier: 1.6,
+    noiseGateResidualGain: 0.25,
+    highPassCutoffHz: 70,
+    captureProcessingEnabled: false,
+  },
+  standard: {
+    denoiseEnabled: true,
+    noiseGateFloor: 0.0022,
+    noiseGateMultiplier: 1.8,
+    noiseGateResidualGain: 0.16,
+    highPassCutoffHz: 85,
+    captureProcessingEnabled: true,
+  },
+  aggressive: {
+    denoiseEnabled: true,
+    noiseGateFloor: 0.0028,
+    noiseGateMultiplier: 2.2,
+    noiseGateResidualGain: 0.06,
+    highPassCutoffHz: 110,
+    captureProcessingEnabled: true,
+  },
+}
+
+export interface MicCaptureDiagnostics {
+  noiseCancellationLevel: NoiseCancellationLevel
+  softwareDenoiserEnabled: boolean
+  supportedConstraints: MicConstraintSupport
+  requestedConstraints: {
+    echoCancellation: boolean
+    noiseSuppression: boolean
+    autoGainControl: boolean
+  }
+  appliedSettings: {
+    echoCancellation: boolean | string | null
+    noiseSuppression: boolean | null
+    autoGainControl: boolean | null
+    sampleRate: number | null
+    channelCount: number | null
+    latency: number | null
+  }
+}
+
+function buildCaptureConstraintSupport(): MicConstraintSupport {
+  const supported = navigator.mediaDevices?.getSupportedConstraints?.()
+  if (!supported) {
+    // getSupportedConstraints is optional; default to requesting core
+    // audio-processing constraints and let the user agent ignore unsupported ones.
+    return {
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true,
+    }
+  }
+  return {
+    echoCancellation: supported.echoCancellation !== false,
+    noiseSuppression: supported.noiseSuppression !== false,
+    autoGainControl: supported.autoGainControl !== false,
+  }
+}
+
+function createAudioConstraints(
+  level: NoiseCancellationLevel,
+  support: MicConstraintSupport,
+): { requested: MediaTrackConstraints; requestedFlags: MicCaptureDiagnostics['requestedConstraints'] } {
+  const processingEnabled = RECORDER_DENOISE_PRESETS[level].captureProcessingEnabled
+  const requestedFlags = {
+    echoCancellation: processingEnabled,
+    noiseSuppression: processingEnabled,
+    autoGainControl: processingEnabled,
+  }
+
+  const requested: MediaTrackConstraints = {
+    sampleRate: 16000,
+    channelCount: 1,
+  }
+  if (support.echoCancellation) {
+    requested.echoCancellation = requestedFlags.echoCancellation
+  }
+  if (support.noiseSuppression) {
+    requested.noiseSuppression = requestedFlags.noiseSuppression
+  }
+  if (support.autoGainControl) {
+    requested.autoGainControl = requestedFlags.autoGainControl
+  }
+
+  return { requested, requestedFlags }
+}
+
+function toBoolean(value: unknown): boolean | null {
+  return typeof value === 'boolean' ? value : null
+}
+
+function toBooleanOrString(value: unknown): boolean | string | null {
+  if (typeof value === 'boolean' || typeof value === 'string') return value
+  return null
+}
+
+function toNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null
 }
 
 export function useAudioWorklet(
@@ -37,11 +163,17 @@ export function useAudioWorklet(
   const playerNodeRef = useRef<AudioWorkletNode | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [micCaptureDiagnostics, setMicCaptureDiagnostics] = useState<MicCaptureDiagnostics | null>(
+    null,
+  )
   const onSpeechActivityRef = useRef<UseAudioWorkletOptions['onSpeechActivity']>(
     options.onSpeechActivity,
   )
   const onPlaybackStatsRef = useRef<UseAudioWorkletOptions['onPlaybackStats']>(
     options.onPlaybackStats,
+  )
+  const noiseCancellationLevelRef = useRef<NoiseCancellationLevel>(
+    options.noiseCancellationLevel ?? 'aggressive',
   )
 
   useEffect(() => {
@@ -58,9 +190,14 @@ export function useAudioWorklet(
     }
   }, [options.onPlaybackStats])
 
+  useEffect(() => {
+    noiseCancellationLevelRef.current = options.noiseCancellationLevel ?? 'aggressive'
+  }, [options.noiseCancellationLevel])
+
   const startRecording = useCallback(async () => {
     try {
       setError(null)
+      setMicCaptureDiagnostics(null)
 
       // 16kHz for recording (Gemini Live API expects 16kHz PCM)
       const ctx = new AudioContext({ sampleRate: 16000 })
@@ -73,18 +210,70 @@ export function useAudioWorklet(
 
       await ctx.audioWorklet.addModule('/pcm-recorder-processor.js')
 
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          sampleRate: 16000,
-          channelCount: 1,
-          echoCancellation: true,
-          noiseSuppression: true,
-        },
-      })
+      const level = noiseCancellationLevelRef.current
+      const support = buildCaptureConstraintSupport()
+      const { requested, requestedFlags } = createAudioConstraints(level, support)
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: requested })
       streamRef.current = stream
 
+      const trackCandidates =
+        typeof stream.getAudioTracks === 'function'
+          ? stream.getAudioTracks()
+          : typeof stream.getTracks === 'function'
+            ? stream.getTracks()
+            : []
+      const [track] = trackCandidates
+      if (track && typeof track.applyConstraints === 'function') {
+        const processingOnly: MediaTrackConstraints = {}
+        if (support.echoCancellation) {
+          processingOnly.echoCancellation = requestedFlags.echoCancellation
+        }
+        if (support.noiseSuppression) {
+          processingOnly.noiseSuppression = requestedFlags.noiseSuppression
+        }
+        if (support.autoGainControl) {
+          processingOnly.autoGainControl = requestedFlags.autoGainControl
+        }
+        if (
+          Object.keys(processingOnly).length > 0 &&
+          requestedFlags.echoCancellation === true
+        ) {
+          try {
+            await track.applyConstraints(processingOnly)
+          } catch {
+            // Continue with base constraints if per-track processing cannot be applied.
+          }
+        }
+      }
+
+      const appliedSettings = track?.getSettings?.()
+      setMicCaptureDiagnostics({
+        noiseCancellationLevel: level,
+        softwareDenoiserEnabled: RECORDER_DENOISE_PRESETS[level].denoiseEnabled,
+        supportedConstraints: support,
+        requestedConstraints: requestedFlags,
+        appliedSettings: {
+          echoCancellation: toBooleanOrString(appliedSettings?.echoCancellation),
+          noiseSuppression: toBoolean(appliedSettings?.noiseSuppression),
+          autoGainControl: toBoolean(appliedSettings?.autoGainControl),
+          sampleRate: toNumber(appliedSettings?.sampleRate),
+          channelCount: toNumber(appliedSettings?.channelCount),
+          latency: toNumber((appliedSettings as Record<string, unknown>)?.latency),
+        },
+      })
+
       const source = ctx.createMediaStreamSource(stream)
-      const recorder = new AudioWorkletNode(ctx, 'pcm-recorder-processor')
+      const denoisePreset = RECORDER_DENOISE_PRESETS[level]
+      const recorderProcessorOptions: RecorderProcessorOptions = {
+        denoiseEnabled: denoisePreset.denoiseEnabled,
+        noiseGateFloor: denoisePreset.noiseGateFloor,
+        noiseGateMultiplier: denoisePreset.noiseGateMultiplier,
+        noiseGateResidualGain: denoisePreset.noiseGateResidualGain,
+        highPassCutoffHz: denoisePreset.highPassCutoffHz,
+      }
+      const recorder = new AudioWorkletNode(ctx, 'pcm-recorder-processor', {
+        processorOptions: recorderProcessorOptions,
+      })
       recorderNodeRef.current = recorder
 
       // Use ref pattern to avoid stale closure
@@ -261,6 +450,7 @@ export function useAudioWorklet(
     clearPlaybackBuffer,
     recoverAudioContexts,
     stop,
+    micCaptureDiagnostics,
     error,
   }
 }

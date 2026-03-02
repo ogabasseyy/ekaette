@@ -120,15 +120,21 @@
     "data_tier": "demo"
   },
   {
-    "id": "prod-samsung-buds-3-pro",
-    "name": "Samsung Galaxy Buds3 Pro",
-    "price": 145000,
+    "id": "prod-cctv-bundle-4ch",
+    "name": "CCTV Security Bundle (4-Camera + DVR)",
+    "price": 980000,
     "currency": "NGN",
-    "category": "accessories",
-    "brand": "Samsung",
-    "in_stock": false,
-    "features": ["ANC", "360 Audio", "IP57 water resistance"],
-    "description": "Premium Galaxy earbuds with blade-style design.",
+    "category": "security",
+    "brand": "Hikvision",
+    "in_stock": true,
+    "features": [
+      "4 x 2MP HD cameras",
+      "8-channel DVR",
+      "1TB surveillance HDD",
+      "60m cabling kit",
+      "12V power supply"
+    ],
+    "description": "Complete starter CCTV kit for shops, warehouses, and homes with same-week installation support.",
     "data_tier": "demo"
   },
   {

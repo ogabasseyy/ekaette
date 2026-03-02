@@ -34,6 +34,9 @@ describe('TranscriptionOverlay', () => {
       { type: 'transcription', role: 'agent', text: 'One', partial: false },
     ]
     const { rerender } = render(<TranscriptionOverlay messages={messages} />)
+    expect(scrollSpy).toHaveBeenCalledTimes(1)
+    scrollSpy.mockClear()
+
     rerender(
       <TranscriptionOverlay
         messages={[
@@ -42,7 +45,27 @@ describe('TranscriptionOverlay', () => {
         ]}
       />,
     )
-    expect(scrollSpy).toHaveBeenCalled()
+    expect(scrollSpy).toHaveBeenCalledTimes(1)
+    scrollSpy.mockRestore()
+  })
+
+  it('auto-scrolls when latest partial message updates in place', () => {
+    const scrollSpy = vi.spyOn(Element.prototype, 'scrollIntoView').mockImplementation(() => {})
+
+    const { rerender } = render(
+      <TranscriptionOverlay
+        messages={[{ type: 'transcription', role: 'agent', text: 'Hello', partial: true }]}
+      />,
+    )
+    expect(scrollSpy).toHaveBeenCalledTimes(1)
+    scrollSpy.mockClear()
+
+    rerender(
+      <TranscriptionOverlay
+        messages={[{ type: 'transcription', role: 'agent', text: 'Hello there', partial: true }]}
+      />,
+    )
+    expect(scrollSpy).toHaveBeenCalledTimes(1)
     scrollSpy.mockRestore()
   })
 })

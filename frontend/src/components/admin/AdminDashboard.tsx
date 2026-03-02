@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { NavBar } from '../layout/NavBar'
 
 interface AdminCompanyMeta {
   id: string
@@ -31,12 +32,36 @@ interface AdminConnectorEntry {
   secret_ref?: string
 }
 
+interface AdminInventorySyncState {
+  source_type?: string
+  source_url?: string
+  connector_id?: string
+  sheet_name?: string
+  data_tier?: string
+  dry_run?: boolean
+  auto_enabled?: boolean
+  interval_minutes?: number
+  next_run_at?: string
+  configured_at?: string
+  last_attempt_at?: string
+  last_error?: string
+  status?: string
+  updated_at?: string
+  last_result?: {
+    written?: number
+    parsed_rows?: number
+    normalized_rows?: number
+    error_count?: number
+  }
+}
+
 interface AdminCompanyDetail {
   id: string
   templateId?: string
   displayName?: string
   status?: string
   connectors?: Record<string, AdminConnectorEntry>
+  inventorySync?: AdminInventorySyncState
 }
 
 type ConnectorMode = 'create' | 'update'
@@ -134,6 +159,17 @@ export function AdminDashboard() {
     ),
   )
   const [runtimeDataTier, setRuntimeDataTier] = useState('admin')
+  const [inventorySourceType, setInventorySourceType] = useState<'google_sheets' | 'mcp_connector'>(
+    'google_sheets',
+  )
+  const [inventorySourceUrl, setInventorySourceUrl] = useState('')
+  const [inventoryConnectorId, setInventoryConnectorId] = useState('inventory')
+  const [inventorySheetName, setInventorySheetName] = useState('')
+  const [inventoryDryRun, setInventoryDryRun] = useState(false)
+  const [inventoryAutoEnabled, setInventoryAutoEnabled] = useState(false)
+  const [inventoryIntervalMinutes, setInventoryIntervalMinutes] = useState('15')
+  const [inventoryRunForce, setInventoryRunForce] = useState(true)
+  const [inventoryFile, setInventoryFile] = useState<File | null>(null)
 
   const [companies, setCompanies] = useState<AdminCompanyMeta[]>([])
   const [providers, setProviders] = useState<AdminProviderMeta[]>([])
@@ -152,6 +188,35 @@ export function AdminDashboard() {
       abortControllersRef.current.clear()
     }
   }, [])
+
+  useEffect(() => {
+    const sync = companyDetail?.inventorySync
+    if (!sync) return
+    if (sync.source_type === 'google_sheets' || sync.source_type === 'mcp_connector') {
+      setInventorySourceType(sync.source_type)
+    }
+    if (typeof sync.source_url === 'string') {
+      setInventorySourceUrl(sync.source_url)
+    }
+    if (typeof sync.connector_id === 'string') {
+      setInventoryConnectorId(sync.connector_id)
+    }
+    if (typeof sync.sheet_name === 'string') {
+      setInventorySheetName(sync.sheet_name)
+    }
+    if (typeof sync.data_tier === 'string' && sync.data_tier.trim()) {
+      setRuntimeDataTier(sync.data_tier.trim())
+    }
+    if (typeof sync.dry_run === 'boolean') {
+      setInventoryDryRun(sync.dry_run)
+    }
+    if (typeof sync.auto_enabled === 'boolean') {
+      setInventoryAutoEnabled(sync.auto_enabled)
+    }
+    if (typeof sync.interval_minutes === 'number' && Number.isFinite(sync.interval_minutes)) {
+      setInventoryIntervalMinutes(String(Math.max(1, Math.min(1440, Math.round(sync.interval_minutes)))))
+    }
+  }, [companyDetail?.inventorySync])
 
   const adminHeaders = useMemo(
     () => {
@@ -561,6 +626,126 @@ export function AdminDashboard() {
     })
   }
 
+  async function syncInventorySource() {
+    if (!activeCompanyId.trim()) {
+      setErrorMessage('Active company id is required.')
+      return
+    }
+    await runAction(async () => {
+      const payload = await callAdminJson(
+        `/api/v1/admin/companies/${encodeURIComponent(activeCompanyId)}/inventory/sync`,
+        {
+          method: 'POST',
+          idempotencyPrefix: 'admin-inventory-sync',
+          payload: {
+            sourceType: inventorySourceType,
+            sourceUrl: inventorySourceType === 'google_sheets' ? inventorySourceUrl : undefined,
+            connectorId: inventorySourceType === 'mcp_connector' ? inventoryConnectorId : undefined,
+            sheetName: inventorySheetName || undefined,
+            dataTier: runtimeDataTier,
+            dryRun: inventoryDryRun,
+          },
+        },
+      )
+      setStatusMessage(`Inventory sync: ${String(payload.written ?? 0)} written`)
+      await loadCompanyDetail()
+    })
+  }
+
+  async function uploadInventoryFile() {
+    if (!activeCompanyId.trim()) {
+      setErrorMessage('Active company id is required.')
+      return
+    }
+    if (!inventoryFile) {
+      setErrorMessage('Select a CSV or XLSX inventory file first.')
+      return
+    }
+    await runAction(async () => {
+      const formData = new FormData()
+      formData.append('file', inventoryFile)
+      formData.append('data_tier', runtimeDataTier)
+      formData.append('dry_run', String(inventoryDryRun))
+      if (inventorySheetName.trim()) {
+        formData.append('sheet_name', inventorySheetName.trim())
+      }
+      const payload = await callAdminFormData(
+        `/api/v1/admin/companies/${encodeURIComponent(activeCompanyId)}/inventory/upload`,
+        formData,
+        {
+          method: 'POST',
+          idempotencyPrefix: 'admin-inventory-upload',
+        },
+      )
+      setStatusMessage(`Inventory upload: ${String(payload.written ?? 0)} written`)
+      setInventoryFile(null)
+      await loadCompanyDetail()
+    })
+  }
+
+  async function saveInventorySyncConfig() {
+    if (!activeCompanyId.trim()) {
+      setErrorMessage('Active company id is required.')
+      return
+    }
+    const parsedInterval = Number.parseInt(inventoryIntervalMinutes.trim(), 10)
+    const intervalMinutes = Number.isFinite(parsedInterval)
+      ? Math.max(1, Math.min(1440, parsedInterval))
+      : 15
+
+    await runAction(async () => {
+      const payload = await callAdminJson(
+        `/api/v1/admin/companies/${encodeURIComponent(activeCompanyId)}/inventory/sync/config`,
+        {
+          method: 'PUT',
+          idempotencyPrefix: 'admin-inventory-config',
+          payload: {
+            sourceType: inventorySourceType,
+            sourceUrl: inventorySourceType === 'google_sheets' ? inventorySourceUrl : undefined,
+            connectorId: inventorySourceType === 'mcp_connector' ? inventoryConnectorId : undefined,
+            sheetName: inventorySheetName || undefined,
+            dataTier: runtimeDataTier,
+            dryRun: inventoryDryRun,
+            autoEnabled: inventoryAutoEnabled,
+            intervalMinutes,
+          },
+        },
+      )
+      setStatusMessage(
+        `Inventory sync config saved. Auto=${String(
+          (payload.inventorySync as Record<string, unknown> | undefined)?.auto_enabled ?? inventoryAutoEnabled,
+        )} interval=${String(
+          (payload.inventorySync as Record<string, unknown> | undefined)?.interval_minutes ?? intervalMinutes,
+        )}m`,
+      )
+      setInventoryIntervalMinutes(String(intervalMinutes))
+      await loadCompanyDetail()
+    })
+  }
+
+  async function runInventorySyncJobs() {
+    if (!activeCompanyId.trim()) {
+      setErrorMessage('Active company id is required.')
+      return
+    }
+    await runAction(async () => {
+      const payload = await callAdminJson('/api/v1/admin/inventory/sync/run', {
+        method: 'POST',
+        idempotencyPrefix: 'admin-inventory-run',
+        payload: {
+          companyId: activeCompanyId,
+          maxCompanies: 1,
+          force: inventoryRunForce,
+          dryRunOverride: inventoryDryRun,
+        },
+      })
+      setStatusMessage(
+        `Inventory run: ${String(payload.triggered ?? 0)} triggered, ${String(payload.skipped ?? 0)} skipped`,
+      )
+      await loadCompanyDetail()
+    })
+  }
+
   const connectorList = useMemo(() => {
     const map = companyDetail?.connectors
     if (!map || typeof map !== 'object') return []
@@ -571,8 +756,9 @@ export function AdminDashboard() {
   }, [companyDetail?.connectors])
 
   return (
-    <main className="min-h-screen bg-background px-4 py-6 text-foreground sm:px-8">
-      <section className="mx-auto flex w-full max-w-6xl flex-col gap-5 rounded-2xl border border-border/70 bg-card/60 p-5 sm:p-7">
+    <main className="min-h-screen bg-background text-foreground">
+      <NavBar activePage="admin" />
+      <section className="mx-auto flex w-full max-w-6xl flex-col gap-5 rounded-2xl border border-border/70 bg-card/60 p-5 px-4 py-6 sm:px-8 sm:p-7">
         <header className="space-y-2">
           <p className="text-[0.65rem] uppercase tracking-[0.25em] text-primary">Admin</p>
           <h1 className="font-display text-2xl text-white sm:text-3xl">Ekaette Admin Console</h1>
@@ -873,6 +1059,154 @@ export function AdminDashboard() {
                 >
                   Purge Demo Data
                 </button>
+              </div>
+
+              <div className="mt-4 rounded-xl border border-border/70 bg-card/30 p-3">
+                <p className="text-xs font-semibold text-foreground">Inventory Sync</p>
+                <p className="mt-1 text-[0.72rem] text-muted-foreground">
+                  Sync from Google Sheets link, connector payload, or uploaded CSV/XLSX.
+                </p>
+                <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                  <label className="flex flex-col gap-1 text-xs text-muted-foreground">
+                    Source Type
+                    <select
+                      value={inventorySourceType}
+                      onChange={event =>
+                        setInventorySourceType(event.target.value as 'google_sheets' | 'mcp_connector')
+                      }
+                      className="rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground"
+                    >
+                      <option value="google_sheets">google_sheets</option>
+                      <option value="mcp_connector">mcp_connector</option>
+                    </select>
+                  </label>
+                  <label className="flex flex-col gap-1 text-xs text-muted-foreground">
+                    Sheet Name (optional)
+                    <input
+                      value={inventorySheetName}
+                      onChange={event => setInventorySheetName(event.target.value)}
+                      placeholder="Sheet1"
+                      className="rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground"
+                    />
+                  </label>
+                  {inventorySourceType === 'google_sheets' ? (
+                    <label className="flex flex-col gap-1 text-xs text-muted-foreground sm:col-span-2">
+                      Google Sheets URL
+                      <input
+                        value={inventorySourceUrl}
+                        onChange={event => setInventorySourceUrl(event.target.value)}
+                        placeholder="https://docs.google.com/spreadsheets/d/<id>/edit#gid=0"
+                        className="rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground"
+                      />
+                    </label>
+                  ) : (
+                    <label className="flex flex-col gap-1 text-xs text-muted-foreground sm:col-span-2">
+                      Connector ID
+                      <input
+                        value={inventoryConnectorId}
+                        onChange={event => setInventoryConnectorId(event.target.value)}
+                        placeholder="inventory"
+                        className="rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground"
+                      />
+                    </label>
+                  )}
+                  <label className="sm:col-span-2 flex items-center gap-2 text-xs text-muted-foreground">
+                    <input
+                      type="checkbox"
+                      checked={inventoryDryRun}
+                      onChange={event => setInventoryDryRun(event.target.checked)}
+                    />
+                    Dry run (validate only, do not write)
+                  </label>
+                  <label className="sm:col-span-2 flex items-center gap-2 text-xs text-muted-foreground">
+                    <input
+                      type="checkbox"
+                      checked={inventoryAutoEnabled}
+                      onChange={event => setInventoryAutoEnabled(event.target.checked)}
+                    />
+                    Enable auto sync schedule
+                  </label>
+                  <label className="flex flex-col gap-1 text-xs text-muted-foreground">
+                    Interval Minutes
+                    <input
+                      type="number"
+                      min={1}
+                      max={1440}
+                      value={inventoryIntervalMinutes}
+                      onChange={event => setInventoryIntervalMinutes(event.target.value)}
+                      className="rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground"
+                    />
+                  </label>
+                  <label className="flex items-center gap-2 self-end text-xs text-muted-foreground">
+                    <input
+                      type="checkbox"
+                      checked={inventoryRunForce}
+                      onChange={event => setInventoryRunForce(event.target.checked)}
+                    />
+                    Force run now
+                  </label>
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={syncInventorySource}
+                    disabled={busy}
+                    className="rounded-full border border-primary/60 bg-primary/10 px-4 py-2 text-sm font-semibold text-primary disabled:opacity-50"
+                  >
+                    Sync Inventory Source
+                  </button>
+                  <label className="cursor-pointer rounded-full border border-border bg-background px-4 py-2 text-sm font-semibold text-foreground">
+                    Choose Inventory File
+                    <input
+                      type="file"
+                      aria-label="Inventory file"
+                      accept=".csv,.xlsx"
+                      className="sr-only"
+                      onChange={event => {
+                        const selected =
+                          event.target.files && event.target.files.length > 0 ? event.target.files[0] : null
+                        setInventoryFile(selected ?? null)
+                      }}
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    onClick={uploadInventoryFile}
+                    disabled={busy}
+                    className="rounded-full border border-border bg-background px-4 py-2 text-sm font-semibold text-foreground disabled:opacity-50"
+                  >
+                    Upload Inventory File
+                  </button>
+                  <button
+                    type="button"
+                    onClick={saveInventorySyncConfig}
+                    disabled={busy}
+                    className="rounded-full border border-primary/60 bg-primary/10 px-4 py-2 text-sm font-semibold text-primary disabled:opacity-50"
+                  >
+                    Save Sync Config
+                  </button>
+                  <button
+                    type="button"
+                    onClick={runInventorySyncJobs}
+                    disabled={busy}
+                    className="rounded-full border border-border bg-background px-4 py-2 text-sm font-semibold text-foreground disabled:opacity-50"
+                  >
+                    Run Sync Jobs
+                  </button>
+                </div>
+                {inventoryFile ? (
+                  <p className="mt-2 text-xs text-muted-foreground">Selected inventory file: {inventoryFile.name}</p>
+                ) : null}
+                {companyDetail?.inventorySync ? (
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    Last sync status:{' '}
+                    {companyDetail.inventorySync.status ?? 'unknown'} · updated{' '}
+                    {companyDetail.inventorySync.updated_at ?? 'n/a'} · written{' '}
+                    {String(companyDetail.inventorySync.last_result?.written ?? 0)} · next run{' '}
+                    {companyDetail.inventorySync.next_run_at ?? 'n/a'} · auto{' '}
+                    {String(companyDetail.inventorySync.auto_enabled ?? false)}
+                  </p>
+                ) : null}
               </div>
             </div>
           </article>

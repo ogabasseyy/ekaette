@@ -345,13 +345,25 @@ describe('preferFinalTranscriptMessages', () => {
     const messages: TranscriptMessage[] = [
       { type: 'transcription', role: 'user', text: 'Hi', partial: true },
       { type: 'transcription', role: 'user', text: 'Hi there', partial: false },
-      { type: 'transcription', role: 'agent', text: 'Checking now', partial: true },
       { type: 'transcription', role: 'agent', text: 'Checking now.', partial: false },
     ]
 
     const result = preferFinalTranscriptMessages(messages)
     expect(result).toHaveLength(2)
     expect(result.every(message => !message.partial)).toBe(true)
+  })
+
+  it('keeps newest partial visible when it arrives after finals', () => {
+    const messages: TranscriptMessage[] = [
+      { type: 'transcription', role: 'user', text: 'Hi there', partial: false },
+      { type: 'transcription', role: 'agent', text: 'Checking now.', partial: false },
+      { type: 'transcription', role: 'agent', text: 'Checking delivery fee', partial: true },
+    ]
+
+    const result = preferFinalTranscriptMessages(messages)
+    expect(result).toHaveLength(3)
+    expect(result[2].partial).toBe(true)
+    expect(result[2].text).toBe('Checking delivery fee')
   })
 
   it('keeps the newest partial when no final transcript exists yet', () => {

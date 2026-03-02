@@ -6,14 +6,14 @@ import type { IndustryTemplateMeta, OnboardingCompanyMeta } from '../../types'
 const FALLBACK_OPTIONS: IndustryTemplateMeta[] = [
   {
     id: 'electronics',
-    label: 'Electronics',
+    label: 'Hardware',
     category: 'retail',
     description: 'Trade-ins, valuation, negotiation, pickup booking.',
     defaultVoice: 'Aoede',
     theme: {
       accent: 'oklch(74% 0.21 158)',
       accentSoft: 'oklch(62% 0.14 172)',
-      title: 'Electronics Trade Desk',
+      title: 'Hardware Trade Desk',
       hint: 'Inspect. Value. Negotiate. Book pickup.',
     },
     capabilities: [],
@@ -74,6 +74,11 @@ interface IndustryOnboardingProps {
   onComplete: (selection: { templateId: string; companyId: string }) => void
 }
 
+function resolveTemplateDisplayLabel(option: IndustryTemplateMeta): string {
+  if (option.id === 'electronics') return 'Hardware'
+  return option.label
+}
+
 export function IndustryOnboarding({
   templates,
   companies,
@@ -132,19 +137,20 @@ export function IndustryOnboarding({
   return (
     <section className="panel-glass mx-auto w-full max-w-3xl px-4 py-5 sm:px-7 sm:py-8">
       <p className="text-[0.58rem] text-[color:var(--industry-accent)] uppercase tracking-[0.24em] sm:text-[0.64rem] sm:tracking-[0.3em]">
-        Onboarding
+        Vendor Setup
       </p>
       <h1 className="mt-2 font-display text-white text-xl leading-tight sm:text-3xl">
-        Choose Your Service Industry
+        Configure Your Business
       </h1>
       <p className="mt-2 max-w-2xl text-muted-foreground text-xs leading-relaxed sm:text-sm">
-        Your industry profile sets the assistant voice and behavior for live calls. This is locked
-        during active conversations.
+        Select the industry and company profile for your AI assistant. This determines voice,
+        behavior, and capabilities for customer calls.
       </p>
 
-      <div className="mt-5 grid gap-3 sm:mt-6 sm:grid-cols-2" role="radiogroup" aria-label="Industry templates">
+      <div className="mt-5 grid gap-3 sm:mt-6 sm:grid-cols-2" role="radiogroup" aria-label="Industry selection">
         {options.map(option => {
           const active = selectedTemplateId === option.id
+          const displayLabel = resolveTemplateDisplayLabel(option)
           return (
             <button
               key={option.id}
@@ -162,7 +168,7 @@ export function IndustryOnboarding({
                   : 'border-border/70 bg-card/40 hover:border-primary/40',
               )}
             >
-              <p className="font-semibold text-white">{option.label}</p>
+              <p className="font-semibold text-white">{displayLabel}</p>
               <p className="mt-1 text-muted-foreground text-sm">{option.description}</p>
             </button>
           )
@@ -170,11 +176,11 @@ export function IndustryOnboarding({
       </div>
 
       <div className="mt-4">
-        <label htmlFor="onboarding-company" className="block text-[0.68rem] text-muted-foreground uppercase tracking-[0.16em]">
+        <label htmlFor="vendor-company" className="block text-[0.68rem] text-muted-foreground uppercase tracking-[0.16em]">
           Company
         </label>
         <select
-          id="onboarding-company"
+          id="vendor-company"
           aria-label="Choose Company"
           value={selectedCompanyId}
           onChange={event => setSelectedCompanyId(event.target.value)}
@@ -203,7 +209,7 @@ export function IndustryOnboarding({
           }
           className="w-full rounded-full bg-[color:var(--industry-accent)] px-5 py-2.5 font-semibold text-black text-sm transition hover:brightness-110 sm:w-auto sm:py-2"
         >
-          Continue
+          Launch Live Desk
         </button>
       </div>
     </section>

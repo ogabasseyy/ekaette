@@ -35,6 +35,12 @@ describe('useEkaetteSocket', () => {
         __lastMockWebSocket?: MockSocket
       }
     ).__lastMockWebSocket = undefined
+    // Default fetch mock: returns minimal token response without wsToken.
+    // Tests needing specific fetch behavior should override via vi.spyOn.
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      json: async () => ({ token: 'default-test-token' }),
+    } as Response)
   })
 
   afterEach(() => {
@@ -47,10 +53,13 @@ describe('useEkaetteSocket', () => {
     expect(result.current.state).toBe('disconnected')
   })
 
-  it('connects with websocket path and arraybuffer binary type', () => {
+  it('connects with websocket path and arraybuffer binary type', async () => {
     const { result } = renderHook(() => useEkaetteSocket('user1', 'session1'))
     act(() => {
       result.current.connect()
+    })
+    await act(async () => {
+      await Promise.resolve()
     })
 
     const ws = getLastSocket()
@@ -59,12 +68,15 @@ describe('useEkaetteSocket', () => {
     expect(result.current.state).toBe('connecting')
   })
 
-  it('connects with industry query parameter when provided', () => {
+  it('connects with industry query parameter when provided', async () => {
     const { result } = renderHook(() =>
       useEkaetteSocket('user1', 'session1', { industry: 'hotel' }),
     )
     act(() => {
       result.current.connect()
+    })
+    await act(async () => {
+      await Promise.resolve()
     })
 
     const ws = getLastSocket()
@@ -77,6 +89,9 @@ describe('useEkaetteSocket', () => {
       result.current.connect()
     })
     await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
       vi.advanceTimersByTime(1)
     })
 
@@ -148,6 +163,10 @@ describe('useEkaetteSocket', () => {
       result.current.connect()
     })
     await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
       vi.advanceTimersByTime(1)
     })
 
@@ -176,6 +195,10 @@ describe('useEkaetteSocket', () => {
       result.current.connect()
     })
     await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
       vi.advanceTimersByTime(1)
     })
 
@@ -211,6 +234,9 @@ describe('useEkaetteSocket', () => {
       result.current.connect()
     })
     await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
       vi.advanceTimersByTime(1)
     })
 
@@ -228,9 +254,13 @@ describe('useEkaetteSocket', () => {
       )
     })
 
-    // Advance past 150ms voice reconnect delay + 1ms for onopen setTimeout(0).
+    // Advance past 150ms voice reconnect delay, flush token fetch, then advance for onopen.
     await act(async () => {
       vi.advanceTimersByTime(200)
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+      vi.advanceTimersByTime(1)
     })
     const secondWs = getLastSocket()
 
@@ -250,6 +280,10 @@ describe('useEkaetteSocket', () => {
       result.current.connect()
     })
     await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
       vi.advanceTimersByTime(1)
     })
 
@@ -274,6 +308,10 @@ describe('useEkaetteSocket', () => {
       result.current.connect()
     })
     await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
       vi.advanceTimersByTime(1)
     })
 
@@ -294,6 +332,9 @@ describe('useEkaetteSocket', () => {
       result.current.connect()
     })
     await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
       vi.advanceTimersByTime(1)
     })
 
@@ -313,6 +354,9 @@ describe('useEkaetteSocket', () => {
       result.current.connect()
     })
     await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
       vi.advanceTimersByTime(1)
     })
 
@@ -336,6 +380,9 @@ describe('useEkaetteSocket', () => {
       result.current.connect()
     })
     await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
       vi.advanceTimersByTime(1)
     })
 
@@ -359,19 +406,25 @@ describe('useEkaetteSocket', () => {
       result.current.connect()
     })
     await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
       vi.advanceTimersByTime(1)
     })
 
     const ws = getLastSocket()
-    const sentBefore = ws.sent.length
+
+    // Auto VAD mode should not send explicit activity controls.
     act(() => {
       result.current.sendActivityStart()
     })
-    expect(ws.sent.length).toBe(sentBefore)
+    expect(ws.sent).toHaveLength(0)
+
     act(() => {
       result.current.sendActivityEnd()
     })
-    expect(ws.sent.length).toBe(sentBefore)
+    expect(ws.sent).toHaveLength(0)
 
     // Simulate backend capability handshake enabling manual VAD.
     act(() => {
@@ -388,6 +441,7 @@ describe('useEkaetteSocket', () => {
       )
     })
 
+    // Still works after manual VAD is enabled.
     act(() => {
       result.current.sendActivityStart()
     })
@@ -409,6 +463,10 @@ describe('useEkaetteSocket', () => {
       result.current.connect()
     })
     await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
       vi.advanceTimersByTime(1)
     })
 
@@ -439,6 +497,9 @@ describe('useEkaetteSocket', () => {
       result.current.connect()
     })
     await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
       vi.advanceTimersByTime(1)
     })
 
@@ -490,6 +551,9 @@ describe('useEkaetteSocket', () => {
     })
     await act(async () => {
       await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
       vi.advanceTimersByTime(1)
     })
 
@@ -514,6 +578,9 @@ describe('useEkaetteSocket', () => {
       result.current.connect()
     })
     await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
       vi.advanceTimersByTime(1)
     })
 
@@ -523,6 +590,10 @@ describe('useEkaetteSocket', () => {
     })
     await act(async () => {
       vi.advanceTimersByTime(1001)
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+      vi.advanceTimersByTime(1)
     })
 
     ws = getLastSocket()
@@ -531,6 +602,10 @@ describe('useEkaetteSocket', () => {
     })
     await act(async () => {
       vi.advanceTimersByTime(2001)
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+      vi.advanceTimersByTime(1)
     })
 
     ws = getLastSocket()
@@ -551,6 +626,10 @@ describe('useEkaetteSocket', () => {
       result.current.connect()
     })
     await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
       vi.advanceTimersByTime(1)
     })
 
@@ -594,6 +673,10 @@ describe('useEkaetteSocket', () => {
       result.current.connect()
     })
     await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
       vi.advanceTimersByTime(1)
     })
 
@@ -614,48 +697,16 @@ describe('useEkaetteSocket', () => {
     expect(ending).toBeDefined()
   })
 
-  it('updates manualVadActive from session_started and enables activity messages', async () => {
-    const { result } = renderHook(() => useEkaetteSocket('user1', 'session1'))
-    act(() => {
-      result.current.connect()
-    })
-    await act(async () => {
-      vi.advanceTimersByTime(1)
-    })
-
-    const ws = getLastSocket()
-    const sentBefore = ws.sent.length
-    act(() => {
-      result.current.sendActivityStart()
-    })
-    expect(ws.sent.length).toBe(sentBefore)
-
-    act(() => {
-      ws.onmessage?.(
-        new MessageEvent('message', {
-          data: JSON.stringify({
-            type: 'session_started',
-            sessionId: 'session1',
-            industry: 'electronics',
-            manualVadActive: true,
-            vadMode: 'manual',
-          }),
-        }),
-      )
-    })
-
-    act(() => {
-      result.current.sendActivityStart()
-    })
-    expect(JSON.parse(ws.sent.at(-1) as string)).toEqual({ type: 'activity_start' })
-  })
-
   it('ignores malformed JSON messages without throwing', async () => {
     const { result } = renderHook(() => useEkaetteSocket('user1', 'session1'))
     act(() => {
       result.current.connect()
     })
     await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
       vi.advanceTimersByTime(1)
     })
 
@@ -699,6 +750,10 @@ describe('useEkaetteSocket', () => {
       result.current.connect()
     })
     await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
       vi.advanceTimersByTime(1)
     })
 
@@ -714,5 +769,123 @@ describe('useEkaetteSocket', () => {
     expect(result.current.debugMetrics.audioTxBytes).toBe(4)
     expect(result.current.debugMetrics.audioTxBackpressureCount).toBe(1)
     expect(result.current.debugMetrics.audioTxDropCount).toBe(1)
+  })
+
+  it('wsToken from token response is included in WebSocket URL', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        token: 'ephemeral-token-123',
+        wsToken: 'ws-auth-token-abc',
+      }),
+    } as Response)
+
+    const { result } = renderHook(() =>
+      useEkaetteSocket('user1', 'session1', { industry: 'electronics' }),
+    )
+
+    act(() => {
+      result.current.connect()
+    })
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+      vi.advanceTimersByTime(1)
+    })
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      '/api/token',
+      expect.objectContaining({ method: 'POST' }),
+    )
+    const ws = getLastSocket()
+    expect(ws.url).toContain('token=ws-auth-token-abc')
+    expect(ws.url).toContain('/ws/user1/session1')
+
+    fetchSpy.mockRestore()
+  })
+
+  it('connects without token param when wsToken is undefined', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        token: 'ephemeral-token-123',
+      }),
+    } as Response)
+
+    const { result } = renderHook(() =>
+      useEkaetteSocket('user1', 'session1', { industry: 'electronics' }),
+    )
+
+    act(() => {
+      result.current.connect()
+    })
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+      vi.advanceTimersByTime(1)
+    })
+
+    const ws = getLastSocket()
+    expect(ws.url).not.toContain('token=')
+    expect(ws.url).toContain('/ws/user1/session1')
+
+    fetchSpy.mockRestore()
+  })
+
+  it('reconnects with fresh token on 4401 close', async () => {
+    let fetchCallCount = 0
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
+      fetchCallCount += 1
+      return {
+        ok: true,
+        json: async () => ({
+          token: 'ephemeral-token-123',
+          wsToken: fetchCallCount === 1 ? 'expired-token' : 'fresh-token',
+        }),
+      } as Response
+    })
+
+    const { result } = renderHook(() =>
+      useEkaetteSocket('user1', 'session1', { industry: 'electronics' }),
+    )
+
+    act(() => {
+      result.current.connect()
+    })
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+      vi.advanceTimersByTime(1)
+    })
+
+    const firstWs = getLastSocket()
+    expect(firstWs.url).toContain('token=expired-token')
+
+    // Server closes connection with 4401 (invalid/expired token)
+    act(() => {
+      firstWs.onclose?.(new CloseEvent('close', { code: 4401 }))
+    })
+
+    // Advance past reconnect delay (1s base * 2^0 = 1000ms) + async token fetch + WS open
+    await act(async () => {
+      vi.advanceTimersByTime(1100)
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+      vi.advanceTimersByTime(1)
+    })
+
+    const secondWs = getLastSocket()
+    expect(secondWs).not.toBe(firstWs)
+    expect(secondWs.url).toContain('token=fresh-token')
+    expect(secondWs.url).not.toContain('token=expired-token')
+    expect(fetchCallCount).toBeGreaterThanOrEqual(2)
+
+    fetchSpy.mockRestore()
   })
 })

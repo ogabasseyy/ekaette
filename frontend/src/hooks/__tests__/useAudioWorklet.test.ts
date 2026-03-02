@@ -4,10 +4,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { useAudioWorklet } from '../useAudioWorklet'
 
 // Helper to create the ref that useAudioWorklet expects
-function renderAudioWorklet() {
+function renderAudioWorklet(
+  options?: Parameters<typeof useAudioWorklet>[1],
+) {
   return renderHook(() => {
     const onAudioChunk = useRef<((data: ArrayBuffer) => void) | null>(null)
-    const worklet = useAudioWorklet(onAudioChunk)
+    const worklet = useAudioWorklet(onAudioChunk, options)
     return { worklet, onAudioChunk }
   })
 }
@@ -96,6 +98,82 @@ describe('useAudioWorklet', () => {
     Object.defineProperty(navigator, 'mediaDevices', {
       value: { getUserMedia: original },
       configurable: true,
+    })
+  })
+
+  it('requests browser audio processing constraints by default', async () => {
+    const getUserMediaSpy = vi
+      .spyOn(navigator.mediaDevices, 'getUserMedia')
+      .mockResolvedValue({
+        getTracks: () => [{ stop: () => {} }],
+        getAudioTracks: () => [{ getSettings: () => ({}) }],
+      } as unknown as MediaStream)
+
+    const { result } = renderAudioWorklet()
+    await act(async () => {
+      await result.current.worklet.startRecording()
+    })
+
+    expect(getUserMediaSpy).toHaveBeenCalledTimes(1)
+    const constraints = getUserMediaSpy.mock.calls[0]?.[0]
+    const audio = constraints?.audio as MediaTrackConstraints
+    expect(audio.echoCancellation).toBe(true)
+    expect(audio.noiseSuppression).toBe(true)
+    expect(audio.autoGainControl).toBe(true)
+  })
+
+  it('allows disabling capture processing constraints', async () => {
+    const getUserMediaSpy = vi
+      .spyOn(navigator.mediaDevices, 'getUserMedia')
+      .mockResolvedValue({
+        getTracks: () => [{ stop: () => {} }],
+        getAudioTracks: () => [{ getSettings: () => ({}) }],
+      } as unknown as MediaStream)
+
+    const { result } = renderAudioWorklet({ noiseCancellationLevel: 'off' })
+    await act(async () => {
+      await result.current.worklet.startRecording()
+    })
+
+    const constraints = getUserMediaSpy.mock.calls[0]?.[0]
+    const audio = constraints?.audio as MediaTrackConstraints
+    expect(audio.echoCancellation).toBe(false)
+    expect(audio.noiseSuppression).toBe(false)
+    expect(audio.autoGainControl).toBe(false)
+  })
+
+  it('captures applied mic processing diagnostics', async () => {
+    vi.spyOn(navigator.mediaDevices, 'getUserMedia').mockResolvedValue({
+      getTracks: () => [{ stop: () => {} }],
+      getAudioTracks: () => [
+        {
+          applyConstraints: async () => {},
+          getSettings: () => ({
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+            sampleRate: 16000,
+            channelCount: 1,
+          }),
+        },
+      ],
+    } as unknown as MediaStream)
+
+    const { result } = renderAudioWorklet({ noiseCancellationLevel: 'aggressive' })
+    await act(async () => {
+      await result.current.worklet.startRecording()
+    })
+
+    expect(result.current.worklet.micCaptureDiagnostics).toMatchObject({
+      noiseCancellationLevel: 'aggressive',
+      softwareDenoiserEnabled: true,
+      appliedSettings: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+        sampleRate: 16000,
+        channelCount: 1,
+      },
     })
   })
 

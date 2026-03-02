@@ -17,6 +17,8 @@ from google.adk.events import Event
 from google.adk.sessions import Session
 from google.adk.sessions.in_memory_session_service import InMemorySessionService
 
+from app.tools.pii_redaction import redact_pii
+
 logger = logging.getLogger(__name__)
 
 
@@ -55,6 +57,31 @@ class PersistentInMemorySessionService(InMemorySessionService):
         except Exception as exc:
             logger.warning("Failed to load session snapshot: %s", exc)
 
+    @staticmethod
+    def _redact_user_state(user_state: dict[str, Any]) -> dict[str, Any]:
+        """Return a deep copy of user_state with PII redacted from string values.
+
+        ADK stores user:* session keys in a nested structure:
+        ``{app_name: {user_id: {field: value}}}``.
+        Only string leaf values are redacted; non-string values pass through.
+        The original in-memory dict is never mutated.
+        """
+        redacted: dict[str, Any] = {}
+        for app_name, users in user_state.items():
+            redacted[app_name] = {}
+            if not isinstance(users, dict):
+                redacted[app_name] = users
+                continue
+            for user_id, fields in users.items():
+                if not isinstance(fields, dict):
+                    redacted[app_name][user_id] = fields
+                    continue
+                redacted[app_name][user_id] = {
+                    k: redact_pii(v) if isinstance(v, str) else v
+                    for k, v in fields.items()
+                }
+        return redacted
+
     async def _save_to_disk(self) -> None:
         async with self._io_lock:
             sessions_payload: dict[str, dict[str, dict[str, Any]]] = {}
@@ -69,7 +96,7 @@ class PersistentInMemorySessionService(InMemorySessionService):
 
             payload = {
                 "app_state": self.app_state,
-                "user_state": self.user_state,
+                "user_state": self._redact_user_state(self.user_state),
                 "sessions": sessions_payload,
             }
             temp_path = self._file_path.with_suffix(".tmp")

@@ -11,20 +11,16 @@ beforeAll(async () => {
 
 const INDUSTRY_STORAGE_KEY = 'ekaette:onboarding:industry'
 
-async function dismissStartupSelectionPromptIfPresent() {
-  const continueButton = screen.queryByRole('button', { name: /continue with last setup/i })
-  if (!continueButton) return
-  await act(async () => {
-    continueButton.click()
-  })
-}
-
 describe('Demo mode integration', () => {
   beforeEach(() => {
     vi.useFakeTimers()
     ;(globalThis.WebSocket as unknown as { instances?: unknown[] }).instances = []
     ;(globalThis as { __lastMockWebSocket?: unknown }).__lastMockWebSocket = undefined
     window.localStorage.clear()
+    window.localStorage.setItem(
+      'ekaette:privacy:consent',
+      JSON.stringify({ accepted: true, timestamp: '2026-01-01T00:00:00Z', version: '1.0' }),
+    )
   })
 
   afterEach(() => {
@@ -37,7 +33,7 @@ describe('Demo mode integration', () => {
     window.localStorage.setItem(INDUSTRY_STORAGE_KEY, 'electronics')
     window.history.replaceState({}, '', '/?demo=1')
     render(<App />)
-    await dismissStartupSelectionPromptIfPresent()
+
 
     // Start the demo
     const startButton = screen.getByRole('button', { name: /start call/i })
@@ -90,7 +86,7 @@ describe('Demo mode integration', () => {
     window.localStorage.setItem(INDUSTRY_STORAGE_KEY, 'electronics')
     window.history.replaceState({}, '', '/?demo=1')
     render(<App />)
-    await dismissStartupSelectionPromptIfPresent()
+
 
     const startButton = screen.getByRole('button', { name: /start call/i })
     await act(async () => {

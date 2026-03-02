@@ -1,4 +1,4 @@
-@import url("https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Manrope:wght@400;500;600;700&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Fraunces:opsz,wght@9..144,500;9..144,700&family=IBM+Plex+Mono:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600;700&family=Manrope:wght@400;500;600;700&display=swap");
 @import "tailwindcss";
 
 @theme {
@@ -222,8 +222,7 @@
 
 .message-bubble {
   width: fit-content;
-  max-width: min(95%, 28rem);
-  border-radius: 1rem;
+  max-width: min(85%, 26rem);
   border: 1px solid color-mix(in oklab, var(--color-border), transparent 14%);
   background: color-mix(in oklab, var(--color-card), transparent 22%);
   padding: 0.7rem 0.85rem;
@@ -231,15 +230,17 @@
 }
 
 .message-user {
+  border-radius: 1.1rem 1.1rem 0.3rem 1.1rem;
   border-color: color-mix(in oklab, var(--color-accent), transparent 44%);
   background: linear-gradient(
     150deg,
-    color-mix(in oklab, var(--color-accent), transparent 80%),
-    color-mix(in oklab, var(--color-card), transparent 14%)
+    color-mix(in oklab, var(--color-accent), transparent 72%),
+    color-mix(in oklab, var(--color-card), transparent 10%)
   );
 }
 
 .message-agent {
+  border-radius: 1.1rem 1.1rem 1.1rem 0.3rem;
   border-color: color-mix(in oklab, var(--color-info), transparent 64%);
   background: linear-gradient(
     150deg,
@@ -277,3 +278,133 @@
     transform: translateY(1rem);
   }
 }
+
+/* ═══ Connector Config Panel ═══ */
+
+.connector-config-panel {
+  opacity: 1;
+  transform: translateY(0);
+  transition: opacity 0.2s ease-out, transform 0.2s ease-out;
+}
+
+@starting-style {
+  .connector-config-panel {
+    opacity: 0;
+    transform: translateY(0.5rem);
+  }
+}
+
+/* ═══ NavBar ═══ */
+
+.nav-bar {
+  border-bottom: 1px solid color-mix(in oklab, var(--color-border), transparent 30%);
+  background: color-mix(in oklab, var(--color-card), transparent 40%);
+  backdrop-filter: blur(10px);
+}
+
+.nav-tab {
+  position: relative;
+  cursor: pointer;
+  border: none;
+  background: none;
+}
+
+.nav-tab-active::after {
+  content: "";
+  position: absolute;
+  bottom: -1px;
+  left: 15%;
+  right: 15%;
+  height: 2px;
+  background: var(--color-primary);
+  border-radius: 1px;
+}
+
+/* ═══ Rate Bar ═══ */
+
+.rate-bar-track {
+  border-radius: 9999px;
+  height: 0.4rem;
+  background: color-mix(in oklab, var(--color-border), transparent 40%);
+  overflow: hidden;
+}
+
+.rate-bar-fill {
+  height: 100%;
+  border-radius: 9999px;
+  transition: width 0.6s ease-out;
+}
+
+/* ═══ Campaign Detail ═══ */
+
+.campaign-detail-panel {
+  animation: var(--animate-slide-up);
+}
+
+@starting-style {
+  .campaign-detail-panel {
+    opacity: 0;
+    transform: translateY(1rem);
+  }
+}
+
+/* ═══ Analytics table perf ═══ */
+
+.analytics-table-body {
+  content-visibility: auto;
+  contain-intrinsic-size: 400px;
+}
+
+/* ═══ Marketing Dashboard ═══ */
+
+.contacts-list-body {
+  content-visibility: auto;
+  contain-intrinsic-size: 300px;
+}
+
+.contact-row {
+  border: 1px solid transparent;
+  transition: background-color 0.15s, border-color 0.15s;
+}
+
+.contact-row:hover {
+  background: color-mix(in oklab, var(--color-surface) 80%, transparent);
+}
+
+.contact-row-selected {
+  border-color: color-mix(in oklab, var(--color-primary) 30%, transparent);
+}
+
+.composer-input {
+  background: color-mix(in oklab, var(--color-surface) 80%, transparent);
+}
+
+.composer-input:focus {
+  background: color-mix(in oklab, var(--color-surface) 95%, transparent);
+}
+
+.channel-badge {
+  font-size: 0.55rem;
+  letter-spacing: 0.12em;
+}
+
+.quick-action-btn {
+  opacity: 0.6;
+  transition: opacity 0.15s, color 0.15s;
+}
+
+.quick-action-btn:hover {
+  opacity: 1;
+}
+
+.mkt-feedback {
+  animation: var(--animate-slide-up);
+}
+
+@starting-style {
+  .mkt-feedback {
+    opacity: 0;
+    transform: translateY(0.5rem);
+  }
+}
+

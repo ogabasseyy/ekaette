@@ -12,6 +12,7 @@ from app.api.v1.realtime.models import SessionInitContext
 from app.api.v1.realtime.runtime_cache import (
     bind_runtime_values,
     configure_runtime as configure_runtime_cache,
+    get_runtime_value_safe,
 )
 
 logger = logging.getLogger(__name__)
@@ -102,6 +103,20 @@ async def initialize_session(
     if not ws_path_id_re.fullmatch(user_id or "") or not ws_path_id_re.fullmatch(session_id or ""):
         await websocket.close(code=1008, reason="Invalid path parameter")
         return None
+
+    # ── WS token authentication (when WS_TOKEN_SECRET is configured) ──
+    ws_secret = get_runtime_value_safe("WS_TOKEN_SECRET", "")
+    if ws_secret:
+        token_param = websocket.query_params.get("token")
+        if not token_param:
+            await websocket.close(code=4401, reason="Missing authentication token")
+            return None
+        from app.api.v1.public.ws_auth import validate_ws_token
+
+        claims = validate_ws_token(token_param, expected_user_id=user_id)
+        if claims is None:
+            await websocket.close(code=4401, reason="Invalid or expired token")
+            return None
 
     origin = websocket.headers.get("origin")
     ws_origin_allowed = is_websocket_origin_allowed_fn(origin)

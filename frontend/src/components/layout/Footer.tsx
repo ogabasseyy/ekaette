@@ -22,8 +22,8 @@ export function Footer({
   const status = isConnected ? 'recording' : isStarting ? 'processing' : 'idle'
 
   return (
-    <footer className="panel-glass mt-3 shrink-0 px-4 py-3 sm:mt-4 sm:px-5 sm:py-4">
-      <div className="grid grid-cols-2 gap-3 sm:flex sm:items-center">
+    <footer className="panel-glass control-footer mt-3 shrink-0 px-4 py-3 sm:mt-4 sm:px-5 sm:py-4">
+      <div className="control-footer__grid grid grid-cols-2 gap-3 sm:flex sm:items-center">
         <ImageUpload onImageSelected={onImageSelected} />
 
         <MicButton onClick={onToggleCall} disabled={isStarting} status={status} size="default" />
@@ -31,6 +31,17 @@ export function Footer({
         <div className="col-span-2 min-w-0 sm:flex-1">
           <TextInput connected={isConnected} onSend={onSendText} />
         </div>
+      </div>
+
+      <div className="mt-2 flex justify-center gap-3 text-[0.6rem] text-muted-foreground uppercase tracking-[0.12em]">
+        <a
+          href="/privacy.html"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="hover:text-foreground transition"
+        >
+          Privacy Policy
+        </a>
       </div>
     </footer>
   )

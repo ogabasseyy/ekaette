@@ -14,13 +14,21 @@ const ValuationCard = lazy(() => import('./components/cards/ValuationCard'))
 const BookingConfirmationCard = lazy(() => import('./components/cards/BookingConfirmationCard'))
 const ProductCard = lazy(() => import('./components/cards/ProductCard'))
 
+import { AiDisclosureBanner } from './components/layout/AiDisclosureBanner'
+import { ConsentModal } from './components/layout/ConsentModal'
 import { Footer } from './components/layout/Footer'
 import { Header } from './components/layout/Header'
-import { IndustryOnboarding } from './components/layout/IndustryOnboarding'
+import { NavBar } from './components/layout/NavBar'
+import { VendorSetupWizard } from './components/layout/VendorSetupWizard'
 import { TranscriptionOverlay } from './components/layout/TranscriptionOverlay'
 import { VoicePanel } from './components/layout/VoicePanel'
 import { ImagePreview } from './components/media/ImagePreview'
-import { type PlaybackStats, useAudioWorklet } from './hooks/useAudioWorklet'
+import {
+  type NoiseCancellationLevel,
+  type PlaybackStats,
+  useAudioWorklet,
+} from './hooks/useAudioWorklet'
+import { useConsent } from './hooks/useConsent'
 import { useDemoMode } from './hooks/useDemoMode'
 import { SocketConnectError, useEkaetteSocket } from './hooks/useEkaetteSocket'
 import {
@@ -50,7 +58,6 @@ const INDUSTRY_STORAGE_KEY = 'ekaette:onboarding:industry'
 const TEMPLATE_STORAGE_KEY = 'ekaette:onboarding:templateId'
 const COMPANY_STORAGE_KEY = 'ekaette:onboarding:companyId'
 const TENANT_STORAGE_KEY = 'ekaette:onboarding:tenantId'
-const FORCE_ONBOARDING_SELECTION_KEY = 'ekaette:onboarding:forceSelection'
 
 // ═══ Hardcoded Fallbacks (legacy compat, used until registry fetch is wired) ═══
 
@@ -72,7 +79,7 @@ const FALLBACK_THEMES: Record<string, ThemeConfig> = {
   electronics: {
     accent: 'oklch(74% 0.21 158)',
     accentSoft: 'oklch(62% 0.14 172)',
-    title: 'Electronics Trade Desk',
+    title: 'Hardware Trade Desk',
     hint: 'Inspect. Value. Negotiate. Book pickup.',
   },
   hotel: {
@@ -96,7 +103,7 @@ const FALLBACK_THEMES: Record<string, ThemeConfig> = {
 }
 
 const FALLBACK_LABELS: Record<string, string> = {
-  electronics: 'Electronics',
+  electronics: 'Hardware',
   hotel: 'Hotel',
   automotive: 'Automotive',
   fashion: 'Fashion',
@@ -123,26 +130,6 @@ function parseStoredValue(value: string | null): string | null {
   return value.trim()
 }
 
-function clearStoredOnboardingSelection(): void {
-  if (typeof window === 'undefined') return
-  window.localStorage.removeItem(INDUSTRY_STORAGE_KEY)
-  window.localStorage.removeItem(TEMPLATE_STORAGE_KEY)
-  window.localStorage.removeItem(COMPANY_STORAGE_KEY)
-}
-
-function readForceOnboardingSelection(): boolean {
-  if (typeof window === 'undefined') return false
-  return window.localStorage.getItem(FORCE_ONBOARDING_SELECTION_KEY) === '1'
-}
-
-function setForceOnboardingSelection(value: boolean): void {
-  if (typeof window === 'undefined') return
-  if (value) {
-    window.localStorage.setItem(FORCE_ONBOARDING_SELECTION_KEY, '1')
-    return
-  }
-  window.localStorage.removeItem(FORCE_ONBOARDING_SELECTION_KEY)
-}
 
 function readDemoModeFlag(): boolean {
   if (typeof window === 'undefined') return false
@@ -150,9 +137,26 @@ function readDemoModeFlag(): boolean {
   return String(import.meta.env.VITE_DEMO_MODE ?? '').toLowerCase() === 'true'
 }
 
+function resolveCustomerOnboardingEnabled(): boolean {
+  // Vendor setup UI is enabled in test and development modes.
+  if (import.meta.env.MODE === 'test') return true
+  if (import.meta.env.DEV) return true
+  return false
+}
+
 function resolveTransportMode(): TransportMode {
   const raw = String(import.meta.env.VITE_LIVE_TRANSPORT ?? '').toLowerCase()
   return raw === 'direct-live' ? 'direct-live' : 'backend-proxy'
+}
+
+function resolveNoiseCancellationLevel(): NoiseCancellationLevel {
+  const raw = String(import.meta.env.VITE_NOISE_CANCELLATION_LEVEL ?? 'aggressive')
+    .toLowerCase()
+    .trim()
+  if (raw === 'off' || raw === 'standard' || raw === 'aggressive') {
+    return raw
+  }
+  return 'aggressive'
 }
 
 function resolveTheme(
@@ -162,7 +166,15 @@ function resolveTheme(
   // Server-provided templates take priority
   if (templates) {
     const match = templates.find(t => t.id === templateId)
-    if (match) return match.theme
+    if (match) {
+      if (templateId === 'electronics') {
+        return {
+          ...match.theme,
+          title: 'Hardware Trade Desk',
+        }
+      }
+      return match.theme
+    }
   }
   // Fallback to hardcoded
   return FALLBACK_THEMES[templateId] ?? DEFAULT_THEME
@@ -202,6 +214,7 @@ function resolveTemplateLabel(
   templateId: string,
   templates: IndustryTemplateMeta[] | null,
 ): string {
+  if (templateId === 'electronics') return 'Hardware'
   if (templates) {
     const match = templates.find(t => t.id === templateId)
     if (match) return match.label
@@ -235,6 +248,12 @@ function formatMs(value: number | null | undefined): string {
   return `${Math.round(value)}ms`
 }
 
+function formatBooleanish(value: boolean | string | null | undefined): string {
+  if (value == null) return 'n/a'
+  if (typeof value === 'boolean') return value ? 'on' : 'off'
+  return value
+}
+
 function isRuntimeBootstrapResponse(
   value: unknown,
 ): value is RuntimeBootstrapResponse {
@@ -254,6 +273,8 @@ function isRuntimeBootstrapResponse(
 function App() {
   const [industry, setIndustry] = useState<string | null>(() => {
     if (typeof window === 'undefined') return null
+    // In dev mode (not test), start null so the vendor setup wizard renders first.
+    if (import.meta.env.DEV && import.meta.env.MODE !== 'test') return null
     return (
       parseStoredValue(window.localStorage.getItem(TEMPLATE_STORAGE_KEY)) ??
       parseStoredIndustry(window.localStorage.getItem(INDUSTRY_STORAGE_KEY))
@@ -261,6 +282,7 @@ function App() {
   })
   const [companySelection, setCompanySelection] = useState<string | null>(() => {
     if (typeof window === 'undefined') return null
+    if (import.meta.env.DEV && import.meta.env.MODE !== 'test') return null
     return parseStoredValue(window.localStorage.getItem(COMPANY_STORAGE_KEY))
   })
   const [tenantSelection, setTenantSelection] = useState<string | null>(() => {
@@ -276,20 +298,12 @@ function App() {
   const [runtimeBootstrapError, setRuntimeBootstrapError] = useState<string | null>(null)
   const [onboardingReloadNonce, setOnboardingReloadNonce] = useState(0)
   const userId = 'demo-user'
-  const [sessionId, setSessionId] = useState<string>(() => createClientSessionId())
+  const [sessionId] = useState<string>(() => createClientSessionId())
   const [isStarting, setIsStarting] = useState(false)
   const [callError, setCallError] = useState<string | null>(null)
   const [elapsedSeconds, setElapsedSeconds] = useState(0)
   const [errorToast, setErrorToast] = useState<ErrorMessage | null>(null)
-  const [startupSelectionPromptOpen, setStartupSelectionPromptOpen] = useState<boolean>(() => {
-    if (typeof window === 'undefined') return false
-    return Boolean(
-      parseStoredValue(window.localStorage.getItem(TEMPLATE_STORAGE_KEY)) ??
-        parseStoredIndustry(window.localStorage.getItem(INDUSTRY_STORAGE_KEY)),
-    )
-  })
-  const [manualOnboardingOverride, setManualOnboardingOverride] =
-    useState(readForceOnboardingSelection)
+  const [manualOnboardingOverride, setManualOnboardingOverride] = useState(false)
   const [debugOpen, setDebugOpen] = useState(() => import.meta.env.DEV)
   const [debugEvents, setDebugEvents] = useState<DebugEventItem[]>([])
   const [playbackStats, setPlaybackStats] = useState<PlaybackStats | null>(null)
@@ -298,22 +312,40 @@ function App() {
   const lastPlaybackDebugAtRef = useRef(0)
   const debugEventIdRef = useRef(0)
   const activeIndustry = industry ?? 'electronics'
+  const { hasConsented, acceptConsent, declineConsent } = useConsent()
+  const [aiBannerDismissed, setAiBannerDismissed] = useState(() =>
+    typeof window !== 'undefined' &&
+    window.sessionStorage.getItem('ekaette:ui:ai-banner-dismissed') === '1',
+  )
+  const handleDismissBanner = useCallback(() => {
+    setAiBannerDismissed(true)
+    window.sessionStorage.setItem('ekaette:ui:ai-banner-dismissed', '1')
+  }, [])
+  const customerOnboardingEnabled = useMemo(() => resolveCustomerOnboardingEnabled(), [])
   const demoModeEnabled = useMemo(() => readDemoModeFlag(), [])
   const transportMode = useMemo(() => resolveTransportMode(), [])
+  const noiseCancellationLevel = useMemo(() => resolveNoiseCancellationLevel(), [])
   const endUserOnboardingEnabled =
+    customerOnboardingEnabled &&
     String(import.meta.env.VITE_END_USER_ONBOARDING_ENABLED ?? '').toLowerCase() === 'true'
   const allowOnboardingCompatFallback =
-    import.meta.env.DEV ||
-    demoModeEnabled ||
-    String(import.meta.env.VITE_ONBOARDING_COMPAT_FALLBACK ?? '').toLowerCase() === 'true'
-  const forceManualOnboarding = endUserOnboardingEnabled || manualOnboardingOverride
+    customerOnboardingEnabled &&
+    (import.meta.env.DEV ||
+      demoModeEnabled ||
+      String(import.meta.env.VITE_ONBOARDING_COMPAT_FALLBACK ?? '').toLowerCase() === 'true')
+  const forceManualOnboarding =
+    customerOnboardingEnabled &&
+    ((import.meta.env.DEV && import.meta.env.MODE !== 'test') || endUserOnboardingEnabled || manualOnboardingOverride)
   const showRuntimeBootstrapLoading = !forceManualOnboarding && runtimeBootstrapStatus === 'loading'
   const showRuntimeBootstrapError =
     !forceManualOnboarding &&
     runtimeBootstrapStatus === 'error' &&
     !allowOnboardingCompatFallback
   const canRenderOnboardingSelection =
-    forceManualOnboarding || runtimeBootstrapStatus === 'compat' || runtimeBootstrapStatus === 'idle'
+    customerOnboardingEnabled &&
+    (forceManualOnboarding ||
+      runtimeBootstrapStatus === 'compat' ||
+      runtimeBootstrapStatus === 'idle')
   const showOnboardingConfigLoading =
     canRenderOnboardingSelection &&
     (onboardingConfigStatus === 'idle' || onboardingConfigStatus === 'loading')
@@ -331,13 +363,6 @@ function App() {
   }, [activeIndustry, companies, companySelection, fallbackCompanyId])
   const theme = resolveTheme(activeIndustry, templates)
   const templateLabel = resolveTemplateLabel(activeIndustry, templates)
-  const selectedCompanyLabel = useMemo(() => {
-    if (!companyId) return 'Not selected'
-    const match = companies?.find(company => company.id === companyId)
-    return match?.displayName ?? companyId
-  }, [companies, companyId])
-  const showStartupSelectionPrompt = Boolean(industry) && startupSelectionPromptOpen
-
   const socket = useEkaetteSocket(userId, sessionId, {
     demoMode: demoModeEnabled,
     industry: activeIndustry,
@@ -367,12 +392,18 @@ function App() {
     })
   }, [])
 
+  const audioRef = useRef<ReturnType<typeof useAudioWorklet> | null>(null)
+
   const handleSpeechActivity = useCallback(
     (state: 'start' | 'end') => {
       if (!isConnected) return
       pushDebugEvent('vad', state)
       if (state === 'start') {
         socket.sendActivityStart()
+        // Preemptively clear agent playback so user hears silence immediately.
+        // The server will also send an 'interrupted' event, but this avoids
+        // the round-trip latency for a snappier barge-in experience.
+        audioRef.current?.clearPlaybackBuffer()
       } else {
         socket.sendActivityEnd()
       }
@@ -404,7 +435,9 @@ function App() {
         console.debug('[ekaette][playback]', stats)
       }
     },
+    noiseCancellationLevel,
   })
+  audioRef.current = audio
 
   const socketStateRef = useRef(socket.state)
   const processedCountRef = useRef(0)
@@ -504,6 +537,7 @@ function App() {
     [socket.messages, debugOpen],
   )
   const socketDebug = socket.debugMetrics
+  const micCaptureDiagnostics = audio.micCaptureDiagnostics
 
   const displaySessionId = derived.sessionStarted?.sessionId ?? sessionId
 
@@ -570,7 +604,6 @@ function App() {
         setIndustry(nextTemplate)
         setCompanySelection(nextCompany || null)
         setTenantSelection(nextTenant)
-        setStartupSelectionPromptOpen(false)
         setRuntimeBootstrapStatus('ready')
         setRuntimeBootstrapError(null)
 
@@ -668,12 +701,14 @@ function App() {
     const started = derived.sessionStarted
     if (!started) return
 
-    const nextTemplateId =
+    const runtimeTemplateId =
       (typeof started.industryTemplateId === 'string' && started.industryTemplateId.trim()) ||
       (typeof started.industry === 'string' && started.industry.trim()) ||
       null
-    const nextCompanyId =
+    const runtimeCompanyId =
       typeof started.companyId === 'string' && started.companyId.trim() ? started.companyId : null
+    const nextTemplateId = runtimeTemplateId
+    const nextCompanyId = runtimeCompanyId
     const nextTenantId =
       typeof started.tenantId === 'string' && started.tenantId.trim() ? started.tenantId : null
 
@@ -797,9 +832,6 @@ function App() {
           `${msg.role}:${msg.partial ? 'P' : 'F'} ${snippet.replace(/\s+/g, ' ')}`,
         )
       }
-      if (msg.type === 'agent_transfer') {
-        pushDebugEvent('transfer', `${msg.from} -> ${msg.to}`)
-      }
       if (msg.type === 'interrupted') {
         pushDebugEvent('interrupted', 'server signaled interruption')
         audio.clearPlaybackBuffer()
@@ -843,7 +875,7 @@ function App() {
 
   const handleToggleCall = async () => {
     if (!industry) {
-      setCallError('Complete onboarding before starting a call.')
+      setCallError('Complete vendor setup before starting a call.')
       return
     }
     if (isConnected) {
@@ -913,7 +945,6 @@ function App() {
 
   const handleOnboardingComplete = useCallback((selection: { templateId: string; companyId: string }) => {
     setManualOnboardingOverride(false)
-    setForceOnboardingSelection(false)
     setIndustry(selection.templateId)
     setCompanySelection(selection.companyId)
     setTenantSelection(tenantId)
@@ -948,7 +979,7 @@ function App() {
     setOnboardingReloadNonce(value => value + 1)
   }, [])
 
-  const resetClientUiState = useCallback(() => {
+  const _resetClientUiState = useCallback(() => {
     processedCountRef.current = 0
     socket.clearMessages()
     setElapsedSeconds(0)
@@ -959,67 +990,19 @@ function App() {
     lastPlaybackUnderrunsRef.current = 0
     lastPlaybackDebugAtRef.current = 0
   }, [socket.clearMessages])
+  void _resetClientUiState
 
-  const handleContinueWithLastSetup = useCallback(() => {
-    setManualOnboardingOverride(false)
-    setForceOnboardingSelection(false)
-    setStartupSelectionPromptOpen(false)
-    setCallError(null)
-  }, [])
-
-  const handleStartFreshCall = useCallback(() => {
-    setManualOnboardingOverride(false)
-    setForceOnboardingSelection(false)
-    if (isConnected || socket.state === 'connecting' || socket.state === 'reconnecting') {
-      socket.sendActivityEnd()
-      if (!demoModeEnabled) {
-        audio.stop()
-      }
-      socket.disconnect()
-    }
-    resetClientUiState()
-    setSessionId(createClientSessionId())
-    setStartupSelectionPromptOpen(false)
-  }, [
-    audio.stop,
-    demoModeEnabled,
-    isConnected,
-    resetClientUiState,
-    socket,
-    socket.state,
-  ])
-
-  const handleReselectIndustry = useCallback(() => {
-    setManualOnboardingOverride(true)
-    setForceOnboardingSelection(true)
-    if (isConnected || socket.state === 'connecting' || socket.state === 'reconnecting') {
-      socket.sendActivityEnd()
-      if (!demoModeEnabled) {
-        audio.stop()
-      }
-      socket.disconnect()
-    }
-    resetClientUiState()
-    setSessionId(createClientSessionId())
-    setIndustry(null)
-    setCompanySelection(null)
-    clearStoredOnboardingSelection()
-    setStartupSelectionPromptOpen(false)
-  }, [
-    audio.stop,
-    demoModeEnabled,
-    isConnected,
-    resetClientUiState,
-    socket,
-    socket.state,
-  ])
 
   return (
     <div
       className="app-shell h-screen min-h-screen overflow-hidden text-foreground supports-[height:100dvh]:h-dvh supports-[height:100dvh]:min-h-dvh"
       style={rootStyle}
     >
+      {!hasConsented && (
+        <ConsentModal onAccept={acceptConsent} onDecline={declineConsent} />
+      )}
       <div className="atmosphere-layer" aria-hidden />
+      <NavBar activePage="voice" />
 
       <div className="relative mx-auto flex h-full w-full max-w-6xl flex-col px-3 pt-[calc(env(safe-area-inset-top)+0.75rem)] pb-[calc(env(safe-area-inset-bottom)+0.75rem)] sm:px-6 sm:pt-5 sm:pb-6 lg:px-8">
         {!industry ? (
@@ -1064,18 +1047,17 @@ function App() {
 
               {onboardingConfigStatus === 'compat' ? (
                 <div className="panel-glass px-4 py-3 text-xs text-muted-foreground sm:px-5">
-                  Using local compatibility onboarding because backend onboarding config is
-                  unavailable.
+                  Using local configuration because the backend setup service is unavailable.
                 </div>
               ) : null}
 
               {showOnboardingConfigLoading ? (
                 <section className="panel-glass w-full px-4 py-5 sm:px-7 sm:py-8">
                   <p className="text-[0.58rem] text-muted-foreground uppercase tracking-[0.24em] sm:text-[0.64rem] sm:tracking-[0.3em]">
-                    Onboarding
+                    Vendor Setup
                   </p>
                   <h1 className="mt-2 font-display text-white text-xl leading-tight sm:text-3xl">
-                    Loading onboarding options
+                    Loading configuration
                   </h1>
                   <p className="mt-2 max-w-2xl text-muted-foreground text-xs leading-relaxed sm:text-sm">
                     Fetching available industries and companies for your tenant.
@@ -1086,14 +1068,14 @@ function App() {
               {onboardingConfigStatus === 'error' && !allowOnboardingCompatFallback ? (
                 <section className="panel-glass w-full px-4 py-5 sm:px-7 sm:py-8">
                   <p className="text-[0.58rem] text-muted-foreground uppercase tracking-[0.24em] sm:text-[0.64rem] sm:tracking-[0.3em]">
-                    Onboarding
+                    Vendor Setup
                   </p>
                   <h1 className="mt-2 font-display text-white text-xl leading-tight sm:text-3xl">
-                    Onboarding Unavailable
+                    Setup Unavailable
                   </h1>
                   <p className="mt-2 max-w-2xl text-muted-foreground text-xs leading-relaxed sm:text-sm">
                     {onboardingConfigError ??
-                      'Unable to load onboarding configuration. Please try again.'}
+                      'Unable to load vendor configuration. Please try again.'}
                   </p>
                   <div className="mt-6 flex justify-stretch sm:justify-end">
                     <button
@@ -1108,7 +1090,7 @@ function App() {
               ) : (
                 <>
                   {canRenderOnboardingSelection && !showOnboardingConfigLoading ? (
-                    <IndustryOnboarding
+                    <VendorSetupWizard
                       templates={templates ?? undefined}
                       companies={companies ?? undefined}
                       defaultTemplateId={onboardingConfig?.defaults.templateId ?? industry}
@@ -1120,69 +1102,17 @@ function App() {
               )}
             </div>
           </main>
-        ) : showStartupSelectionPrompt ? (
-          <main className="mt-3 grid min-h-0 flex-1 overflow-y-auto pb-1 sm:mt-4 sm:pb-0">
-            <section className="panel-glass mx-auto w-full max-w-3xl px-4 py-5 sm:px-7 sm:py-8">
-              <p className="text-[0.58rem] text-[color:var(--industry-accent)] uppercase tracking-[0.24em] sm:text-[0.64rem] sm:tracking-[0.3em]">
-                Resume Setup
-              </p>
-              <h1 className="mt-2 font-display text-white text-xl leading-tight sm:text-3xl">
-                Continue with your last workspace?
-              </h1>
-              <p className="mt-2 max-w-2xl text-muted-foreground text-xs leading-relaxed sm:text-sm">
-                We found a previous onboarding selection in this browser. Choose whether to keep
-                it, start a fresh call, or re-select your industry before connecting.
-              </p>
-
-              <div className="mt-5 grid gap-3 sm:grid-cols-2">
-                <div className="rounded-2xl border border-border/70 bg-card/40 px-4 py-4">
-                  <p className="text-[0.62rem] text-muted-foreground uppercase tracking-[0.16em]">
-                    Industry
-                  </p>
-                  <p className="mt-1 font-semibold text-white">{templateLabel}</p>
-                </div>
-                <div className="rounded-2xl border border-border/70 bg-card/40 px-4 py-4">
-                  <p className="text-[0.62rem] text-muted-foreground uppercase tracking-[0.16em]">
-                    Company
-                  </p>
-                  <p className="mt-1 font-semibold text-white">{selectedCompanyLabel}</p>
-                </div>
-              </div>
-
-              <div className="mt-6 grid gap-2 sm:grid-cols-[1fr_1fr]">
-                <button
-                  type="button"
-                  onClick={handleContinueWithLastSetup}
-                  className="rounded-full bg-[color:var(--industry-accent)] px-5 py-2.5 font-semibold text-black text-sm transition hover:brightness-110 sm:py-2"
-                >
-                  Continue With Last Setup
-                </button>
-                <button
-                  type="button"
-                  onClick={handleStartFreshCall}
-                  className="rounded-full border border-primary/50 bg-primary/10 px-5 py-2.5 font-semibold text-primary text-sm transition hover:bg-primary/15 sm:py-2"
-                >
-                  Start Fresh Call
-                </button>
-              </div>
-              <div className="mt-3 flex justify-stretch sm:justify-end">
-                <button
-                  type="button"
-                  onClick={handleReselectIndustry}
-                  className="w-full rounded-full border border-border/70 bg-card/40 px-5 py-2.5 font-medium text-foreground text-sm transition hover:border-primary/40 hover:bg-card/60 sm:w-auto sm:py-2"
-                >
-                  Re-select Industry
-                </button>
-              </div>
-            </section>
-          </main>
         ) : (
           <>
             <div className="hidden lg:block">
               <Header hint={theme.hint} templateLabel={templateLabel} connectionState={socket.state} />
             </div>
 
-            <main className="mt-3 flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto pb-1 sm:mt-4 sm:pb-0 lg:grid lg:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)] lg:overflow-hidden lg:pb-0">
+            {!aiBannerDismissed && (
+              <AiDisclosureBanner onDismiss={handleDismissBanner} />
+            )}
+
+            <main className="conversation-stage mt-3 flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto pb-1 sm:mt-4 sm:pb-0 lg:grid lg:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)] lg:overflow-hidden lg:pb-0">
               <div className="lg:hidden">
                 <Header
                   hint={theme.hint}
@@ -1368,6 +1298,20 @@ function App() {
                     {socketDebug.audioTxDropCount} · bp {socketDebug.audioTxBackpressureCount} ·
                     rxGap {socketDebug.audioRxDropSuspectCount} (
                     {formatMs(socketDebug.audioRxLastGapMs)})
+                  </p>
+                </div>
+                <div className="col-span-2 rounded-lg border border-border/60 bg-card/60 p-2">
+                  <p className="text-muted-foreground">Mic Processing</p>
+                  <p className="font-medium text-foreground">
+                    profile {noiseCancellationLevel} · software denoiser{' '}
+                    {micCaptureDiagnostics?.softwareDenoiserEnabled ? 'on' : 'off'}
+                  </p>
+                  <p className="mt-1 text-[10px] text-muted-foreground">
+                    AEC {formatBooleanish(micCaptureDiagnostics?.appliedSettings.echoCancellation)} ·
+                    NS {formatBooleanish(micCaptureDiagnostics?.appliedSettings.noiseSuppression)} ·
+                    AGC {formatBooleanish(micCaptureDiagnostics?.appliedSettings.autoGainControl)} ·
+                    sr {micCaptureDiagnostics?.appliedSettings.sampleRate ?? 'n/a'}Hz · ch{' '}
+                    {micCaptureDiagnostics?.appliedSettings.channelCount ?? 'n/a'}
                   </p>
                 </div>
               </div>

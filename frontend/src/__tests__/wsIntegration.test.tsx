@@ -35,16 +35,7 @@ function sendServerMessage(ws: MockSocket, message: ServerMessage) {
   )
 }
 
-async function dismissStartupSelectionPromptIfPresent() {
-  const continueButton = screen.queryByRole('button', { name: /continue with last setup/i })
-  if (!continueButton) return
-  await act(async () => {
-    continueButton.click()
-  })
-}
-
 async function connectCall() {
-  await dismissStartupSelectionPromptIfPresent()
   const micButton = screen.getByRole('button', { name: /start call/i })
   await act(async () => {
     micButton.click()
@@ -68,6 +59,10 @@ describe('WebSocket → UI integration', () => {
     ;(globalThis.WebSocket as unknown as { instances?: unknown[] }).instances = []
     ;(globalThis as { __lastMockWebSocket?: MockSocket }).__lastMockWebSocket = undefined
     window.localStorage.clear()
+    window.localStorage.setItem(
+      'ekaette:privacy:consent',
+      JSON.stringify({ accepted: true, timestamp: '2026-01-01T00:00:00Z', version: '1.0' }),
+    )
   })
 
   afterEach(() => {

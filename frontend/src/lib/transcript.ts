@@ -383,15 +383,39 @@ export function normalizeTranscriptMessages(messages: TranscriptMessage[]): Tran
 }
 
 export function preferFinalTranscriptMessages(messages: TranscriptMessage[]): TranscriptMessage[] {
-  const finals = messages.filter(message => !message.partial)
+  const finals: TranscriptMessage[] = []
+  let lastFinalIndex = -1
+  let latestPartial: TranscriptMessage | null = null
+  let latestPartialIndex = -1
+
+  for (let idx = 0; idx < messages.length; idx += 1) {
+    const message = messages[idx]
+    if (message.partial) {
+      latestPartial = message
+      latestPartialIndex = idx
+      continue
+    }
+    finals.push(message)
+    lastFinalIndex = idx
+  }
+
   if (finals.length > 0) {
+    // Preserve stable finalized transcript history, but keep the newest in-progress
+    // partial visible when it arrives after the latest final bubble.
+    if (latestPartial && latestPartialIndex > lastFinalIndex) {
+      const duplicatesFinal = finals.some(
+        final =>
+          final.role === latestPartial.role && isEquivalentTranscriptText(final.text, latestPartial.text),
+      )
+      if (!duplicatesFinal) {
+        return [...finals, latestPartial]
+      }
+    }
     return finals
   }
-  for (let idx = messages.length - 1; idx >= 0; idx -= 1) {
-    const candidate = messages[idx]
-    if (candidate.partial) {
-      return [candidate]
-    }
+
+  if (latestPartial) {
+    return [latestPartial]
   }
   return []
 }
