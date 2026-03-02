@@ -4,9 +4,6 @@ Verifies that all 4 industries (electronics, hotel, automotive, fashion)
 have local fallback configs with correct voice personas and greetings.
 """
 
-import pytest
-
-
 class TestLocalIndustryConfigs:
     """All 4 industries should have local fallback configs."""
 

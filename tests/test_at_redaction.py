@@ -5,7 +5,6 @@ V2 mandate: Never log API keys, SIP credentials, SMS full payloads with PII.
 
 from __future__ import annotations
 
-import ast
 import re
 from pathlib import Path
 

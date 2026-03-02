@@ -209,13 +209,13 @@ class WaSession:
                 try:
                     await gemini_ctx.__aexit__(None, None, None)
                 except Exception:
-                    pass
+                    pass  # Best-effort cleanup — session may already be closed
             # Clean up UDP socket only if we created it
             if self._owns_transport and self.media_transport is not None:
                 try:
                     self.media_transport.close()
                 except Exception:
-                    pass
+                    pass  # Best-effort socket cleanup
                 self.media_transport = None
 
             duration = time.time() - self.started_at
@@ -342,7 +342,7 @@ class WaSession:
                     try:
                         self._gemini_in_queue.put_nowait(pcm16)
                     except asyncio.QueueFull:
-                        pass
+                        pass  # Drop frame — Gemini consumer is behind
             except Exception:
                 logger.debug("Inbound frame processing error", exc_info=True)
 

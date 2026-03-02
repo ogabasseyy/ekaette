@@ -145,7 +145,7 @@ class WaSIPServer:
             writer.write(response.encode("utf-8"))
             await writer.drain()
         except Exception:
-            pass
+            pass  # Best-effort health response — connection may have been reset
         finally:
             writer.close()
 
@@ -456,7 +456,7 @@ async def _run(config: WhatsAppBridgeConfig) -> None:
     try:
         await asyncio.Event().wait()  # Run until cancelled
     except asyncio.CancelledError:
-        pass
+        pass  # Normal shutdown signal
     finally:
         await server.stop()
         logger.info("WhatsApp SIP bridge shut down")

@@ -5,8 +5,7 @@ Red phase — write tests before implementation.
 
 from __future__ import annotations
 
-import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 from fastapi import FastAPI, Depends
 from fastapi.testclient import TestClient
 

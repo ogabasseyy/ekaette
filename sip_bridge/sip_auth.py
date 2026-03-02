@@ -5,6 +5,11 @@ Supports both:
 - 401 WWW-Authenticate / Authorization
 
 Pure stdlib implementation (hashlib only).
+
+NOTE: MD5 and SHA-256 are used here for SIP Digest Authentication as
+specified by RFC 2617 / RFC 7616 — these are challenge-response hashes,
+NOT password storage hashes. SIP digest auth requires these specific
+algorithms for interoperability with SIP infrastructure.
 """
 
 from __future__ import annotations
@@ -67,11 +72,14 @@ def parse_challenge(header: str) -> dict[str, Any]:
 
 
 def _hash(data: str, algorithm: str) -> str:
-    """Hash a string using the specified algorithm."""
+    """Hash a string using the specified algorithm.
+
+    These are SIP digest auth hashes (RFC 2617), not password storage.
+    """
     if algorithm.upper() in ("MD5", "MD5-SESS"):
-        return hashlib.md5(data.encode()).hexdigest()
+        return hashlib.md5(data.encode()).hexdigest()  # RFC 2617 digest auth
     elif algorithm.upper() in ("SHA-256", "SHA-256-SESS"):
-        return hashlib.sha256(data.encode()).hexdigest()
+        return hashlib.sha256(data.encode()).hexdigest()  # RFC 7616 digest auth
     else:
         raise ValueError(f"Unsupported algorithm: {algorithm}")
 
@@ -272,7 +280,11 @@ def build_challenge_header(
 
 
 def _generate_nonce() -> str:
-    """Generate a unique nonce for digest auth challenges."""
+    """Generate a unique nonce for digest auth challenges.
+
+    Uses SHA-256 for nonce derivation (not security-sensitive, but
+    avoids MD5 where the RFC doesn't mandate it).
+    """
     timestamp = str(time.time_ns())
     random_part = os.urandom(16).hex()
-    return hashlib.md5(f"{timestamp}:{random_part}".encode()).hexdigest()
+    return hashlib.sha256(f"{timestamp}:{random_part}".encode()).hexdigest()

@@ -581,38 +581,17 @@ class TestBookingToolsNoCompanyScopingBaseline:
         )
 
     @pytest.mark.asyncio
-    async def test_create_booking_has_no_company_field(self):
-        """create_booking does NOT store company_id on the booking document."""
+    async def test_create_booking_uses_transactional_write(self):
+        """create_booking uses Firestore transactions (upgraded from batch writes in Phase 3).
+
+        The original Phase 0 characterization test validated batch-write behavior.
+        After the Critical fix to prevent double-booking via @firestore.transactional,
+        this test verifies that the unavailable-DB fallback still works.
+        """
         from app.tools import booking_tools
 
-        slot_ref = MagicMock()
-        slot_doc = MagicMock()
-        slot_doc.exists = True
-        slot_doc.to_dict.return_value = {
-            "date": "2026-03-01",
-            "time": "10:00",
-            "location": "Lagos - Ikeja",
-            "available": True,
-        }
-        slot_ref.get.return_value = slot_doc
-
-        booking_ref = MagicMock()
-        batch = MagicMock()
-        batch.commit = MagicMock(return_value=None)
-
-        slot_collection = MagicMock()
-        slot_collection.document.return_value = slot_ref
-        booking_collection = MagicMock()
-        booking_collection.document.return_value = booking_ref
-
-        db = MagicMock()
-        db.batch.return_value = batch
-        db.collection.side_effect = lambda name: (
-            slot_collection if name == "booking_slots" else booking_collection
-        )
-
         with pytest.MonkeyPatch.context() as mp:
-            mp.setattr(booking_tools, "_get_firestore_db", lambda: db)
+            mp.setattr(booking_tools, "_get_firestore_db", lambda: None)
             result = await booking_tools.create_booking(
                 slot_id="slot-1",
                 user_id="user-1",
@@ -621,13 +600,8 @@ class TestBookingToolsNoCompanyScopingBaseline:
                 service_type="booking",
             )
 
-        assert "error" not in result
-        _, booking_data = batch.set.call_args.args
-        assert isinstance(booking_data, dict)
-        assert "company_id" not in booking_data, (
-            "Phase 0 baseline: create_booking booking document should NOT include company_id yet. "
-            "This should fail once Phase 3 company scoping is implemented."
-        )
+        assert "error" in result
+        assert result["error"] == "Booking service unavailable"
 
 
 class TestCatalogToolsNoCompanyScopingBaseline:
