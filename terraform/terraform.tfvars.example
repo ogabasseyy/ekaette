@@ -1,0 +1,16 @@
+# Copy this file to terraform.tfvars and fill in your values:
+#   cp terraform.tfvars.example terraform.tfvars
+
+project_id      = "ekaette"
+region          = "us-central1"
+app_name        = "ekaette"
+container_image = "us-central1-docker.pkg.dev/ekaette/ekaette/ekaette:latest"
+min_instances   = 1
+max_instances   = 10
+
+env_vars = {
+  LIVE_MODEL_ID       = "gemini-2.5-flash-native-audio-preview-12-2025"
+  LIVE_MODEL_FALLBACK = "gemini-2.5-flash-preview-native-audio-dialog"
+  VISION_MODEL        = "gemini-3-flash-preview"
+  ALLOWED_ORIGINS     = "*"
+}
