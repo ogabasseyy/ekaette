@@ -2,7 +2,7 @@
 # Pin versions for reproducible builds
 
 # Core framework
-google-adk==1.25.1
+google-adk==1.26.0
 google-genai==1.64.0
 google-cloud-aiplatform==1.139.0
 fastapi==0.133.0
