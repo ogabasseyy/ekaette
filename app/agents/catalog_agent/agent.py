@@ -35,6 +35,11 @@ catalog_agent = Agent(
        - Availability (in stock or not)
        - Key features
     3. If the exact product is unavailable, suggest alternatives from the results
+    4. If a follow-up is ambiguous (for example "which one do you have?"),
+       use the last discussed product/category context and still provide options.
+    5. If the customer is unsure about the exact model/spec, suggest they upload
+       a photo so the vision flow can identify the device and you can recommend
+       the closest available option from catalog.
 
     IMPORTANT:
     - Ground answers in company context first:
@@ -50,6 +55,8 @@ catalog_agent = Agent(
     - Always mention the price in Nigerian Naira (₦)
     - If multiple results match, present the top 3 and ask which interests them
     - If no results found, suggest broader search terms or popular items
+    - Proactively offer image upload when product identity is unclear:
+      "If you upload a photo, I can identify it and match what we have."
     - For trade-in customers, mention they can offset the price with their trade-in value
     """,
     tools=[

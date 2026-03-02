@@ -12,12 +12,22 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
+def _is_mapping_like(obj: Any) -> bool:
+    """Check if *obj* supports dict-like `get` / `__contains__` (duck-typing).
+
+    ADK's ``State`` object is **not** a ``dict`` subclass, so
+    ``isinstance(state, dict)`` silently returns ``False`` and breaks
+    scoped queries.  This helper accepts any mapping-like object.
+    """
+    return obj is not None and hasattr(obj, "get") and hasattr(obj, "__contains__")
+
+
 def _tenant_id_from_context(tool_context: Any) -> str | None:
     """Extract tenant_id from tool context state."""
     if tool_context is None:
         return None
     state = getattr(tool_context, "state", None)
-    if not isinstance(state, dict):
+    if not _is_mapping_like(state):
         return None
     value = state.get("app:tenant_id")
     return value if isinstance(value, str) and value.strip() else None
@@ -28,7 +38,7 @@ def _company_id_from_context(tool_context: Any) -> str | None:
     if tool_context is None:
         return None
     state = getattr(tool_context, "state", None)
-    if not isinstance(state, dict):
+    if not _is_mapping_like(state):
         return None
     value = state.get("app:company_id")
     return value if isinstance(value, str) and value.strip() else None
@@ -86,7 +96,7 @@ def scoped_collection_or_global(
         return result
 
     state = getattr(tool_context, "state", None)
-    if isinstance(state, dict):
+    if _is_mapping_like(state):
         has_tenant_key = "app:tenant_id" in state
         has_company_key = "app:company_id" in state
         if has_tenant_key or has_company_key:

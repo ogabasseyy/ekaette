@@ -120,6 +120,37 @@ class TestCheckAvailability:
 
         assert "error" in result
 
+    @pytest.mark.asyncio
+    async def test_location_fallback_returns_city_matches_when_exact_branch_missing(self):
+        """Should fallback to loosely matching city tokens for voice-entered locations."""
+        from app.tools.booking_tools import check_availability
+
+        mock_db = MagicMock()
+        mock_query = MagicMock()
+
+        ikeja_slot = {
+            "id": "slot-ikeja-fallback",
+            "date": "2026-03-01",
+            "time": "10:00",
+            "location": "Lagos - Ikeja",
+            "available": True,
+        }
+        doc = MagicMock()
+        doc.id = ikeja_slot["id"]
+        doc.to_dict.return_value = ikeja_slot
+
+        mock_query.where.return_value = mock_query
+        mock_query.stream.side_effect = [iter([]), iter([doc])]
+        mock_db.collection.return_value = mock_query
+
+        with patch("app.tools.booking_tools._get_firestore_db", return_value=mock_db):
+            result = await check_availability(date="2026-03-01", location="Lagos, Yaba")
+
+        assert result.get("location_fallback") is True
+        assert result.get("requested_location") == "Lagos, Yaba"
+        assert len(result["slots"]) == 1
+        assert "Lagos" in result["slots"][0]["location"]
+
 
 class TestCreateBooking:
     """Test booking creation."""

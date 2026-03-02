@@ -343,6 +343,10 @@ async def before_model_inject_config(
             "session. Do NOT greet again (no hello/hi/good morning). Continue "
             "directly with the answer or next question."
         )
+        instruction_lines.append(
+            "Style guard: Do not re-introduce your role (for example, never say "
+            "'I am the support agent'). Keep responses task-focused."
+        )
         has_runtime_context = True
 
     company_id_raw = callback_context.state.get("app:company_id")

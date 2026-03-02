@@ -37,6 +37,19 @@ def _generate_confirmation_id() -> str:
     return f"EKT-{uuid.uuid4().hex[:8].upper()}"
 
 
+def _location_tokens(value: str) -> list[str]:
+    text = "".join(ch.lower() if ch.isalnum() else " " for ch in value)
+    return [token for token in text.split() if token]
+
+
+def _location_match_score(requested: str, candidate: str) -> int:
+    requested_tokens = set(_location_tokens(requested))
+    candidate_tokens = set(_location_tokens(candidate))
+    if not requested_tokens or not candidate_tokens:
+        return 0
+    return len(requested_tokens.intersection(candidate_tokens))
+
+
 async def check_availability(
     date: str,
     location: str | None = None,
@@ -74,7 +87,38 @@ async def check_availability(
             if slot_data.get("available", False):
                 slots.append(slot_data)
 
-        return {"date": date, "slots": slots}
+        if slots or not location:
+            return {"date": date, "slots": slots}
+
+        # Fallback for user-friendly voice inputs like "Lagos, Yaba" when
+        # exact branch strings differ from stored values.
+        fallback_query = scoped_collection_or_global(db, tool_context, "booking_slots")
+        if fallback_query is None:
+            return {"date": date, "slots": []}
+        fallback_query = fallback_query.where("date", "==", date)
+        fallback_docs = await asyncio.to_thread(lambda: list(fallback_query.stream()))
+
+        fallback_matches: list[tuple[int, dict[str, Any]]] = []
+        for doc in fallback_docs:
+            slot_data = doc.to_dict()
+            slot_data["id"] = doc.id
+            if not slot_data.get("available", False):
+                continue
+            slot_location = str(slot_data.get("location", ""))
+            score = _location_match_score(str(location), slot_location)
+            if score > 0:
+                fallback_matches.append((score, slot_data))
+
+        if fallback_matches:
+            fallback_matches.sort(key=lambda item: item[0], reverse=True)
+            return {
+                "date": date,
+                "slots": [item[1] for item in fallback_matches],
+                "requested_location": location,
+                "location_fallback": True,
+            }
+
+        return {"date": date, "slots": []}
 
     except Exception as exc:
         logger.error("Availability check failed: %s", exc)

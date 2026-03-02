@@ -24,6 +24,13 @@ TOOL_RESPONSE_SCHEDULING: dict[str, str] = {
     "create_booking": "WHEN_IDLE",
     "cancel_booking": "WHEN_IDLE",
     "search_catalog": "WHEN_IDLE",
+    "get_topship_delivery_quote": "WHEN_IDLE",
+    "create_virtual_account_payment": "WHEN_IDLE",
+    "check_payment_status": "WHEN_IDLE",
+    "get_virtual_account_record": "WHEN_IDLE",
+    "create_order_record": "WHEN_IDLE",
+    "track_order_delivery": "WHEN_IDLE",
+    "send_order_review_followup": "WHEN_IDLE",
     "preload_memory": "SILENT",
 }
 
@@ -92,4 +99,3 @@ def install_tool_response_scheduling_patch() -> bool:
     except Exception as exc:
         logger.warning("Failed to install live tool scheduling patch: %s", exc)
         return False
-

@@ -1,7 +1,7 @@
-"""Booking Agent — Availability checking and appointment scheduling.
+"""Booking Agent — Delivery quote + checkout, plus pickup scheduling.
 
 In bidi-streaming mode, all agents must use a Live API-compatible model.
-Scheduling logic is implemented as tools.
+Commerce and scheduling logic is implemented as tools.
 """
 
 from google.adk.agents import Agent
@@ -20,41 +20,77 @@ from app.tools.knowledge_tools import (
     search_company_knowledge,
 )
 from app.tools.booking_tools import check_availability, create_booking, cancel_booking
+from app.tools.payment_tools import (
+    check_payment_status,
+    create_virtual_account_payment,
+    get_virtual_account_record,
+)
+from app.tools.shipping_tools import (
+    create_order_record,
+    get_topship_delivery_quote,
+    send_order_review_followup,
+    track_order_delivery,
+)
 
 LIVE_MODEL_ID = resolve_live_model_id()
 
 booking_agent = Agent(
     name="booking_agent",
     model=LIVE_MODEL_ID,
-    instruction="""You handle appointment scheduling, reservations, and pickups.
+    instruction="""You handle delivery quotes, purchase finalization, and pickup scheduling.
 
-    BOOKING FLOW:
-    1. Ask the customer for their preferred date and location
-    2. Call check_availability to find open slots
-    3. Present available time slots to the customer
-    4. Once they choose, call create_booking with their details
-    5. Confirm the booking with the confirmation ID
+    INTENT PRIORITY:
+    - For purchase intents, start with delivery quote + checkout flow.
+    - Do NOT start with slot booking unless the customer explicitly asks for a pickup
+      appointment/reservation/time slot.
+
+    DELIVERY QUOTE + CHECKOUT FLOW (default for purchase):
+    1. Confirm product/items and subtotal.
+    2. Ask for delivery destination city (and full address when possible).
+    3. Call get_topship_delivery_quote to estimate delivery fee.
+    4. Present subtotal + delivery fee + total clearly.
+    5. Call create_virtual_account_payment and read account details clearly.
+    6. Tell the customer account details are also sent via SMS/WhatsApp.
+    7. Call create_order_record once order details are confirmed.
+    8. If customer says they paid, call check_payment_status before confirmation.
+    9. For tracking requests, call track_order_delivery.
+
+    PICKUP BOOKING FLOW (only when explicitly requested):
+    1. Ask for preferred date and location.
+    2. Call check_availability to find open slots.
+    3. Present available time slots.
+    4. Once selected, call create_booking with customer details.
+    5. Confirm with the booking confirmation ID.
 
     CANCELLATION FLOW:
-    1. Ask for the confirmation ID (starts with EKT-)
-    2. Call cancel_booking to process the cancellation
-    3. Confirm the cancellation was successful
+    1. Ask for confirmation ID (starts with EKT-).
+    2. Call cancel_booking.
+    3. Confirm cancellation success.
+
+    PICKUP FALLBACK WHEN NO SLOTS:
+    - Do not dead-end. Offer next available dates/locations, or proceed with
+      delivery quote + payment flow immediately.
 
     IMPORTANT:
     - Use company grounding tools before assumptions:
       - get_company_profile_fact for operating hours/locations/policies
-      - search_company_knowledge for booking-specific policy details
+      - search_company_knowledge for booking and delivery policy details
       - query_company_system for connected booking/CRM checks when available
-    - Always confirm details BEFORE creating the booking
-    - Read back the date, time, and location for confirmation
-    - If no slots are available, suggest alternative dates
-    - The confirmation ID is important — make sure the customer notes it down
-    - Be warm and helpful — scheduling should feel easy, not bureaucratic
+    - Booking is optional for completed purchases; do not block checkout on slot availability.
+    - Always confirm critical details before tool calls.
+    - Be warm and helpful; keep transitions concise.
     """,
     tools=[
         check_availability,
         create_booking,
         cancel_booking,
+        create_virtual_account_payment,
+        check_payment_status,
+        get_virtual_account_record,
+        get_topship_delivery_quote,
+        create_order_record,
+        track_order_delivery,
+        send_order_review_followup,
         search_company_knowledge,
         get_company_profile_fact,
         query_company_system,

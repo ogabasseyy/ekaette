@@ -52,7 +52,7 @@ def _connector_manifest_from_state(tool_context: ToolContext | None) -> tuple[di
     if tool_context is None:
         return {}, False
     state = getattr(tool_context, "state", None)
-    if not isinstance(state, dict):
+    if not (state is not None and hasattr(state, "get") and hasattr(state, "__contains__")):
         return {}, False
     if "app:connector_manifest" not in state:
         return {}, False

@@ -69,6 +69,14 @@ class TestEkaetteRouterAgent:
         for name in ["vision_agent", "valuation_agent", "booking_agent", "catalog_agent", "support_agent"]:
             assert name in instruction, f"Instruction should mention {name}"
 
+    def test_agent_instruction_mentions_cctv_asr_variants_for_catalog_routing(self):
+        """Router should treat CCTV ASR variants as catalog inventory intent."""
+        from app.agents.ekaette_router.agent import ekaette_router
+
+        instruction = ekaette_router.instruction
+        assert "CTV" in instruction
+        assert "CT scan" in instruction
+
     def test_agent_instruction_mentions_company_grounding_state(self):
         """Router instruction should mention company grounding context keys."""
         from app.agents.ekaette_router.agent import ekaette_router
@@ -98,6 +106,18 @@ class TestEkaetteRouterAgent:
         from app.agents.ekaette_router.agent import ekaette_router
 
         assert ekaette_router.before_agent_callback is before_agent_isolation_guard_and_dedup
+
+    def test_agent_instruction_includes_ai_disclosure(self):
+        """Root agent instruction must include AI disclosure for transparency (EU AI Act Art. 50)."""
+        from app.agents.ekaette_router.agent import ekaette_router
+        instruction = ekaette_router.instruction
+        assert "AI-powered" in instruction, "Instruction should disclose AI nature"
+
+    def test_agent_instruction_includes_human_escalation(self):
+        """Root agent instruction must offer human escalation path (EU AI Act best practice)."""
+        from app.agents.ekaette_router.agent import ekaette_router
+        instruction = ekaette_router.instruction
+        assert "human" in instruction.lower(), "Instruction should mention human escalation"
 
     def test_agent_has_preload_memory_tool(self):
         """Root agent includes PreloadMemoryTool in tool list."""
@@ -146,6 +166,17 @@ class TestSubAgentStubs:
         agent = getattr(mod, agent_name)
         assert agent.instruction is not None
         assert len(agent.instruction) > 20
+
+    def test_catalog_and_support_instructions_mention_photo_upload_path(self):
+        """Catalog/support instructions should guide photo-upload identification flow."""
+        from app.agents.catalog_agent.agent import catalog_agent
+        from app.agents.support_agent.agent import support_agent
+
+        catalog_instruction = catalog_agent.instruction.lower()
+        support_instruction = support_agent.instruction.lower()
+
+        assert "upload" in catalog_instruction and "photo" in catalog_instruction
+        assert "upload" in support_instruction and "photo" in support_instruction
 
     @pytest.mark.parametrize("agent_module,agent_name", [
         ("app.agents.vision_agent.agent", "vision_agent"),

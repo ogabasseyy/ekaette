@@ -161,6 +161,7 @@ class TestBeforeModelInjectConfig:
         system_instruction = str(llm_request.config.system_instruction)
         assert "First-turn greeting policy" not in system_instruction
         assert "Do NOT greet again" in system_instruction
+        assert "Do not re-introduce your role" in system_instruction
 
 
 class TestCompanyInstructionBuilder:
