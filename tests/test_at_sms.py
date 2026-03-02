@@ -88,6 +88,25 @@ class TestSMSCallback:
         assert resp.status_code == 200
         assert resp.json()["status"] == "disabled"
 
+    @patch("app.api.v1.at.providers.send_sms", new_callable=AsyncMock)
+    @patch("app.api.v1.at.bridge_text.query_text", new_callable=AsyncMock)
+    def test_inbound_sms_provider_failure_returns_controlled_error(
+        self,
+        mock_query: AsyncMock,
+        mock_send: AsyncMock,
+        sms_client: TestClient,
+    ) -> None:
+        mock_query.return_value = "Reply text"
+        mock_send.side_effect = RuntimeError("provider down")
+        resp = sms_client.post(
+            "/api/v1/at/sms/callback",
+            data={"from": "+2348012345678", "to": "12345", "text": "Where is my order?"},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "error"
+        assert body["code"] == "AT_SMS_SEND_FAILED"
+
 
 # ── Outbound SMS Send Tests ──
 
@@ -130,6 +149,18 @@ class TestSMSSend:
         sent_msg = mock_send.call_args[1].get("message") or mock_send.call_args[0][0]
         assert len(sent_msg) <= 160
 
+    @patch("app.api.v1.at.providers.send_sms", new_callable=AsyncMock)
+    def test_send_sms_provider_error_returns_502(
+        self, mock_send: AsyncMock, sms_client: TestClient
+    ) -> None:
+        mock_send.side_effect = RuntimeError("provider down")
+        resp = sms_client.post(
+            "/api/v1/at/sms/send",
+            json={"to": "+2348012345678", "message": "Hello from Ekaette"},
+        )
+        assert resp.status_code == 502
+        assert "SMS provider unavailable" in resp.json()["detail"]
+
 
 # ── Bulk SMS Campaign Tests ──
 
@@ -152,6 +183,21 @@ class TestSMSCampaign:
         assert resp.status_code == 200
         assert resp.json()["status"] == "ok"
         mock_send.assert_awaited_once()
+
+    @patch("app.api.v1.at.providers.send_sms", new_callable=AsyncMock)
+    def test_campaign_sms_provider_error_returns_502(
+        self, mock_send: AsyncMock, sms_client: TestClient
+    ) -> None:
+        mock_send.side_effect = RuntimeError("provider down")
+        resp = sms_client.post(
+            "/api/v1/at/sms/campaign",
+            json={
+                "to": ["+2348012345678", "+2348098765432"],
+                "message": "Flash sale today!",
+            },
+        )
+        assert resp.status_code == 502
+        assert "SMS provider unavailable" in resp.json()["detail"]
 
 
 # ── Service Logic Tests ──

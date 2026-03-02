@@ -200,6 +200,19 @@ class TestOutboundCall:
         assert resp.status_code == 200
         assert resp.json()["status"] == "disabled"
 
+    @patch("app.api.v1.at.providers.make_call", new_callable=AsyncMock)
+    def test_outbound_call_provider_error_returns_502(
+        self, mock_call: AsyncMock, voice_client: TestClient
+    ) -> None:
+        mock_call.side_effect = RuntimeError("provider down")
+        resp = voice_client.post(
+            "/api/v1/at/voice/call",
+            json={"to": "+2348012345678"},
+            headers={"Idempotency-Key": "call-provider-error-001"},
+        )
+        assert resp.status_code == 502
+        assert "Voice provider unavailable" in resp.json()["detail"]
+
 
 # ── Campaign Tests ──
 
@@ -255,6 +268,19 @@ class TestVoiceTransfer:
         )
         assert resp.status_code == 200
         assert resp.json()["status"] == "disabled"
+
+    @patch("app.api.v1.at.providers.transfer_call", new_callable=AsyncMock)
+    def test_transfer_provider_error_returns_502(
+        self, mock_transfer: AsyncMock, voice_client: TestClient
+    ) -> None:
+        mock_transfer.side_effect = RuntimeError("transfer down")
+        resp = voice_client.post(
+            "/api/v1/at/voice/transfer",
+            json={"session_id": "AT-session-001", "transfer_to": "+2348099999999"},
+            headers={"Idempotency-Key": "transfer-provider-error-001"},
+        )
+        assert resp.status_code == 502
+        assert "Voice transfer unavailable" in resp.json()["detail"]
 
 
 # ── Service Logic Tests ──

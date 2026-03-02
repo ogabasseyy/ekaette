@@ -164,8 +164,8 @@ class TestVoiceEndpointResilience:
                 json={"to": "+2348012345678"},
                 headers={"Idempotency-Key": "resilience-test-1"},
             )
-            # Should return 500, not crash
-            assert resp.status_code == 500
+            # Should return 502 (Bad Gateway — provider unavailable), not crash
+            assert resp.status_code == 502
 
 
 # ── SMS Endpoint Resilience ──
@@ -200,4 +200,5 @@ class TestSMSEndpointResilience:
                 "/api/v1/at/sms/send",
                 json={"to": "+2348012345678", "message": "test"},
             )
-            assert resp.status_code == 500
+            # Should return 502 (Bad Gateway — provider unavailable), not crash
+            assert resp.status_code == 502

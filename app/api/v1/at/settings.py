@@ -38,6 +38,50 @@ class ATSettings(BaseSettings):
     at_call_metadata_retention_days: int = Field(default=90, alias="AT_CALL_METADATA_RETENTION_DAYS")
     at_sms_retention_days: int = Field(default=30, alias="AT_SMS_RETENTION_DAYS")
 
+    # Payments (Paystack)
+    paystack_enabled: bool = Field(default=False, alias="PAYSTACK_ENABLED")
+    paystack_secret_key: str = Field(default="", alias="PAYSTACK_SECRET_KEY")
+    paystack_public_key: str = Field(default="", alias="PAYSTACK_PUBLIC_KEY")
+    paystack_webhook_secret: str = Field(default="", alias="PAYSTACK_WEBHOOK_SECRET")
+    paystack_initialize_url: str = Field(
+        default="https://api.paystack.co/transaction/initialize",
+        alias="PAYSTACK_INITIALIZE_URL",
+    )
+    paystack_verify_url_template: str = Field(
+        default="https://api.paystack.co/transaction/verify/{reference}",
+        alias="PAYSTACK_VERIFY_URL_TEMPLATE",
+    )
+    paystack_default_callback_url: str = Field(
+        default="",
+        alias="PAYSTACK_DEFAULT_CALLBACK_URL",
+    )
+    paystack_customer_url: str = Field(
+        default="https://api.paystack.co/customer",
+        alias="PAYSTACK_CUSTOMER_URL",
+    )
+    paystack_dedicated_account_url: str = Field(
+        default="https://api.paystack.co/dedicated_account",
+        alias="PAYSTACK_DEDICATED_ACCOUNT_URL",
+    )
+    paystack_dedicated_account_providers_url: str = Field(
+        default="https://api.paystack.co/dedicated_account/available_providers",
+        alias="PAYSTACK_DEDICATED_ACCOUNT_PROVIDERS_URL",
+    )
+    paystack_default_dva_bank_slug: str = Field(
+        default="",
+        alias="PAYSTACK_DEFAULT_DVA_BANK_SLUG",
+    )
+    paystack_default_dva_country: str = Field(
+        default="NG",
+        alias="PAYSTACK_DEFAULT_DVA_COUNTRY",
+    )
+
+    # WhatsApp Cloud API (Meta Business)
+    whatsapp_enabled: bool = Field(default=False, alias="WHATSAPP_ENABLED")
+    whatsapp_access_token: str = Field(default="", alias="WHATSAPP_ACCESS_TOKEN")
+    whatsapp_phone_number_id: str = Field(default="", alias="WHATSAPP_PHONE_NUMBER_ID")
+    whatsapp_api_version: str = Field(default="v22.0", alias="WHATSAPP_API_VERSION")
+
 
 cfg = ATSettings()
 
@@ -58,3 +102,32 @@ AT_RECORDING_ENABLED = cfg.at_recording_enabled
 AT_RECORDING_DISCLOSURE = cfg.at_recording_disclosure
 AT_CALL_METADATA_RETENTION_DAYS = cfg.at_call_metadata_retention_days
 AT_SMS_RETENTION_DAYS = cfg.at_sms_retention_days
+
+# Paystack
+PAYSTACK_ENABLED = cfg.paystack_enabled
+PAYSTACK_SECRET_KEY = cfg.paystack_secret_key
+PAYSTACK_PUBLIC_KEY = cfg.paystack_public_key
+PAYSTACK_WEBHOOK_SECRET = cfg.paystack_webhook_secret
+PAYSTACK_INITIALIZE_URL = cfg.paystack_initialize_url
+PAYSTACK_VERIFY_URL_TEMPLATE = cfg.paystack_verify_url_template
+PAYSTACK_DEFAULT_CALLBACK_URL = cfg.paystack_default_callback_url
+PAYSTACK_CUSTOMER_URL = cfg.paystack_customer_url
+PAYSTACK_DEDICATED_ACCOUNT_URL = cfg.paystack_dedicated_account_url
+PAYSTACK_DEDICATED_ACCOUNT_PROVIDERS_URL = cfg.paystack_dedicated_account_providers_url
+def _resolve_dva_bank_slug(explicit: str, secret_key: str) -> str:
+    """Return the DVA bank slug, auto-detecting test-bank for test keys."""
+    if explicit:
+        return explicit
+    if secret_key.startswith("sk_test_"):
+        return "test-bank"
+    return "wema-bank"
+
+
+PAYSTACK_DEFAULT_DVA_BANK_SLUG = _resolve_dva_bank_slug(cfg.paystack_default_dva_bank_slug, cfg.paystack_secret_key)
+PAYSTACK_DEFAULT_DVA_COUNTRY = cfg.paystack_default_dva_country
+
+# WhatsApp Cloud API
+WHATSAPP_ENABLED = cfg.whatsapp_enabled
+WHATSAPP_ACCESS_TOKEN = cfg.whatsapp_access_token
+WHATSAPP_PHONE_NUMBER_ID = cfg.whatsapp_phone_number_id
+WHATSAPP_API_VERSION = cfg.whatsapp_api_version

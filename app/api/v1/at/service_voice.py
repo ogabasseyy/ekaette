@@ -14,6 +14,7 @@ from .settings import (
     AT_RECORDING_ENABLED,
     AT_RECORDING_DISCLOSURE,
 )
+from app.tools.pii_redaction import redact_pii
 
 logger = logging.getLogger(__name__)
 
@@ -31,8 +32,12 @@ def resolve_tenant_context(destination_number: str) -> tuple[str, str]:
 def build_dial_xml(sip_endpoint: str, caller_id: str) -> str:
     """Build AT XML to bridge caller to SIP-to-AI server.
 
+    When SIP endpoint is not configured, returns a <Say> greeting fallback.
     When recording is enabled, prepends a <Say> disclosure per data governance.
     """
+    if not sip_endpoint:
+        return build_say_fallback_xml()
+
     record_attr = 'record="true"' if AT_RECORDING_ENABLED else 'record="false"'
     disclosure = ""
     if AT_RECORDING_ENABLED and AT_RECORDING_DISCLOSURE:
@@ -49,6 +54,18 @@ def build_dial_xml(sip_endpoint: str, caller_id: str) -> str:
     )
 
 
+def build_say_fallback_xml() -> str:
+    """Build AT XML greeting when SIP bridge is not yet configured."""
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        "<Response>\n"
+        "    <Say>Hello, thank you for calling Ekaette. "
+        "Our AI voice assistant is being configured. "
+        "Please try again shortly or visit our website for support. Goodbye.</Say>\n"
+        "</Response>"
+    )
+
+
 def build_end_xml() -> str:
     """Build empty AT XML response for ended calls."""
     return "<Response/>"
@@ -61,7 +78,7 @@ def log_call_bridged(session_id: str, caller: str, direction: str) -> None:
         "AT call bridged",
         extra={
             "at_session_id": session_id,
-            "caller": caller,
+            "caller": redact_pii(caller),
             "direction": direction,
             "tenant_id": tenant_id,
             "company_id": company_id,
@@ -81,7 +98,7 @@ def log_call_ended(
         "AT call ended",
         extra={
             "at_session_id": session_id,
-            "caller": caller,
+            "caller": redact_pii(caller),
             "duration_seconds": duration_seconds,
             "amount": amount,
         },

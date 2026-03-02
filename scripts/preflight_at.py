@@ -57,7 +57,13 @@ def validate_sip_bridge_env() -> list[str]:
         return errors
 
     # If bridge endpoint is set, validate bridge-side vars
-    for var in ("SIP_BRIDGE_HOST", "SIP_BRIDGE_PORT"):
+    for var in (
+        "SIP_BRIDGE_HOST",
+        "SIP_BRIDGE_PORT",
+        "SIP_PUBLIC_IP",
+        "SIP_USERNAME",
+        "SIP_PASSWORD",
+    ):
         err = _check_env(var)
         if err:
             errors.append(err)
