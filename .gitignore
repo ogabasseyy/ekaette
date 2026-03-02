@@ -9,6 +9,7 @@ __pycache__/
 *$py.class
 *.so
 .venv/
+.venv*/
 venv/
 *.egg-info/
 dist/
@@ -63,3 +64,7 @@ terraform/.terraform.lock.hcl
 tmp/
 frontend/.pnpmrc.json
 .data/
+
+# Dev/debug scripts (not production code)
+patch_*.py
+test_genai.py

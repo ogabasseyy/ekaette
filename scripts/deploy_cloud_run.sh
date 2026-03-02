@@ -45,11 +45,47 @@ if [[ "${RUN_RELEASE_GATE}" == "1" ]]; then
 fi
 
 echo "Deploying ${SERVICE_NAME} to Cloud Run (${REGION}) in project ${PROJECT_ID}"
-ADMIN_AUTH_MODE="${ADMIN_AUTH_MODE:-iap}"
-ADMIN_IAP_AUDIENCE="${ADMIN_IAP_AUDIENCE:-}"
-IDEMPOTENCY_STORE_BACKEND="${IDEMPOTENCY_STORE_BACKEND:-firestore}"
-CONNECTOR_CIRCUIT_BACKEND="${CONNECTOR_CIRCUIT_BACKEND:-firestore}"
-CONNECTOR_LOCK_BACKEND="${CONNECTOR_LOCK_BACKEND:-firestore}"
+
+# ── Memory Bank (Agent Engine) ────────────────────────────────────────────────
+# For production memory persistence, set AGENT_ENGINE_ID in .env before deploy.
+# Provision with: python -m scripts.provision_agent_engine
+# The AGENT_ENGINE_ID is auto-read from .env and passed to Cloud Run below.
+
+# ── Build env-vars YAML file from .env ────────────────────────────────────────
+ENV_FILE="${ENV_FILE:-.env}"
+ENV_YAML=$(mktemp /tmp/deploy-env-XXXXXX.yaml)
+trap 'rm -f "${ENV_YAML}"' EXIT
+
+if [[ -f "${ENV_FILE}" ]]; then
+  echo "Reading environment variables from ${ENV_FILE}"
+  count=0
+  while IFS='=' read -r key value; do
+    # Skip comments, blank lines, and keys with empty values
+    [[ -z "${key}" || "${key}" =~ ^# ]] && continue
+    [[ -z "${value}" ]] && continue
+    # Strip surrounding quotes from value
+    value="${value%\"}"
+    value="${value#\"}"
+    value="${value%\'}"
+    value="${value#\'}"
+    # Skip placeholder values
+    [[ "${value}" == "<"*">" ]] && continue
+    # Skip Cloud Run reserved env vars
+    [[ "${key}" == "PORT" || "${key}" == "K_SERVICE" || "${key}" == "K_REVISION" || "${key}" == "K_CONFIGURATION" ]] && continue
+    # Write as YAML (quote values to handle commas, colons, etc.)
+    echo "${key}: \"${value}\"" >> "${ENV_YAML}"
+    count=$((count + 1))
+  done < <(grep -E '^[A-Z_]+=.' "${ENV_FILE}")
+  echo "Loaded ${count} env vars into ${ENV_YAML}"
+else
+  echo "Warning: ${ENV_FILE} not found — deploying with minimal env vars"
+  cat > "${ENV_YAML}" <<YAML
+ADMIN_AUTH_MODE: iap
+IDEMPOTENCY_STORE_BACKEND: firestore
+CONNECTOR_CIRCUIT_BACKEND: firestore
+CONNECTOR_LOCK_BACKEND: firestore
+YAML
+fi
 
 gcloud run deploy "${SERVICE_NAME}" \
   --source . \
@@ -61,6 +97,6 @@ gcloud run deploy "${SERVICE_NAME}" \
   --cpu "${CPU}" \
   --min-instances "${MIN_INSTANCES}" \
   --allow-unauthenticated \
-  --set-env-vars "ADMIN_AUTH_MODE=${ADMIN_AUTH_MODE},ADMIN_IAP_AUDIENCE=${ADMIN_IAP_AUDIENCE},IDEMPOTENCY_STORE_BACKEND=${IDEMPOTENCY_STORE_BACKEND},CONNECTOR_CIRCUIT_BACKEND=${CONNECTOR_CIRCUIT_BACKEND},CONNECTOR_LOCK_BACKEND=${CONNECTOR_LOCK_BACKEND}"
+  --env-vars-file "${ENV_YAML}"
 
 echo "Deployment complete."
