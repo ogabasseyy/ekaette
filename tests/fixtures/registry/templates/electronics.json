@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "id": "electronics",
+  "label": "Electronics & Gadgets",
+  "category": "retail",
+  "description": "Trade-ins, valuation, negotiation, pickup booking.",
+  "default_voice": "Aoede",
+  "greeting_policy": "Welcome! I can help you with device trade-ins, swaps, and purchases.",
+  "theme": {
+    "accent": "oklch(74% 0.21 158)",
+    "accentSoft": "oklch(74% 0.21 158 / 0.15)",
+    "title": "Electronics Trade Desk",
+    "hint": "Inspect. Value. Negotiate. Book pickup."
+  },
+  "capabilities": ["catalog_lookup", "valuation_tradein", "booking_reservations"],
+  "enabled_agents": ["vision_agent", "valuation_agent", "booking_agent", "catalog_agent", "support_agent"],
+  "connectors_supported": ["crm"],
+  "status": "active"
+}

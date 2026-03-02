@@ -1,0 +1,152 @@
+[
+  {
+    "id": "prod-iphone-15-pro-max",
+    "name": "iPhone 15 Pro Max",
+    "price": 950000,
+    "currency": "NGN",
+    "category": "smartphones",
+    "brand": "Apple",
+    "in_stock": true,
+    "features": ["A17 Pro chip", "48MP camera", "Titanium design", "USB-C"],
+    "description": "Flagship Apple smartphone with titanium frame and advanced camera system.",
+    "data_tier": "demo"
+  },
+  {
+    "id": "prod-iphone-15-pro",
+    "name": "iPhone 15 Pro",
+    "price": 850000,
+    "currency": "NGN",
+    "category": "smartphones",
+    "brand": "Apple",
+    "in_stock": true,
+    "features": ["A17 Pro chip", "48MP camera", "Titanium design"],
+    "description": "Pro-level iPhone with titanium build and ProMotion display.",
+    "data_tier": "demo"
+  },
+  {
+    "id": "prod-iphone-14",
+    "name": "iPhone 14",
+    "price": 520000,
+    "currency": "NGN",
+    "category": "smartphones",
+    "brand": "Apple",
+    "in_stock": true,
+    "features": ["A15 Bionic", "Dual camera", "Crash Detection"],
+    "description": "Reliable mid-range iPhone with excellent battery life.",
+    "data_tier": "demo"
+  },
+  {
+    "id": "prod-samsung-s24-ultra",
+    "name": "Samsung Galaxy S24 Ultra",
+    "price": 780000,
+    "currency": "NGN",
+    "category": "smartphones",
+    "brand": "Samsung",
+    "in_stock": true,
+    "features": ["Snapdragon 8 Gen 3", "200MP camera", "S Pen", "AI tools"],
+    "description": "Samsung's most powerful Galaxy with built-in S Pen and Galaxy AI.",
+    "data_tier": "demo"
+  },
+  {
+    "id": "prod-samsung-s24",
+    "name": "Samsung Galaxy S24",
+    "price": 620000,
+    "currency": "NGN",
+    "category": "smartphones",
+    "brand": "Samsung",
+    "in_stock": true,
+    "features": ["Snapdragon 8 Gen 3", "120Hz AMOLED", "AI camera tools"],
+    "description": "Compact flagship with Galaxy AI features and vibrant display.",
+    "data_tier": "demo"
+  },
+  {
+    "id": "prod-google-pixel-8",
+    "name": "Google Pixel 8",
+    "price": 450000,
+    "currency": "NGN",
+    "category": "smartphones",
+    "brand": "Google",
+    "in_stock": false,
+    "features": ["Tensor G3", "Best-in-class camera AI", "7 years updates"],
+    "description": "Google's AI-first phone with industry-leading software support.",
+    "data_tier": "demo"
+  },
+  {
+    "id": "prod-ipad-air-m2",
+    "name": "iPad Air M2",
+    "price": 680000,
+    "currency": "NGN",
+    "category": "tablets",
+    "brand": "Apple",
+    "in_stock": true,
+    "features": ["M2 chip", "10.9-inch Liquid Retina", "Apple Pencil support"],
+    "description": "Powerful tablet for creatives and professionals.",
+    "data_tier": "demo"
+  },
+  {
+    "id": "prod-samsung-tab-s9",
+    "name": "Samsung Galaxy Tab S9",
+    "price": 520000,
+    "currency": "NGN",
+    "category": "tablets",
+    "brand": "Samsung",
+    "in_stock": true,
+    "features": ["Snapdragon 8 Gen 2", "120Hz AMOLED", "S Pen included"],
+    "description": "Premium Android tablet with stunning display and S Pen.",
+    "data_tier": "demo"
+  },
+  {
+    "id": "prod-macbook-air-m3",
+    "name": "MacBook Air M3",
+    "price": 1250000,
+    "currency": "NGN",
+    "category": "laptops",
+    "brand": "Apple",
+    "in_stock": true,
+    "features": ["M3 chip", "18hr battery", "Fanless design", "13.6-inch Retina"],
+    "description": "Ultra-portable laptop with all-day battery and silent operation.",
+    "data_tier": "demo"
+  },
+  {
+    "id": "prod-airpods-pro-2",
+    "name": "AirPods Pro 2",
+    "price": 180000,
+    "currency": "NGN",
+    "category": "accessories",
+    "brand": "Apple",
+    "in_stock": true,
+    "features": ["Active Noise Cancellation", "USB-C", "Adaptive Audio"],
+    "description": "Premium wireless earbuds with spatial audio and ANC.",
+    "data_tier": "demo"
+  },
+  {
+    "id": "prod-cctv-bundle-4ch",
+    "name": "CCTV Security Bundle (4-Camera + DVR)",
+    "price": 980000,
+    "currency": "NGN",
+    "category": "security",
+    "brand": "Hikvision",
+    "in_stock": true,
+    "features": [
+      "4 x 2MP HD cameras",
+      "8-channel DVR",
+      "1TB surveillance HDD",
+      "60m cabling kit",
+      "12V power supply"
+    ],
+    "description": "Complete starter CCTV kit for shops, warehouses, and homes with same-week installation support.",
+    "data_tier": "demo"
+  },
+  {
+    "id": "prod-anker-powerbank-26k",
+    "name": "Anker PowerCore 26800",
+    "price": 32000,
+    "currency": "NGN",
+    "category": "accessories",
+    "brand": "Anker",
+    "in_stock": true,
+    "features": ["26800mAh", "Dual USB-A", "PowerIQ fast charging"],
+    "description": "High-capacity portable charger for multiple device charges.",
+    "data_tier": "demo"
+  }
+]
