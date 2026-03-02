@@ -101,6 +101,26 @@ class AdminSettings(BaseSettings):
     )
 
     knowledge_import_max_bytes: int = Field(default=1_048_576, alias="KNOWLEDGE_IMPORT_MAX_BYTES")
+    inventory_import_max_bytes: int = Field(default=5_242_880, alias="INVENTORY_IMPORT_MAX_BYTES")
+    inventory_sync_http_timeout_seconds: float = Field(
+        default=20.0,
+        alias="INVENTORY_SYNC_HTTP_TIMEOUT_SECONDS",
+    )
+    inventory_sync_internal_enabled: bool = Field(default=False, alias="INVENTORY_SYNC_INTERNAL_ENABLED")
+    inventory_sync_internal_auth_mode: str = Field(default="oidc", alias="INVENTORY_SYNC_INTERNAL_AUTH_MODE")
+    inventory_sync_internal_shared_secret: str = Field(
+        default="",
+        alias="INVENTORY_SYNC_INTERNAL_SHARED_SECRET",
+    )
+    inventory_sync_internal_audience: str = Field(default="", alias="INVENTORY_SYNC_INTERNAL_AUDIENCE")
+    inventory_sync_internal_allowed_service_accounts: str = Field(
+        default="",
+        alias="INVENTORY_SYNC_INTERNAL_ALLOWED_SERVICE_ACCOUNTS",
+    )
+    inventory_sync_internal_max_companies: int = Field(
+        default=250,
+        alias="INVENTORY_SYNC_INTERNAL_MAX_COMPANIES",
+    )
 
     token_allowed_tenants: str = Field(default="public", alias="TOKEN_ALLOWED_TENANTS")
 
@@ -186,6 +206,16 @@ _idempotency_store: dict[str, dict[str, object]] = {}
 _idempotency_store_lock = threading.Lock()
 
 KNOWLEDGE_IMPORT_MAX_BYTES = int(_cfg.knowledge_import_max_bytes)
+INVENTORY_IMPORT_MAX_BYTES = int(_cfg.inventory_import_max_bytes)
+INVENTORY_SYNC_HTTP_TIMEOUT_SECONDS = float(_cfg.inventory_sync_http_timeout_seconds)
+INVENTORY_SYNC_INTERNAL_ENABLED = bool(_cfg.inventory_sync_internal_enabled)
+INVENTORY_SYNC_INTERNAL_AUTH_MODE = (_cfg.inventory_sync_internal_auth_mode or "oidc").strip().lower()
+INVENTORY_SYNC_INTERNAL_SHARED_SECRET = (_cfg.inventory_sync_internal_shared_secret or "").strip()
+INVENTORY_SYNC_INTERNAL_AUDIENCE = (_cfg.inventory_sync_internal_audience or "").strip()
+INVENTORY_SYNC_INTERNAL_ALLOWED_SERVICE_ACCOUNTS = _parse_csv_set(
+    _cfg.inventory_sync_internal_allowed_service_accounts
+)
+INVENTORY_SYNC_INTERNAL_MAX_COMPANIES = max(1, min(int(_cfg.inventory_sync_internal_max_companies), 500))
 
 TOKEN_ALLOWED_TENANTS = set(_parse_allowlist(_cfg.token_allowed_tenants))
 

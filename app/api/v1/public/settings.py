@@ -66,6 +66,9 @@ class PublicRuntimeSettings(BaseSettings):
         alias="TOKEN_PRICE_COMPLETION_PER_MILLION_USD",
     )
 
+    ws_token_secret: str = Field(default="", alias="WS_TOKEN_SECRET")
+    ws_token_ttl_seconds: int = Field(default=0, alias="WS_TOKEN_TTL_SECONDS")
+
     registry_enabled: bool = Field(default=True, alias="REGISTRY_ENABLED")
     registry_require_company_template_match: bool = Field(
         default=False,
@@ -108,8 +111,17 @@ DEBUG_TELEMETRY = bool(_cfg.debug_telemetry)
 TOKEN_PRICE_PROMPT_PER_MILLION = float(_cfg.token_price_prompt_per_million_usd)
 TOKEN_PRICE_COMPLETION_PER_MILLION = float(_cfg.token_price_completion_per_million_usd)
 
+WS_TOKEN_SECRET = (_cfg.ws_token_secret or "").strip()
+WS_TOKEN_TTL_SECONDS = int(_cfg.ws_token_ttl_seconds)
+
 REGISTRY_ENABLED = bool(_cfg.registry_enabled)
 REGISTRY_REQUIRE_COMPANY_TEMPLATE_MATCH = bool(_cfg.registry_require_company_template_match)
+
+# Initialize ws_auth module secret at import time so token
+# creation/validation work without extra wiring steps.
+from app.api.v1.public import ws_auth as _ws_auth_mod  # noqa: E402
+
+_ws_auth_mod._WS_TOKEN_SECRET = WS_TOKEN_SECRET
 
 
 def build_live_model_candidates(primary_model: str, additional_models: list[str]) -> list[str]:

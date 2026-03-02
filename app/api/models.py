@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -111,3 +113,36 @@ class AdminRetentionPurgePayload(BaseModel):
     older_than_days: int = Field(alias="olderThanDays", ge=1, le=3650)
     collections: list[str] = Field(default_factory=lambda: ["knowledge"])
     data_tier: str | None = Field(default=None, alias="dataTier", max_length=32)
+
+
+class AdminInventorySyncPayload(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    source_type: Literal["google_sheets", "mcp_connector"] = Field(alias="sourceType")
+    source_url: str | None = Field(default=None, alias="sourceUrl", max_length=4096)
+    connector_id: str | None = Field(default=None, alias="connectorId", max_length=80)
+    sheet_name: str | None = Field(default=None, alias="sheetName", max_length=128)
+    data_tier: str = Field(default="admin", alias="dataTier", min_length=2, max_length=32)
+    dry_run: bool = Field(default=False, alias="dryRun")
+
+
+class AdminInventorySyncConfigPayload(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    source_type: Literal["google_sheets", "mcp_connector"] = Field(alias="sourceType")
+    source_url: str | None = Field(default=None, alias="sourceUrl", max_length=4096)
+    connector_id: str | None = Field(default=None, alias="connectorId", max_length=80)
+    sheet_name: str | None = Field(default=None, alias="sheetName", max_length=128)
+    data_tier: str = Field(default="admin", alias="dataTier", min_length=2, max_length=32)
+    dry_run: bool = Field(default=False, alias="dryRun")
+    auto_enabled: bool = Field(default=False, alias="autoEnabled")
+    interval_minutes: int = Field(default=15, alias="intervalMinutes", ge=1, le=1440)
+
+
+class AdminInventorySyncRunPayload(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    company_id: str | None = Field(default=None, alias="companyId", max_length=64)
+    max_companies: int = Field(default=50, alias="maxCompanies", ge=1, le=500)
+    force: bool = Field(default=False)
+    dry_run_override: bool | None = Field(default=None, alias="dryRunOverride")

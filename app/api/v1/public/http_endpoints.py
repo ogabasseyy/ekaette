@@ -211,6 +211,27 @@ async def create_ephemeral_token(
         "vadMode": "manual" if MANUAL_VAD_ACTIVE else "auto",
     }
 
+    # Include a signed WS auth token when WS_TOKEN_SECRET is configured.
+    # Import as module to avoid shadowing TOKEN_TTL_SECONDS injected by
+    # configure_runtime() — a bare `from .settings import TOKEN_TTL_SECONDS`
+    # would create a local binding that shadows the globals() value and cause
+    # UnboundLocalError on line 60.
+    from . import settings as _pub_settings
+    from .ws_auth import create_ws_token
+
+    if _pub_settings.WS_TOKEN_SECRET:
+        ws_ttl = (
+            _pub_settings.WS_TOKEN_TTL_SECONDS
+            if _pub_settings.WS_TOKEN_TTL_SECONDS > 0
+            else TOKEN_TTL_SECONDS
+        )
+        response["wsToken"] = create_ws_token(
+            user_id=payload.user_id,
+            tenant_id=normalized_tenant_id,
+            company_id=normalized_company_id,
+            ttl_seconds=ws_ttl,
+        )
+
     response["voice"] = resolved_voice or _voice_for_industry(resolved_legacy_industry)
     if registry_config is not None:
         template_id = getattr(registry_config, "industry_template_id", None)

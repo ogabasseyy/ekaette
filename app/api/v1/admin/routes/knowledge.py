@@ -16,6 +16,13 @@ from app.api.v1.admin.idempotency import require_idempotency_key
 
 logger = logging.getLogger(__name__)
 
+try:
+    from kreuzberg import extract_bytes as _extract_bytes
+
+    _HAS_KREUZBERG = True
+except ImportError:  # pragma: no cover – kreuzberg is a required dep
+    _HAS_KREUZBERG = False
+
 router = APIRouter()
 
 
@@ -298,7 +305,18 @@ async def import_admin_company_knowledge_file_route(
             status_code=413,
             content={"error": "Upload exceeds max size", "code": "UPLOAD_TOO_LARGE", "maxBytes": _m.KNOWLEDGE_IMPORT_MAX_BYTES},
         )
-    text = raw.decode("utf-8", errors="ignore").strip()
+    # Use kreuzberg to extract text from any supported format (PDF, DOCX, XLSX, etc.)
+    if _HAS_KREUZBERG:
+        try:
+            mime_type = file.content_type or "application/octet-stream"
+            result = await _extract_bytes(raw, mime_type=mime_type)
+            text = result.content.strip()
+        except Exception as exc:
+            logger.warning("kreuzberg extraction failed for %s: %s", file.filename, exc)
+            # Fallback: try plain UTF-8 decode for simple text files
+            text = raw.decode("utf-8", errors="ignore").strip()
+    else:
+        text = raw.decode("utf-8", errors="ignore").strip()
     if not text:
         return JSONResponse(status_code=400, content={"error": "File has no readable text", "code": "INVALID_FILE_TEXT"})
     parsed_tags = [item.strip() for item in tags.split(",")] if isinstance(tags, str) and tags.strip() else ["file"]

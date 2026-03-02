@@ -56,6 +56,7 @@ def _admin_company_response(
     template_id = _m._normalize_template_id(company.get("industry_template_id")) or ""
     status = str(company.get("status") or "active").strip().lower() or "active"
     connectors = company.get("connectors")
+    inventory_sync = company.get("inventory_sync")
     facts = company.get("facts")
     links = company.get("links")
     return {
@@ -65,6 +66,7 @@ def _admin_company_response(
         "displayName": str(display_name),
         "status": status,
         "connectors": connectors if isinstance(connectors, dict) else {},
+        "inventorySync": inventory_sync if isinstance(inventory_sync, dict) else {},
         "overview": str(company.get("overview") or ""),
         "facts": facts if isinstance(facts, dict) else {},
         "links": links if isinstance(links, list) else [],

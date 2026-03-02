@@ -32,9 +32,15 @@ async def client(app):
 def _reset_in_memory_state(admin_runtime):
     from app.api.v1.admin import settings as admin_settings
 
+    # Force in-memory idempotency backend for tests — contract tests must
+    # never hit real Firestore.  The production .env may set "firestore"
+    # which would read stale documents that reset_runtime_state() cannot clear.
+    original_backend = admin_settings.IDEMPOTENCY_STORE_BACKEND
+    admin_settings.IDEMPOTENCY_STORE_BACKEND = "memory"
     admin_settings.reset_runtime_state()
     yield
     admin_settings.reset_runtime_state()
+    admin_settings.IDEMPOTENCY_STORE_BACKEND = original_backend
 
 
 def _admin_headers(*, tenant_id: str = "public") -> dict[str, str]:
@@ -469,6 +475,41 @@ class TestAdminV1Contracts:
         assert payload["deleted"] is True
 
     @pytest.mark.asyncio
+    async def test_post_demo_seed_contract(self, client, admin_runtime, monkeypatch):
+        async def _fake_load_company(**kwargs):
+            return _company_doc(company_id=kwargs["company_id"], template_id="electronics"), None
+
+        async def _fake_seed_demo(**kwargs):
+            return {
+                "seedVersion": "electronics-v1",
+                "dataTier": "demo",
+                "ok": True,
+                "sections": {
+                    "knowledge": {"ok": True, "written": 4},
+                    "connectors": {"ok": True, "connectorId": "crm", "created": True},
+                    "products": {"ok": True, "written": 12},
+                    "booking_slots": {"ok": True, "written": 8},
+                },
+                "errors": [],
+            }
+
+        monkeypatch.setattr(admin_runtime, "_load_registry_company_doc", _fake_load_company)
+        monkeypatch.setattr(admin_runtime, "_seed_company_demo_data", _fake_seed_demo)
+
+        response = await client.post(
+            "/api/v1/admin/companies/ekaette-electronics/seed/demo?tenantId=public",
+            headers={**_admin_headers(), "Idempotency-Key": "contract-seed-demo-1"},
+        )
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["apiVersion"] == "v1"
+        assert payload["companyId"] == "ekaette-electronics"
+        assert payload["seedVersion"] == "electronics-v1"
+        assert payload["ok"] is True
+        assert isinstance(payload["sections"], dict)
+        assert isinstance(payload["errors"], list)
+
+    @pytest.mark.asyncio
     async def test_post_products_import_contract(self, client, admin_runtime, monkeypatch):
         async def _fake_load_company(**kwargs):
             return _company_doc(company_id=kwargs["company_id"], template_id="electronics"), None
@@ -505,6 +546,137 @@ class TestAdminV1Contracts:
         assert payload["apiVersion"] == "v1"
         assert payload["collection"] == "products"
         assert isinstance(payload["operations"], dict)
+
+    @pytest.mark.asyncio
+    async def test_post_inventory_sync_contract(self, client, admin_runtime, monkeypatch):
+        async def _fake_load_company(**kwargs):
+            return _company_doc(company_id=kwargs["company_id"], template_id="electronics"), None
+
+        async def _fake_sync_google_sheet(**kwargs):
+            return {
+                "parsedRows": 2,
+                "normalizedRows": 2,
+                "written": 2,
+                "operations": {"created": 2, "updated": 0, "unchanged": 0, "failed": 0},
+                "errors": [],
+                "dryRun": False,
+            }
+
+        monkeypatch.setattr(admin_runtime, "_load_registry_company_doc", _fake_load_company)
+        monkeypatch.setattr(admin_runtime, "_sync_company_inventory_from_google_sheet", _fake_sync_google_sheet)
+        monkeypatch.setattr(admin_runtime, "_inventory_sync_metadata", lambda **kwargs: {"status": "success"})
+        monkeypatch.setattr(admin_runtime, "_save_registry_company_doc", AsyncMock())
+
+        response = await client.post(
+            "/api/v1/admin/companies/ekaette-electronics/inventory/sync?tenantId=public",
+            headers={**_admin_headers(), "Idempotency-Key": "contract-inventory-sync-1"},
+            json={
+                "sourceType": "google_sheets",
+                "sourceUrl": "https://docs.google.com/spreadsheets/d/test-sheet-id/edit#gid=0",
+                "dataTier": "admin",
+                "dryRun": False,
+            },
+        )
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["apiVersion"] == "v1"
+        assert payload["sourceType"] == "google_sheets"
+        assert payload["companyId"] == "ekaette-electronics"
+        assert isinstance(payload["operations"], dict)
+
+    @pytest.mark.asyncio
+    async def test_post_inventory_upload_contract(self, client, admin_runtime, monkeypatch):
+        async def _fake_load_company(**kwargs):
+            return _company_doc(company_id=kwargs["company_id"], template_id="electronics"), None
+
+        async def _fake_sync_upload(**kwargs):
+            return {
+                "parsedRows": 1,
+                "normalizedRows": 1,
+                "written": 1,
+                "operations": {"created": 1, "updated": 0, "unchanged": 0, "failed": 0},
+                "errors": [],
+                "dryRun": False,
+            }
+
+        monkeypatch.setattr(admin_runtime, "_load_registry_company_doc", _fake_load_company)
+        monkeypatch.setattr(admin_runtime, "_sync_company_inventory_from_upload", _fake_sync_upload)
+        monkeypatch.setattr(admin_runtime, "_inventory_sync_metadata", lambda **kwargs: {"status": "success"})
+        monkeypatch.setattr(admin_runtime, "_save_registry_company_doc", AsyncMock())
+
+        response = await client.post(
+            "/api/v1/admin/companies/ekaette-electronics/inventory/upload?tenantId=public",
+            headers={**_admin_headers(), "Idempotency-Key": "contract-inventory-upload-1"},
+            data={"data_tier": "admin", "dry_run": "false"},
+            files={"file": ("inventory.csv", b"id,name,category,price,currency,in_stock\nsku-1,iPhone,phones,500,USD,true\n", "text/csv")},
+        )
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["apiVersion"] == "v1"
+        assert payload["companyId"] == "ekaette-electronics"
+        assert payload["fileName"] == "inventory.csv"
+        assert isinstance(payload["operations"], dict)
+
+    @pytest.mark.asyncio
+    async def test_put_inventory_sync_config_contract(self, client, admin_runtime, monkeypatch):
+        async def _fake_load_company(**kwargs):
+            return _company_doc(company_id=kwargs["company_id"], template_id="electronics"), None
+
+        monkeypatch.setattr(admin_runtime, "_load_registry_company_doc", _fake_load_company)
+        monkeypatch.setattr(admin_runtime, "_inventory_sync_metadata", lambda **kwargs: {"status": "configured"})
+        monkeypatch.setattr(admin_runtime, "_save_registry_company_doc", AsyncMock())
+
+        response = await client.put(
+            "/api/v1/admin/companies/ekaette-electronics/inventory/sync/config?tenantId=public",
+            headers={**_admin_headers(), "Idempotency-Key": "contract-inventory-config-1"},
+            json={
+                "sourceType": "google_sheets",
+                "sourceUrl": "https://docs.google.com/spreadsheets/d/test-sheet-id/edit#gid=0",
+                "dataTier": "admin",
+                "dryRun": False,
+                "autoEnabled": True,
+                "intervalMinutes": 30,
+            },
+        )
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["apiVersion"] == "v1"
+        assert payload["configured"] is True
+        assert isinstance(payload["inventorySync"], dict)
+
+    @pytest.mark.asyncio
+    async def test_post_inventory_sync_run_contract(self, client, admin_runtime, monkeypatch):
+        async def _fake_run_jobs(**kwargs):
+            return {
+                "tenantId": "public",
+                "companyId": kwargs.get("company_id"),
+                "force": kwargs.get("force", False),
+                "dryRunOverride": kwargs.get("dry_run_override"),
+                "processed": 1,
+                "triggered": 1,
+                "skipped": 0,
+                "results": [{"companyId": "ekaette-electronics", "status": "success", "written": 2}],
+                "runAt": "2026-02-28T10:00:00+00:00",
+            }
+
+        monkeypatch.setattr(admin_runtime, "_run_inventory_sync_jobs", _fake_run_jobs)
+
+        response = await client.post(
+            "/api/v1/admin/inventory/sync/run?tenantId=public",
+            headers={**_admin_headers(), "Idempotency-Key": "contract-inventory-run-1"},
+            json={
+                "companyId": "ekaette-electronics",
+                "maxCompanies": 10,
+                "force": True,
+                "dryRunOverride": False,
+            },
+        )
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["apiVersion"] == "v1"
+        assert payload["processed"] == 1
+        assert payload["triggered"] == 1
+        assert isinstance(payload["results"], list)
 
     @pytest.mark.asyncio
     async def test_post_booking_slots_import_contract(self, client, admin_runtime, monkeypatch):

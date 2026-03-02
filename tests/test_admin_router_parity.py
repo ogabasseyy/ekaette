@@ -21,7 +21,12 @@ def test_admin_route_parity_after_router_extraction():
         ("PUT", "/api/v1/admin/companies/{company_id}/connectors/{connector_id}"),
         ("POST", "/api/v1/admin/companies/{company_id}/connectors/{connector_id}/test"),
         ("DELETE", "/api/v1/admin/companies/{company_id}/connectors/{connector_id}"),
+        ("POST", "/api/v1/admin/companies/{company_id}/seed/demo"),
         ("POST", "/api/v1/admin/companies/{company_id}/products/import"),
+        ("POST", "/api/v1/admin/companies/{company_id}/inventory/sync"),
+        ("POST", "/api/v1/admin/companies/{company_id}/inventory/upload"),
+        ("PUT", "/api/v1/admin/companies/{company_id}/inventory/sync/config"),
+        ("POST", "/api/v1/admin/inventory/sync/run"),
         ("POST", "/api/v1/admin/companies/{company_id}/booking-slots/import"),
         ("POST", "/api/v1/admin/companies/{company_id}/runtime/purge-demo"),
         ("POST", "/api/v1/admin/companies/{company_id}/export"),
@@ -43,6 +48,6 @@ def test_admin_route_parity_after_router_extraction():
             endpoint_modules.append(getattr(route.endpoint, "__module__", ""))
 
     assert found == expected
-    assert len(found) == 20
+    assert len(found) == 25
     assert endpoint_modules
     assert all(module.startswith("app.api.v1.admin.routes") for module in endpoint_modules)

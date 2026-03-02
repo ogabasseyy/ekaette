@@ -34,5 +34,5 @@ def test_admin_routes_still_mounted_from_router_modules():
                 continue
             routes.append((method, path, getattr(route.endpoint, "__module__", "")))
 
-    assert len(routes) == 20
+    assert len(routes) == 25
     assert all(module.startswith("app.api.v1.admin.routes") for _, _, module in routes)
