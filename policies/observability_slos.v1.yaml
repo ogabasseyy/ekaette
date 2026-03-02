@@ -1,0 +1,32 @@
+{
+  "policyVersion": "v1",
+  "service": "ekaette-live-api",
+  "window": "15m",
+  "slos": {
+    "onboarding_config": {
+      "path": "/api/onboarding/config",
+      "latencyP95Ms": 300,
+      "errorRatePercent": 1.0
+    },
+    "runtime_bootstrap": {
+      "path": "/api/v1/runtime/bootstrap",
+      "latencyP95Ms": 300,
+      "errorRatePercent": 1.0
+    },
+    "token": {
+      "path": "/api/token",
+      "latencyP95Ms": 500,
+      "errorRatePercent": 1.0,
+      "registryMissRatePercent": 0.1
+    },
+    "websocket_startup": {
+      "path": "/ws/{user_id}/{session_id}",
+      "latencyP95Ms": 1500,
+      "errorRatePercent": 1.0
+    },
+    "registry_resolution": {
+      "metric": "registry_resolution_ms",
+      "latencyP95Ms": 100
+    }
+  }
+}

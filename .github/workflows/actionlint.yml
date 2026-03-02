@@ -1,0 +1,31 @@
+name: Actionlint
+
+on:
+  push:
+    branches: [main, dev]
+    paths:
+      - ".github/workflows/**"
+  pull_request:
+    branches: [main, dev]
+    paths:
+      - ".github/workflows/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  actionlint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Run actionlint
+        uses: rhysd/actionlint@393031adb9afb225ee52ae2ccd7a5af5525e03e8 # v1.7.11

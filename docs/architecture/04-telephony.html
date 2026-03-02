@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ekaette — Telephony &amp; Channel Integration</title>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 1200px; margin: 0 auto; padding: 20px; background: #f5f5f5; }
+        h1 { color: #1a1a2e; border-bottom: 3px solid #16213e; padding-bottom: 10px; }
+        h2 { color: #16213e; margin-top: 40px; }
+        .breadcrumb { font-size: 14px; color: #666; margin-bottom: 8px; }
+        .breadcrumb a { color: #1565C0; text-decoration: none; }
+        .breadcrumb a:hover { text-decoration: underline; }
+        .diagram-container { background: white; border-radius: 12px; padding: 24px; margin: 20px 0; box-shadow: 0 2px 8px rgba(0,0,0,0.1); overflow-x: auto; }
+        .diagram-count { color: #666; font-size: 14px; }
+        hr { border: none; border-top: 2px solid #e0e0e0; margin: 40px 0; }
+    </style>
+</head>
+<body>
+    <p class="breadcrumb"><a href="../../Ekaette_Architecture.html">&larr; Architecture Index</a></p>
+    <h1>Telephony &amp; Channel Integration</h1>
+    <p class="diagram-count">5 diagrams</p>
+
+    <hr>
+    <h2>1. SIP Bridge Architecture (GCE VM)</h2>
+    <div class="diagram-container">
+        <pre class="mermaid">
+graph TB
+    subgraph "GCE VM: ekaette-sip (34.69.236.219)"
+        subgraph "sip_bridge/ — Standalone Python Process"
+            MAIN["main.py<br/>Entry point, signal handlers"]
+            CONFIG["config.py<br/>BridgeConfig (frozen dataclass)"]
+
+            subgraph "SIP Signaling Layer"
+                SERVER["server.py<br/>SIPServer + SIPProtocol<br/>UDP :6060"]
+                REGISTER["sip_register.py<br/>SIP REGISTER client"]
+                AUTH["sip_auth.py<br/>Digest auth (RFC 2617)"]
+                DIALOG["sip_dialog.py<br/>INVITE parser, SDP negotiation"]
+            end
+
+            subgraph "Media Pipeline (per call)"
+                SESS["session.py — CallSession"]
+                WA_S["wa_session.py — WaSession"]
+
+                subgraph "4-Task Pattern"
+                    T1["1. _media_recv_loop<br/>UDP recvfrom → queue"]
+                    T2["2. _media_inbound_loop<br/>codec decode → PCM16 16kHz"]
+                    T3["3. _gemini_bidi_loop<br/>PCM16 ↔ Gemini Live"]
+                    T4["4. _media_outbound_loop<br/>PCM16 24kHz → codec encode"]
+                end
+            end
+
+            subgraph "Codec Layer"
+                RTP["rtp.py<br/>RTPPacket, RTPTimer"]
+                CODEC_B["codec_bridge.py<br/>G711CodecBridge"]
+                AUDIO["audio_codec.py<br/>G.711 μ-law, resample"]
+                SRTP_CTX["srtp_context.py<br/>SRTP protect/unprotect"]
+            end
+        end
+    end
+
+    subgraph "External"
+        AT["AT SIP Registrar"]
+        GEMINI["Gemini Live API (v1alpha)"]
+        FSTORE["Firestore (wa_calls)"]
+    end
+
+    MAIN --> CONFIG
+    MAIN --> SERVER
+    SERVER --> REGISTER
+    REGISTER --> AUTH
+    SERVER --> DIALOG
+    SERVER -->|"creates per call"| SESS
+    SERVER -->|"creates per call"| WA_S
+    SESS --> T1
+    SESS --> T2
+    SESS --> T3
+    SESS --> T4
+    T1 --> RTP
+    T2 --> CODEC_B
+    CODEC_B --> AUDIO
+    T4 --> RTP
+    WA_S --> SRTP_CTX
+    REGISTER -->|"REGISTER/401/200"| AT
+    T3 -->|"PCM16 bidi"| GEMINI
+    SESS --> FSTORE
+    WA_S --> FSTORE
+
+    classDef entry fill:#E3F2FD,stroke:#1565C0,stroke-width:2px
+    classDef signaling fill:#FFF8E1,stroke:#F57F17,stroke-width:2px
+    classDef media fill:#E1F5FE,stroke:#0277BD,stroke-width:2px
+    classDef codec fill:#E8F5E9,stroke:#2E7D32,stroke-width:2px
+    classDef external fill:#FCE4EC,stroke:#C62828,stroke-width:2px
+    class MAIN,CONFIG entry
+    class SERVER,REGISTER,AUTH,DIALOG signaling
+    class SESS,WA_S,T1,T2,T3,T4 media
+    class RTP,CODEC_B,AUDIO,SRTP_CTX codec
+    class AT,GEMINI,FSTORE external
+        </pre>
+    </div>
+
+    <hr>
+    <h2>2. Inbound Phone Call Flow (AT → SIP Bridge → Gemini)</h2>
+    <div class="diagram-container">
+        <pre class="mermaid">
+sequenceDiagram
+    participant CALLER as Caller (Phone)
+    participant AT as Africa's Talking<br/>(SIP Registrar)
+    participant SIP as SIPServer<br/>(GCE VM :6060)
+    participant SESS as CallSession<br/>(4-task pipeline)
+    participant GEMINI as Gemini Live API<br/>(v1alpha)
+    participant FS as Firestore
+
+    Note over CALLER,FS: SIP Registration (on startup)
+    SIP->>AT: SIP REGISTER (UDP)
+    AT->>SIP: 401 Unauthorized (nonce challenge)
+    SIP->>SIP: Compute digest auth (MD5/SHA-256)
+    SIP->>AT: SIP REGISTER (with Authorization)
+    AT->>SIP: 200 OK (registered)
+    Note over SIP,AT: Re-registers at 80% of expiry
+
+    Note over CALLER,FS: Inbound Call
+    CALLER->>AT: Dial +2342017001127
+    AT->>SIP: SIP INVITE (SDP: G.711, port X)
+    SIP->>AT: 100 Trying
+    SIP->>SIP: Allocate RTP port (10000-20000)
+    SIP->>AT: 200 OK (SDP: G.711, port Y)
+    AT->>SIP: ACK
+
+    Note over SIP,FS: Session Setup
+    SIP->>SESS: Create CallSession
+    SESS->>FS: Write call start record
+    SESS->>GEMINI: Connect Gemini Live
+    GEMINI-->>SESS: WebSocket connected
+
+    Note over SESS,GEMINI: Proactive Greeting
+    SESS->>GEMINI: send_client_content("[Call connected]")
+    GEMINI->>SESS: Audio greeting (PCM16 24kHz)
+    SESS->>SESS: Encode 24k→8k→G.711→RTP
+    SESS->>AT: RTP audio frames
+    AT->>CALLER: Caller hears AI greeting
+
+    Note over CALLER,GEMINI: Bidirectional Audio
+
+    par Caller speaks
+        CALLER->>AT: Voice audio
+        AT->>SIP: RTP G.711 frames
+        SESS->>SESS: G.711 decode→resample 8k→16k
+        SESS->>GEMINI: send_realtime_input(PCM16 16kHz)
+    and AI responds
+        GEMINI->>SESS: PCM16 24kHz chunks
+        SESS->>SESS: Resample 24k→8k→G.711→RTP
+        SESS->>AT: RTP audio frames
+        AT->>CALLER: Caller hears AI
+    end
+
+    Note over CALLER,FS: Call Ends
+    AT->>SIP: SIP BYE
+    SESS->>GEMINI: Close WebSocket
+    SESS->>FS: Write call end record
+        </pre>
+    </div>
+
+    <hr>
+    <h2>3. WhatsApp Call Flow (Opus/SRTP → Gemini)</h2>
+    <div class="diagram-container">
+        <pre class="mermaid">
+sequenceDiagram
+    participant WA as WhatsApp Caller
+    participant WA_SIP as WaSipClient<br/>(GCE VM)
+    participant WA_SESS as WaSession<br/>(4-task pipeline)
+    participant GEMINI as Gemini Live API<br/>(v1alpha)
+    participant FS as Firestore
+
+    Note over WA,FS: WhatsApp Call Setup
+    WA->>WA_SIP: WhatsApp call signaling
+    WA_SIP->>WA_SIP: Negotiate Opus codec, SRTP keys
+    WA_SIP->>WA_SESS: Create WaSession
+    WA_SESS->>FS: Write call start record
+    WA_SESS->>GEMINI: Connect Gemini Live (proactive_audio=True)
+
+    Note over WA_SESS,GEMINI: Proactive Greeting
+    WA_SESS->>GEMINI: send_client_content("[Call connected]")
+    GEMINI->>WA_SESS: Audio greeting (PCM16 24kHz)
+
+    Note over WA,GEMINI: Bidirectional Audio
+
+    par Caller speaks
+        WA->>WA_SIP: SRTP Opus frames
+        WA_SESS->>WA_SESS: SRTP unprotect→Opus decode→PCM16 16kHz
+        WA_SESS->>GEMINI: send_realtime_input(PCM16 16kHz)
+    and AI responds
+        GEMINI->>WA_SESS: PCM16 24kHz chunks
+        WA_SESS->>WA_SESS: Opus encode→SRTP protect
+        WA_SESS->>WA: SRTP Opus frames
+    end
+
+    Note over WA,FS: Call Ends
+    WA_SESS->>GEMINI: Close WebSocket
+    WA_SESS->>FS: Write call end record
+        </pre>
+    </div>
+
+    <hr>
+    <h2>4. SMS Text Bridge Flow</h2>
+    <div class="diagram-container">
+        <pre class="mermaid">
+sequenceDiagram
+    participant USER as User (Phone)
+    participant AT as Africa's Talking
+    participant CR as Cloud Run (FastAPI)
+    participant GEMINI as Gemini (Text API)
+    participant ANALYTICS as Campaign Analytics
+
+    Note over USER,ANALYTICS: Inbound SMS → AI Response
+    USER->>AT: SMS to virtual DID
+    AT->>CR: POST /api/v1/at/sms/callback
+    CR->>CR: Deduplicate by message ID
+    CR->>GEMINI: Bridge text to Gemini
+    GEMINI->>CR: AI text response
+    CR->>CR: Truncate to 160 chars
+    CR->>AT: providers.send_sms(reply)
+    AT->>USER: SMS reply
+    CR->>ANALYTICS: Record inbound reply event
+
+    Note over USER,ANALYTICS: Outbound SMS Campaign
+    CR->>AT: providers.send_sms(recipients[], message)
+    AT->>USER: Bulk SMS delivery
+    CR->>ANALYTICS: Record sent/delivered/failed
+        </pre>
+    </div>
+
+    <hr>
+    <h2>5. AT Channel Module Architecture</h2>
+    <div class="diagram-container">
+        <pre class="mermaid">
+graph TB
+    subgraph "app/api/v1/at/ — Africa's Talking Channel"
+        direction TB
+        INIT["__init__.py<br/>Router composition, AT SDK init"]
+
+        subgraph "Voice"
+            V_ROUTES["voice.py<br/>POST /voice/callback<br/>POST /voice/call<br/>POST /voice/campaign<br/>POST /voice/transfer"]
+            V_SVC["service_voice.py<br/>XML builder, DID resolution"]
+        end
+
+        subgraph "SMS"
+            S_ROUTES["sms.py<br/>POST /sms/callback<br/>POST /sms/send<br/>POST /sms/campaign"]
+        end
+
+        subgraph "Payments (Paystack)"
+            P_ROUTES["payments.py<br/>POST /payments/initialize<br/>POST /payments/virtual-accounts<br/>POST /payments/webhook<br/>GET /payments/verify"]
+            P_SVC["service_payments.py<br/>Transaction lifecycle,<br/>VA provisioning,<br/>HMAC verification"]
+        end
+
+        subgraph "Shipping (Topship)"
+            SH_ROUTES["shipping.py<br/>POST /shipping/quote<br/>POST /shipping/orders<br/>GET /shipping/tracking"]
+        end
+
+        subgraph "Analytics"
+            A_ROUTES["analytics_routes.py<br/>GET /analytics/overview<br/>GET /analytics/campaigns"]
+            A_SVC["campaign_analytics.py<br/>In-memory campaign state"]
+        end
+
+        subgraph "Infrastructure"
+            SETTINGS["settings.py<br/>ATSettings (pydantic-settings)"]
+            MODELS["models.py<br/>Request/response DTOs"]
+            PROVIDERS["providers.py<br/>AT SDK, Paystack httpx,<br/>WhatsApp Cloud API"]
+            HEALTH["health.py<br/>GET /health, /readiness"]
+        end
+    end
+
+    INIT --> V_ROUTES
+    INIT --> S_ROUTES
+    INIT --> P_ROUTES
+    INIT --> SH_ROUTES
+    INIT --> A_ROUTES
+    INIT --> HEALTH
+    V_ROUTES --> V_SVC
+    V_ROUTES --> PROVIDERS
+    V_ROUTES --> A_SVC
+    S_ROUTES --> PROVIDERS
+    S_ROUTES --> A_SVC
+    P_ROUTES --> P_SVC
+    P_SVC --> PROVIDERS
+    P_SVC --> A_SVC
+
+    classDef router fill:#E3F2FD,stroke:#1565C0,stroke-width:2px
+    classDef service fill:#E8F5E9,stroke:#2E7D32,stroke-width:2px
+    classDef infra fill:#FFF8E1,stroke:#F57F17,stroke-width:2px
+    class V_ROUTES,S_ROUTES,P_ROUTES,SH_ROUTES,A_ROUTES,HEALTH router
+    class V_SVC,P_SVC,A_SVC service
+    class SETTINGS,MODELS,PROVIDERS,INIT infra
+        </pre>
+    </div>
+
+    <script>
+        mermaid.initialize({ startOnLoad: true, theme: 'default', securityLevel: 'loose' });
+    </script>
+</body>
+</html>

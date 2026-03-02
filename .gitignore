@@ -9,6 +9,7 @@ __pycache__/
 *$py.class
 *.so
 .venv/
+.venv*/
 venv/
 *.egg-info/
 dist/
@@ -44,7 +45,26 @@ service-account*.json
 
 # ADK
 adk-samples/
+.adk/
+
+# Reference docs (not part of codebase)
+Ekaette_*.md
+Ekaette_*.html
+compressed-*.md
+
+# Terraform
+terraform/.terraform/
+terraform/*.tfstate
+terraform/*.tfstate.backup
+terraform/*.tfvars
+terraform/.terraform.lock.hcl
 
 # Misc
 *.log
 tmp/
+frontend/.pnpmrc.json
+.data/
+
+# Dev/debug scripts (not production code)
+patch_*.py
+test_genai.py

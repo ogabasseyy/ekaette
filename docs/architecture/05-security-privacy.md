@@ -1,0 +1,240 @@
+# Security & Privacy
+
+> Part of [Ekaette System Architecture](../../Ekaette_Architecture.md)
+
+## Security Architecture
+
+```mermaid
+sequenceDiagram
+    participant C as Client Browser
+    participant PUB as Public API
+    participant WS as WebSocket /ws/
+    participant ADMIN as Admin API
+    participant LIVE as Gemini Live API
+
+    Note over C,LIVE: Ephemeral Token Flow (Public)
+
+    C->>PUB: POST /api/token {tenantId, companyId}
+    PUB->>PUB: Validate tenant + rate limit
+    PUB->>PUB: Resolve registry config
+    PUB->>LIVE: Request ephemeral token<br/>live_connect_constraints:<br/>model: native-audio-preview,<br/>response_modalities: AUDIO
+    LIVE->>PUB: Ephemeral token (5 min TTL, single-use)
+    PUB->>C: Return token + resolved config + wsToken
+
+    C->>LIVE: WebSocket connect with ephemeral token
+    Note over C,LIVE: Direct client-to-API<br/>No API key exposed<br/>Constrained to config
+    LIVE->>C: Audio stream
+
+    Note over C,WS: Backend WebSocket Auth (HMAC-SHA256)
+
+    C->>WS: Connect /ws/{user_id}/{session_id}?token={wsToken}
+    WS->>WS: Validate HMAC-SHA256 signature<br/>Check expiry, JTI single-use,<br/>match user_id from path
+    WS-->>C: 4401 Close (if invalid/expired/reused)
+    WS->>C: Accept connection (if valid)
+    Note over C,WS: Disabled when WS_TOKEN_SECRET<br/>is empty (dev fallback)
+
+    Note over C,LIVE: Admin API Flow (Separate Auth)
+
+    C->>ADMIN: PUT /api/v1/admin/companies/{id}<br/>Headers: x-user-id, x-roles, x-tenant-id
+    ADMIN->>ADMIN: Admin auth middleware<br/>JWT/IAP verification (prod),<br/>header-based auth (dev),<br/>scope check (read/write)
+    ADMIN->>ADMIN: Idempotency check (Firestore-backed)
+    ADMIN->>ADMIN: Execute + commit idempotency
+    ADMIN->>C: 200 OK + observability log
+```
+
+---
+
+## Privacy & Compliance Architecture
+
+```mermaid
+graph TB
+    subgraph "User-Facing Privacy Layer"
+        CONSENT["ConsentModal<br/>NDPA GAID 2025 opt-in<br/>Accept/Decline equal prominence<br/>localStorage: consent record"]
+        AI_BANNER["AiDisclosureBanner<br/>EU AI Act Article 50<br/>CA SB 243, CO CAIA<br/>sessionStorage: dismissible"]
+        PRIVACY["Privacy Policy<br/>privacy.html<br/>NDPA-compliant: controller, purpose,<br/>retention, rights, third parties"]
+        FOOTER["Footer Link<br/>Privacy policy + AI attribution"]
+    end
+
+    subgraph "Agent-Level Disclosure"
+        ROUTER["ekaette_router<br/>instruction: 'AI-powered assistant'<br/>Human escalation path"]
+        GREETING["Voice Greeting<br/>Identifies as AI at first interaction"]
+    end
+
+    subgraph "Consent Gate"
+        APP["App.tsx"]
+        HOOK["useConsent() hook<br/>localStorage key:<br/>ekaette:privacy:consent<br/>Stores: accepted, timestamp, version"]
+    end
+
+    subgraph "Data Protection"
+        PII["PII Redaction Pipeline<br/>(app/tools/pii_redaction.py)"]
+        SCOPED["Scoped Queries<br/>scoped_collection() — tenant isolation"]
+        RETENTION["Retention Policy<br/>Calls: 90 days<br/>SMS: 30 days"]
+    end
+
+    subgraph "WebSocket Security"
+        WS_AUTH["WS Token Auth<br/>HMAC-SHA256 signed tokens<br/>Single-use JTI enforcement<br/>Graceful dev fallback"]
+    end
+
+    APP --> HOOK
+    HOOK -->|"!hasConsented"| CONSENT
+    HOOK -->|"hasConsented"| AI_BANNER
+    AI_BANNER --> FOOTER
+    FOOTER --> PRIVACY
+
+    ROUTER --> GREETING
+    PII --> SCOPED
+
+    classDef privacy fill:#E8F5E9,stroke:#2E7D32,stroke-width:2px
+    classDef consent fill:#FFF8E1,stroke:#F57F17,stroke-width:2px
+    classDef security fill:#E3F2FD,stroke:#1565C0,stroke-width:2px
+    classDef agent fill:#F3E5F5,stroke:#6A1B9A,stroke-width:2px
+
+    class CONSENT,HOOK,APP consent
+    class AI_BANNER,PRIVACY,FOOTER,RETENTION privacy
+    class PII,SCOPED,WS_AUTH security
+    class ROUTER,GREETING agent
+```
+
+---
+
+## PII Redaction Pipeline
+
+```mermaid
+graph LR
+    subgraph "PII Sources"
+        VOICE_IN["Voice Transcription"]
+        SMS_CB["SMS Callbacks<br/>(from, to)"]
+        AT_VOICE["Voice Callbacks<br/>(callerNumber)"]
+        SESSION["Session State<br/>(user:* keys)"]
+    end
+
+    subgraph "Redaction Engine (app/tools/pii_redaction.py)"
+        PHONE_R["Phone Numbers<br/>+234****5678<br/>Nigerian + international"]
+        EMAIL_R["Email Addresses<br/>b***@gmail.com"]
+        NIN_R["National IDs<br/>NIN: ****5678"]
+        PAY_R["Payment References<br/>PAY-****ABCD"]
+    end
+
+    subgraph "Redacted Outputs"
+        LOGS["Application Logs<br/>sanitize_log() + redact_pii()"]
+        PERSIST["Session Storage<br/>Redacted on save,<br/>original in-memory"]
+        TRANSCRIPT["Transcription Display<br/>Redacted in ServerMessage"]
+    end
+
+    VOICE_IN --> PHONE_R
+    VOICE_IN --> EMAIL_R
+    SMS_CB --> PHONE_R
+    AT_VOICE --> PHONE_R
+    SESSION --> PHONE_R
+    SESSION --> EMAIL_R
+
+    PHONE_R --> LOGS
+    EMAIL_R --> LOGS
+    NIN_R --> LOGS
+    PAY_R --> LOGS
+
+    PHONE_R --> PERSIST
+    EMAIL_R --> PERSIST
+
+    PHONE_R --> TRANSCRIPT
+    EMAIL_R --> TRANSCRIPT
+
+    classDef source fill:#FFEBEE,stroke:#C62828,stroke-width:2px
+    classDef engine fill:#FFF8E1,stroke:#F57F17,stroke-width:2px
+    classDef output fill:#E8F5E9,stroke:#2E7D32,stroke-width:2px
+
+    class VOICE_IN,SMS_CB,AT_VOICE,SESSION source
+    class PHONE_R,EMAIL_R,NIN_R,PAY_R engine
+    class LOGS,PERSIST,TRANSCRIPT output
+```
+
+---
+
+## WebSocket Authentication Flow
+
+```mermaid
+sequenceDiagram
+    participant C as Client Browser
+    participant PUB as POST /api/token
+    participant WS as WebSocket /ws/
+    participant AUTH as ws_auth.py<br/>(HMAC-SHA256)
+
+    Note over C,AUTH: Token Acquisition (during ephemeral token request)
+    C->>PUB: POST /api/token {tenantId, companyId, userId}
+    PUB->>AUTH: create_ws_token(user_id, tenant_id, company_id, ttl)
+    AUTH->>AUTH: Generate JTI (uuid4)<br/>Build payload: sub, tenant, company, exp, jti<br/>Sign with HMAC-SHA256(WS_TOKEN_SECRET)
+    AUTH->>PUB: base64(header.payload.signature)
+    PUB->>C: {token, wsToken, ...}
+
+    Note over C,AUTH: WebSocket Connection
+    C->>WS: Connect /ws/{user_id}/{session_id}?token={wsToken}
+    WS->>AUTH: validate_ws_token(token, expected_user_id)
+    AUTH->>AUTH: Decode base64, split header.payload.signature
+    AUTH->>AUTH: Recompute HMAC-SHA256, compare signatures
+    AUTH->>AUTH: Check exp > now (not expired)
+    AUTH->>AUTH: Check sub == expected_user_id (path match)
+    AUTH->>AUTH: Check JTI not in used set (single-use)
+    AUTH->>AUTH: Add JTI to used set
+    AUTH->>WS: WsTokenClaims (valid)
+    WS->>C: Connection accepted
+
+    Note over C,AUTH: Rejection Cases
+    C->>WS: Connect with bad/expired/reused token
+    WS->>AUTH: validate_ws_token(token, user_id)
+    AUTH->>WS: None (invalid)
+    WS-->>C: Close 4401 (auth required)
+
+    Note over C,AUTH: Reconnection
+    C->>WS: Close code 4401 received
+    C->>PUB: Request fresh ephemeral token
+    PUB->>C: New {token, wsToken}
+    C->>WS: Reconnect with fresh wsToken
+```
+
+---
+
+## Audio Codec Pipeline
+
+```mermaid
+graph LR
+    subgraph "AT Phone Path (G.711)"
+        PHONE_IN["Phone Audio<br/>G.711 μ-law<br/>8kHz mono"]
+        ULAW_DEC["μ-law Decode<br/>(lookup table)"]
+        UP_16["Resample<br/>8kHz → 16kHz<br/>(linear interp)"]
+        GEMINI_IN["Gemini Input<br/>PCM16 16kHz"]
+
+        GEMINI_OUT["Gemini Output<br/>PCM16 24kHz"]
+        DOWN_8["Resample<br/>24kHz → 8kHz<br/>(every 3rd sample)"]
+        ULAW_ENC["μ-law Encode"]
+        PHONE_OUT["Phone Audio<br/>G.711 μ-law<br/>8kHz mono"]
+    end
+
+    subgraph "WhatsApp Path (Opus)"
+        WA_IN["WhatsApp Audio<br/>Opus/SRTP"]
+        SRTP_DEC["SRTP Unprotect"]
+        OPUS_DEC["Opus Decode<br/>→ PCM16 16kHz"]
+        WA_GEMINI_IN["Gemini Input<br/>PCM16 16kHz"]
+
+        WA_GEMINI_OUT["Gemini Output<br/>PCM16 24kHz"]
+        OPUS_ENC["Opus Encode"]
+        SRTP_ENC["SRTP Protect"]
+        WA_OUT["WhatsApp Audio<br/>Opus/SRTP"]
+    end
+
+    subgraph "Browser Path (Direct)"
+        BROWSER_IN["Browser Mic<br/>PCM16 16kHz<br/>(AudioWorklet)"]
+        ADK_IN["ADK LiveRequestQueue<br/>→ Gemini Live API"]
+
+        ADK_OUT["Gemini Live API<br/>PCM16 24kHz"]
+        BROWSER_OUT["Browser Speaker<br/>(AudioWorklet)"]
+    end
+
+    PHONE_IN --> ULAW_DEC --> UP_16 --> GEMINI_IN
+    GEMINI_OUT --> DOWN_8 --> ULAW_ENC --> PHONE_OUT
+
+    WA_IN --> SRTP_DEC --> OPUS_DEC --> WA_GEMINI_IN
+    WA_GEMINI_OUT --> OPUS_ENC --> SRTP_ENC --> WA_OUT
+
+    BROWSER_IN --> ADK_IN
+    ADK_OUT --> BROWSER_OUT
+```
