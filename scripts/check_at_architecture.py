@@ -8,7 +8,7 @@ Checks:
 
 from __future__ import annotations
 
-import re
+import ast
 from pathlib import Path
 import sys
 
@@ -39,23 +39,53 @@ def _count_loc(path: Path) -> int:
 
 
 def _check_no_main_imports(errors: list[str]) -> None:
-    """No module under AT or sip_bridge may import main."""
-    pattern = re.compile(r"^\s*(from\s+main\s+import|import\s+main\b)")
+    """No module under AT or sip_bridge may import main (AST-based)."""
     for root in (AT_ROOT, SIP_ROOT):
         if not root.exists():
             continue
         for file_path in sorted(root.rglob("*.py")):
-            content = file_path.read_text(encoding="utf-8")
-            for lineno, line in enumerate(content.splitlines(), start=1):
-                if pattern.search(line):
-                    errors.append(f"{file_path}:{lineno}: forbidden main import")
+            source = file_path.read_text(encoding="utf-8")
+            try:
+                tree = ast.parse(source, filename=str(file_path))
+            except SyntaxError:
+                errors.append(f"{file_path}: syntax error, cannot parse")
+                continue
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    for alias in node.names:
+                        if alias.name == "main" or alias.name.startswith("main."):
+                            errors.append(f"{file_path}:{node.lineno}: forbidden main import")
+                elif isinstance(node, ast.ImportFrom):
+                    module = node.module or ""
+                    if module == "main" or module.startswith("main."):
+                        errors.append(f"{file_path}:{node.lineno}: forbidden main import")
+
+
+def _extract_relative_imports(file_path: Path) -> list[tuple[int, str]]:
+    """Extract relative import module names via AST. Returns (lineno, module_name) pairs."""
+    source = file_path.read_text(encoding="utf-8")
+    try:
+        tree = ast.parse(source, filename=str(file_path))
+    except SyntaxError:
+        return []
+    results: list[tuple[int, str]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.level > 0:
+            module = node.module or ""
+            results.append((node.lineno, module))
+    return results
+
+
+# Forbidden relative import targets per module
+_PROVIDER_FORBIDDEN_IMPORTS = {"voice", "sms", "service_voice", "service_sms"}
+_SERVICE_FORBIDDEN_IMPORTS = {"voice", "sms"}
 
 
 def _check_dependency_direction(errors: list[str]) -> None:
-    """Enforce route → service → provider direction.
+    """Enforce route -> service -> provider direction (AST-based).
 
-    - providers.py must NOT import from voice.py, sms.py, service_*.py
-    - service_*.py must NOT import from voice.py, sms.py
+    - providers.py must NOT import from voice, sms, service_voice, service_sms
+    - service_*.py must NOT import from voice, sms
     """
     if not AT_ROOT.exists():
         return
@@ -63,37 +93,23 @@ def _check_dependency_direction(errors: list[str]) -> None:
     # Providers must not import from routes or services
     providers_path = AT_ROOT / "providers.py"
     if providers_path.exists():
-        content = providers_path.read_text(encoding="utf-8")
-        forbidden = [
-            r"from\s+\.voice\s+import",
-            r"from\s+\.sms\s+import",
-            r"from\s+\.service_voice\s+import",
-            r"from\s+\.service_sms\s+import",
-        ]
-        for pat in forbidden:
-            for lineno, line in enumerate(content.splitlines(), start=1):
-                if re.search(pat, line):
-                    errors.append(
-                        f"{providers_path}:{lineno}: providers.py imports "
-                        f"from route/service module (forbidden)"
-                    )
+        for lineno, module in _extract_relative_imports(providers_path):
+            if module in _PROVIDER_FORBIDDEN_IMPORTS:
+                errors.append(
+                    f"{providers_path}:{lineno}: providers.py imports "
+                    f"from route/service module .{module} (forbidden)"
+                )
 
     # Services must not import from routes
     for svc_name in ("service_voice.py", "service_sms.py"):
         svc_path = AT_ROOT / svc_name
         if not svc_path.exists():
             continue
-        content = svc_path.read_text(encoding="utf-8")
-        route_imports = [
-            r"from\s+\.voice\s+import",
-            r"from\s+\.sms\s+import",
-        ]
-        for pat in route_imports:
-            for lineno, line in enumerate(content.splitlines(), start=1):
-                if re.search(pat, line):
-                    errors.append(
-                        f"{svc_path}:{lineno}: service imports from route module (forbidden)"
-                    )
+        for lineno, module in _extract_relative_imports(svc_path):
+            if module in _SERVICE_FORBIDDEN_IMPORTS:
+                errors.append(
+                    f"{svc_path}:{lineno}: service imports from route module .{module} (forbidden)"
+                )
 
 
 def _check_file_size_caps(errors: list[str]) -> None:

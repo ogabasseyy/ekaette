@@ -55,7 +55,10 @@ def _resolve_location(args_location: str | None) -> str:
     """Resolve GCP location from arg or env."""
     if args_location:
         return args_location
-    return os.getenv("GOOGLE_CLOUD_LOCATION", "us-central1").strip()
+    location = os.getenv("GOOGLE_CLOUD_LOCATION", "").strip()
+    if not location:
+        location = "us-central1"
+    return location
 
 
 def provision(project: str, location: str, *, dry_run: bool = False) -> str:

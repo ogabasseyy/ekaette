@@ -160,6 +160,9 @@ async def run_demo() -> bool:
     # In demo mode, we send a text prompt to trigger the greeting since
     # VAD won't fire on silence.
     print("\n[3] Sending text prompt to trigger Gemini greeting...")
+    if session.gemini_session is None:
+        print("  FAIL: Gemini session not established — cannot send prompt")
+        return False
     try:
         await session.gemini_session.send_client_content(
             turns=[{
@@ -221,7 +224,10 @@ async def run_demo() -> bool:
         body="",
     )
     resp3 = await server.handle_sip_message(bye, peer)
-    print(f"  <- {resp3.status_code if resp3 else 'None'} OK")
+    bye_ok = resp3 is not None and resp3.status_code == 200
+    print(f"  <- {resp3.status_code if resp3 else 'None'} {'OK' if bye_ok else 'UNEXPECTED'}")
+    if not bye_ok:
+        print(f"  WARN: BYE expected 200, got {resp3.status_code if resp3 else 'None'}")
     print(f"  Active sessions: {len(server.active_sessions)}")
 
     # --- Summary ---
@@ -229,10 +235,11 @@ async def run_demo() -> bool:
     print("  SIP handshake:     PASSED (407 → auth → 200)")
     print(f"  Gemini connected:  {'YES' if session.gemini_session else 'NO'}")
     print(f"  Response frames:   {response_frames}")
+    print(f"  BYE teardown:      {'PASSED' if bye_ok else 'FAILED'}")
     print(f"  Session metrics:   recv={session.frames_received} "
           f"sent={session.frames_sent}")
-    success = response_frames > 0
-    print(f"  Result:            {'PASSED' if success else 'PARTIAL (no audio response)'}")
+    success = response_frames > 0 and bye_ok
+    print(f"  Result:            {'PASSED' if success else 'PARTIAL'}")
     print("=" * 50)
 
     return success

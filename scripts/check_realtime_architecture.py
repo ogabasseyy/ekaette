@@ -27,8 +27,27 @@ def _check_main_ws_delegate(errors: list[str]) -> None:
     for node in module.body:
         if not isinstance(node, ast.AsyncFunctionDef) or node.name != "websocket_endpoint":
             continue
-        body_src = ast.get_source_segment(source, node) or ""
-        if "_sync_realtime_runtime()" in body_src and "realtime_ws.websocket_endpoint(" in body_src:
+        # Walk the AST body looking for the two required calls:
+        #   1. _sync_realtime_runtime()
+        #   2. realtime_ws.websocket_endpoint(...)
+        found_sync = False
+        found_delegate = False
+        for child in ast.walk(node):
+            if not isinstance(child, ast.Call):
+                continue
+            func = child.func
+            # Match _sync_realtime_runtime()
+            if isinstance(func, ast.Name) and func.id == "_sync_realtime_runtime":
+                found_sync = True
+            # Match realtime_ws.websocket_endpoint(...)
+            if (
+                isinstance(func, ast.Attribute)
+                and func.attr == "websocket_endpoint"
+                and isinstance(func.value, ast.Name)
+                and func.value.id == "realtime_ws"
+            ):
+                found_delegate = True
+        if found_sync and found_delegate:
             wrapper_ok = True
             break
 

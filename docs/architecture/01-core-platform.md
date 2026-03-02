@@ -13,7 +13,7 @@
 
 ### Firestore Data Model
 
-```
+```text
 industry_templates/{templateId}
 tenants/{tenantId}/companies/{companyId}
 tenants/{tenantId}/companies/{companyId}/knowledge/{id}

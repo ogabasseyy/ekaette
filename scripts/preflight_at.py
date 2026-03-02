@@ -81,17 +81,30 @@ def validate_secrets_not_in_env_file() -> list[str]:
     # In production, secrets should come from secret manager, not .env
     env_file = os.path.join(os.getcwd(), ".env")
     if os.path.exists(env_file):
-        content = open(env_file).read()
-        sensitive_keys = ["AT_API_KEY=", "GOOGLE_API_KEY=", "AT_WEBHOOK_SHARED_SECRET="]
-        for key in sensitive_keys:
-            if key in content:
-                # Check if the value after = is non-empty
-                for line in content.splitlines():
-                    if line.startswith(key) and line.split("=", 1)[1].strip():
-                        errors.append(
-                            f"SECURITY: {key.rstrip('=')} has plaintext value in .env "
-                            f"(use secret manager in production)"
-                        )
+        with open(env_file, encoding="utf-8") as f:
+            content = f.read()
+        sensitive_keys = ["AT_API_KEY", "GOOGLE_API_KEY", "AT_WEBHOOK_SHARED_SECRET"]
+        for key_name in sensitive_keys:
+            for line in content.splitlines():
+                stripped = line.strip()
+                # Match KEY=value, export KEY=value, and quoted values
+                if stripped.startswith("#"):
+                    continue
+                # Strip optional 'export ' prefix
+                effective = stripped
+                if effective.startswith("export "):
+                    effective = effective[7:]
+                if not effective.startswith(f"{key_name}="):
+                    continue
+                value = effective.split("=", 1)[1].strip()
+                # Strip surrounding quotes
+                if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+                    value = value[1:-1]
+                if value:
+                    errors.append(
+                        f"SECURITY: {key_name} has plaintext value in .env "
+                        f"(use secret manager in production)"
+                    )
     return errors
 
 

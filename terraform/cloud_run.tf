@@ -5,8 +5,8 @@
 resource "google_cloud_run_v2_service" "app" {
   name                = var.app_name
   location            = var.region
-  deletion_protection = false
-  ingress             = "INGRESS_TRAFFIC_ALL"
+  deletion_protection = var.deletion_protection
+  ingress             = var.ingress
 
   template {
     service_account = google_service_account.cloud_run_sa.email
@@ -14,8 +14,8 @@ resource "google_cloud_run_v2_service" "app" {
     # Pin WebSocket connections to the same container instance
     session_affinity = true
 
-    # 60-minute max for long-running Live API audio sessions
-    timeout = "3600s"
+    # Long-running Live API audio sessions
+    timeout = var.timeout
 
     scaling {
       min_instance_count = var.min_instances
@@ -31,8 +31,8 @@ resource "google_cloud_run_v2_service" "app" {
 
       resources {
         limits = {
-          cpu    = "2"
-          memory = "1Gi"
+          cpu    = var.cpu
+          memory = var.memory
         }
         cpu_idle = true
       }

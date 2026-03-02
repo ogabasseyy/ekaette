@@ -204,14 +204,21 @@ def run_staging_governance_drill(
     verify_counts = export_after.get("counts", {})
     counts_match = snapshot_counts == verify_counts
 
+    # Validate intermediate step results
+    purge_ok = isinstance(purge_result, dict) and purge_result.get("success", purge_result.get("ok", True)) is not False
+    delete_ok = isinstance(delete_result, dict) and delete_result.get("success", delete_result.get("ok", True)) is not False
+    all_steps_ok = counts_match and purge_ok and delete_ok
+
     return {
-        "success": bool(counts_match),
+        "success": bool(all_steps_ok),
         "dryRun": False,
         "tenantId": tenant_id,
         "companyId": company_id,
         "snapshotCounts": snapshot_counts,
         "verifyCounts": verify_counts,
         "countsMatch": bool(counts_match),
+        "purgeOk": bool(purge_ok),
+        "deleteOk": bool(delete_ok),
         "purgeResult": purge_result,
         "deleteResult": delete_result,
         "restored": restored,

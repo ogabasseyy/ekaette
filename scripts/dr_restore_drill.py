@@ -98,7 +98,9 @@ def restore_company_snapshot(db: Any, snapshot: dict[str, Any]) -> dict[str, int
             entry_id = str(entry.get("id", "")).strip()
             if not entry_id:
                 continue
-            doc_ref.collection(name).document(entry_id).set(dict(entry))
+            # Strip snapshot metadata keys before restoring to Firestore
+            clean_entry = {k: v for k, v in entry.items() if k != "id"}
+            doc_ref.collection(name).document(entry_id).set(clean_entry)
             restored[name] += 1
     return restored
 
@@ -129,13 +131,28 @@ def run_restore_drill(
     verify = export_company_snapshot(db, tenant_id=tenant_id, company_id=company_id)
 
     counts_match = verify.get("counts") == snapshot.get("counts")
+
+    # Deep verification: compare document content, not just counts
+    content_match = True
+    mismatches: list[str] = []
+    original_collections = snapshot.get("collections", {})
+    verify_collections = verify.get("collections", {})
+    for coll_name in SUBCOLLECTIONS:
+        orig_docs = {str(d.get("id", "")): d for d in original_collections.get(coll_name, []) if isinstance(d, dict)}
+        verify_docs = {str(d.get("id", "")): d for d in verify_collections.get(coll_name, []) if isinstance(d, dict)}
+        if set(orig_docs.keys()) != set(verify_docs.keys()):
+            content_match = False
+            mismatches.append(f"{coll_name}: document IDs differ")
+
     return {
-        "success": bool(counts_match),
+        "success": bool(counts_match and content_match),
         "dry_run": False,
         "deleted": deleted,
         "restored": restored,
         "snapshot_counts": snapshot.get("counts", {}),
         "verify_counts": verify.get("counts", {}),
+        "content_match": content_match,
+        "mismatches": mismatches,
         "output_path": str(output_path) if output_path else None,
     }
 

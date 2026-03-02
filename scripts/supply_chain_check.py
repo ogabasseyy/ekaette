@@ -1,8 +1,8 @@
 """Supply-chain integrity checks for AT + SIP bridge dependencies.
 
 Verifies:
-1. Dependency lock file exists and has hashes
-2. No known vulnerable packages (basic check via pip audit)
+1. Dependency pinning and hash verification in requirements.txt
+2. No known vulnerable packages (pip-audit)
 3. SBOM generation capability (CycloneDX format)
 
 Run: python -m scripts.supply_chain_check
@@ -10,6 +10,7 @@ Run: python -m scripts.supply_chain_check
 
 from __future__ import annotations
 
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -52,21 +53,47 @@ def check_requirements_pinned() -> list[str]:
     return errors
 
 
+def check_hash_pinning() -> list[str]:
+    """Verify requirements.txt uses hash pinning for critical dependencies."""
+    errors: list[str] = []
+    if not REQ_FILE.exists():
+        return errors
+
+    content = REQ_FILE.read_text()
+    # Check if any lines have --hash markers (pip hash-checking mode)
+    has_hashes = any("--hash=" in line for line in content.splitlines())
+    if not has_hashes:
+        errors.append(
+            "requirements.txt has no --hash pins; consider running "
+            "'pip-compile --generate-hashes' for supply-chain integrity"
+        )
+    return errors
+
+
 def check_pip_audit() -> list[str]:
     """Run pip-audit if available (non-blocking if not installed)."""
     errors: list[str] = []
     try:
         result = subprocess.run(
-            [sys.executable, "-m", "pip_audit", "--strict", "--desc"],
-            capture_output=True, text=True, timeout=60,
+            [sys.executable, "-m", "pip_audit", "--strict", "--desc",
+             "--require-hashes", "-r", str(REQ_FILE)],
+            capture_output=True, text=True, timeout=120,
         )
         if "No module named" in result.stderr:
             print("SKIP: pip-audit not installed (pip install pip-audit)")
             return errors
         if result.returncode != 0:
+            # Parse structured output — look for vulnerability lines
+            vuln_pattern = re.compile(r"(CVE-\d+-\d+|PYSEC-\d+-\d+|GHSA-[\w-]+)")
+            found_vulns = False
             for line in result.stdout.splitlines():
-                if "vulnerability" in line.lower() or "CVE" in line:
+                if vuln_pattern.search(line) or "vulnerability" in line.lower():
                     errors.append(f"Vulnerability: {line.strip()}")
+                    found_vulns = True
+            if not found_vulns and result.returncode != 0:
+                # Non-zero exit but no vulnerability lines — report stderr
+                stderr_summary = result.stderr.strip().split("\n")[0] if result.stderr.strip() else "unknown error"
+                errors.append(f"pip-audit failed (exit {result.returncode}): {stderr_summary}")
     except FileNotFoundError:
         print("SKIP: pip-audit not installed (pip install pip-audit)")
     except subprocess.TimeoutExpired:
@@ -102,6 +129,14 @@ def main() -> None:
         print(f"  FAIL: {e}")
     if not errors:
         print("  PASS: Critical deps pinned with bounds")
+
+    print("── Checking hash integrity ──")
+    errors = check_hash_pinning()
+    all_errors.extend(errors)
+    for e in errors:
+        print(f"  WARN: {e}")
+    if not errors:
+        print("  PASS: Hash-pinned requirements")
 
     print("── Checking for vulnerabilities ──")
     errors = check_pip_audit()

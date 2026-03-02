@@ -43,3 +43,39 @@ variable "env_vars" {
   type        = map(string)
   default     = {}
 }
+
+variable "cpu" {
+  description = "CPU allocation for Cloud Run containers"
+  type        = string
+  default     = "2"
+}
+
+variable "memory" {
+  description = "Memory allocation for Cloud Run containers"
+  type        = string
+  default     = "1Gi"
+}
+
+variable "timeout" {
+  description = "Request timeout for Cloud Run service (e.g. 3600s for long-running audio sessions)"
+  type        = string
+  default     = "3600s"
+}
+
+variable "deletion_protection" {
+  description = "Enable deletion protection for the Cloud Run service"
+  type        = bool
+  default     = false
+}
+
+variable "ingress" {
+  description = "Ingress traffic setting for Cloud Run (INGRESS_TRAFFIC_ALL, INGRESS_TRAFFIC_INTERNAL_ONLY, etc.)"
+  type        = string
+  default     = "INGRESS_TRAFFIC_ALL"
+}
+
+variable "kms_key_name" {
+  description = "Cloud KMS key for CMEK encryption of the media bucket (null = Google-managed keys)"
+  type        = string
+  default     = null
+}

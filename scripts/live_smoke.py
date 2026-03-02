@@ -125,7 +125,7 @@ class LiveSmokeClient:
         assert self.ws is not None
         try:
             raw = await asyncio.wait_for(self.ws.recv(), timeout=timeout)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             raise
         except websockets.ConnectionClosed as exc:
             return ("closed", exc, monotonic_ts())
@@ -386,8 +386,11 @@ async def run(args: argparse.Namespace) -> int:
             )
         )
         return 0
-    except (AssertionError, TimeoutError, RuntimeError) as exc:
+    except (AssertionError, TimeoutError, asyncio.TimeoutError, RuntimeError) as exc:
         print(json.dumps({"ok": False, "error": str(exc)}), file=sys.stderr)
+        return 1
+    except asyncio.CancelledError:
+        print(json.dumps({"ok": False, "error": "cancelled"}), file=sys.stderr)
         return 1
     finally:
         await client.close()

@@ -34,7 +34,7 @@ Meta's WhatsApp Business Calling API (July 2025) enables a 4th channel. After re
 
 ## Architecture
 
-```
+```text
 Cloud Run (main FastAPI) — NO WhatsApp call webhooks (SIP mode disables them)
   ├── /api/v1/at/          — AT callbacks (existing)
   ├── /ws/                 — Browser voice (existing)
@@ -79,6 +79,7 @@ GCE VM (SIP Bridge — shared by AT + WhatsApp)
 ### SIP + SDES Configuration (official API, two steps)
 
 **Step 1**: Enable calling + SIP
+
 ```json
 POST /<PHONE_NUMBER_ID>/settings
 {
@@ -96,6 +97,7 @@ POST /<PHONE_NUMBER_ID>/settings
 ```
 
 **Step 2**: Enable SDES (separate setting, default is DTLS)
+
 ```json
 POST /<PHONE_NUMBER_ID>/settings
 {

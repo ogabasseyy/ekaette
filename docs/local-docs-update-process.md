@@ -47,7 +47,8 @@ for item in data['files']:
     p = Path(item['path'])
     item['sha256'] = hashlib.sha256(p.read_bytes()).hexdigest()
     item['last_reviewed_commit'] = head
-    item['last_reviewed_date'] = '2026-02-26'
+    from datetime import date
+    item['last_reviewed_date'] = date.today().isoformat()
 manifest.write_text(json.dumps(data, indent=2, sort_keys=True) + '\n')
 PY
 ```

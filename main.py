@@ -93,9 +93,12 @@ _PUBLIC_RUNTIME_WIRED = False
 _REALTIME_RUNTIME_WIRED = False
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    global session_service, industry_config_client, company_config_client, memory_service, runner, TOKEN_CLIENT
+def _ensure_singletons_initialized() -> None:
+    """Initialize session, config, memory, and runner singletons if not already set.
+
+    Called both at module level (test-safe fallback) and in the ASGI lifespan.
+    """
+    global session_service, industry_config_client, company_config_client, memory_service, runner
 
     if session_service is None:
         session_service = create_session_service()
@@ -112,16 +115,23 @@ async def lifespan(app: FastAPI):
             session_service=session_service,
             memory_service=memory_service,
         )
+    sync_admin_runtime_clients(
+        industry_client=industry_config_client,
+        company_client=company_config_client,
+    )
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global session_service, industry_config_client, company_config_client, memory_service, runner, TOKEN_CLIENT
+
+    _ensure_singletons_initialized()
     app.state.session_service = session_service
     app.state.industry_config_client = industry_config_client
     app.state.company_config_client = company_config_client
     app.state.memory_service = memory_service
     app.state.runner = runner
     app.state.token_client = TOKEN_CLIENT
-    sync_admin_runtime_clients(
-        industry_client=industry_config_client,
-        company_client=company_config_client,
-    )
     # Prime runtime wiring at startup when sync mode resolves to startup.
     _sync_public_runtime()
     _sync_realtime_runtime()
@@ -489,25 +499,7 @@ def _append_canonical_lock_fields(
 
 
 # ═══ Session/Runner Singletons (initialized in lifespan, with test-safe fallback) ═══
-if session_service is None:
-    session_service = create_session_service()
-if industry_config_client is None:
-    industry_config_client = create_industry_config_client()
-if company_config_client is None:
-    company_config_client = create_company_config_client()
-if memory_service is None:
-    memory_service = create_memory_service()
-if runner is None:
-    _adk_app = create_adk_app(name=SESSION_APP_NAME, root_agent=ekaette_router)
-    runner = Runner(
-        app=_adk_app,
-        session_service=session_service,
-        memory_service=memory_service,
-    )
-sync_admin_runtime_clients(
-    industry_client=industry_config_client,
-    company_client=company_config_client,
-)
+_ensure_singletons_initialized()
 
 
 # ═══ HTTP Endpoints ═══

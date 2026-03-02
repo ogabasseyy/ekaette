@@ -9,6 +9,7 @@ Checks:
 
 from __future__ import annotations
 
+import ast
 import re
 from pathlib import Path
 import sys
@@ -16,7 +17,8 @@ import sys
 SIP_ROOT = Path("sip_bridge")
 
 # File-size caps (lines of code, excluding blanks/comments)
-FILE_SIZE_CAPS = {
+# Explicit caps for known modules; wa_*.py modules discovered at runtime default to 400.
+_EXPLICIT_FILE_SIZE_CAPS = {
     "wa_sip_client.py": 400,
     "wa_session.py": 400,
     "wa_config.py": 400,
@@ -26,6 +28,20 @@ FILE_SIZE_CAPS = {
     "codec_bridge.py": 250,
     "srtp_context.py": 200,
 }
+WA_DEFAULT_LOC_CAP = 400
+
+
+def _build_file_size_caps() -> dict[str, int]:
+    """Build file-size caps, auto-discovering wa_*.py modules."""
+    caps = dict(_EXPLICIT_FILE_SIZE_CAPS)
+    if SIP_ROOT.exists():
+        for p in SIP_ROOT.glob("wa_*.py"):
+            if p.name not in caps:
+                caps[p.name] = WA_DEFAULT_LOC_CAP
+    return caps
+
+
+FILE_SIZE_CAPS = _build_file_size_caps()
 
 # State-boundary ownership: module -> forbidden import patterns
 # Each module owns a specific concern and must not cross boundaries
@@ -103,16 +119,34 @@ def _check_no_app_imports(errors: list[str]) -> None:
 
 
 def _check_state_boundaries(errors: list[str]) -> None:
-    """Enforce cross-module import restrictions."""
+    """Enforce cross-module import restrictions using AST inspection."""
     for module_name, forbidden_patterns in BOUNDARY_RULES.items():
         file_path = SIP_ROOT / module_name
         if not file_path.exists():
             continue
-        content = file_path.read_text(encoding="utf-8")
+        source = file_path.read_text(encoding="utf-8")
+        try:
+            tree = ast.parse(source, filename=str(file_path))
+        except SyntaxError:
+            errors.append(f"{file_path}: syntax error, cannot parse")
+            continue
+        # Extract actual import statements via AST for accurate matching
+        import_lines: list[tuple[int, str]] = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    import_lines.append((node.lineno, f"import {alias.name}"))
+            elif isinstance(node, ast.ImportFrom):
+                module = node.module or ""
+                for alias in node.names:
+                    import_lines.append(
+                        (node.lineno, f"from .{module} import {alias.name}"
+                         if node.level else f"from {module} import {alias.name}")
+                    )
         for pat in forbidden_patterns:
             compiled = re.compile(pat)
-            for lineno, line in enumerate(content.splitlines(), start=1):
-                if compiled.search(line):
+            for lineno, import_str in import_lines:
+                if compiled.search(import_str):
                     errors.append(
                         f"{file_path}:{lineno}: boundary violation — "
                         f"matches forbidden pattern: {pat}"

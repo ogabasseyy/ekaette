@@ -42,6 +42,13 @@ resource "google_storage_bucket" "media" {
     enabled = true
   }
 
+  dynamic "encryption" {
+    for_each = var.kms_key_name != null ? [var.kms_key_name] : []
+    content {
+      default_kms_key_name = encryption.value
+    }
+  }
+
   depends_on = [google_project_service.apis]
 }
 
