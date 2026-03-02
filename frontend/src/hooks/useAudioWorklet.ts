@@ -1,16 +1,160 @@
-import { useCallback, useRef, useState, type MutableRefObject } from 'react'
+import { type MutableRefObject, useCallback, useEffect, useRef, useState } from 'react'
 
 interface UseAudioWorkletReturn {
   startRecording: () => Promise<void>
   initPlayer: () => Promise<void>
   playAudioChunk: (data: ArrayBuffer) => void
   clearPlaybackBuffer: () => void
+  recoverAudioContexts: () => Promise<void>
   stop: () => void
+  micCaptureDiagnostics: MicCaptureDiagnostics | null
   error: string | null
+}
+
+type SpeechActivityState = 'start' | 'end'
+export type NoiseCancellationLevel = 'off' | 'standard' | 'aggressive'
+
+interface UseAudioWorkletOptions {
+  onSpeechActivity?: (state: SpeechActivityState) => void
+  onPlaybackStats?: (stats: PlaybackStats) => void
+  noiseCancellationLevel?: NoiseCancellationLevel
+}
+
+export interface PlaybackStats {
+  type: 'playback_stats'
+  availableSamples: number
+  isBuffering: boolean
+  startupPrebufferSamples: number
+  currentRebufferSamples: number
+  underrunCount: number
+}
+
+interface MicConstraintSupport {
+  echoCancellation: boolean
+  noiseSuppression: boolean
+  autoGainControl: boolean
+}
+
+interface RecorderProcessorOptions {
+  denoiseEnabled: boolean
+  noiseGateFloor: number
+  noiseGateMultiplier: number
+  noiseGateResidualGain: number
+  highPassCutoffHz: number
+}
+
+interface RecorderDenoisePreset extends RecorderProcessorOptions {
+  captureProcessingEnabled: boolean
+}
+
+const RECORDER_DENOISE_PRESETS: Record<NoiseCancellationLevel, RecorderDenoisePreset> = {
+  off: {
+    denoiseEnabled: false,
+    noiseGateFloor: 0.002,
+    noiseGateMultiplier: 1.6,
+    noiseGateResidualGain: 0.25,
+    highPassCutoffHz: 70,
+    captureProcessingEnabled: false,
+  },
+  standard: {
+    denoiseEnabled: true,
+    noiseGateFloor: 0.0022,
+    noiseGateMultiplier: 1.8,
+    noiseGateResidualGain: 0.16,
+    highPassCutoffHz: 85,
+    captureProcessingEnabled: true,
+  },
+  aggressive: {
+    denoiseEnabled: true,
+    noiseGateFloor: 0.0028,
+    noiseGateMultiplier: 2.2,
+    noiseGateResidualGain: 0.06,
+    highPassCutoffHz: 110,
+    captureProcessingEnabled: true,
+  },
+}
+
+export interface MicCaptureDiagnostics {
+  noiseCancellationLevel: NoiseCancellationLevel
+  softwareDenoiserEnabled: boolean
+  supportedConstraints: MicConstraintSupport
+  requestedConstraints: {
+    echoCancellation: boolean
+    noiseSuppression: boolean
+    autoGainControl: boolean
+  }
+  appliedSettings: {
+    echoCancellation: boolean | string | null
+    noiseSuppression: boolean | null
+    autoGainControl: boolean | null
+    sampleRate: number | null
+    channelCount: number | null
+    latency: number | null
+  }
+}
+
+function buildCaptureConstraintSupport(): MicConstraintSupport {
+  const supported = navigator.mediaDevices?.getSupportedConstraints?.()
+  if (!supported) {
+    // getSupportedConstraints is optional; default to requesting core
+    // audio-processing constraints and let the user agent ignore unsupported ones.
+    return {
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true,
+    }
+  }
+  return {
+    echoCancellation: supported.echoCancellation !== false,
+    noiseSuppression: supported.noiseSuppression !== false,
+    autoGainControl: supported.autoGainControl !== false,
+  }
+}
+
+function createAudioConstraints(
+  level: NoiseCancellationLevel,
+  support: MicConstraintSupport,
+): { requested: MediaTrackConstraints; requestedFlags: MicCaptureDiagnostics['requestedConstraints'] } {
+  const processingEnabled = RECORDER_DENOISE_PRESETS[level].captureProcessingEnabled
+  const requestedFlags = {
+    echoCancellation: processingEnabled,
+    noiseSuppression: processingEnabled,
+    autoGainControl: processingEnabled,
+  }
+
+  const requested: MediaTrackConstraints = {
+    sampleRate: 16000,
+    channelCount: 1,
+  }
+  if (support.echoCancellation) {
+    requested.echoCancellation = requestedFlags.echoCancellation
+  }
+  if (support.noiseSuppression) {
+    requested.noiseSuppression = requestedFlags.noiseSuppression
+  }
+  if (support.autoGainControl) {
+    requested.autoGainControl = requestedFlags.autoGainControl
+  }
+
+  return { requested, requestedFlags }
+}
+
+function toBoolean(value: unknown): boolean | null {
+  return typeof value === 'boolean' ? value : null
+}
+
+function toBooleanOrString(value: unknown): boolean | string | null {
+  if (typeof value === 'boolean' || typeof value === 'string') return value
+  return null
+}
+
+function toNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null
 }
 
 export function useAudioWorklet(
   onAudioChunk: MutableRefObject<((data: ArrayBuffer) => void) | null>,
+  options: UseAudioWorkletOptions = {},
 ): UseAudioWorkletReturn {
   // FIX: Separate contexts for different sample rates
   const recorderCtxRef = useRef<AudioContext | null>(null)
@@ -19,10 +163,41 @@ export function useAudioWorklet(
   const playerNodeRef = useRef<AudioWorkletNode | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [micCaptureDiagnostics, setMicCaptureDiagnostics] = useState<MicCaptureDiagnostics | null>(
+    null,
+  )
+  const onSpeechActivityRef = useRef<UseAudioWorkletOptions['onSpeechActivity']>(
+    options.onSpeechActivity,
+  )
+  const onPlaybackStatsRef = useRef<UseAudioWorkletOptions['onPlaybackStats']>(
+    options.onPlaybackStats,
+  )
+  const noiseCancellationLevelRef = useRef<NoiseCancellationLevel>(
+    options.noiseCancellationLevel ?? 'aggressive',
+  )
+
+  useEffect(() => {
+    onSpeechActivityRef.current = options.onSpeechActivity
+  }, [options.onSpeechActivity])
+
+  useEffect(() => {
+    onPlaybackStatsRef.current = options.onPlaybackStats
+    if (playerNodeRef.current) {
+      playerNodeRef.current.port.postMessage({
+        command: 'enable_playback_stats',
+        enabled: Boolean(options.onPlaybackStats),
+      })
+    }
+  }, [options.onPlaybackStats])
+
+  useEffect(() => {
+    noiseCancellationLevelRef.current = options.noiseCancellationLevel ?? 'aggressive'
+  }, [options.noiseCancellationLevel])
 
   const startRecording = useCallback(async () => {
     try {
       setError(null)
+      setMicCaptureDiagnostics(null)
 
       // 16kHz for recording (Gemini Live API expects 16kHz PCM)
       const ctx = new AudioContext({ sampleRate: 16000 })
@@ -35,33 +210,112 @@ export function useAudioWorklet(
 
       await ctx.audioWorklet.addModule('/pcm-recorder-processor.js')
 
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          sampleRate: 16000,
-          channelCount: 1,
-          echoCancellation: true,
-          noiseSuppression: true,
-        },
-      })
+      const level = noiseCancellationLevelRef.current
+      const support = buildCaptureConstraintSupport()
+      const { requested, requestedFlags } = createAudioConstraints(level, support)
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: requested })
       streamRef.current = stream
 
+      const trackCandidates =
+        typeof stream.getAudioTracks === 'function'
+          ? stream.getAudioTracks()
+          : typeof stream.getTracks === 'function'
+            ? stream.getTracks()
+            : []
+      const [track] = trackCandidates
+      if (track && typeof track.applyConstraints === 'function') {
+        const processingOnly: MediaTrackConstraints = {}
+        if (support.echoCancellation) {
+          processingOnly.echoCancellation = requestedFlags.echoCancellation
+        }
+        if (support.noiseSuppression) {
+          processingOnly.noiseSuppression = requestedFlags.noiseSuppression
+        }
+        if (support.autoGainControl) {
+          processingOnly.autoGainControl = requestedFlags.autoGainControl
+        }
+        if (
+          Object.keys(processingOnly).length > 0 &&
+          requestedFlags.echoCancellation === true
+        ) {
+          try {
+            await track.applyConstraints(processingOnly)
+          } catch {
+            // Continue with base constraints if per-track processing cannot be applied.
+          }
+        }
+      }
+
+      const appliedSettings = track?.getSettings?.()
+      setMicCaptureDiagnostics({
+        noiseCancellationLevel: level,
+        softwareDenoiserEnabled: RECORDER_DENOISE_PRESETS[level].denoiseEnabled,
+        supportedConstraints: support,
+        requestedConstraints: requestedFlags,
+        appliedSettings: {
+          echoCancellation: toBooleanOrString(appliedSettings?.echoCancellation),
+          noiseSuppression: toBoolean(appliedSettings?.noiseSuppression),
+          autoGainControl: toBoolean(appliedSettings?.autoGainControl),
+          sampleRate: toNumber(appliedSettings?.sampleRate),
+          channelCount: toNumber(appliedSettings?.channelCount),
+          latency: toNumber((appliedSettings as Record<string, unknown>)?.latency),
+        },
+      })
+
       const source = ctx.createMediaStreamSource(stream)
-      const recorder = new AudioWorkletNode(ctx, 'pcm-recorder-processor')
+      const denoisePreset = RECORDER_DENOISE_PRESETS[level]
+      const recorderProcessorOptions: RecorderProcessorOptions = {
+        denoiseEnabled: denoisePreset.denoiseEnabled,
+        noiseGateFloor: denoisePreset.noiseGateFloor,
+        noiseGateMultiplier: denoisePreset.noiseGateMultiplier,
+        noiseGateResidualGain: denoisePreset.noiseGateResidualGain,
+        highPassCutoffHz: denoisePreset.highPassCutoffHz,
+      }
+      const recorder = new AudioWorkletNode(ctx, 'pcm-recorder-processor', {
+        processorOptions: recorderProcessorOptions,
+      })
       recorderNodeRef.current = recorder
 
       // Use ref pattern to avoid stale closure
       recorder.port.onmessage = (event: MessageEvent) => {
         const chunk = event.data
+        if (
+          chunk &&
+          typeof chunk === 'object' &&
+          'type' in chunk &&
+          chunk.type === 'vad' &&
+          (chunk.state === 'speech_start' || chunk.state === 'speech_end')
+        ) {
+          if (chunk.state === 'speech_start') {
+            // Signal the server that user started speaking (for manual VAD).
+            // Do NOT clear playback buffer here — that causes voice breaks.
+            // The server sends an 'interrupted' message when the agent should
+            // actually stop; clearPlaybackBuffer is called from App.tsx on that event.
+            onSpeechActivityRef.current?.('start')
+          } else {
+            onSpeechActivityRef.current?.('end')
+          }
+          return
+        }
         if (chunk instanceof ArrayBuffer) {
           onAudioChunk.current?.(chunk)
+          return
+        }
+        if (chunk instanceof Float32Array) {
+          // Fallback for non-standard recorder processors that emit Float32 PCM.
+          // Convert here so onAudioChunk.current consumers always receive Int16 PCM buffers.
+          const pcm16 = new Int16Array(chunk.length)
+          for (let i = 0; i < chunk.length; i++) {
+            const sample = Math.max(-1, Math.min(1, chunk[i]))
+            pcm16[i] = sample < 0 ? sample * 0x8000 : sample * 0x7fff
+          }
+          onAudioChunk.current?.(pcm16.buffer)
           return
         }
         if (ArrayBuffer.isView(chunk)) {
           const view = chunk as ArrayBufferView
           const normalized = new Uint8Array(view.byteLength)
-          normalized.set(
-            new Uint8Array(view.buffer, view.byteOffset, view.byteLength),
-          )
+          normalized.set(new Uint8Array(view.buffer, view.byteOffset, view.byteLength))
           onAudioChunk.current?.(normalized.buffer)
         }
       }
@@ -88,6 +342,16 @@ export function useAudioWorklet(
       await ctx.audioWorklet.addModule('/pcm-player-processor.js')
       const player = new AudioWorkletNode(ctx, 'pcm-player-processor')
       playerNodeRef.current = player
+      player.port.onmessage = (event: MessageEvent) => {
+        const payload = event.data
+        if (payload && typeof payload === 'object' && payload.type === 'playback_stats') {
+          onPlaybackStatsRef.current?.(payload as PlaybackStats)
+        }
+      }
+      player.port.postMessage({
+        command: 'enable_playback_stats',
+        enabled: Boolean(onPlaybackStatsRef.current),
+      })
       player.connect(ctx.destination)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Audio playback failed')
@@ -106,22 +370,77 @@ export function useAudioWorklet(
     }
   }, [])
 
+  const recoverAudioContexts = useCallback(async () => {
+    const resumes: Promise<unknown>[] = []
+    if (playerCtxRef.current?.state === 'suspended') {
+      resumes.push(playerCtxRef.current.resume())
+    }
+    if (recorderCtxRef.current?.state === 'suspended') {
+      resumes.push(recorderCtxRef.current.resume())
+    }
+    if (resumes.length > 0) {
+      try {
+        await Promise.all(resumes)
+      } catch {
+        // Ignore resume races; normal playback/recording may still recover on next gesture.
+      }
+    }
+  }, [])
+
   const stop = useCallback(() => {
+    // Gain ramp-down on player to avoid audio pops (pattern from live-api-web-console).
+    const playerCtx = playerCtxRef.current
+    const playerNode = playerNodeRef.current
+    if (playerCtx && playerNode) {
+      try {
+        const gain = playerCtx.createGain()
+        gain.gain.setValueAtTime(1, playerCtx.currentTime)
+        gain.gain.linearRampToValueAtTime(0, playerCtx.currentTime + 0.05)
+        playerNode.disconnect()
+        playerNode.connect(gain)
+        gain.connect(playerCtx.destination)
+        // Close after ramp completes
+        setTimeout(() => {
+          playerNode.disconnect()
+          if (playerNodeRef.current === playerNode) {
+            playerNodeRef.current = null
+          }
+          playerCtx.close().catch(() => {})
+          if (playerCtxRef.current === playerCtx) {
+            playerCtxRef.current = null
+          }
+        }, 80)
+      } catch {
+        // Fallback: immediate close
+        playerNode.disconnect()
+        if (playerNodeRef.current === playerNode) {
+          playerNodeRef.current = null
+        }
+        playerCtx.close().catch(() => {})
+        if (playerCtxRef.current === playerCtx) {
+          playerCtxRef.current = null
+        }
+      }
+    } else {
+      playerNodeRef.current?.disconnect()
+      playerNodeRef.current = null
+      playerCtxRef.current?.close().catch(() => {})
+      playerCtxRef.current = null
+    }
+
     // Stop microphone tracks
-    streamRef.current?.getTracks().forEach(track => track.stop())
+    streamRef.current?.getTracks().forEach(track => {
+      track.stop()
+    })
     streamRef.current = null
 
-    // Disconnect nodes
+    // Disconnect recorder
     recorderNodeRef.current?.disconnect()
-    playerNodeRef.current?.disconnect()
     recorderNodeRef.current = null
-    playerNodeRef.current = null
 
-    // Close both contexts
-    recorderCtxRef.current?.close()
-    playerCtxRef.current?.close()
+    // Close recorder context
+    recorderCtxRef.current?.close().catch(() => {})
     recorderCtxRef.current = null
-    playerCtxRef.current = null
   }, [])
 
   return {
@@ -129,7 +448,9 @@ export function useAudioWorklet(
     initPlayer,
     playAudioChunk,
     clearPlaybackBuffer,
+    recoverAudioContexts,
     stop,
+    micCaptureDiagnostics,
     error,
   }
 }
