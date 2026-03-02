@@ -8,6 +8,7 @@ TIMEOUT="${TIMEOUT:-3600}"
 MEMORY="${MEMORY:-1Gi}"
 CPU="${CPU:-2}"
 MIN_INSTANCES="${MIN_INSTANCES:-1}"
+ALLOW_UNAUTHENTICATED="${ALLOW_UNAUTHENTICATED:-0}"
 RUN_RELEASE_GATE="${RUN_RELEASE_GATE:-1}"
 RUN_DOCS_CHECK="${RUN_DOCS_CHECK:-0}"
 RELEASE_GATE_STRICT="${RELEASE_GATE_STRICT:-1}"
@@ -72,7 +73,9 @@ if [[ -f "${ENV_FILE}" ]]; then
     [[ "${value}" == "<"*">" ]] && continue
     # Skip Cloud Run reserved env vars
     [[ "${key}" == "PORT" || "${key}" == "K_SERVICE" || "${key}" == "K_REVISION" || "${key}" == "K_CONFIGURATION" ]] && continue
-    # Write as YAML (quote values to handle commas, colons, etc.)
+    # Escape backslashes and quotes for valid YAML
+    value="${value//\\/\\\\}"
+    value="${value//\"/\\\"}"
     echo "${key}: \"${value}\"" >> "${ENV_YAML}"
     count=$((count + 1))
   done < <(grep -E '^[A-Z_]+=.' "${ENV_FILE}")
@@ -87,6 +90,11 @@ CONNECTOR_LOCK_BACKEND: firestore
 YAML
 fi
 
+AUTH_FLAG="--no-allow-unauthenticated"
+if [[ "${ALLOW_UNAUTHENTICATED}" == "1" ]]; then
+  AUTH_FLAG="--allow-unauthenticated"
+fi
+
 gcloud run deploy "${SERVICE_NAME}" \
   --source . \
   --project "${PROJECT_ID}" \
@@ -96,7 +104,7 @@ gcloud run deploy "${SERVICE_NAME}" \
   --memory "${MEMORY}" \
   --cpu "${CPU}" \
   --min-instances "${MIN_INSTANCES}" \
-  --allow-unauthenticated \
+  ${AUTH_FLAG} \
   --env-vars-file "${ENV_YAML}"
 
 echo "Deployment complete."

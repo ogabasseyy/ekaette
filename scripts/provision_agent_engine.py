@@ -97,7 +97,8 @@ def provision(project: str, location: str, *, dry_run: bool = False) -> str:
                 print(f"AGENT_ENGINE_ID={engine_id}")
                 return engine_id
     except Exception as exc:
-        print(f"Warning: Could not list existing engines: {exc}", file=sys.stderr)
+        print(f"Error: Could not list existing engines: {exc}", file=sys.stderr)
+        raise SystemExit(1)
 
     if dry_run:
         print("[DRY RUN] Would create Agent Engine with config:")

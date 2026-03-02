@@ -1,6 +1,6 @@
 ---
 title: "Building Ekaette: A Multimodal AI Agent That Sees, Hears, and Negotiates"
-published: true
+published: false
 tags: GeminiLiveAgentChallenge, ai, googlecloud, webdev
 cover_image: https://YOUR_COVER_IMAGE_URL/cover-1000x420.png
 ---

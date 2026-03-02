@@ -28,7 +28,11 @@ def _check_no_deleted_services_imports(errors: list[str]) -> None:
 
 
 def _check_admin_route_parity(errors: list[str]) -> None:
-    from main import app
+    try:
+        from main import app
+    except Exception as exc:
+        errors.append(f"cannot import main app: {exc}")
+        return
 
     found: list[tuple[str, str, str]] = []
     for route in app.routes:

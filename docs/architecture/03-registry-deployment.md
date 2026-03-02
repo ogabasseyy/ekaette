@@ -76,7 +76,7 @@ graph TB
         end
 
         subgraph "GCE VM (ekaette-sip)"
-            SIP_BR["SIP Bridge<br/>Python asyncio,<br/>UDP :6060,<br/>systemd managed,<br/>IP: 34.69.236.219"]
+            SIP_BR["SIP Bridge<br/>Python asyncio,<br/>UDP :6060,<br/>systemd managed,<br/>IP: <reserved-static-ip>"]
         end
 
         subgraph "Data Layer"

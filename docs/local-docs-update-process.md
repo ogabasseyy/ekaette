@@ -1,6 +1,7 @@
 # Local Ignored Docs Update Process
 
 ## Why This Exists
+
 The `Ekaette_*.md` / `Ekaette_*.html` docs are intentionally git-ignored, so we use a tracked manifest + checker to prevent silent drift.
 
 Tracked controls:
@@ -8,12 +9,14 @@ Tracked controls:
 - `scripts/check_local_docs.py`
 
 ## Local Docs Covered
+
 - `Ekaette_Architecture.md`
 - `Ekaette_Architecture.html`
 - `Ekaette_Build_Plan_v3.md`
 - `Ekaette_Setup_Guide.md`
 
 ## When To Run The Checker
+
 Run before:
 - release/cutover
 - architecture or setup changes
@@ -25,6 +28,7 @@ Command:
 ```
 
 ## How To Refresh The Manifest After Intentional Doc Edits
+
 1. Edit the local ignored docs.
 2. Review changes for accuracy.
 3. Recompute hashes and update `docs/local-docs-manifest.json`.
@@ -49,6 +53,7 @@ PY
 ```
 
 ## Release Checklist Integration
+
 Before release/cutover:
 - [ ] run `scripts/check_local_docs.py`
 - [ ] confirm manifest phase marker matches current rollout phase

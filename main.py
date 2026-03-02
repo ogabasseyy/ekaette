@@ -2,15 +2,12 @@
 
 import asyncio
 import base64
-import binascii
 import json
 import logging
 import os
 import re
 import sys
-import time
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import warnings
 
@@ -58,10 +55,6 @@ from app.configs.industry_loader import (  # noqa: E402
     build_session_state,
     create_industry_config_client,
     load_industry_config,
-)
-from app.configs.host_allowlist import (  # noqa: E402
-    extract_connector_endpoint_host,
-    host_matches_allowlist,
 )
 from app.configs.model_resolver import get_live_model_candidates  # noqa: E402
 from app.configs.compaction_factory import create_app as create_adk_app  # noqa: E402

@@ -6,7 +6,7 @@
 
 ```mermaid
 graph TB
-    subgraph "GCE VM: ekaette-sip (34.69.236.219)"
+    subgraph "GCE VM: ekaette-sip (<reserved-static-ip>)"
         subgraph "sip_bridge/ — Standalone Python Process"
             MAIN["main.py<br/>Entry point, signal handlers,<br/>config validation"]
             CONFIG["config.py<br/>BridgeConfig (frozen dataclass)<br/>All config from env vars"]
@@ -105,7 +105,7 @@ sequenceDiagram
     Note over SIP,AT: Re-registers at 80% of expiry
 
     Note over CALLER,FS: Inbound Call
-    CALLER->>AT: Dial +2342017001127
+    CALLER->>AT: Dial <service-number>
     AT->>SIP: SIP INVITE (SDP: G.711 μ-law, port X)
     SIP->>AT: 100 Trying
     SIP->>SIP: Allocate RTP port (10000-20000)

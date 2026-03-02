@@ -129,7 +129,7 @@ If bearer tokens only:
 
 ## E. Policy-as-code (new)
 Store provider allowlist and capability policies as versioned config:
-- `policies/mcp_providers.v1.yaml`
+- `policies/mcp_providers.v1.json`
 - `policies/capability_matrix.v1.yaml`
 Changes require:
 - code review
@@ -371,7 +371,7 @@ Rollback action:
 - [x] Runtime data admin endpoints: `POST /products/import`, `POST /booking-slots/import`, `POST /runtime/purge-demo`.
 - [x] Extended admin endpoint tests for knowledge/connectors/runtime imports (positive + negative paths).
 - [x] Policy-as-code files added and wired:
-  - `policies/mcp_providers.v1.yaml`
+  - `policies/mcp_providers.v1.json`
   - `policies/capability_matrix.v1.yaml`
 - [x] Connector create/update now enforce provider + template capability policy rules from policy files.
 - [x] Idempotency dependency extraction added for mutating admin routes:
@@ -416,7 +416,7 @@ Rollback action:
 ### Recently completed (this plan scope)
 - [x] SLO/alert policy templates added:
   - `policies/observability_slos.v1.yaml`
-  - `policies/alert_policies.v1.yaml`
+  - `policies/alert_policies.v1.json`
 - [x] Release gate validation extended to enforce observability policy shape.
 - [x] Deployment automation now runs release gates pre-deploy:
   - `scripts/deploy_cloud_run.sh` invokes `python -m scripts.release_gate --strict` by default.

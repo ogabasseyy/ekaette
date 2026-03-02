@@ -182,7 +182,9 @@ Each handler:
 ## What Stays in main.py
 
 ```python
+
 # ~1,400 lines total
+
 - Imports + logging setup (~50 lines)
 - Lifespan + app.state + CORS middleware (~100 lines)
 - Shared utilities: normalization, origin checks, tenant validation, rate limiting (~300 lines)
@@ -199,16 +201,21 @@ Each handler:
 ## Verification
 
 ```bash
+
 # After each step:
-cd "/Users/mac/Downloads/Ekaette/Ekaette " && python -m pytest tests/ -v --tb=short -q
+
+cd . && python -m pytest tests/ -v --tb=short -q
 
 # After Phase C (handlers moved):
+
 wc -l main.py  # should be ~1,400
 
 # After Phase D (cleanup):
-cd "/Users/mac/Downloads/Ekaette/Ekaette /frontend" && npx vitest run
+
+cd frontend && npx vitest run
 
 # Verify all routes mounted:
+
 python -c "
 from main import app
 admin = [r for r in app.routes if hasattr(r, 'path') and '/admin/' in r.path]
@@ -217,15 +224,18 @@ assert len(admin) >= 20
 "
 
 # Verify Dockerfile compatibility:
+
 python -c "import main; assert hasattr(main, 'app'); print('OK')"
 
 # Verify no circular imports at module load:
+
 python -c "from app.api.v1.admin import admin_router; print(f'Router OK: {len(admin_router.routes)} routes')"
 ```
 
 ## Acceptance Gates
 
 ### Gate 1: No admin handler body remains in main.py
+
 After Phase C, run:
 ```bash
 grep -n "^async def.*admin\|^def.*admin" main.py
@@ -233,9 +243,10 @@ grep -n "^async def.*admin\|^def.*admin" main.py
 **Must return zero matches.** All 20 admin handler functions must exist ONLY in `app/api/v1/admin/routes/*.py`. Re-exports of the function name are allowed (for test compat), but the function body (the actual `async def` with business logic) must not be in main.py.
 
 ### Gate 2: Auth/idempotency behavior is byte-for-byte equivalent
+
 After Phase A (infrastructure extraction), verify:
 ```bash
-cd "/Users/mac/Downloads/Ekaette/Ekaette "
+cd .
 python -m pytest tests/test_admin_v1_contracts.py tests/test_main.py -v --tb=short -q
 ```
 All existing auth and idempotency tests must pass **without any test modifications**. If a test needs changing to pass, the extraction introduced a behavioral regression — stop and fix.

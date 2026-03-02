@@ -11,10 +11,9 @@ resource "google_service_account" "cloud_run_sa" {
 # Roles: only what the service actually needs
 locals {
   cloud_run_roles = [
-    "roles/datastore.user",      # Firestore read/write
-    "roles/storage.objectAdmin", # Cloud Storage CRUD
-    "roles/aiplatform.user",     # Vertex AI / Gemini API
-    "roles/logging.logWriter",   # Cloud Logging
+    "roles/datastore.user",    # Firestore read/write
+    "roles/aiplatform.user",   # Vertex AI / Gemini API
+    "roles/logging.logWriter", # Cloud Logging
   ]
 }
 

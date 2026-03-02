@@ -44,6 +44,12 @@ def _check_manifest(manifest_path: Path, repo_root: Path) -> dict[str, Any]:
             continue
 
         abs_path = (repo_root / rel_path).resolve()
+        try:
+            abs_path.relative_to(repo_root.resolve())
+        except ValueError:
+            failures += 1
+            results.append({"path": rel_path, "status": "path_traversal"})
+            continue
         if not abs_path.exists():
             failures += 1
             results.append({"path": rel_path, "status": "missing"})

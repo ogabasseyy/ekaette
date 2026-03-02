@@ -32,6 +32,12 @@ variable "max_instances" {
   default     = 10
 }
 
+variable "cors_allowed_origins" {
+  description = "Allowed CORS origins for the media storage bucket"
+  type        = list(string)
+  default     = ["https://ekaette.vercel.app"]
+}
+
 variable "env_vars" {
   description = "Additional environment variables for the Cloud Run service"
   type        = map(string)

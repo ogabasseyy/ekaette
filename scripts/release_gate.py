@@ -28,10 +28,10 @@ def _read_json_or_yaml_object(path: Path) -> dict[str, Any]:
 
 def validate_policy_files(repo_root: Path) -> list[str]:
     errors: list[str] = []
-    providers_path = repo_root / "policies" / "mcp_providers.v1.yaml"
+    providers_path = repo_root / "policies" / "mcp_providers.v1.json"
     capability_path = repo_root / "policies" / "capability_matrix.v1.yaml"
     slos_path = repo_root / "policies" / "observability_slos.v1.yaml"
-    alerts_path = repo_root / "policies" / "alert_policies.v1.yaml"
+    alerts_path = repo_root / "policies" / "alert_policies.v1.json"
 
     if not providers_path.exists():
         errors.append(f"missing policy file: {providers_path}")

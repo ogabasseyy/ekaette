@@ -1,6 +1,7 @@
 # Registry Schema Versioning Policy
 
 ## Purpose
+
 This policy defines how registry template and tenant-company documents are versioned, validated, and loaded during the registry-first cutover.
 
 It applies to:
@@ -8,6 +9,7 @@ It applies to:
 - `tenants/{tenantId}/companies/{companyId}`
 
 ## Current Version Window
+
 - `schema_version` is required on every template and company registry document.
 - Current supported range:
   - `MIN_SUPPORTED_SCHEMA_VERSION = 1`
@@ -16,6 +18,7 @@ It applies to:
   - `REGISTRY_SCHEMA_VERSION = 1`
 
 ## Loader Behavior (Fail-Closed)
+
 Registry loaders must reject unsupported or malformed schema versions with explicit errors.
 
 Required behavior:
@@ -28,6 +31,7 @@ Runtime error code:
 - `REGISTRY_SCHEMA_VERSION_UNSUPPORTED`
 
 ## Provisioning / Migration Write Policy
+
 Provisioning and migration tools must:
 - always write `schema_version`
 - use the current `REGISTRY_SCHEMA_VERSION`
@@ -35,11 +39,13 @@ Provisioning and migration tools must:
 - remain idempotent on reruns
 
 ## Compatibility Policy
+
 - Compatibility fallbacks are temporary migration aids and not a substitute for schema versioning.
 - New template additions must be registry-first and include `schema_version` from day one.
 - Unsupported future schema versions are not interpreted until loaders are explicitly upgraded.
 
 ## Upgrade Process (Future Schema Versions)
+
 When introducing a new schema version:
 1. Add/track schema changes in code + docs.
 2. Update validators to understand the new version.
@@ -52,6 +58,7 @@ When introducing a new schema version:
 6. Roll out to staging and validate registry resolution behavior before production.
 
 ## Required Tests
+
 - missing template/company `schema_version` fails validation
 - unsupported template/company `schema_version` fails validation
 - loaders fail closed on unsupported schema versions

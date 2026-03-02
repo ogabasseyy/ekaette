@@ -5,12 +5,12 @@
 resource "google_storage_bucket" "media" {
   name          = "${var.project_id}-${var.app_name}-media"
   location      = var.region
-  force_destroy = true
+  force_destroy = false
 
   uniform_bucket_level_access = true
 
   cors {
-    origin          = ["*"]
+    origin          = var.cors_allowed_origins
     method          = ["GET", "POST", "PUT", "OPTIONS"]
     response_header = ["Content-Type", "Content-Disposition"]
     max_age_seconds = 3600

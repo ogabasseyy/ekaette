@@ -94,7 +94,7 @@ graph TB
             CR["Ekaette Container<br/>FastAPI + Uvicorn,<br/>3 API packages + AT channel,<br/>ADK multi-agent runtime,<br/>WebSocket bidi-streaming"]
         end
         subgraph "GCE VM (ekaette-sip)"
-            SIP_BR["SIP Bridge<br/>Python asyncio, UDP :6060,<br/>systemd managed,<br/>IP: 34.69.236.219"]
+            SIP_BR["SIP Bridge<br/>Python asyncio, UDP :6060,<br/>systemd managed,<br/>IP: <reserved-static-ip>"]
         end
         subgraph "Data Layer"
             FS["Firestore<br/>Registry, sessions, knowledge,<br/>products, booking slots,<br/>call records (wa_calls)"]

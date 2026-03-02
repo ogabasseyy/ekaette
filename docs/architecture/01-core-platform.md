@@ -31,7 +31,7 @@ graph TB
     subgraph "Client Layer"
         WW["Web App<br/>(Vite + React 19)"]
         MW["Mobile Web"]
-        PHONE["Phone Call<br/>(+2342017001127)"]
+        PHONE["Phone Call<br/>(&lt;service-number&gt;)"]
         WA["WhatsApp Call"]
         SMS_C["SMS"]
     end
@@ -101,7 +101,7 @@ graph TB
         MB["Memory Bank<br/>(Agent Engine)<br/>Long-term customer memory,<br/>cross-session recall"]
     end
 
-    subgraph "GCE VM — SIP Bridge (34.69.236.219)"
+    subgraph "GCE VM — SIP Bridge (<reserved-static-ip>)"
         SIP_SVR["SIPServer<br/>UDP :6060, SIP REGISTER,<br/>INVITE/ACK/BYE handling"]
         CALL_SESS["CallSession<br/>4-task pipeline:<br/>recv → decode → Gemini → encode"]
         WA_SESS["WaSession<br/>4-task pipeline:<br/>SRTP → Opus decode → Gemini → Opus encode"]

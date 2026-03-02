@@ -8,7 +8,7 @@ COPY frontend/ .
 RUN pnpm run build
 
 # ─── Stage 2: Python runtime ───
-FROM python:3.13-slim
+FROM python:3.13.12-slim
 
 # System deps for grpc / crypto wheels
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -28,9 +28,16 @@ COPY app/ app/
 # Copy built frontend
 COPY --from=frontend-build /app/frontend/dist frontend/dist
 
+# Run as non-root user
+RUN useradd --create-home --uid 10001 appuser && chown -R appuser:appuser /app
+USER appuser
+
 # Cloud Run injects PORT; default 8080
 ENV PORT=8080
 
 EXPOSE ${PORT}
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD python -c "import urllib.request,os; urllib.request.urlopen('http://localhost:'+os.environ.get('PORT','8080')+'/health')" || exit 1
 
 CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT}"]
