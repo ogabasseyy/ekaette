@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "id": "automotive",
+  "label": "Automotive",
+  "category": "automotive",
+  "description": "Vehicle inspection, trade-in, and service scheduling.",
+  "default_voice": "Kore",
+  "greeting_policy": "Hello! Looking to buy, sell, or service a vehicle?",
+  "theme": {
+    "accent": "oklch(71% 0.18 240)",
+    "accentSoft": "oklch(71% 0.18 240 / 0.15)",
+    "title": "Automotive Service Lane",
+    "hint": "Trade-ins, inspections, parts and service scheduling."
+  },
+  "capabilities": ["booking_reservations", "valuation_tradein", "catalog_lookup"],
+  "enabled_agents": ["vision_agent", "valuation_agent", "booking_agent", "catalog_agent", "support_agent"],
+  "connectors_supported": ["dms"],
+  "status": "active"
+}

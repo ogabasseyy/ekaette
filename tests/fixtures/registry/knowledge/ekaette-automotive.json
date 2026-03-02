@@ -1,0 +1,30 @@
+[
+  {
+    "id": "kb-auto-inspection",
+    "title": "Vehicle inspection checklist",
+    "text": "Our 150-point inspection covers engine, brakes, tires, electronics, body condition, suspension, fluids, and emissions. Results include photos and a detailed condition report. Inspection takes approximately 90 minutes.",
+    "tags": ["inspection", "service"],
+    "source": "seed"
+  },
+  {
+    "id": "kb-auto-finance",
+    "title": "Financing and payment options",
+    "text": "Financing options are available through partner banks (Access Bank, GTBank, Zenith) for qualified buyers. Minimum down payment is 30%. Terms from 12-48 months. Pre-approval available online.",
+    "tags": ["finance", "payment", "sales"],
+    "source": "seed"
+  },
+  {
+    "id": "kb-auto-tradein",
+    "title": "Vehicle trade-in process",
+    "text": "Trade-in evaluation is free and takes about 30 minutes. Bring your vehicle title and ID. Offers are valid for 7 days. Trade-in value can be applied as credit toward any vehicle purchase.",
+    "tags": ["trade-in", "valuation", "sales"],
+    "source": "seed"
+  },
+  {
+    "id": "kb-auto-warranty",
+    "title": "Warranty and service guarantee",
+    "text": "Pre-owned vehicles include a 6-month/10,000km powertrain warranty. New vehicles carry manufacturer's warranty. Extended warranty plans available for 12-36 months. Service guarantee covers parts and labor.",
+    "tags": ["warranty", "service", "policy"],
+    "source": "seed"
+  }
+]

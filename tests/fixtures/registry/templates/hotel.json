@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "id": "hotel",
+  "label": "Hotels & Hospitality",
+  "category": "hospitality",
+  "description": "Reservations, room search, and guest support.",
+  "default_voice": "Puck",
+  "greeting_policy": "Good day! Welcome to our hotel. How can I make your stay perfect?",
+  "theme": {
+    "accent": "oklch(78% 0.15 55)",
+    "accentSoft": "oklch(78% 0.15 55 / 0.15)",
+    "title": "Hospitality Concierge",
+    "hint": "Real-time booking and guest support voice assistant."
+  },
+  "capabilities": ["booking_reservations", "policy_qa"],
+  "enabled_agents": ["booking_agent", "support_agent"],
+  "connectors_supported": ["pms"],
+  "status": "active"
+}

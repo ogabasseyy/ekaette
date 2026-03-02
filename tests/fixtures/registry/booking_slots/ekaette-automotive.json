@@ -1,0 +1,74 @@
+[
+  {
+    "id": "slot-auto-0301-09-ikeja",
+    "date": "2026-03-01",
+    "time": "09:00",
+    "location": "Lagos - Ikeja Service Center",
+    "slot_type": "inspection",
+    "available": true,
+    "data_tier": "demo"
+  },
+  {
+    "id": "slot-auto-0301-13-ikeja",
+    "date": "2026-03-01",
+    "time": "13:00",
+    "location": "Lagos - Ikeja Service Center",
+    "slot_type": "service",
+    "available": true,
+    "data_tier": "demo"
+  },
+  {
+    "id": "slot-auto-0308-09-wuse",
+    "date": "2026-03-08",
+    "time": "09:00",
+    "location": "Abuja - Wuse Service Center",
+    "slot_type": "inspection",
+    "available": true,
+    "data_tier": "demo"
+  },
+  {
+    "id": "slot-auto-0308-14-wuse",
+    "date": "2026-03-08",
+    "time": "14:00",
+    "location": "Abuja - Wuse Service Center",
+    "slot_type": "service",
+    "available": false,
+    "data_tier": "demo"
+  },
+  {
+    "id": "slot-auto-0315-09-ikeja",
+    "date": "2026-03-15",
+    "time": "09:00",
+    "location": "Lagos - Ikeja Service Center",
+    "slot_type": "inspection",
+    "available": true,
+    "data_tier": "demo"
+  },
+  {
+    "id": "slot-auto-0315-15-ikeja",
+    "date": "2026-03-15",
+    "time": "15:00",
+    "location": "Lagos - Ikeja Service Center",
+    "slot_type": "trade-in",
+    "available": true,
+    "data_tier": "demo"
+  },
+  {
+    "id": "slot-auto-0322-10-wuse",
+    "date": "2026-03-22",
+    "time": "10:00",
+    "location": "Abuja - Wuse Service Center",
+    "slot_type": "inspection",
+    "available": true,
+    "data_tier": "demo"
+  },
+  {
+    "id": "slot-auto-0322-14-ikeja",
+    "date": "2026-03-22",
+    "time": "14:00",
+    "location": "Lagos - Ikeja Service Center",
+    "slot_type": "service",
+    "available": true,
+    "data_tier": "demo"
+  }
+]
