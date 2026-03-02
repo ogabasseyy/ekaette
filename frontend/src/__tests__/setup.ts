@@ -60,7 +60,7 @@ class MockAudioWorkletNode {
     onmessage: null as ((ev: MessageEvent) => void) | null,
     postMessage: (_data: unknown) => {},
   }
-  constructor(_context: AudioContext, _name: string) {}
+  constructor(_context: AudioContext, _name: string, _options?: Record<string, unknown>) {}
   connect() {}
   disconnect() {}
 }

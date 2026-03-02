@@ -12,7 +12,7 @@ interface StepKnowledgeProps {
 export function StepKnowledge({ companyId, tenantId, onNext, onBack }: StepKnowledgeProps) {
   const [title, setTitle] = useState('FAQ')
   const [text, setText] = useState('')
-  const [url, setUrl] = useState('')
+  const [url] = useState('')
   const [file, setFile] = useState<File | null>(null)
   const [entries, setEntries] = useState<AdminKnowledgeEntry[]>([])
   const [status, setStatus] = useState<string | null>(null)

@@ -117,7 +117,7 @@ const DEFAULT_THEME: ThemeConfig = {
 }
 
 function createClientSessionId(): string {
-  return `session-${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`
+  return `session-${Date.now()}-${crypto.randomUUID().slice(0, 12)}`
 }
 
 function parseStoredIndustry(value: string | null): string | null {
