@@ -20,7 +20,9 @@ def _get_genai_client() -> genai.Client:
     """Get or create the GenAI client for Standard API calls."""
     global _genai_client
     if _genai_client is None:
-        api_key = os.getenv("GOOGLE_API_KEY", "")
+        api_key = os.getenv("GOOGLE_API_KEY", "").strip()
+        if not api_key:
+            raise RuntimeError("GOOGLE_API_KEY is not configured")
         _genai_client = genai.Client(
             api_key=api_key,
             http_options=types.HttpOptions(api_version="v1alpha"),

@@ -14,6 +14,7 @@ from .settings import (
     AT_RECORDING_ENABLED,
     AT_RECORDING_DISCLOSURE,
 )
+from app.configs import sanitize_log
 from app.tools.pii_redaction import redact_pii
 
 logger = logging.getLogger(__name__)
@@ -77,9 +78,9 @@ def log_call_bridged(session_id: str, caller: str, direction: str) -> None:
     logger.info(
         "AT call bridged",
         extra={
-            "at_session_id": session_id,
-            "caller": redact_pii(caller),
-            "direction": direction,
+            "at_session_id": sanitize_log(session_id),
+            "caller": sanitize_log(redact_pii(caller)),
+            "direction": sanitize_log(direction),
             "tenant_id": tenant_id,
             "company_id": company_id,
             "sip_endpoint": SIP_BRIDGE_ENDPOINT,
@@ -97,9 +98,9 @@ def log_call_ended(
     logger.info(
         "AT call ended",
         extra={
-            "at_session_id": session_id,
-            "caller": redact_pii(caller),
-            "duration_seconds": duration_seconds,
-            "amount": amount,
+            "at_session_id": sanitize_log(session_id),
+            "caller": sanitize_log(redact_pii(caller)),
+            "duration_seconds": sanitize_log(duration_seconds),
+            "amount": sanitize_log(amount),
         },
     )

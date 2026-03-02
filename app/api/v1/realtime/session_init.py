@@ -279,6 +279,9 @@ async def initialize_session(
                 session_id=resolved_session_id,
                 state_updates=state_updates,
             )
+            # Reflect state_updates into the session object so session_state
+            # (used below for voice/canonical fields) is consistent.
+            session.state.update(state_updates)
     else:
         if registry_enabled_fn():
             try:

@@ -13,6 +13,7 @@ import hashlib
 import hmac
 import json
 import secrets
+import threading
 import time
 from typing import NamedTuple
 
@@ -21,6 +22,7 @@ _WS_TOKEN_SECRET: str = ""
 
 # In-memory used-JTI set for single-use enforcement.
 _used_jtis: dict[str, float] = {}  # jti -> expiration timestamp
+_used_jtis_lock = threading.Lock()
 _MAX_USED_JTIS = 10_000
 
 
@@ -105,6 +107,8 @@ def validate_ws_token(token: str, expected_user_id: str) -> WsTokenClaims | None
 
     # Check expiration
     exp = payload.get("exp", 0)
+    if not isinstance(exp, (int, float)):
+        return None
     if time.time() > exp:
         return None
 
@@ -118,11 +122,12 @@ def validate_ws_token(token: str, expected_user_id: str) -> WsTokenClaims | None
     if not jti:
         return None
 
-    _prune_used_jtis()
+    with _used_jtis_lock:
+        _prune_used_jtis()
 
-    if jti in _used_jtis:
-        return None
-    _used_jtis[jti] = exp
+        if jti in _used_jtis:
+            return None
+        _used_jtis[jti] = exp
 
     return WsTokenClaims(
         sub=sub,

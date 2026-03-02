@@ -58,9 +58,8 @@ def create_memory_service() -> BaseMemoryService:
 
         if not agent_engine_id:
             if backend == "vertex":
-                logger.warning(
-                    "MEMORY_BACKEND=vertex but AGENT_ENGINE_ID not set — "
-                    "falling back to InMemoryMemoryService"
+                raise RuntimeError(
+                    "MEMORY_BACKEND=vertex requires AGENT_ENGINE_ID to be set."
                 )
             return InMemoryMemoryService()
 
@@ -74,6 +73,11 @@ def create_memory_service() -> BaseMemoryService:
             )
             return service
 
+        if backend == "vertex":
+            raise RuntimeError(
+                "MEMORY_BACKEND=vertex but VertexAiMemoryBankService init failed. "
+                "Check AGENT_ENGINE_ID and credentials."
+            )
         logger.warning(
             "VertexAiMemoryBankService failed — falling back to InMemoryMemoryService"
         )

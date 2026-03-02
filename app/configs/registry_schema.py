@@ -144,6 +144,8 @@ def validate_knowledge_entry(data: Any) -> list[str]:
     tags = data.get("tags")
     if not isinstance(tags, list) or len(tags) == 0:
         errors.append("missing or empty required field: tags (must be a non-empty list)")
+    elif not all(isinstance(tag, str) and tag.strip() for tag in tags):
+        errors.append("tags must contain only non-empty strings")
 
     return errors
 

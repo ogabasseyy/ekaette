@@ -118,7 +118,7 @@ def _store_payment(reference: str, payload: dict[str, Any]) -> None:
         existing = _payment_records.get(reference, {})
         merged = {**existing, **payload}
         merged.setdefault("reference", reference)
-        merged.setdefault("updated_at", _now_iso())
+        merged["updated_at"] = _now_iso()
         _payment_records[reference] = merged
 
 
@@ -127,7 +127,7 @@ def _store_virtual_account(reference: str, payload: dict[str, Any]) -> None:
         existing = _virtual_account_records.get(reference, {})
         merged = {**existing, **payload}
         merged.setdefault("reference", reference)
-        merged.setdefault("updated_at", _now_iso())
+        merged["updated_at"] = _now_iso()
         _virtual_account_records[reference] = merged
         account_number = _normalize_account_number(_coerce_str(merged.get("account_number")))
         if account_number:
