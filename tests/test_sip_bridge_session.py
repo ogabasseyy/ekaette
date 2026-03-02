@@ -30,6 +30,36 @@ class TestCallSessionCreation:
         assert s.inbound_drops == 0
         assert s.outbound_drops == 0
 
+    def test_session_codec_bridge_defaults_to_none(self) -> None:
+        s = CallSession(call_id="call-1", tenant_id="public", company_id="acme")
+        assert s.codec_bridge is None
+
+    def test_session_accepts_codec_bridge(self) -> None:
+        from sip_bridge.codec_bridge import G711CodecBridge
+
+        bridge = G711CodecBridge()
+        s = CallSession(
+            call_id="call-1",
+            tenant_id="public",
+            company_id="acme",
+            codec_bridge=bridge,
+        )
+        assert s.codec_bridge is bridge
+        assert s.codec_bridge.rtp_payload_type == 0
+
+    def test_session_accepts_opus_codec_bridge(self) -> None:
+        from sip_bridge.codec_bridge import OpusCodecBridge
+
+        bridge = OpusCodecBridge(encode_rate=16000)
+        s = CallSession(
+            call_id="call-1",
+            tenant_id="public",
+            company_id="acme",
+            codec_bridge=bridge,
+        )
+        assert s.codec_bridge is bridge
+        assert s.codec_bridge.rtp_payload_type == 111
+
 
 class TestInboundFeeding:
     """feed_inbound() and backpressure metrics."""

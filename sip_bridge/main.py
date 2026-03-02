@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import signal
+import sys
 
 from .config import BridgeConfig
 from .server import SIPServer
@@ -27,7 +28,12 @@ async def main() -> None:
     errors = config.validate()
     if errors:
         for err in errors:
-            logger.warning("Config issue: %s", err)
+            logger.error("Config issue: %s", err)
+        logger.fatal(
+            "Invalid SIP bridge configuration. Refusing to start to avoid one-way audio "
+            "or failed AT registration."
+        )
+        sys.exit(1)
 
     server = SIPServer(config=config)
     await server.start()

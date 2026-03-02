@@ -9,6 +9,7 @@ import struct
 
 # G.711 μ-law decode table (256 entries)
 _ULAW_DECODE: list[int] = []
+_ALAW_DECODE: list[int] = []
 
 
 def _build_ulaw_table() -> None:
@@ -66,6 +67,39 @@ def _linear_to_ulaw(sample: int) -> int:
 
     mantissa = (sample >> (exponent + 3)) & 0x0F
     return ~(sign | (exponent << 4) | mantissa) & 0xFF
+
+
+def _alaw_to_linear(byte_val: int) -> int:
+    """Decode one G.711 A-law byte into signed PCM16."""
+    val = byte_val ^ 0x55
+    t = (val & 0x0F) << 4
+    seg = (val & 0x70) >> 4
+    if seg == 0:
+        t += 8
+    elif seg == 1:
+        t += 0x108
+    else:
+        t += 0x108
+        t <<= (seg - 1)
+    return t if (val & 0x80) else -t
+
+
+def _build_alaw_table() -> None:
+    """Build A-law to linear PCM16 lookup table."""
+    global _ALAW_DECODE
+    if _ALAW_DECODE:
+        return
+    for i in range(256):
+        _ALAW_DECODE.append(_alaw_to_linear(i))
+
+
+_build_alaw_table()
+
+
+def alaw_to_pcm16(alaw_bytes: bytes) -> bytes:
+    """Convert G.711 A-law bytes to PCM16 linear (same sample rate)."""
+    samples = [_ALAW_DECODE[b] for b in alaw_bytes]
+    return struct.pack(f"<{len(samples)}h", *samples)
 
 
 def resample_8k_to_16k(pcm16_8k: bytes) -> bytes:

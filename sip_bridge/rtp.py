@@ -13,6 +13,7 @@ from dataclasses import dataclass
 # RTP header: V=2, P=0, X=0, CC=0, M=0, PT=0 (PCMU), SSRC=random
 RTP_HEADER_SIZE = 12
 PCMU_PAYLOAD_TYPE = 0
+PCMA_PAYLOAD_TYPE = 8
 FRAME_DURATION_MS = 20
 SAMPLES_PER_FRAME = 160  # 8kHz * 20ms
 
@@ -27,6 +28,7 @@ class RTPPacket:
     timestamp: int
     ssrc: int
     payload: bytes
+    marker: bool = False
 
     @classmethod
     def parse(cls, data: bytes) -> RTPPacket | None:
@@ -38,12 +40,14 @@ class RTPPacket:
         if version != 2:
             return None
         pt = byte1 & 0x7F
+        marker = bool(byte1 & 0x80)
         return cls(
             version=version,
             payload_type=pt,
             sequence=seq,
             timestamp=ts,
             ssrc=ssrc,
+            marker=marker,
             payload=data[RTP_HEADER_SIZE:],
         )
 
@@ -51,6 +55,8 @@ class RTPPacket:
         """Serialize RTP packet to bytes."""
         byte0 = 0x80  # V=2
         byte1 = self.payload_type & 0x7F
+        if self.marker:
+            byte1 |= 0x80
         header = struct.pack(
             "!BBHII",
             byte0, byte1,
@@ -78,5 +84,13 @@ class RTPTimer:
         import asyncio
         deadline = self.next_deadline()
         now = time.monotonic()
+
+        # If we fell significantly behind (e.g. waiting for network/Gemini chunks),
+        # do not burst-send hundreds of frames to "catch up". Reset the timer baseline.
+        if now - deadline > 0.1:  # 100ms gap
+            self._start = now
+            self._frame_count = 0
+            deadline = self.next_deadline()
+
         if deadline > now:
             await asyncio.sleep(deadline - now)

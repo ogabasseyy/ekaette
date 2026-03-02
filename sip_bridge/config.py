@@ -24,6 +24,11 @@ class BridgeConfig:
     company_id: str
     tenant_id: str
     health_port: int
+    # AT SIP registration
+    sip_registrar: str
+    sip_username: str
+    sip_password: str
+    sip_register_interval: int
 
     @classmethod
     def from_env(cls) -> BridgeConfig:
@@ -44,13 +49,20 @@ class BridgeConfig:
             ),
             system_instruction=os.getenv(
                 "SIP_SYSTEM_INSTRUCTION",
-                "You are Ekaette, an AI customer service assistant. "
-                "Be helpful, concise, and professional.",
+                "You are an AI customer service assistant named ehkaitay. "
+                "Your name is ehkaitay — always say it exactly like that. "
+                "You are answering a phone call. Greet the caller warmly and ask how you can help. "
+                "Always speak in English. "
+                "Be helpful, concise, and professional. Keep responses short for phone conversation.",
             ),
             gemini_voice=os.getenv("SIP_GEMINI_VOICE", "Aoede"),
             company_id=os.getenv("SIP_COMPANY_ID", "ekaette-electronics"),
             tenant_id=os.getenv("SIP_TENANT_ID", "public"),
             health_port=int(os.getenv("SIP_HEALTH_PORT", "8081")),
+            sip_registrar=os.getenv("SIP_REGISTRAR", "ng.sip.africastalking.com"),
+            sip_username=os.getenv("SIP_USERNAME", ""),
+            sip_password=os.getenv("SIP_PASSWORD", ""),
+            sip_register_interval=int(os.getenv("SIP_REGISTER_INTERVAL", "300")),
         )
 
     def validate(self) -> list[str]:
@@ -60,4 +72,8 @@ class BridgeConfig:
             errors.append("GOOGLE_API_KEY is required for Gemini Live")
         if not self.sip_public_ip or self.sip_public_ip == "127.0.0.1":
             errors.append("SIP_PUBLIC_IP should be set to a reachable public IP")
+        if not self.sip_username:
+            errors.append("SIP_USERNAME required for AT SIP registration")
+        if not self.sip_password:
+            errors.append("SIP_PASSWORD required for AT SIP registration")
         return errors

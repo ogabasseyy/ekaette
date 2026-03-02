@@ -103,12 +103,40 @@ class TestBridgeConfigValidation:
         errors = cfg.validate()
         assert any("SIP_PUBLIC_IP" in e for e in errors)
 
+    def test_missing_sip_username_flagged(self) -> None:
+        from sip_bridge.config import BridgeConfig
+
+        env = {
+            "GOOGLE_API_KEY": "test-key-123",
+            "SIP_PUBLIC_IP": "203.0.113.1",
+            "SIP_PASSWORD": "secret-pass",
+        }
+        with patch.dict("os.environ", env, clear=True):
+            cfg = BridgeConfig.from_env()
+        errors = cfg.validate()
+        assert any("SIP_USERNAME" in e for e in errors)
+
+    def test_missing_sip_password_flagged(self) -> None:
+        from sip_bridge.config import BridgeConfig
+
+        env = {
+            "GOOGLE_API_KEY": "test-key-123",
+            "SIP_PUBLIC_IP": "203.0.113.1",
+            "SIP_USERNAME": "agent1.ekaette@ng.sip.africastalking.com",
+        }
+        with patch.dict("os.environ", env, clear=True):
+            cfg = BridgeConfig.from_env()
+        errors = cfg.validate()
+        assert any("SIP_PASSWORD" in e for e in errors)
+
     def test_valid_config_no_errors(self) -> None:
         from sip_bridge.config import BridgeConfig
 
         env = {
             "GOOGLE_API_KEY": "test-key-123",
             "SIP_PUBLIC_IP": "203.0.113.1",
+            "SIP_USERNAME": "agent1.ekaette@ng.sip.africastalking.com",
+            "SIP_PASSWORD": "secret-pass",
         }
         with patch.dict("os.environ", env, clear=True):
             cfg = BridgeConfig.from_env()

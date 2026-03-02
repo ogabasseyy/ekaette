@@ -11,12 +11,19 @@ import time
 
 import pytest
 from sip_bridge.audio_codec import (
+    alaw_to_pcm16,
     ulaw_to_pcm16,
     pcm16_to_ulaw,
     resample_8k_to_16k,
     resample_24k_to_8k,
 )
-from sip_bridge.rtp import RTPPacket, RTPTimer, RTP_HEADER_SIZE, PCMU_PAYLOAD_TYPE
+from sip_bridge.rtp import (
+    PCMA_PAYLOAD_TYPE,
+    PCMU_PAYLOAD_TYPE,
+    RTP_HEADER_SIZE,
+    RTPPacket,
+    RTPTimer,
+)
 
 
 # ── G.711 μ-law Codec ──
@@ -55,6 +62,20 @@ class TestUlawCodec:
         pcm = struct.pack("<h", 32767)
         result = pcm16_to_ulaw(pcm)
         assert len(result) == 1
+
+
+class TestAlawCodec:
+    """G.711 A-law encode/decode correctness."""
+
+    def test_roundtrip_silence(self) -> None:
+        silence = bytes([0x55] * 160)
+        pcm = alaw_to_pcm16(silence)
+        assert len(pcm) == 320
+
+    def test_output_length_correct(self) -> None:
+        alaw = bytes([0x55] * 80)
+        pcm = alaw_to_pcm16(alaw)
+        assert len(pcm) == 160
 
 
 # ── Resampling ──
@@ -103,6 +124,12 @@ class TestRTPPacket:
         assert pkt.sequence == 42
         assert pkt.timestamp == 320
         assert pkt.payload_type == PCMU_PAYLOAD_TYPE
+
+    def test_parse_pcma_payload_type(self) -> None:
+        raw = self._make_rtp(pt=PCMA_PAYLOAD_TYPE)
+        pkt = RTPPacket.parse(raw)
+        assert pkt is not None
+        assert pkt.payload_type == PCMA_PAYLOAD_TYPE
 
     def test_parse_too_short_returns_none(self) -> None:
         assert RTPPacket.parse(b"\x00" * 5) is None
