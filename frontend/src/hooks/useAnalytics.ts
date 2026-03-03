@@ -97,6 +97,7 @@ export function useAnalytics({
     selectCampaignAbortRef.current?.abort()
     const controller = new AbortController()
     selectCampaignAbortRef.current = controller
+    setError(null)
     try {
       const response = await fetch(
         `/api/v1/at/analytics/campaigns/${encodeURIComponent(campaignId)}`,

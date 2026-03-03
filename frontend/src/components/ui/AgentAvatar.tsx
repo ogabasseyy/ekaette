@@ -31,7 +31,10 @@ export function AgentAvatar({ label, active = false, className }: AgentAvatarPro
 
   return (
     <div className={cn('inline-flex items-center gap-2', className)}>
-      <span aria-hidden="true" className={cn(avatarVariants({ active }))}>
+      <span
+        aria-hidden={normalizedLabel ? 'true' : undefined}
+        className={cn(avatarVariants({ active }))}
+      >
         {initials || 'AI'}
       </span>
       {normalizedLabel ? (

@@ -177,7 +177,18 @@ export function AdminDashboard() {
 
   useEffect(() => {
     const sync = companyDetail?.inventorySync
-    if (!sync) return
+    if (!sync) {
+      // Clear stale state when switching to a company without inventorySync
+      setInventorySourceType('google_sheets')
+      setInventorySourceUrl('')
+      setInventoryConnectorId('')
+      setInventorySheetName('')
+      setRuntimeDataTier('admin')
+      setInventoryDryRun(true)
+      setInventoryAutoEnabled(false)
+      setInventoryIntervalMinutes('60')
+      return
+    }
     if (sync.source_type === 'google_sheets' || sync.source_type === 'mcp_connector') {
       setInventorySourceType(sync.source_type)
     }
@@ -461,6 +472,10 @@ export function AdminDashboard() {
       setStatusMessage('No company selected')
       return
     }
+    if (!knowledgeId.trim()) {
+      setStatusMessage('Missing knowledge entry ID')
+      return
+    }
     await runAction(async () => {
       await callAdminJson(
         `/api/v1/admin/companies/${encodeURIComponent(
@@ -536,6 +551,10 @@ export function AdminDashboard() {
   }
 
   async function testConnector(connectorName: string) {
+    if (!activeCompanyId.trim()) {
+      setStatusMessage('No company selected')
+      return
+    }
     await runAction(async () => {
       await callAdminJson(
         `/api/v1/admin/companies/${encodeURIComponent(
@@ -550,6 +569,10 @@ export function AdminDashboard() {
   }
 
   async function deleteConnector(connectorName: string) {
+    if (!activeCompanyId.trim()) {
+      setStatusMessage('No company selected')
+      return
+    }
     await runAction(async () => {
       await callAdminJson(
         `/api/v1/admin/companies/${encodeURIComponent(
@@ -1231,8 +1254,16 @@ export function AdminDashboard() {
           </article>
         </section>
 
-        {statusMessage ? <p className="text-emerald-400 text-sm">{statusMessage}</p> : null}
-        {errorMessage ? <p className="text-red-400 text-sm">{errorMessage}</p> : null}
+        {statusMessage ? (
+          <p aria-live="polite" className="text-emerald-400 text-sm">
+            {statusMessage}
+          </p>
+        ) : null}
+        {errorMessage ? (
+          <p aria-live="assertive" className="text-red-400 text-sm">
+            {errorMessage}
+          </p>
+        ) : null}
 
         <section className="grid gap-4 lg:grid-cols-3">
           <article className="rounded-2xl border border-border/70 bg-background/40 p-4">

@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useReducer } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useReducer, useRef } from 'react'
 import type { IndustryTemplateMeta, OnboardingCompanyMeta, WizardStepId } from '../../types'
 import { WizardStepIndicator } from './wizard/WizardStepIndicator'
 
@@ -198,17 +198,21 @@ function NormalWizard({
     companyId: initialCompanyId,
   })
 
-  // Sync wizard state when async-fetched defaults arrive after mount
+  // Sync wizard state when async-fetched defaults arrive after mount.
+  // Only fire once (first async arrival) and only while on step 0.
+  const hasSyncedRef = useRef(false)
   useEffect(() => {
+    if (hasSyncedRef.current || state.currentStep !== 0) return
     if (
-      state.currentStep === 0 &&
+      defaultTemplateId &&
       (defaultTemplateId !== state.templateId ||
         (defaultCompanyId && defaultCompanyId !== state.companyId))
     ) {
+      hasSyncedRef.current = true
       dispatch({
         type: 'SYNC',
-        templateId: defaultTemplateId ?? state.templateId,
-        companyId: defaultCompanyId ?? `ekaette-${defaultTemplateId ?? state.templateId}`,
+        templateId: defaultTemplateId,
+        companyId: defaultCompanyId ?? `ekaette-${defaultTemplateId}`,
       })
     }
   }, [defaultTemplateId, defaultCompanyId, state.templateId, state.companyId, state.currentStep])
