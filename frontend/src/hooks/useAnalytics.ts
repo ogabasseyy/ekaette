@@ -37,6 +37,7 @@ export function useAnalytics({
   const [error, setError] = useState<string | null>(null)
 
   const abortRef = useRef<AbortController | null>(null)
+  const selectCampaignAbortRef = useRef<AbortController | null>(null)
 
   const fetchOverview = useCallback(async () => {
     abortRef.current?.abort()
@@ -83,12 +84,15 @@ export function useAnalytics({
     return () => {
       clearInterval(interval)
       abortRef.current?.abort()
+      selectCampaignAbortRef.current?.abort()
     }
   }, [fetchOverview])
 
   const selectCampaign = useCallback(async (campaignId: string) => {
+    selectCampaignAbortRef.current?.abort()
+    const controller = new AbortController()
+    selectCampaignAbortRef.current = controller
     try {
-      const controller = new AbortController()
       const response = await fetch(
         `/api/v1/at/analytics/campaigns/${encodeURIComponent(campaignId)}`,
         { signal: controller.signal },

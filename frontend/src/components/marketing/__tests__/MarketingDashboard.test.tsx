@@ -95,8 +95,8 @@ describe('MarketingDashboard', () => {
   it('renders NavBar with marketing active', () => {
     global.fetch = mockFetchResponses(MOCK_CONTACTS)
     render(<MarketingDashboard />)
-    const marketingTab = screen.getByRole('tab', { name: /marketing/i })
-    expect(marketingTab).toHaveAttribute('aria-current', 'page')
+    const marketingBtn = screen.getByRole('button', { name: /marketing/i })
+    expect(marketingBtn).toHaveAttribute('aria-current', 'page')
   })
 
   it('shows loading state while fetching', () => {

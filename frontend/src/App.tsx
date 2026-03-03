@@ -287,7 +287,7 @@ function App() {
   const [runtimeBootstrapStatus, setRuntimeBootstrapStatus] =
     useState<RuntimeBootstrapStatus>('idle')
   const [runtimeBootstrapError, setRuntimeBootstrapError] = useState<string | null>(null)
-  const [_onboardingReloadNonce, setOnboardingReloadNonce] = useState(0)
+  const [onboardingReloadNonce, setOnboardingReloadNonce] = useState(0)
   const userId = 'demo-user'
   const [sessionId] = useState<string>(() => createClientSessionId())
   const [isStarting, setIsStarting] = useState(false)
@@ -619,6 +619,7 @@ function App() {
     }
   }, [allowOnboardingCompatFallback, forceManualOnboarding, tenantId])
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: onboardingReloadNonce triggers retry
   useEffect(() => {
     const shouldLoadOnboardingConfig = canRenderOnboardingSelection
     if (!shouldLoadOnboardingConfig) return
@@ -659,7 +660,7 @@ function App() {
       disposed = true
       controller.abort()
     }
-  }, [allowOnboardingCompatFallback, canRenderOnboardingSelection, tenantId])
+  }, [allowOnboardingCompatFallback, canRenderOnboardingSelection, tenantId, onboardingReloadNonce])
 
   useEffect(() => {
     if (!onboardingConfig || !industry || companySelection) return
@@ -908,9 +909,10 @@ function App() {
 
   const handleImageSelected = useCallback(
     (base64: string, mimeType: string) => {
+      if (!isConnected) return
       socket.sendImage(base64, mimeType)
     },
-    [socket],
+    [isConnected, socket],
   )
 
   const handleSendText = useCallback(

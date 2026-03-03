@@ -41,12 +41,13 @@ interface UseMarketingResult {
 }
 
 export function useMarketing(): UseMarketingResult {
-  const [sending, setSending] = useState(false)
+  const [activeRequests, setActiveRequests] = useState(0)
+  const sending = activeRequests > 0
   const [error, setError] = useState<string | null>(null)
 
   const sendCampaign = useCallback(async (params: SendCampaignParams) => {
     setError(null)
-    setSending(true)
+    setActiveRequests(n => n + 1)
     try {
       const isVoice = params.channel === 'voice'
       const url = isVoice ? '/api/v1/at/voice/campaign' : '/api/v1/at/sms/campaign'
@@ -79,13 +80,13 @@ export function useMarketing(): UseMarketingResult {
       setError(err instanceof Error ? err.message : String(err))
       throw err
     } finally {
-      setSending(false)
+      setActiveRequests(n => Math.max(0, n - 1))
     }
   }, [])
 
   const quickSms = useCallback(async (params: QuickSmsParams) => {
     setError(null)
-    setSending(true)
+    setActiveRequests(n => n + 1)
     try {
       const resp = await fetch('/api/v1/at/sms/send', {
         method: 'POST',
@@ -107,13 +108,13 @@ export function useMarketing(): UseMarketingResult {
       setError(err instanceof Error ? err.message : String(err))
       throw err
     } finally {
-      setSending(false)
+      setActiveRequests(n => Math.max(0, n - 1))
     }
   }, [])
 
   const quickCall = useCallback(async (params: QuickCallParams) => {
     setError(null)
-    setSending(true)
+    setActiveRequests(n => n + 1)
     try {
       const resp = await fetch('/api/v1/at/voice/call', {
         method: 'POST',
@@ -137,7 +138,7 @@ export function useMarketing(): UseMarketingResult {
       setError(err instanceof Error ? err.message : String(err))
       throw err
     } finally {
-      setSending(false)
+      setActiveRequests(n => Math.max(0, n - 1))
     }
   }, [])
 

@@ -77,7 +77,7 @@ export function useDemoMode(options: UseDemoModeOptions = {}): UseDemoModeReturn
         return
       }
 
-      const nextMessage = { ...step.message }
+      const nextMessage = structuredClone(step.message)
       setMessages(prev => [...prev, nextMessage])
       onEmit?.(nextMessage)
 

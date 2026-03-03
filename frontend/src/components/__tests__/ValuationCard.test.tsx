@@ -42,6 +42,7 @@ describe('ValuationCard', () => {
     fireEvent.change(input, { target: { value: '195000' } })
     await userEvent.click(screen.getByRole('button', { name: /counter/i }))
     expect(onCounterOffer).toHaveBeenCalledWith(195000)
+    expect(onCounterOffer).toHaveBeenCalledTimes(1)
   })
 
   it('fires accept and decline callbacks', async () => {

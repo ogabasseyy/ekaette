@@ -33,7 +33,7 @@ interface NavBarProps {
 export function NavBar({ activePage, className }: NavBarProps) {
   return (
     <nav className={cn('nav-bar', className)}>
-      <div role="tablist" className="flex items-center justify-center gap-1">
+      <div className="flex items-center justify-center gap-1">
         {NAV_ITEMS.map(item => {
           const isActive = item.page === activePage
           const Icon = ICON_MAP[item.iconName]
@@ -41,8 +41,6 @@ export function NavBar({ activePage, className }: NavBarProps) {
             <button
               type="button"
               key={item.page}
-              role="tab"
-              aria-selected={isActive}
               aria-current={isActive ? 'page' : undefined}
               className={cn(navTabVariants({ active: isActive }))}
               onClick={() => {

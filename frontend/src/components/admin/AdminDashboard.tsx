@@ -161,6 +161,7 @@ export function AdminDashboard() {
   const [companyDetail, setCompanyDetail] = useState<AdminCompanyDetail | null>(null)
   const [knowledgeEntries, setKnowledgeEntries] = useState<AdminKnowledgeEntry[]>([])
   const [busy, setBusy] = useState(false)
+  const busyCountRef = useRef(0)
   const [statusMessage, setStatusMessage] = useState<string | null>(null)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const abortControllersRef = useRef<Set<AbortController>>(new Set())
@@ -292,6 +293,7 @@ export function AdminDashboard() {
   }
 
   async function runAction(action: () => Promise<void>) {
+    busyCountRef.current++
     setBusy(true)
     setErrorMessage(null)
     setStatusMessage(null)
@@ -300,7 +302,8 @@ export function AdminDashboard() {
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Action failed')
     } finally {
-      setBusy(false)
+      busyCountRef.current--
+      setBusy(busyCountRef.current > 0)
     }
   }
 

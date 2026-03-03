@@ -60,6 +60,7 @@ interface UseWizardApiOptions {
 
 export function useWizardApi({ tenantId, userId = 'admin-user' }: UseWizardApiOptions) {
   const [busy, setBusy] = useState(false)
+  const busyCountRef = useRef(0)
   const [error, setError] = useState<string | null>(null)
   const abortControllersRef = useRef<Set<AbortController>>(new Set())
 
@@ -159,6 +160,7 @@ export function useWizardApi({ tenantId, userId = 'admin-user' }: UseWizardApiOp
   )
 
   const runAction = useCallback(async (action: () => Promise<void>) => {
+    busyCountRef.current++
     setBusy(true)
     setError(null)
     try {
@@ -166,7 +168,8 @@ export function useWizardApi({ tenantId, userId = 'admin-user' }: UseWizardApiOp
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Action failed')
     } finally {
-      setBusy(false)
+      busyCountRef.current--
+      setBusy(busyCountRef.current > 0)
     }
   }, [])
 

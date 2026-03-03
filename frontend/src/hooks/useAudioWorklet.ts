@@ -198,6 +198,7 @@ export function useAudioWorklet(
   }, [options.noiseCancellationLevel])
 
   const startRecording = useCallback(async () => {
+    if (recorderCtxRef.current) return
     try {
       setError(null)
       setMicCaptureDiagnostics(null)
@@ -211,7 +212,7 @@ export function useAudioWorklet(
         await ctx.resume()
       }
 
-      await ctx.audioWorklet.addModule('/pcm-recorder-processor.js')
+      await ctx.audioWorklet.addModule(`${import.meta.env.BASE_URL}pcm-recorder-processor.js`)
 
       const level = noiseCancellationLevelRef.current
       const support = buildCaptureConstraintSupport()
@@ -328,6 +329,7 @@ export function useAudioWorklet(
   }, [onAudioChunk])
 
   const initPlayer = useCallback(async () => {
+    if (playerCtxRef.current) return
     try {
       setError(null)
       // 24kHz for playback (Gemini Live API sends 24kHz PCM)
@@ -339,7 +341,7 @@ export function useAudioWorklet(
         await ctx.resume()
       }
 
-      await ctx.audioWorklet.addModule('/pcm-player-processor.js')
+      await ctx.audioWorklet.addModule(`${import.meta.env.BASE_URL}pcm-player-processor.js`)
       const player = new AudioWorkletNode(ctx, 'pcm-player-processor')
       playerNodeRef.current = player
       player.port.onmessage = (event: MessageEvent) => {

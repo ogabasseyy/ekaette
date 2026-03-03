@@ -1,5 +1,6 @@
 import { Camera } from 'lucide-react'
 import { type ChangeEvent, useId, useState } from 'react'
+import { cn } from '../../lib/utils'
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024 // 10MB
 const ALLOWED_MIME_TYPES = new Set([
@@ -59,11 +60,17 @@ export function ImageUpload({
         setPreviewSrc(value)
       }
     }
+    reader.onerror = () => {
+      setPreviewSrc(null)
+    }
+    reader.onabort = () => {
+      setPreviewSrc(null)
+    }
     reader.readAsDataURL(file)
   }
 
   return (
-    <div className={['w-full sm:w-auto', className].filter(Boolean).join(' ')}>
+    <div className={cn('w-full sm:w-auto', className)}>
       <label
         htmlFor={inputId}
         className="inline-flex w-full cursor-pointer items-center justify-center gap-2 rounded-2xl border border-border/80 bg-card/40 px-4 py-3 text-foreground text-sm transition hover:border-primary/60 hover:bg-card"

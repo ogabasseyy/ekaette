@@ -25,6 +25,6 @@ describe('AiDisclosureBanner', () => {
 
   it('has correct accessibility role', () => {
     render(<AiDisclosureBanner onDismiss={() => {}} />)
-    expect(screen.getByRole('status')).toBeInTheDocument()
+    expect(screen.getByRole('complementary')).toBeInTheDocument()
   })
 })

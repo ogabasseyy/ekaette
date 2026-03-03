@@ -68,8 +68,8 @@ export function VoicePanel({
         )}
         {latestTelemetry && (
           <StatusBadge variant="muted" className="block break-words">
-            Tokens: {latestTelemetry.sessionTotalTokens} (cost: $
-            {latestTelemetry.sessionCostUsd.toFixed(4)})
+            Tokens: {latestTelemetry.sessionTotalTokens ?? 0} (cost: $
+            {(latestTelemetry.sessionCostUsd ?? 0).toFixed(4)})
           </StatusBadge>
         )}
         {latestMemoryRecall && (

@@ -105,7 +105,7 @@ export function StepConnectors({ companyId, tenantId, onNext, onBack }: StepConn
       const payload = await api.callJson(companyUrl)
       const detail = payload.company as AdminCompanyDetail | undefined
       const map = detail?.connectors ?? {}
-      setConnectors(Object.entries(map).map(([id, entry]) => ({ id, ...entry })))
+      setConnectors(Object.entries(map).map(([id, entry]) => ({ ...entry, id })))
     } catch {
       /* non-blocking */
     }
@@ -121,7 +121,6 @@ export function StepConnectors({ companyId, tenantId, onNext, onBack }: StepConn
     async (provider: ProviderEntry, secret?: string) => {
       const cid = connectorIdForProvider(provider.id)
       setActionStates(prev => ({ ...prev, [cid]: { status: 'connecting', message: null } }))
-      let _failed = false
       await api.runAction(async () => {
         try {
           await api.callJson(`${companyUrl}/connectors`, {
@@ -143,7 +142,6 @@ export function StepConnectors({ companyId, tenantId, onNext, onBack }: StepConn
           setSecretRef('')
           await loadConnectors()
         } catch (err) {
-          _failed = true
           const message = err instanceof Error ? err.message : 'Connection failed'
           setActionStates(prev => ({ ...prev, [cid]: { status: 'error', message } }))
           throw err
@@ -159,24 +157,33 @@ export function StepConnectors({ companyId, tenantId, onNext, onBack }: StepConn
     const cid = `custom-${pid}`
     setActionStates(prev => ({ ...prev, [cid]: { status: 'connecting', message: null } }))
     await api.runAction(async () => {
-      await api.callJson(`${companyUrl}/connectors`, {
-        method: 'POST',
-        idempotencyPrefix: 'wizard-connector-create',
-        payload: {
-          connectorId: cid,
-          provider: pid,
-          enabled: true,
-          capabilities: ['read', 'write'],
-          config: { endpoint: customUrl.trim() },
-          ...(customSecret ? { secretRef: customSecret } : {}),
-        },
-      })
-      setActionStates(prev => ({ ...prev, [cid]: { status: 'connected', message: 'Connected' } }))
-      setExpandedId(null)
-      setCustomUrl('')
-      setCustomProviderId('')
-      setCustomSecret('')
-      await loadConnectors()
+      try {
+        await api.callJson(`${companyUrl}/connectors`, {
+          method: 'POST',
+          idempotencyPrefix: 'wizard-connector-create',
+          payload: {
+            connectorId: cid,
+            provider: pid,
+            enabled: true,
+            capabilities: ['read', 'write'],
+            config: { endpoint: customUrl.trim() },
+            ...(customSecret ? { secretRef: customSecret } : {}),
+          },
+        })
+        setActionStates(prev => ({
+          ...prev,
+          [cid]: { status: 'connected', message: 'Connected' },
+        }))
+        setExpandedId(null)
+        setCustomUrl('')
+        setCustomProviderId('')
+        setCustomSecret('')
+        await loadConnectors()
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err)
+        setActionStates(prev => ({ ...prev, [cid]: { status: 'error', message } }))
+        throw err
+      }
     })
   }, [api, companyUrl, customProviderId, customSecret, customUrl, loadConnectors])
 
@@ -185,18 +192,24 @@ export function StepConnectors({ companyId, tenantId, onNext, onBack }: StepConn
     async (connectorId: string) => {
       setActionStates(prev => ({ ...prev, [connectorId]: { status: 'testing', message: null } }))
       await api.runAction(async () => {
-        const result = await api.callJson(
-          `${companyUrl}/connectors/${encodeURIComponent(connectorId)}/test`,
-          { method: 'POST', idempotencyPrefix: 'wizard-connector-test' },
-        )
-        const ok = result.ok === true
-        setActionStates(prev => ({
-          ...prev,
-          [connectorId]: {
-            status: ok ? 'connected' : 'error',
-            message: ok ? 'Test passed' : String(result.details ?? 'Test failed'),
-          },
-        }))
+        try {
+          const result = await api.callJson(
+            `${companyUrl}/connectors/${encodeURIComponent(connectorId)}/test`,
+            { method: 'POST', idempotencyPrefix: 'wizard-connector-test' },
+          )
+          const ok = result.ok === true
+          setActionStates(prev => ({
+            ...prev,
+            [connectorId]: {
+              status: ok ? 'connected' : 'error',
+              message: ok ? 'Test passed' : String(result.details ?? 'Test failed'),
+            },
+          }))
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err)
+          setActionStates(prev => ({ ...prev, [connectorId]: { status: 'error', message } }))
+          throw err
+        }
       })
     },
     [api, companyUrl],

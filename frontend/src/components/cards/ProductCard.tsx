@@ -1,4 +1,15 @@
+import { cva } from 'class-variance-authority'
 import { formatNaira } from '../../lib/format'
+import { cn } from '../../lib/utils'
+
+const availabilityBadge = cva('rounded-full border px-2 py-0.5 text-[0.65rem]', {
+  variants: {
+    available: {
+      true: 'border-primary/40 bg-primary/15 text-primary',
+      false: 'border-destructive/40 bg-destructive/15 text-destructive',
+    },
+  },
+})
 
 interface ProductCardProps {
   name: string
@@ -25,13 +36,7 @@ export default function ProductCard({
     <article className="animate-slide-up rounded-2xl border border-border/70 bg-card/65 p-4">
       <div className="flex items-start justify-between gap-3">
         <h4 className="font-medium text-white">{name}</h4>
-        <span
-          className={
-            available
-              ? 'rounded-full border border-primary/40 bg-primary/15 px-2 py-0.5 text-[0.65rem] text-primary'
-              : 'rounded-full border border-destructive/40 bg-destructive/15 px-2 py-0.5 text-[0.65rem] text-destructive'
-          }
-        >
+        <span className={cn(availabilityBadge({ available }))}>
           {available ? 'Available' : 'Out'}
         </span>
       </div>

@@ -784,6 +784,7 @@ export function useEkaetteSocket(
       await requestEphemeralToken()
     } catch {
       // Token fetch is best-effort for backend-proxy; proceed without wsToken.
+      wsTokenRef.current = null
     }
     if (!shouldReconnectRef.current) {
       connectingRef.current = false

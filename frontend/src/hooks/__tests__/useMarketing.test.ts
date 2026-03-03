@@ -248,6 +248,9 @@ describe('useMarketing', () => {
       await p1!
     })
 
+    // After first request resolves, sending should still be true (second is pending)
+    expect(result.current.sending).toBe(true)
+
     await act(async () => {
       resolve2({ ok: true, json: () => Promise.resolve({ status: 'ok' }) })
       await p2!

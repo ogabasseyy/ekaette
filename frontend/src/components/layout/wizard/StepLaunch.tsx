@@ -43,9 +43,7 @@ export function StepLaunch({
       const headers: Record<string, string> = {
         Accept: 'application/json',
         'Content-Type': 'application/json',
-        'x-user-id': 'admin-user',
         'x-tenant-id': tenantId,
-        'x-roles': 'tenant_admin',
       }
       const separator = companyUrl.includes('?') ? '&' : '?'
       const tenantSuffix = `${separator}tenantId=${encodeURIComponent(tenantId)}`
@@ -58,8 +56,8 @@ export function StepLaunch({
 
         if (disposed) return
 
-        let knowledgeCount = 0
-        let connectorCount = 0
+        let knowledgeCount: number | null = null
+        let connectorCount: number | null = null
 
         if (knowledgeRes.ok) {
           const data = (await knowledgeRes.json()) as Record<string, unknown>
