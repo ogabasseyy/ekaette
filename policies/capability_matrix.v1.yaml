@@ -1,0 +1,29 @@
+{
+  "policyVersion": "v1",
+  "templates": {
+    "electronics": {
+      "allowed_provider_ids": ["mock", "salesforce", "hubspot", "zendesk"],
+      "max_capabilities": ["read", "write"]
+    },
+    "hotel": {
+      "allowed_provider_ids": ["mock", "salesforce", "hubspot", "zendesk"],
+      "max_capabilities": ["read", "write"]
+    },
+    "automotive": {
+      "allowed_provider_ids": ["mock", "salesforce", "hubspot", "zendesk"],
+      "max_capabilities": ["read", "write"]
+    },
+    "fashion": {
+      "allowed_provider_ids": ["mock", "salesforce", "hubspot", "zendesk"],
+      "max_capabilities": ["read", "write"]
+    },
+    "telecom": {
+      "allowed_provider_ids": ["mock", "salesforce", "hubspot", "zendesk"],
+      "max_capabilities": ["read", "write"]
+    },
+    "aviation-support": {
+      "allowed_provider_ids": ["mock", "salesforce", "hubspot", "zendesk"],
+      "max_capabilities": ["read", "write"]
+    }
+  }
+}

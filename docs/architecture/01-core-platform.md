@@ -1,0 +1,396 @@
+# Core Platform Architecture
+
+> Part of [Ekaette System Architecture](../../Ekaette_Architecture.md)
+
+## Design Principles
+
+- **Registry-first multi-tenancy:** `tenant_id` + `company_id` + `industry_template_id` form the authoritative runtime tuple, resolved by the backend from Firestore
+- **Modular backend:** Three isolated API packages (admin, public, realtime) with enforced architectural boundaries — no circular dependencies
+- **Agent-per-capability:** Root orchestrator delegates to specialized sub-agents; each agent owns one domain
+- **Fail-closed config:** Missing registry data returns explicit errors, never silent defaults
+- **Zero-latency voice:** Ephemeral tokens enable direct client-to-API WebSocket; backend handles auth and config only
+- **Privacy by design:** AI disclosure at first interaction (EU AI Act), NDPA-compliant consent, PII redaction pipeline across logs/sessions/transcripts, HMAC-signed WebSocket tokens
+
+### Firestore Data Model
+
+```text
+industry_templates/{templateId}
+tenants/{tenantId}/companies/{companyId}
+tenants/{tenantId}/companies/{companyId}/knowledge/{id}
+tenants/{tenantId}/companies/{companyId}/products/{id}
+tenants/{tenantId}/companies/{companyId}/booking_slots/{id}
+tenants/{tenantId}/companies/{companyId}/bookings/{id}
+```
+
+---
+
+## High-Level System Architecture
+
+```mermaid
+graph TB
+    subgraph "Client Layer"
+        WW["Web App<br/>(Vite + React 19)"]
+        MW["Mobile Web"]
+        PHONE["Phone Call<br/>(&lt;service-number&gt;)"]
+        WA["WhatsApp Call"]
+        SMS_C["SMS"]
+    end
+
+    subgraph "Transport Layer"
+        WS["WebSocket<br/>(Voice + Real-time)"]
+        HTTP["HTTP REST<br/>(Config + Upload)"]
+        SIP["SIP/RTP<br/>(G.711 μ-law)"]
+        SRTP["SRTP/Opus<br/>(WhatsApp)"]
+        SMS_T["SMS Webhook"]
+    end
+
+    subgraph "Cloud Run — FastAPI Backend"
+        subgraph "main.py — Composition Layer"
+            LIFE["Lifespan + CORS + Middleware"]
+            AUTH_MW["Admin Auth Middleware<br/>JWT/IAP + Observability"]
+        end
+
+        subgraph "app/api/v1/public — Public API"
+            TOKEN["POST /api/token<br/>Ephemeral token generation"]
+            ONBOARD["GET /api/onboarding/config<br/>Backend-driven onboarding"]
+            BOOT["GET /api/v1/runtime/bootstrap<br/>Runtime context resolution"]
+            UPLOAD["POST /api/upload/validate<br/>Image validation"]
+        end
+
+        subgraph "app/api/v1/admin — Admin API (20 routes)"
+            ADMIN_R["Routes: companies, knowledge,<br/>connectors, data"]
+            ADMIN_S["Services: CRUD, import/export,<br/>purge, retention"]
+            ADMIN_I["Infrastructure: auth, idempotency,<br/>policy, circuit breaker"]
+        end
+
+        subgraph "app/api/v1/realtime — WebSocket Streaming"
+            SESS_INIT["Session Init<br/>Origin validation,<br/>registry config resolution,<br/>ADK session create/resume"]
+            STREAM["Stream Tasks<br/>upstream (client to agent),<br/>downstream (agent to client),<br/>keepalive + silence nudge"]
+            ORCH["Orchestrator<br/>Task lifecycle,<br/>graceful shutdown"]
+        end
+
+        subgraph "ADK Bidi-Streaming Runtime"
+            LRQ["LiveRequestQueue"]
+            RUN["Runner.run_live()"]
+        end
+
+        subgraph "Multi-Agent Hierarchy (ADK)"
+            ROOT["ekaette_router<br/>(Root Agent)<br/>Model: gemini-2.5-flash-native-audio<br/>Real-time voice I/O,<br/>intent detection, agent routing"]
+
+            VA["vision_agent<br/>Image/video analysis,<br/>Visual Thinking"]
+
+            VLA["valuation_agent<br/>Condition grading,<br/>price calculation"]
+
+            BA["booking_agent<br/>Availability checking,<br/>reservation CRUD"]
+
+            CA["catalog_agent<br/>Product search,<br/>Vertex AI Search RAG"]
+
+            SA["support_agent<br/>FAQs + order tracking,<br/>Google Search grounding"]
+        end
+    end
+
+    subgraph "Google Cloud Services"
+        FS["Firestore<br/>Registry (templates + companies),<br/>sessions, knowledge, products,<br/>booking slots"]
+
+        CS["Cloud Storage<br/>Customer photos/videos,<br/>assessment reports"]
+
+        VAS["Vertex AI Search<br/>Product catalog index,<br/>multimodal search"]
+
+        GS["Google Search<br/>Real-time grounding"]
+
+        MB["Memory Bank<br/>(Agent Engine)<br/>Long-term customer memory,<br/>cross-session recall"]
+    end
+
+    subgraph "GCE VM — SIP Bridge (<reserved-static-ip>)"
+        SIP_SVR["SIPServer<br/>UDP :6060, SIP REGISTER,<br/>INVITE/ACK/BYE handling"]
+        CALL_SESS["CallSession<br/>4-task pipeline:<br/>recv → decode → Gemini → encode"]
+        WA_SESS["WaSession<br/>4-task pipeline:<br/>SRTP → Opus decode → Gemini → Opus encode"]
+        CODEC["CodecBridge<br/>G.711 μ-law ↔ PCM16 (AT)<br/>Opus ↔ PCM16 (WhatsApp)"]
+    end
+
+    subgraph "Africa's Talking"
+        AT_SIP["AT SIP Registrar<br/>(ng.sip.africastalking.com)"]
+        AT_VOICE["AT Voice API<br/>Outbound calls, transfers"]
+        AT_SMS["AT SMS API<br/>Send/receive SMS"]
+    end
+
+    subgraph "Payment & Shipping"
+        PAYSTACK["Paystack<br/>Checkout, virtual accounts,<br/>webhooks"]
+        TOPSHIP["Topship<br/>Shipping quotes,<br/>order tracking"]
+    end
+
+    subgraph "AI Models"
+        G25["Gemini 2.5 Flash<br/>Native Audio<br/>(Live API)"]
+        G3F["Gemini 3 Flash<br/>(Standard API)"]
+    end
+
+    WW --> WS
+    WW --> HTTP
+    MW --> WS
+    MW --> HTTP
+    PHONE -->|"PSTN"| AT_SIP
+    AT_SIP -->|"SIP INVITE"| SIP_SVR
+    WA -->|"WhatsApp Call"| WA_SESS
+    SMS_C -->|"AT Webhook"| SMS_T
+
+    WS --> SESS_INIT
+    HTTP --> TOKEN
+    HTTP --> ONBOARD
+    HTTP --> BOOT
+    HTTP --> UPLOAD
+    HTTP --> ADMIN_R
+    SMS_T --> ADMIN_R
+
+    SESS_INIT --> STREAM
+    STREAM --> LRQ
+    LRQ --> RUN
+    RUN --> ROOT
+
+    SIP_SVR --> CALL_SESS
+    CALL_SESS --> CODEC
+    WA_SESS --> CODEC
+    CALL_SESS -.->|"Gemini Live<br/>(direct, no ADK)"| G25
+    WA_SESS -.->|"Gemini Live<br/>(direct, no ADK)"| G25
+
+    ROOT -->|"photo received"| VA
+    ROOT -->|"assess/price"| VLA
+    ROOT -->|"book/schedule"| BA
+    ROOT -->|"search/find"| CA
+    ROOT -->|"help/FAQ"| SA
+
+    ROOT -.->|"Live API Bidi"| G25
+    VA -.->|"Standard API"| G3F
+    VLA -.->|"Standard API"| G3F
+    BA -.->|"Standard API"| G3F
+    CA -.->|"Standard API"| G3F
+    SA -.->|"Standard API"| G3F
+
+    ROOT --> FS
+    BA --> FS
+    VA --> CS
+    CA --> VAS
+    SA --> GS
+    VLA --> FS
+    ROOT -->|"PreloadMemoryTool<br/>+ after_agent_callback"| MB
+    ADMIN_R --> FS
+    CALL_SESS --> FS
+    WA_SESS --> FS
+
+    classDef client fill:#E3F2FD,stroke:#1565C0,stroke-width:2px
+    classDef transport fill:#FFF3E0,stroke:#E65100,stroke-width:2px
+    classDef composition fill:#F3E5F5,stroke:#6A1B9A,stroke-width:2px
+    classDef public fill:#E8F5E9,stroke:#2E7D32,stroke-width:2px
+    classDef admin fill:#FFF8E1,stroke:#F57F17,stroke-width:2px
+    classDef realtime fill:#E1F5FE,stroke:#0277BD,stroke-width:2px
+    classDef adk fill:#F1F8E9,stroke:#558B2F,stroke-width:2px
+    classDef agent fill:#FFFDE7,stroke:#F57F17,stroke-width:2px
+    classDef gcp fill:#FCE4EC,stroke:#C62828,stroke-width:2px
+    classDef model fill:#E0F7FA,stroke:#00695C,stroke-width:2px
+    classDef sipbridge fill:#FFF9C4,stroke:#F9A825,stroke-width:2px
+    classDef telco fill:#E8EAF6,stroke:#283593,stroke-width:2px
+    classDef payments fill:#F3E5F5,stroke:#7B1FA2,stroke-width:2px
+
+    class WW,MW,PHONE,WA,SMS_C client
+    class WS,HTTP,SIP,SRTP,SMS_T transport
+    class LIFE,AUTH_MW composition
+    class TOKEN,ONBOARD,BOOT,UPLOAD public
+    class ADMIN_R,ADMIN_S,ADMIN_I admin
+    class SESS_INIT,STREAM,ORCH realtime
+    class LRQ,RUN adk
+    class ROOT,VA,VLA,BA,CA,SA agent
+    class FS,CS,VAS,GS,MB gcp
+    class G25,G3F model
+    class SIP_SVR,CALL_SESS,WA_SESS,CODEC sipbridge
+    class AT_SIP,AT_VOICE,AT_SMS telco
+    class PAYSTACK,TOPSHIP payments
+```
+
+---
+
+## Backend Module Architecture
+
+```mermaid
+graph TB
+    subgraph "main.py — Composition Root"
+        APP["FastAPI App<br/>Lifespan (singleton init),<br/>CORS middleware,<br/>admin auth middleware,<br/>route delegation,<br/>static file serving"]
+    end
+
+    subgraph "app/api/v1/admin/ — Admin API Package"
+        direction TB
+        A_RUNTIME["runtime.py<br/>RuntimeProxy (lazy symbol resolution)"]
+        A_SETTINGS["settings.py<br/>AdminSettings (pydantic-settings)<br/>+ mutable runtime state"]
+        A_SHARED["shared.py<br/>Normalization, origin checks,<br/>rate limiting, observability"]
+        A_AUTH["auth.py<br/>JWT/IAP verification,<br/>scope checks, AdminAuthContext"]
+        A_IDEMP["idempotency.py<br/>Firestore-backed idempotency<br/>begin/commit pattern"]
+        A_POLICY["policy.py<br/>MCP provider policy,<br/>circuit breaker, distributed locks"]
+        A_FH["firestore_helpers.py<br/>Async doc CRUD + batch ops"]
+        A_SVC["service_*.py<br/>companies, knowledge,<br/>connectors, data"]
+        A_ROUTES["routes/<br/>companies.py (5 handlers)<br/>knowledge.py (5 handlers)<br/>connectors.py (4 handlers)<br/>data.py (6 handlers)"]
+    end
+
+    subgraph "app/api/v1/public/ — Public API Package"
+        direction TB
+        P_SETTINGS["settings.py<br/>PublicRuntimeSettings<br/>(pydantic-settings)<br/>+ WS token config"]
+        P_CORE["core_helpers.py<br/>Shared pure functions:<br/>normalization, voice mapping,<br/>registry resolution, session messages"]
+        P_HTTP["http_endpoints.py<br/>Token (+wsToken), onboarding,<br/>bootstrap, upload handlers"]
+        P_WSAUTH["ws_auth.py<br/>HMAC-SHA256 token create/validate,<br/>single-use JTI enforcement"]
+    end
+
+    subgraph "app/api/v1/realtime/ — Realtime WebSocket Package"
+        direction TB
+        R_MODELS["models.py<br/>SessionInitContext,<br/>SilenceState dataclasses"]
+        R_CACHE["runtime_cache.py<br/>Dependency injection cache"]
+        R_INIT["session_init.py<br/>WS token validation,<br/>origin validation, registry config,<br/>ADK session create/resume"]
+        R_TASKS["stream_tasks.py<br/>upstream, downstream,<br/>keepalive, silence nudge"]
+        R_ORCH["orchestrator.py<br/>Task lifecycle management"]
+        R_WS["ws_stream.py<br/>Thin entrypoint"]
+    end
+
+    subgraph "app/tools/ — Shared Tools"
+        direction TB
+        T_PII["pii_redaction.py<br/>Regex-based PII masking:<br/>phone, email, NIN, payment refs"]
+    end
+
+    APP -->|"delegates"| A_ROUTES
+    APP -->|"delegates"| P_HTTP
+    APP -->|"delegates"| R_WS
+
+    A_ROUTES --> A_SVC
+    A_ROUTES --> A_AUTH
+    A_ROUTES --> A_IDEMP
+    A_SVC --> A_FH
+    A_SVC --> A_POLICY
+    A_ROUTES --> A_RUNTIME
+
+    P_HTTP --> P_WSAUTH
+
+    R_WS --> R_INIT
+    R_WS --> R_ORCH
+    R_ORCH --> R_TASKS
+    R_INIT --> R_CACHE
+    R_INIT -->|"token check"| P_WSAUTH
+    R_TASKS --> R_CACHE
+    R_TASKS -->|"transcript redaction"| T_PII
+
+    classDef main fill:#F3E5F5,stroke:#6A1B9A,stroke-width:2px
+    classDef admin fill:#FFF8E1,stroke:#F57F17,stroke-width:2px
+    classDef public fill:#E8F5E9,stroke:#2E7D32,stroke-width:2px
+    classDef realtime fill:#E1F5FE,stroke:#0277BD,stroke-width:2px
+
+    class APP main
+    class A_RUNTIME,A_SETTINGS,A_SHARED,A_AUTH,A_IDEMP,A_POLICY,A_FH,A_SVC,A_ROUTES admin
+    class P_SETTINGS,P_CORE,P_HTTP,P_WSAUTH public
+    class R_MODELS,R_CACHE,R_INIT,R_TASKS,R_ORCH,R_WS realtime
+    class T_PII public
+```
+
+---
+
+## Data Flow Architecture
+
+```mermaid
+graph LR
+    subgraph "Input Modalities"
+        VOICE["Voice<br/>PCM 16kHz mono"]
+        IMAGE["Image<br/>JPEG/PNG"]
+        VIDEO["Video<br/>JPEG frames"]
+        TEXT["Text"]
+    end
+
+    subgraph "Processing Pipeline"
+        VOICE -->|"WebSocket<br/>send_realtime()"| LRQ["LiveRequestQueue"]
+        TEXT -->|"WebSocket<br/>send_content()"| LRQ
+        IMAGE -->|"WebSocket<br/>binary + base64"| LRQ
+        VIDEO -->|"WebSocket"| LRQ
+
+        LRQ --> RUNNER["Runner.run_live()"]
+    end
+
+    subgraph "Agent Processing"
+        RUNNER --> ROOT["Root Agent<br/>(Voice via Live API)"]
+        ROOT --> VA["Vision Agent"]
+        ROOT --> BA["Booking Agent"]
+        ROOT --> CA["Catalog Agent"]
+        ROOT --> SA["Support Agent"]
+        VA --> VLA["Valuation Agent"]
+    end
+
+    subgraph "Output"
+        ROOT -->|"Audio PCM 24kHz"| SPEAKER["Speaker"]
+        ROOT -->|"Transcription"| TRANSCRIPT["Text Display"]
+        VLA -->|"JSON"| REPORT["Valuation Report"]
+        BA -->|"JSON"| CONFIRM["Booking Confirmation"]
+        CA -->|"JSON"| RESULTS["Product Results"]
+    end
+
+    subgraph "Persistence"
+        ROOT --> FS["Firestore<br/>Sessions + State"]
+        TRANSCRIPT --> FS
+        CONFIRM --> FS
+    end
+
+    subgraph "Learning Layer"
+        FS -->|"after_agent_callback<br/>(async)"| MB2["Memory Bank"]
+        MB2 -->|"PreloadMemoryTool<br/>(each turn start)"| ROOT
+    end
+```
+
+---
+
+## Session and Memory Architecture (3-Tier)
+
+```mermaid
+graph TB
+    subgraph "Tier 1: Session State (short-term)"
+        SS["DatabaseSessionService<br/>(Firestore)"]
+        STATE["Session State"]
+
+        subgraph "State Key Prefixes"
+            TEMP["temp:* (invocation only)<br/>temp:image_result<br/>temp:search_cache"]
+            SESS["(no prefix) (session only)<br/>current_assessment<br/>booking_draft"]
+            USER["user:* (cross-session)<br/>user:name<br/>user:preferences"]
+            APP["app:* (read-only config)<br/>app:tenant_id<br/>app:company_id<br/>app:industry_template_id<br/>app:capabilities<br/>app:registry_version"]
+        end
+    end
+
+    subgraph "Tier 2: Memory Bank (long-term)"
+        MB["Vertex AI Memory Bank<br/>(Agent Engine)"]
+        EXTRACT["Gemini Extraction<br/>(async, post-session)"]
+        CONSOLIDATE["Consolidation<br/>Dedup, resolve contradictions,<br/>update evolving facts"]
+        RETRIEVE["Semantic Search<br/>PreloadMemoryTool (every turn),<br/>LoadMemoryTool (on demand)"]
+        SCOPE["Scoped per user_id<br/>Data isolation, TTL expiration,<br/>memory revisions"]
+    end
+
+    subgraph "Tier 3: Industry Knowledge (registry-driven)"
+        TEMPLATES["Firestore Templates<br/>Capabilities, voice personas,<br/>default config per industry"]
+        COMPANIES["Firestore Companies<br/>Company profile, knowledge base,<br/>products + booking slots"]
+        VASEARCH["Vertex AI Search<br/>Product catalog index,<br/>multimodal search"]
+    end
+
+    subgraph "Live API Session (Transient)"
+        LIVE["WebSocket Connection<br/>~10 min lifetime"]
+        COMP["Context Compression<br/>(sliding window)<br/>trigger: 80k, target: 40k"]
+        RESUME["Session Resumption<br/>(token-based reconnect)"]
+    end
+
+    SS --> STATE
+    STATE --> TEMP
+    STATE --> SESS
+    STATE --> USER
+    STATE --> APP
+
+    LIVE -->|"disconnect"| RESUME
+    RESUME -->|"reconnect"| LIVE
+    LIVE -->|"tokens > 80k"| COMP
+    COMP -->|"prune oldest turns"| LIVE
+
+    SS -.->|"init with history"| LIVE
+    LIVE -.->|"save new events"| SS
+
+    SS -->|"after_agent_callback<br/>(async)"| EXTRACT
+    EXTRACT --> CONSOLIDATE
+    CONSOLIDATE --> MB
+    MB --> RETRIEVE
+    RETRIEVE -->|"injected into<br/>system instructions"| LIVE
+    MB --> SCOPE
+```

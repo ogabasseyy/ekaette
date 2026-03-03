@@ -1,0 +1,57 @@
+{
+  "policyVersion": "v1",
+  "providers": {
+    "mock": {
+      "label": "Mock Provider",
+      "status": "active",
+      "requiresSecretRef": false,
+      "capabilities": ["read", "write"],
+      "testPolicy": {
+        "timeoutSeconds": 1.0,
+        "maxRetries": 0,
+        "circuitOpenAfterFailures": 2,
+        "circuitOpenSeconds": 10,
+        "allowedHosts": []
+      }
+    },
+    "salesforce": {
+      "label": "Salesforce",
+      "status": "preview",
+      "requiresSecretRef": true,
+      "capabilities": ["read", "write"],
+      "testPolicy": {
+        "timeoutSeconds": 2.0,
+        "maxRetries": 1,
+        "circuitOpenAfterFailures": 2,
+        "circuitOpenSeconds": 20,
+        "allowedHosts": ["api.salesforce.com", "login.salesforce.com"]
+      }
+    },
+    "hubspot": {
+      "label": "HubSpot",
+      "status": "preview",
+      "requiresSecretRef": true,
+      "capabilities": ["read", "write"],
+      "testPolicy": {
+        "timeoutSeconds": 2.0,
+        "maxRetries": 1,
+        "circuitOpenAfterFailures": 2,
+        "circuitOpenSeconds": 20,
+        "allowedHosts": ["api.hubapi.com"]
+      }
+    },
+    "zendesk": {
+      "label": "Zendesk",
+      "status": "preview",
+      "requiresSecretRef": true,
+      "capabilities": ["read", "write"],
+      "testPolicy": {
+        "timeoutSeconds": 2.0,
+        "maxRetries": 1,
+        "circuitOpenAfterFailures": 2,
+        "circuitOpenSeconds": 20,
+        "allowedHosts": ["*.zendesk.com"]
+      }
+    }
+  }
+}

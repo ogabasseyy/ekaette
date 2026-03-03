@@ -1,0 +1,17 @@
+language: en-US
+reviews:
+  profile: assertive
+  request_changes_workflow: true
+  high_level_summary: true
+  auto_review:
+    enabled: true
+    drafts: false
+  path_filters:
+    - "!**/*.lock"
+    - "!**/pnpm-lock.yaml"
+    - "!**/*.png"
+    - "!**/*.jpg"
+    - "!**/*.svg"
+    - "!.data/**"
+chat:
+  auto_reply: true

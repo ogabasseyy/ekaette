@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ekaette — Voice &amp; Agent Flows</title>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@11.12.3/dist/mermaid.min.js" integrity="sha384-jFhLSLFn4m565eRAS0CDMWubMqOtfZWWbE8kqgGdU+VHbJ3B2G/4X8u+0BM8MtdU" crossorigin="anonymous"></script>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 1200px; margin: 0 auto; padding: 20px; background: #f5f5f5; }
+        h1 { color: #1a1a2e; border-bottom: 3px solid #16213e; padding-bottom: 10px; }
+        h2 { color: #16213e; margin-top: 40px; }
+        .breadcrumb { font-size: 14px; color: #666; margin-bottom: 8px; }
+        .breadcrumb a { color: #1565C0; text-decoration: none; }
+        .breadcrumb a:hover { text-decoration: underline; }
+        .diagram-container { background: white; border-radius: 12px; padding: 24px; margin: 20px 0; box-shadow: 0 2px 8px rgba(0,0,0,0.1); overflow-x: auto; }
+        .diagram-count { color: #666; font-size: 14px; }
+        hr { border: none; border-top: 2px solid #e0e0e0; margin: 40px 0; }
+    </style>
+</head>
+<body>
+    <p class="breadcrumb"><a href="../../Ekaette_Architecture.html">&larr; Architecture Index</a></p>
+    <h1>Voice &amp; Agent Flows</h1>
+    <p class="diagram-count">4 diagrams</p>
+
+    <hr>
+    <h2>1. Voice Conversation Flow (Bidi-Streaming)</h2>
+    <div class="diagram-container">
+        <pre class="mermaid">
+sequenceDiagram
+    participant C as Customer (Browser)
+    participant WS as WebSocket
+    participant RT as Realtime Module
+    participant LRQ as LiveRequestQueue
+    participant RUN as Runner.run_live()
+    participant ROOT as ekaette_router
+    participant API as Gemini Live API
+
+    Note over C,API: Session Initialization
+    C->>WS: Connect /ws/{user_id}/{session_id}?tenantId=...&companyId=...
+    WS->>RT: session_init.initialize_session()
+    RT->>RT: Validate origin, tenant, company
+    RT->>RT: Resolve registry config (template + capabilities)
+    RT->>RT: Get/Create ADK Session
+    RT->>RT: Build RunConfig (BIDI, AUDIO, transcription, compression)
+    RT->>LRQ: Create LiveRequestQueue()
+    RT->>RUN: Start run_live(user_id, session_id, queue, config)
+    RUN->>API: Connect to Live API (native audio model)
+    RUN->>RUN: PreloadMemoryTool: fetch past memories
+
+    Note over C,API: Bidi-Streaming (concurrent tasks)
+
+    par upstream_task: Customer speaks
+        C->>WS: Audio blob (PCM 16kHz)
+        WS->>RT: receive audio
+        RT->>LRQ: send_realtime(audio_blob)
+        LRQ->>RUN: Buffered audio
+        RUN->>ROOT: Process input
+        ROOT->>API: Stream audio to Live API
+    and downstream_task: Agent responds
+        API->>ROOT: Streaming audio response (PCM 24kHz)
+        ROOT->>RUN: yield Event (audio chunks)
+        RUN->>RT: Event stream
+        RT->>WS: Send audio binary frames
+        WS->>C: Play audio via AudioWorklet
+    and keepalive_task
+        RT->>C: Periodic ping (25s)
+    and silence_nudge_task
+        RT->>RUN: Nudge after silence timeout
+    end
+
+    Note over C,API: Customer interrupts (barge-in)
+    C->>WS: New audio (interruption)
+    API-->>ROOT: [cancelled generation discarded]
+    ROOT->>API: Process new input immediately
+
+    Note over C,API: Disconnect
+    C->>WS: Disconnect
+    RT->>LRQ: close()
+    RUN->>API: Disconnect Live API
+    RT->>RT: after_agent_callback: save to Memory Bank (async)
+        </pre>
+    </div>
+
+    <hr>
+    <h2>2. Multi-Agent Transfer Flow (Image During Voice Call)</h2>
+    <div class="diagram-container">
+        <pre class="mermaid">
+sequenceDiagram
+    participant C as Customer
+    participant ROOT as ekaette_router<br/>(Live API Voice)
+    participant VA as vision_agent<br/>(Gemini 3 Flash)
+    participant VLA as valuation_agent<br/>(Gemini 3 Flash)
+    participant FS as Firestore
+    participant CS as Cloud Storage
+
+    C->>ROOT: "I want to swap my phone"
+    ROOT->>C: "Sure! Please send me photos of your device"
+
+    C->>ROOT: [3 photos uploaded via WebSocket]
+    ROOT->>CS: Store images in Cloud Storage
+    ROOT->>ROOT: Detect intent: visual analysis needed
+
+    Note over ROOT,VA: ADK Agent Transfer
+    ROOT->>VA: Transfer with context + image references
+
+    VA->>CS: Fetch images
+    VA->>VA: Gemini 3 Flash Vision + Visual Thinking
+    Note over VA: Zooms into screen scratch<br/>Crops corner dent<br/>Annotates damage areas
+    VA->>VA: Result: iPhone 14 Pro, Good condition
+    VA->>ROOT: Transfer back with analysis
+
+    ROOT->>VLA: Transfer with vision results
+    VLA->>FS: Load electronics pricing rubric
+    VLA->>VLA: Grade: Screen 7/10, Body 6/10, Battery 8/10
+    VLA->>VLA: Calculate: N185,000 trade-in value
+    VLA->>ROOT: Transfer back with valuation
+
+    ROOT->>C: "Your iPhone 14 Pro is in Good condition.<br/>I can offer N185,000 for the trade-in."
+
+    C->>ROOT: "Yes, tomorrow afternoon"
+    Note over ROOT: Routes to booking_agent...
+        </pre>
+    </div>
+
+    <hr>
+    <h2>3. Learning Layer Flow (Memory Bank)</h2>
+    <div class="diagram-container">
+        <pre class="mermaid">
+sequenceDiagram
+    participant C as Customer
+    participant ROOT as ekaette_router
+    participant MB as Memory Bank<br/>(Agent Engine)
+    participant GEMINI as Gemini<br/>(Extraction)
+
+    Note over C,GEMINI: Session 1: New Customer
+    C->>ROOT: "Hi, I want to swap my iPhone 14 Pro"
+    ROOT->>MB: PreloadMemoryTool.search_memory()
+    MB-->>ROOT: (no memories found)
+    ROOT->>C: "Welcome! Send me photos of your device"
+    Note over C,ROOT: ...vision, valuation, booking flow...
+    ROOT->>C: "Booked! Pickup tomorrow at 10 AM at Lekki"
+
+    Note over ROOT,GEMINI: After session ends (async)
+    ROOT->>GEMINI: after_agent_callback: add_events_to_memory()
+    GEMINI->>GEMINI: Extract key facts
+    GEMINI->>MB: Store memories (scoped to user_id)
+
+    Note over C,GEMINI: Session 2: Returning Customer
+    C->>ROOT: "Hi, I'm back!"
+    ROOT->>MB: PreloadMemoryTool.search_memory()
+    MB-->>ROOT: Memories: Chidi, iPhone 14 Pro, Lekki
+    ROOT->>C: "Welcome back Chidi!"
+
+    Note over C,GEMINI: Session 3: Updated info
+    C->>ROOT: "I moved to Victoria Island now"
+    ROOT->>MB: after_agent_callback
+    MB->>GEMINI: Consolidation check
+    GEMINI->>MB: UPDATE: Lekki to Victoria Island
+        </pre>
+    </div>
+
+    <hr>
+    <h2>4. Latency Mitigation Architecture</h2>
+    <div class="diagram-container">
+        <pre class="mermaid">
+graph TB
+    subgraph "Latency Sources"
+        L1["Agent Transfer<br/>5-10 sec dead air"]
+        L2["Tool Execution<br/>2-5 sec blocking"]
+        L3["Audio Token Bloat<br/>~25 tok/sec accumulation"]
+        L4["Backend Proxy<br/>Extra network hop"]
+        L5["Session Saves<br/>200ms per Firestore write"]
+        L6["Thinking Overhead<br/>Default thinking budget"]
+    end
+
+    subgraph "Mitigations"
+        M1["Voice Filler UX<br/>Baked into agent instructions"]
+        M2["NON_BLOCKING Functions<br/>behavior: NON_BLOCKING<br/>scheduling: WHEN_IDLE"]
+        M3["Context Compression<br/>trigger: 80k tokens<br/>target: 40k sliding window"]
+        M4["Ephemeral Tokens<br/>Direct client-to-API WebSocket"]
+        M5["Async Session Saves<br/>asyncio background tasks"]
+        M6["Thinking Budget Control<br/>Router: 256, Valuation: 2048"]
+    end
+
+    L1 --> M1
+    L2 --> M2
+    L3 --> M3
+    L4 --> M4
+    L5 --> M5
+    L6 --> M6
+
+    classDef danger fill:#FFEBEE,stroke:#C62828,stroke-width:2px
+    classDef fix fill:#E8F5E9,stroke:#2E7D32,stroke-width:2px
+    class L1,L2,L3,L4,L5,L6 danger
+    class M1,M2,M3,M4,M5,M6 fix
+        </pre>
+    </div>
+
+    <script>
+        mermaid.initialize({ startOnLoad: true, theme: 'default', securityLevel: 'loose' });
+    </script>
+</body>
+</html>
