@@ -17,7 +17,8 @@ def _build_app(
     rate_window: int = 60,
 ) -> FastAPI:
     """Build a minimal FastAPI app with AT security dependency for testing."""
-    from app.api.v1.at.security import verify_at_webhook
+    import app.api.v1.at.security as sec_mod
+    verify_at_webhook = sec_mod.verify_at_webhook
 
     app = FastAPI()
 
