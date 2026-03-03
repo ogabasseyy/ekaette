@@ -7,8 +7,16 @@ shutdown signal, TaskGroup structured concurrency.
 from __future__ import annotations
 
 import asyncio
+
 import pytest
+
 from sip_bridge.session import CallSession, INBOUND_QUEUE_SIZE, OUTBOUND_QUEUE_SIZE
+
+try:
+    __import__("opuslib_next")
+    _has_opuslib = True
+except ImportError:
+    _has_opuslib = False
 
 
 class TestCallSessionCreation:
@@ -47,6 +55,7 @@ class TestCallSessionCreation:
         assert s.codec_bridge is bridge
         assert s.codec_bridge.rtp_payload_type == 0
 
+    @pytest.mark.skipif(not _has_opuslib, reason="opuslib_next not installed")
     def test_session_accepts_opus_codec_bridge(self) -> None:
         from sip_bridge.codec_bridge import OpusCodecBridge
 

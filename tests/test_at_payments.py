@@ -385,7 +385,7 @@ class TestPaystackPayments:
             patch("app.api.v1.at.service_payments.PAYSTACK_SECRET_KEY", "sk_test_abc"),
             patch("app.api.v1.at.service_payments.PAYSTACK_DEFAULT_DVA_BANK_SLUG", "wema-bank"),
             patch("app.api.v1.at.service_payments.PAYSTACK_DEFAULT_DVA_COUNTRY", "NG"),
-            patch("app.api.v1.at.settings.AT_SMS_ENABLED", True),
+            patch("app.api.v1.at.service_payments.AT_SMS_ENABLED", True),
         ):
             resp = payments_client.post(
                 "/api/v1/at/payments/paystack/virtual-accounts",
@@ -449,7 +449,7 @@ class TestPaystackPayments:
             patch("app.api.v1.at.service_payments.PAYSTACK_SECRET_KEY", "sk_test_abc"),
             patch("app.api.v1.at.service_payments.PAYSTACK_DEFAULT_DVA_BANK_SLUG", "test-bank"),
             patch("app.api.v1.at.service_payments.PAYSTACK_DEFAULT_DVA_COUNTRY", "NG"),
-            patch("app.api.v1.at.settings.AT_SMS_ENABLED", True),
+            patch("app.api.v1.at.service_payments.AT_SMS_ENABLED", True),
         ):
             resp = payments_client.post(
                 "/api/v1/at/payments/paystack/virtual-accounts",
@@ -561,7 +561,7 @@ class TestPaystackPayments:
             patch("app.api.v1.at.service_payments.PAYSTACK_SECRET_KEY", "sk_test_abc"),
             patch("app.api.v1.at.service_payments.PAYSTACK_DEFAULT_DVA_BANK_SLUG", "wema-bank"),
             patch("app.api.v1.at.service_payments.PAYSTACK_DEFAULT_DVA_COUNTRY", "NG"),
-            patch("app.api.v1.at.settings.AT_SMS_ENABLED", True),
+            patch("app.api.v1.at.service_payments.AT_SMS_ENABLED", True),
             patch("app.api.v1.at.service_payments.WHATSAPP_ENABLED", True),
             patch("app.api.v1.at.service_payments.WHATSAPP_ACCESS_TOKEN", "wa_test_token"),
         ):

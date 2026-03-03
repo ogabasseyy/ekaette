@@ -15,6 +15,22 @@ from unittest.mock import MagicMock
 
 import pytest
 
+try:
+    __import__("opuslib_next")
+    _has_opuslib = True
+except ImportError:
+    _has_opuslib = False
+
+try:
+    __import__("aiohttp")
+    _has_aiohttp = True
+except ImportError:
+    _has_aiohttp = False
+
+_needs_native_libs = pytest.mark.skipif(
+    not _has_opuslib, reason="opuslib_next not installed"
+)
+
 
 class TestWaSIPServerLifecycle:
     """Server start/stop and basic properties."""
@@ -67,6 +83,7 @@ class TestInboundCallHandler:
         assert response.status_code == 407
         assert "proxy-authenticate" in response.headers
 
+    @_needs_native_libs
     async def test_authenticated_invite_creates_session(self):
         """INVITE with valid Proxy-Authorization gets 200 OK and session created."""
         from sip_bridge.sip_auth import (
@@ -290,6 +307,7 @@ class TestTLSEnforcement:
         await server.stop()
 
 
+@_needs_native_libs
 class TestSessionMediaWiring:
     """Accepted INVITEs must create sessions with full media dependencies."""
 
@@ -330,6 +348,7 @@ class TestSessionMediaWiring:
         session.media_transport.close()
 
 
+@_needs_native_libs
 class TestSDPAnswerPort:
     """Finding 2: SDP answer must advertise a local port, not echo the remote port."""
 
@@ -801,6 +820,7 @@ class TestMissingRemoteMedia:
         assert "call-no-media" not in server.active_sessions
 
 
+@pytest.mark.skipif(not _has_aiohttp, reason="aiohttp not installed")
 class TestHealthEndpoint:
     """M4: Health/readiness HTTP endpoint for monitoring."""
 

@@ -9,6 +9,12 @@ import struct
 
 import pytest
 
+try:
+    __import__("opuslib_next")
+    _has_opuslib = True
+except ImportError:
+    _has_opuslib = False
+
 
 # --- ABC contract tests ---
 
@@ -132,7 +138,7 @@ class TestG711CodecBridge:
 
 # --- OpusCodecBridge tests ---
 
-
+@pytest.mark.skipif(not _has_opuslib, reason="opuslib_next not installed")
 class TestOpusCodecBridge:
     """OpusCodecBridge uses opuslib_next for Opus encode/decode."""
 

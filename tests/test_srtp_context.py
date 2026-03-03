@@ -10,6 +10,12 @@ import struct
 
 import pytest
 
+try:
+    __import__("pylibsrtp")
+    _has_pylibsrtp = True
+except ImportError:
+    _has_pylibsrtp = False
+
 
 class TestSDESParsing:
     """Parse a=crypto lines from SDP."""
@@ -71,6 +77,7 @@ class TestSDESParsing:
         assert result["key"] == raw_key
 
 
+@pytest.mark.skipif(not _has_pylibsrtp, reason="pylibsrtp not installed")
 class TestSRTPContext:
     """SRTP protect/unprotect roundtrip using pylibsrtp."""
 
