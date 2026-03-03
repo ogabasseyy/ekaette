@@ -37,8 +37,20 @@ const contactRowVariants = cva(
 )
 
 export function MarketingDashboard() {
-  const [tenantId] = useState('public')
-  const [companyId] = useState('ekaette-electronics')
+  const [tenantId] = useState(() => {
+    try {
+      const v = localStorage.getItem('ekaette:onboarding:tenantId')
+      if (v?.trim()) return v.trim()
+    } catch {}
+    return 'public'
+  })
+  const [companyId] = useState(() => {
+    try {
+      const v = localStorage.getItem('ekaette:onboarding:companyId')
+      if (v?.trim()) return v.trim()
+    } catch {}
+    return 'ekaette-electronics'
+  })
   const [channel, setChannel] = useState<CampaignChannel>('sms')
   const [campaignName, setCampaignName] = useState('')
   const [message, setMessage] = useState('')
@@ -192,7 +204,7 @@ export function MarketingDashboard() {
                       </span>
                       <button
                         type="button"
-                        aria-label="SMS"
+                        aria-label={`SMS ${contact.phone}`}
                         onClick={() => handleQuickSms(contact.phone)}
                         className="quick-action-btn rounded p-1 text-muted-foreground transition-colors hover:bg-primary/10 hover:text-primary"
                       >
@@ -200,7 +212,7 @@ export function MarketingDashboard() {
                       </button>
                       <button
                         type="button"
-                        aria-label="Call"
+                        aria-label={`Call ${contact.phone}`}
                         onClick={() => handleQuickCall(contact.phone)}
                         className="quick-action-btn rounded p-1 text-muted-foreground transition-colors hover:bg-primary/10 hover:text-primary"
                       >

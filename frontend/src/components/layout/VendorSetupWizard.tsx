@@ -200,14 +200,18 @@ function NormalWizard({
 
   // Sync wizard state when async-fetched defaults arrive after mount
   useEffect(() => {
-    if (defaultTemplateId && defaultTemplateId !== state.templateId && state.currentStep === 0) {
+    if (
+      state.currentStep === 0 &&
+      (defaultTemplateId !== state.templateId ||
+        (defaultCompanyId && defaultCompanyId !== state.companyId))
+    ) {
       dispatch({
         type: 'SYNC',
-        templateId: defaultTemplateId,
-        companyId: defaultCompanyId ?? `ekaette-${defaultTemplateId}`,
+        templateId: defaultTemplateId ?? state.templateId,
+        companyId: defaultCompanyId ?? `ekaette-${defaultTemplateId ?? state.templateId}`,
       })
     }
-  }, [defaultTemplateId, defaultCompanyId, state.templateId, state.currentStep])
+  }, [defaultTemplateId, defaultCompanyId, state.templateId, state.companyId, state.currentStep])
 
   const tenantId = String(import.meta.env.VITE_TENANT_ID ?? 'public')
 

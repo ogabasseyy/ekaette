@@ -53,7 +53,12 @@ export function ImageUpload({
     reader.onload = () => {
       const value = String(reader.result)
       const parts = value.split(',')
-      if (parts.length < 2) return
+      if (parts.length < 2) {
+        const msg = 'Failed to process image'
+        setValidationError(msg)
+        onError?.(msg)
+        return
+      }
       const base64 = parts[1]
       onImageSelected(base64, file.type)
       if (showPreview) {
@@ -61,6 +66,9 @@ export function ImageUpload({
       }
     }
     reader.onerror = () => {
+      const msg = 'Failed to read image file'
+      setValidationError(msg)
+      onError?.(msg)
       setPreviewSrc(null)
     }
     reader.onabort = () => {

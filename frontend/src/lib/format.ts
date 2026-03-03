@@ -1,7 +1,7 @@
 const SECONDS_PER_MINUTE = 60
 
 export function formatDuration(totalSeconds: number): string {
-  const safe = !Number.isFinite(totalSeconds) || totalSeconds < 0 ? 0 : totalSeconds
+  const safe = !Number.isFinite(totalSeconds) || totalSeconds < 0 ? 0 : Math.floor(totalSeconds)
   const minutes = Math.floor(safe / SECONDS_PER_MINUTE)
   const seconds = safe % SECONDS_PER_MINUTE
   return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`

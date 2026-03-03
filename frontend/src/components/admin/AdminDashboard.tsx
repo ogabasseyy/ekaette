@@ -301,6 +301,7 @@ export function AdminDashboard() {
       await action()
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Action failed')
+      throw error
     } finally {
       busyCountRef.current--
       setBusy(busyCountRef.current > 0)
@@ -456,6 +457,10 @@ export function AdminDashboard() {
   }
 
   async function deleteKnowledge(knowledgeId: string) {
+    if (!activeCompanyId.trim()) {
+      setStatusMessage('No company selected')
+      return
+    }
     await runAction(async () => {
       await callAdminJson(
         `/api/v1/admin/companies/${encodeURIComponent(

@@ -46,7 +46,6 @@ export function useAnalytics({
 
     try {
       setLoading(true)
-      setSelectedCampaign(null)
       const params = new URLSearchParams({
         tenantId,
         companyId,
@@ -87,6 +86,12 @@ export function useAnalytics({
       selectCampaignAbortRef.current?.abort()
     }
   }, [fetchOverview])
+
+  // Clear selected campaign when the analytics scope changes, not on every poll tick.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: scope args trigger reset intentionally
+  useEffect(() => {
+    setSelectedCampaign(null)
+  }, [tenantId, companyId, days])
 
   const selectCampaign = useCallback(async (campaignId: string) => {
     selectCampaignAbortRef.current?.abort()

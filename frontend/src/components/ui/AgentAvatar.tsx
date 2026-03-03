@@ -21,7 +21,8 @@ interface AgentAvatarProps {
 }
 
 export function AgentAvatar({ label, active = false, className }: AgentAvatarProps) {
-  const initials = label
+  const normalizedLabel = label?.trim() ?? ''
+  const initials = normalizedLabel
     .split(/\s+/)
     .filter(Boolean)
     .slice(0, 2)
@@ -33,7 +34,9 @@ export function AgentAvatar({ label, active = false, className }: AgentAvatarPro
       <span aria-hidden="true" className={cn(avatarVariants({ active }))}>
         {initials || 'AI'}
       </span>
-      {label ? <span className="text-muted-foreground text-xs">{label}</span> : null}
+      {normalizedLabel ? (
+        <span className="text-muted-foreground text-xs">{normalizedLabel}</span>
+      ) : null}
     </div>
   )
 }

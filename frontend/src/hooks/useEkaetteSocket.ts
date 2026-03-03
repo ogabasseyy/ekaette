@@ -292,11 +292,10 @@ export function useEkaetteSocket(
   }, [])
 
   const cleanup = useCallback(() => {
-    const pending = pendingConnectRef.current
-    if (pending?.timeoutTimer) {
-      clearTimeout(pending.timeoutTimer)
-      pending.timeoutTimer = null
-    }
+    // Reject any pending connect promise so callers awaiting connect() don't hang on unmount.
+    rejectPendingConnect(
+      new SocketConnectError('CONNECT_CANCELLED', 'Connection cleaned up', { retryable: false }),
+    )
     if (reconnectTimerRef.current) {
       clearTimeout(reconnectTimerRef.current)
       reconnectTimerRef.current = null
@@ -342,7 +341,7 @@ export function useEkaetteSocket(
       transport: 'backend-proxy',
     }
     setDebugMetrics(debugMetricsRef.current)
-  }, [])
+  }, [rejectPendingConnect])
 
   const createPendingConnect = useCallback(
     (timeoutMs: number) => {
@@ -357,6 +356,9 @@ export function useEkaetteSocket(
         resolvePromise = resolve
         rejectPromise = error => reject(error)
       })
+      // Prevent unhandled rejection warnings when cleanup rejects a promise
+      // that nobody is currently awaiting (e.g. component unmount).
+      promise.catch(() => {})
 
       const pending: PendingConnectRequest = {
         promise,
@@ -377,10 +379,11 @@ export function useEkaetteSocket(
           }
           shouldReconnectRef.current = false
           setState('disconnected')
-          cleanup()
+          // Reject with CONNECT_TIMEOUT before cleanup so cleanup's reject is a no-op.
           rejectPendingConnect(
             new SocketConnectError('CONNECT_TIMEOUT', 'WebSocket connection timeout'),
           )
+          cleanup()
         }, timeoutMs)
       }
 

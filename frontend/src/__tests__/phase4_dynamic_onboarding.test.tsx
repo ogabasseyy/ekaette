@@ -193,8 +193,8 @@ describe('useDemoMode with industryTemplateId', () => {
       expect(firstMsg).toBeDefined()
       expect(firstMsg.type).toBe('session_started')
       const expectedFirst = DEMO_STEPS_BY_TEMPLATE.hotel[0].message
-      expect((firstMsg as Record<string, unknown>).industry).toBe(
-        (expectedFirst as Record<string, unknown>).industry,
+      expect((firstMsg as unknown as Record<string, unknown>).industry).toBe(
+        (expectedFirst as unknown as Record<string, unknown>).industry,
       )
     } finally {
       vi.useRealTimers()

@@ -8,7 +8,7 @@ function isSafeSrc(src: string): boolean {
   if (src.startsWith('data:image/')) return true
   if (src.startsWith('blob:')) return true
   if (src.startsWith('https://')) return true
-  if (src.startsWith('/')) return true
+  if (src.startsWith('/') && !src.startsWith('//')) return true
   return false
 }
 
