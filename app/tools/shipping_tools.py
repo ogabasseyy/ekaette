@@ -315,10 +315,11 @@ async def _fetch_topship_tracking(tracking_id: str) -> dict[str, Any]:
     try:
         async with httpx.AsyncClient(timeout=TOPSHIP_TIMEOUT_SECONDS) as client:
             response = await client.get(url, params={"trackingId": tracking_id}, headers=headers)
-    except Exception as exc:
+    except Exception:
+        logger.warning("Topship tracking request failed", exc_info=True)
         return {
             "status": "error",
-            "error": f"Topship tracking request failed: {exc}",
+            "error": "Topship tracking request failed.",
             "code": "TOPSHIP_TRACKING_REQUEST_FAILED",
             "provider": "topship",
         }
@@ -480,9 +481,10 @@ async def get_topship_delivery_quote(
 
     try:
         status_code, payload = await _fetch_topship_rates(shipment_detail)
-    except Exception as exc:
+    except Exception:
+        logger.warning("Topship request failed", exc_info=True)
         return {
-            "error": f"Topship request failed: {exc}",
+            "error": "Topship request failed.",
             "code": "TOPSHIP_REQUEST_FAILED",
             "provider": "topship",
             "route": _route_summary(sender, receiver, weight_kg),
