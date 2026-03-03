@@ -1,7 +1,7 @@
 @import "tailwindcss";
+@import url("https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Fraunces:opsz,wght@9..144,500;9..144,700&family=IBM+Plex+Mono:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600;700&family=Manrope:wght@400;500;600;700&display=swap");
 
 @theme {
-  /* Semantic color system using OKLCH for perceptual uniformity */
   --color-background: oklch(13% 0.02 264);
   --color-foreground: oklch(93% 0.01 264);
   --color-card: oklch(17% 0.02 264);
@@ -16,37 +16,402 @@
   --color-destructive: oklch(63% 0.24 29);
   --color-info: oklch(62% 0.19 250);
 
-  /* Industry accent — overridden via CSS custom properties per industry */
   --color-accent: var(--industry-accent, oklch(72% 0.19 160));
   --color-accent-foreground: oklch(98% 0.01 160);
+  --color-accent-2: var(--industry-accent-2, oklch(62% 0.14 172));
 
-  /* Radius */
+  --font-display: "Fraunces", "Times New Roman", serif;
+  --font-body: "Manrope", "Segoe UI", sans-serif;
+
   --radius-card: 1rem;
   --radius-button: 9999px;
 
-  /* Animations */
-  --animate-slide-up: slide-up 0.3s ease-out;
-  --animate-pulse-ring: pulse-ring 2s ease-in-out infinite;
-  --animate-fade-in: fade-in 0.2s ease-out;
+  --animate-slide-up: slide-up 0.32s ease-out;
+  --animate-fade-in: fade-in 0.3s ease-out;
+  --animate-orb-breathe: orb-breathe 2.4s ease-in-out infinite;
+  --animate-atmosphere-drift: atmosphere-drift 24s ease-in-out infinite alternate;
 
   @keyframes slide-up {
-    from { transform: translateY(1rem); opacity: 0; }
-    to { transform: translateY(0); opacity: 1; }
+    from {
+      transform: translateY(1rem);
+      opacity: 0;
+    }
+    to {
+      transform: translateY(0);
+      opacity: 1;
+    }
   }
-  @keyframes pulse-ring {
-    0%, 100% { transform: scale(1); opacity: 0.5; }
-    50% { transform: scale(1.15); opacity: 0.8; }
-  }
+
   @keyframes fade-in {
-    from { opacity: 0; }
-    to { opacity: 1; }
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+
+  @keyframes orb-breathe {
+    0%, 100% {
+      transform: scale(1);
+      box-shadow:
+        inset 0 0 0 1px color-mix(in oklab, var(--color-border), transparent 15%),
+        0 16px 40px color-mix(in oklab, var(--color-accent), transparent 76%);
+    }
+    50% {
+      transform: scale(1.05);
+      box-shadow:
+        inset 0 0 0 1px color-mix(in oklab, var(--color-accent), transparent 10%),
+        0 20px 56px color-mix(in oklab, var(--color-accent), transparent 62%);
+    }
+  }
+
+  @keyframes atmosphere-drift {
+    0% {
+      transform: translate3d(-3%, -2%, 0) scale(1);
+    }
+    100% {
+      transform: translate3d(3%, 2%, 0) scale(1.06);
+    }
   }
 }
 
-/* Dark-only app — no theme toggle needed for hackathon */
 @layer base {
   body {
     @apply bg-background text-foreground antialiased;
-    font-family: 'Plus Jakarta Sans', system-ui, sans-serif;
+    font-family: var(--font-body);
+  }
+
+  #root {
+    min-height: 100vh;
   }
 }
+
+.font-display {
+  font-family: var(--font-display);
+}
+
+.app-shell {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  background:
+    radial-gradient(
+      circle at 8% 10%,
+      color-mix(in oklab, var(--color-accent), transparent 86%) 0,
+      transparent 42%
+    ),
+    radial-gradient(
+      circle at 92% 85%,
+      color-mix(in oklab, var(--color-accent-2), transparent 88%) 0,
+      transparent 44%
+    ),
+    linear-gradient(
+      170deg,
+      oklch(12% 0.02 260) 0%,
+      oklch(11% 0.02 260) 44%,
+      oklch(10% 0.018 260) 100%
+    );
+}
+
+.atmosphere-layer {
+  pointer-events: none;
+  position: absolute;
+  inset: -28% -24%;
+  z-index: -1;
+  background:
+    radial-gradient(
+      circle at 12% 15%,
+      color-mix(in oklab, var(--color-accent), transparent 82%) 0,
+      transparent 36%
+    ),
+    radial-gradient(
+      circle at 80% 78%,
+      color-mix(in oklab, var(--color-accent-2), transparent 84%) 0,
+      transparent 42%
+    );
+  filter: blur(14px);
+  opacity: 0.8;
+  animation: var(--animate-atmosphere-drift);
+}
+
+.panel-glass {
+  border-radius: 1.35rem;
+  border: 1px solid color-mix(in oklab, var(--color-border), transparent 10%);
+  background: linear-gradient(
+    165deg,
+    color-mix(in oklab, var(--color-card), transparent 18%) 0%,
+    color-mix(in oklab, var(--color-card), transparent 34%) 100%
+  );
+  backdrop-filter: blur(14px);
+  box-shadow:
+    0 2px 0 color-mix(in oklab, black, transparent 74%) inset,
+    0 24px 38px color-mix(in oklab, black, transparent 76%);
+}
+
+.voice-orb {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: clamp(8rem, 22vw, 11rem);
+  aspect-ratio: 1 / 1;
+  border-radius: 9999px;
+  border: 1px solid color-mix(in oklab, var(--color-border), transparent 8%);
+  background:
+    radial-gradient(
+      circle at 30% 30%,
+      color-mix(in oklab, white, transparent 76%) 0,
+      transparent 34%
+    ),
+    radial-gradient(
+      circle at 50% 60%,
+      color-mix(in oklab, var(--color-accent), transparent 38%) 0,
+      color-mix(in oklab, black, transparent 6%) 65%
+    );
+  animation: var(--animate-orb-breathe);
+}
+
+.voice-orb::before,
+.voice-orb::after {
+  content: "";
+  position: absolute;
+  inset: -10%;
+  border-radius: inherit;
+  border: 1px solid color-mix(in oklab, var(--color-accent), transparent 72%);
+}
+
+.voice-orb::after {
+  inset: -22%;
+  border-color: color-mix(in oklab, var(--color-accent-2), transparent 80%);
+}
+
+.voice-orb.is-live {
+  box-shadow:
+    0 0 0 1px color-mix(in oklab, var(--color-accent), transparent 35%) inset,
+    0 0 48px color-mix(in oklab, var(--color-accent), transparent 62%);
+}
+
+.voice-orb.is-warming {
+  filter: saturate(0.9);
+}
+
+.voice-core {
+  border-radius: 9999px;
+  padding: 0.55rem 0.9rem;
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: oklch(99% 0.003 180);
+  background: color-mix(in oklab, black, transparent 20%);
+  border: 1px solid color-mix(in oklab, white, transparent 80%);
+}
+
+.transcript-scroll {
+  content-visibility: auto;
+  contain-intrinsic-size: 420px;
+  overscroll-behavior: contain;
+}
+
+.empty-transcript {
+  border-radius: 1rem;
+  border: 1px dashed color-mix(in oklab, var(--color-border), transparent 8%);
+  background: color-mix(in oklab, var(--color-card), transparent 34%);
+  padding: 1rem;
+}
+
+.message-bubble {
+  width: fit-content;
+  max-width: min(85%, 26rem);
+  border: 1px solid color-mix(in oklab, var(--color-border), transparent 14%);
+  background: color-mix(in oklab, var(--color-card), transparent 22%);
+  padding: 0.7rem 0.85rem;
+  animation: var(--animate-slide-up);
+}
+
+.message-user {
+  border-radius: 1.1rem 1.1rem 0.3rem 1.1rem;
+  border-color: color-mix(in oklab, var(--color-accent), transparent 44%);
+  background: linear-gradient(
+    150deg,
+    color-mix(in oklab, var(--color-accent), transparent 72%),
+    color-mix(in oklab, var(--color-card), transparent 10%)
+  );
+}
+
+.message-agent {
+  border-radius: 1.1rem 1.1rem 1.1rem 0.3rem;
+  border-color: color-mix(in oklab, var(--color-info), transparent 64%);
+  background: linear-gradient(
+    150deg,
+    color-mix(in oklab, var(--color-info), transparent 86%),
+    color-mix(in oklab, var(--color-card), transparent 16%)
+  );
+}
+
+.message-partial {
+  opacity: 0.78;
+}
+
+.message-meta {
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.17em;
+  text-transform: uppercase;
+  color: color-mix(in oklab, var(--color-muted-foreground), white 10%);
+}
+
+.control-mic {
+  box-shadow:
+    0 0 0 1px color-mix(in oklab, var(--color-accent), transparent 70%) inset,
+    0 8px 20px color-mix(in oklab, var(--color-accent), transparent 82%);
+}
+
+.error-toast {
+  animation: var(--animate-slide-up);
+  transition: opacity 0.2s ease-out;
+}
+
+@starting-style {
+  .error-toast {
+    opacity: 0;
+    transform: translateY(1rem);
+  }
+}
+
+/* ═══ Connector Config Panel ═══ */
+
+.connector-config-panel {
+  opacity: 1;
+  transform: translateY(0);
+  transition: opacity 0.2s ease-out, transform 0.2s ease-out;
+}
+
+@starting-style {
+  .connector-config-panel {
+    opacity: 0;
+    transform: translateY(0.5rem);
+  }
+}
+
+/* ═══ NavBar ═══ */
+
+.nav-bar {
+  border-bottom: 1px solid color-mix(in oklab, var(--color-border), transparent 30%);
+  background: color-mix(in oklab, var(--color-card), transparent 40%);
+  backdrop-filter: blur(10px);
+}
+
+.nav-tab {
+  position: relative;
+  cursor: pointer;
+  border: none;
+  background: none;
+}
+
+.nav-tab-active::after {
+  content: "";
+  position: absolute;
+  bottom: -1px;
+  left: 15%;
+  right: 15%;
+  height: 2px;
+  background: var(--color-primary);
+  border-radius: 1px;
+}
+
+/* ═══ Rate Bar ═══ */
+
+.rate-bar-track {
+  border-radius: 9999px;
+  height: 0.4rem;
+  background: color-mix(in oklab, var(--color-border), transparent 40%);
+  overflow: hidden;
+}
+
+.rate-bar-fill {
+  height: 100%;
+  border-radius: 9999px;
+  transition: width 0.6s ease-out;
+}
+
+/* ═══ Campaign Detail ═══ */
+
+.campaign-detail-panel {
+  animation: var(--animate-slide-up);
+}
+
+@starting-style {
+  .campaign-detail-panel {
+    opacity: 0;
+    transform: translateY(1rem);
+  }
+}
+
+/* ═══ Analytics table perf ═══ */
+
+.analytics-table-body {
+  content-visibility: auto;
+  contain-intrinsic-size: 400px;
+}
+
+/* ═══ Marketing Dashboard ═══ */
+
+.contacts-list-body {
+  content-visibility: auto;
+  contain-intrinsic-size: 300px;
+}
+
+.contact-row {
+  border: 1px solid transparent;
+  transition: background-color 0.15s, border-color 0.15s;
+}
+
+.contact-row:hover {
+  background: color-mix(in oklab, var(--color-card) 80%, transparent);
+}
+
+.contact-row-selected {
+  border-color: color-mix(in oklab, var(--color-primary) 30%, transparent);
+}
+
+.composer-input {
+  background: color-mix(in oklab, var(--color-card) 80%, transparent);
+}
+
+.composer-input:focus {
+  background: color-mix(in oklab, var(--color-card) 95%, transparent);
+}
+
+.channel-badge {
+  font-size: 0.55rem;
+  letter-spacing: 0.12em;
+}
+
+.quick-action-btn {
+  opacity: 0.6;
+  transition: opacity 0.15s, color 0.15s;
+}
+
+.quick-action-btn:hover {
+  opacity: 1;
+}
+
+.mkt-feedback {
+  animation: var(--animate-slide-up);
+}
+
+@starting-style {
+  .mkt-feedback {
+    opacity: 0;
+    transform: translateY(0.5rem);
+  }
+}
+
+/* Defer paint for off-screen dashboard panels (LCP optimization) */
+.analytics-panel,
+.marketing-panel {
+  content-visibility: auto;
+  contain-intrinsic-size: 0 800px;
+}
+
