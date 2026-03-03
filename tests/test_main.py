@@ -102,5 +102,6 @@ class TestSecurityHelpers:
     def test_is_origin_allowed_false_for_unknown_origin(self, main_module):
         assert main_module._is_origin_allowed("http://evil.example.com") is False
 
-    def test_is_origin_allowed_false_when_origin_missing(self, main_module):
-        assert main_module._is_origin_allowed(None) is False
+    def test_is_origin_allowed_true_when_origin_missing(self, main_module):
+        """None origin is allowed (same-origin / server-to-server requests omit Origin header)."""
+        assert main_module._is_origin_allowed(None) is True
