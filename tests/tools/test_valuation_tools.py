@@ -5,8 +5,6 @@ MOST THOROUGH TESTS — pricing math must be correct.
 
 import json
 
-import pytest
-
 
 # ─── Pricing table used across tests ───────────────────────────
 

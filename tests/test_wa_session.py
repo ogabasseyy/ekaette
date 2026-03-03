@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import asyncio
 import os
-import struct
 
 import pytest
 
@@ -192,11 +191,9 @@ class TestWaSessionMediaPipeline:
         await s.feed_inbound(b"\x00" * 200)
 
         async def stop_soon():
-            import asyncio
             await asyncio.sleep(0.15)
             s.shutdown()
 
-        import asyncio
         async with asyncio.TaskGroup() as tg:
             tg.create_task(s.run())
             tg.create_task(stop_soon())
@@ -224,11 +221,9 @@ class TestWaSessionMediaPipeline:
         await s.feed_inbound(b"\x00" * 200)
 
         async def stop_soon():
-            import asyncio
             await asyncio.sleep(0.15)
             s.shutdown()
 
-        import asyncio
         async with asyncio.TaskGroup() as tg:
             tg.create_task(s.run())
             tg.create_task(stop_soon())
@@ -258,11 +253,9 @@ class TestWaSessionMediaPipeline:
             await s.outbound_queue.put(b"\x00" * 960)
 
         async def stop_soon():
-            import asyncio
             await asyncio.sleep(0.15)
             s.shutdown()
 
-        import asyncio
         async with asyncio.TaskGroup() as tg:
             tg.create_task(s.run())
             tg.create_task(stop_soon())
@@ -290,11 +283,9 @@ class TestWaSessionMediaPipeline:
         await s.outbound_queue.put(b"\x00" * 960)
 
         async def stop_soon():
-            import asyncio
             await asyncio.sleep(0.15)
             s.shutdown()
 
-        import asyncio
         async with asyncio.TaskGroup() as tg:
             tg.create_task(s.run())
             tg.create_task(stop_soon())
@@ -328,7 +319,6 @@ class TestWaSessionFirestorePersistence:
             await asyncio.sleep(0.05)
             s.shutdown()
 
-        import asyncio
         async with asyncio.TaskGroup() as tg:
             tg.create_task(s.run())
             tg.create_task(stop_soon())
@@ -364,7 +354,6 @@ class TestWaSessionFirestorePersistence:
             await asyncio.sleep(0.05)
             s.shutdown()
 
-        import asyncio
         async with asyncio.TaskGroup() as tg:
             tg.create_task(s.run())
             tg.create_task(stop_soon())
@@ -400,7 +389,6 @@ class TestWaSessionFirestorePersistence:
             await asyncio.sleep(0.05)
             s.shutdown()
 
-        import asyncio
         async with asyncio.TaskGroup() as tg:
             tg.create_task(s.run())
             tg.create_task(stop_soon())
@@ -470,7 +458,6 @@ class TestWaSessionGeminiBidi:
                 while True:
                     await asyncio.sleep(1)
                     return
-                    yield  # pragma: no cover
 
             response = MagicMock()
             part = MagicMock()
@@ -536,7 +523,6 @@ class TestWaSessionUDPTransport:
             await asyncio.sleep(0.15)
             s.shutdown()
 
-        import asyncio
         async with asyncio.TaskGroup() as tg:
             tg.create_task(s.run())
             tg.create_task(stop_soon())

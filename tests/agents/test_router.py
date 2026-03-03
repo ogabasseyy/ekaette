@@ -1,6 +1,5 @@
 """Tests for the Ekaette root agent (router) structure."""
 
-import os
 import pytest
 
 
