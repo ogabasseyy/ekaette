@@ -178,15 +178,18 @@ export function AdminDashboard() {
   useEffect(() => {
     const sync = companyDetail?.inventorySync
     if (!sync) {
-      // Clear stale state when switching to a company without inventorySync
-      setInventorySourceType('google_sheets')
-      setInventorySourceUrl('')
-      setInventoryConnectorId('')
-      setInventorySheetName('')
-      setRuntimeDataTier('admin')
-      setInventoryDryRun(true)
-      setInventoryAutoEnabled(false)
-      setInventoryIntervalMinutes('60')
+      // Clear stale state when switching to a company without inventorySync,
+      // but only if a company has actually been loaded (avoid resetting on mount).
+      if (companyDetail) {
+        setInventorySourceType('google_sheets')
+        setInventorySourceUrl('')
+        setInventoryConnectorId('')
+        setInventorySheetName('')
+        setRuntimeDataTier('admin')
+        setInventoryDryRun(true)
+        setInventoryAutoEnabled(false)
+        setInventoryIntervalMinutes('60')
+      }
       return
     }
     if (sync.source_type === 'google_sheets' || sync.source_type === 'mcp_connector') {

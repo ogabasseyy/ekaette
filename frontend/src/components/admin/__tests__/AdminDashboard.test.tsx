@@ -10,6 +10,18 @@ function jsonResponse(payload: unknown, status = 200): Response {
 }
 
 describe('AdminDashboard', () => {
+  // Provide a default fetch stub so unmocked relative-URL calls
+  // (e.g. from effects that fire after test cleanup) don't surface
+  // as unhandled ERR_INVALID_URL errors in Node's native fetch.
+  beforeEach(() => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({}), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    )
+  })
+
   afterEach(() => {
     vi.restoreAllMocks()
   })
