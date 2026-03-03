@@ -7,8 +7,11 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
+
+import app.api.v1.at.service_voice as svc
 
 AT_ROOT = Path("app/api/v1/at")
 SIP_ROOT = Path("sip_bridge")
@@ -110,17 +113,12 @@ class TestRecordingDisclosureConfig:
 
     def test_dial_xml_no_recording_by_default(self) -> None:
         """With recording disabled, record attribute should be false."""
-        import app.api.v1.at.service_voice as svc
-
         xml = svc.build_dial_xml("sip:test@example.com", "+234")
         assert 'record="false"' in xml
         assert "<Say>" not in xml  # No disclosure if not recording
 
     def test_dial_xml_recording_includes_disclosure(self) -> None:
         """With recording enabled, XML should include <Say> disclosure before <Dial>."""
-        from unittest.mock import patch
-        import app.api.v1.at.service_voice as svc
-
         with (
             patch.object(svc, "AT_RECORDING_ENABLED", True),
             patch.object(svc, "AT_RECORDING_DISCLOSURE", "This call is recorded."),
