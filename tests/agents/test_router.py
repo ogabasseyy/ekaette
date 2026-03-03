@@ -38,12 +38,17 @@ class TestEkaetteRouterAgent:
         assert names == expected, f"Expected sub-agents {expected}, got {names}"
 
     def test_sub_agents_use_live_model(self):
-        """Sub-agents must use a Live API-compatible model for bidi-streaming."""
+        """Sub-agents use the same Live API model as root (bidi requires it).
+
+        ADK creates separate Live sessions per agent in bidi-streaming mode,
+        so ALL agents (root + sub) must use a Live API-compatible model.
+        """
         from app.agents.ekaette_router.agent import ekaette_router
+        root_model = ekaette_router.model
         for sa in ekaette_router.sub_agents:
-            model = sa.model
-            assert "native-audio" in model or "live" in model.lower(), (
-                f"Sub-agent {sa.name} must use a Live API model for bidi, got: {model}"
+            assert sa.model == root_model, (
+                f"Sub-agent {sa.name} should use the same Live model as root "
+                f"({root_model}), got: {sa.model}"
             )
 
     def test_sub_agents_have_model_and_tool_callbacks(self):

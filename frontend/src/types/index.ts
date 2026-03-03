@@ -11,8 +11,11 @@ export type ServerMessageType =
   | 'error'
   | 'interrupted'
   | 'session_started'
+  | 'session_ending'
   | 'memory_recall'
   | 'agent_status'
+  | 'telemetry'
+  | 'ping'
 
 export interface TranscriptionMessage {
   type: 'transcription'
@@ -83,6 +86,16 @@ export interface SessionStartedMessage {
   type: 'session_started'
   sessionId: string
   industry: string
+  companyId?: string
+  voice?: string
+  voiceChangeRequiresReconnect?: boolean
+  manualVadActive?: boolean
+  vadMode?: 'auto' | 'manual'
+  // Canonical fields (Phase 4+)
+  tenantId?: string
+  industryTemplateId?: string
+  capabilities?: string[]
+  registryVersion?: string
 }
 
 export interface MemoryRecallMessage {
@@ -97,6 +110,29 @@ export interface AgentStatusMessage {
   status: 'active' | 'idle' | 'processing'
 }
 
+export interface TelemetryMessage {
+  type: 'telemetry'
+  promptTokens: number
+  completionTokens: number
+  totalTokens: number
+  sessionPromptTokens: number
+  sessionCompletionTokens: number
+  sessionTotalTokens: number
+  sessionCostUsd: number
+}
+
+export interface SessionEndingMessage {
+  type: 'session_ending'
+  reason: 'go_away' | 'session_resumption' | 'live_session_ended'
+  timeLeftMs?: number | null
+  resumptionToken?: string
+}
+
+export interface PingMessage {
+  type: 'ping'
+  ts: number
+}
+
 export type ServerMessage =
   | TranscriptionMessage
   | AudioMessage
@@ -108,8 +144,11 @@ export type ServerMessage =
   | ErrorMessage
   | InterruptedMessage
   | SessionStartedMessage
+  | SessionEndingMessage
   | MemoryRecallMessage
   | AgentStatusMessage
+  | TelemetryMessage
+  | PingMessage
 
 // ═══ Client → Server Messages ═══
 
@@ -124,27 +163,101 @@ export interface ImageClientMessage {
   mimeType: string
 }
 
-export interface ConfigClientMessage {
-  type: 'config'
-  industry: string
-}
-
 export interface NegotiateClientMessage {
   type: 'negotiate'
   counterOffer: number
   action: 'accept' | 'decline' | 'counter'
 }
 
+export interface ActivityStartClientMessage {
+  type: 'activity_start'
+}
+
+export interface ActivityEndClientMessage {
+  type: 'activity_end'
+}
+
 export type ClientMessage =
   | TextClientMessage
   | ImageClientMessage
-  | ConfigClientMessage
   | NegotiateClientMessage
+  | ActivityStartClientMessage
+  | ActivityEndClientMessage
 
 // ═══ Connection State ═══
 
 export type ConnectionState = 'disconnected' | 'connecting' | 'connected' | 'reconnecting'
 
+export type TransportMode = 'backend-proxy' | 'direct-live'
+
 // ═══ Industry ═══
 
 export type Industry = 'electronics' | 'hotel' | 'automotive' | 'fashion'
+
+// ═══ Registry Types (Phase 4+) ═══
+
+export type IndustryTemplateId = string
+export type CompanyId = string
+
+export interface OnboardingCompanyMeta {
+  id: CompanyId
+  templateId: IndustryTemplateId
+  displayName: string
+}
+
+export interface IndustryTemplateMeta {
+  id: IndustryTemplateId
+  label: string
+  category: string
+  description: string
+  defaultVoice: string
+  theme: { accent: string; accentSoft: string; title: string; hint: string }
+  capabilities: string[]
+  status: 'active' | 'beta' | 'disabled'
+}
+
+export interface OnboardingConfigResponse {
+  tenantId: string
+  templates: IndustryTemplateMeta[]
+  companies: OnboardingCompanyMeta[]
+  defaults: { templateId: IndustryTemplateId; companyId: CompanyId }
+}
+
+export interface RuntimeBootstrapResponse {
+  apiVersion: 'v1'
+  tenantId: string
+  companyId: string
+  industryTemplateId: string
+  industry: string
+  voice: string
+  capabilities: string[]
+  registryVersion?: string
+  onboardingRequired: boolean
+  sessionPolicy: {
+    industryLocked: boolean
+    companyLocked: boolean
+    switchRequiresDisconnect: boolean
+  }
+}
+
+// ═══ Vendor Setup Wizard ═══
+
+export type WizardStepId = 'industry' | 'knowledge' | 'connectors' | 'catalog' | 'launch'
+
+export type WizardStepStatus = 'pending' | 'active' | 'completed' | 'error'
+
+export type SeedItemStatus = 'pending' | 'seeding' | 'ready' | 'error'
+
+export interface SeedItemState {
+  label: string
+  detail: string
+  status: SeedItemStatus
+  errorMessage?: string
+}
+
+export interface SeedResults {
+  knowledge: number
+  connectors: number
+  products: number
+  bookingSlots: number
+}

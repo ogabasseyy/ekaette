@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Privacy Policy — Ekaette</title>
+<style>
+  :root {
+    --bg: #0a0a0f;
+    --text: #e4e4e9;
+    --muted: #8b8b99;
+    --accent: oklch(74% 0.21 158);
+    --border: #1e1e2a;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'DM Sans', 'Plus Jakarta Sans', system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.7;
+    padding: 2rem 1rem;
+  }
+  .container {
+    max-width: 720px;
+    margin: 0 auto;
+  }
+  h1 {
+    font-size: 1.75rem;
+    font-weight: 700;
+    margin-bottom: 0.5rem;
+    color: var(--text);
+  }
+  .effective {
+    color: var(--muted);
+    font-size: 0.85rem;
+    margin-bottom: 2rem;
+  }
+  h2 {
+    font-size: 1.15rem;
+    font-weight: 600;
+    margin: 2rem 0 0.75rem;
+    color: var(--text);
+  }
+  p, li {
+    color: var(--muted);
+    font-size: 0.95rem;
+    margin-bottom: 0.75rem;
+  }
+  ul {
+    padding-left: 1.5rem;
+    margin-bottom: 1rem;
+  }
+  li { margin-bottom: 0.4rem; }
+  a {
+    color: var(--accent);
+    text-decoration: none;
+  }
+  a:hover { text-decoration: underline; }
+  .divider {
+    border: none;
+    border-top: 1px solid var(--border);
+    margin: 2rem 0;
+  }
+  .back-link {
+    display: inline-block;
+    margin-bottom: 1.5rem;
+    font-size: 0.85rem;
+    color: var(--muted);
+  }
+</style>
+</head>
+<body>
+<div class="container">
+  <a href="/" class="back-link">&larr; Back to Ekaette</a>
+
+  <h1>Privacy Policy</h1>
+  <p class="effective">Effective Date: 1 March 2026</p>
+
+  <h2>1. Data Controller</h2>
+  <p>Baci Technologies Limited ("we", "us", "Ekaette") is the data controller responsible for your personal data processed through this service. Contact: <a href="mailto:privacy@bacitechnologies.com">privacy@bacitechnologies.com</a></p>
+
+  <h2>2. AI Disclosure</h2>
+  <p>Ekaette is an AI-powered customer service assistant. When you interact with Ekaette via voice or text, you are communicating with an artificial intelligence system, not a human. You may request to speak with a human representative at any time.</p>
+
+  <h2>3. What Data We Collect</h2>
+  <ul>
+    <li><strong>Voice data:</strong> Audio streamed during calls for real-time processing. Audio is not stored after the session ends unless you opt in to call recording.</li>
+    <li><strong>Conversation transcripts:</strong> Text transcriptions of voice interactions, retained for up to 90 days.</li>
+    <li><strong>SMS content:</strong> Inbound and outbound SMS messages, retained for up to 30 days.</li>
+    <li><strong>Contact information:</strong> Phone number, email address (when provided for bookings or orders).</li>
+    <li><strong>Booking and order data:</strong> Appointment details, product selections, delivery addresses.</li>
+    <li><strong>Device and session data:</strong> Browser type, session identifiers, connection timestamps.</li>
+    <li><strong>Images:</strong> Photos uploaded for product identification or trade-in valuation.</li>
+  </ul>
+
+  <h2>4. Purpose and Lawful Basis</h2>
+  <p>We process your data for the following purposes:</p>
+  <ul>
+    <li><strong>Service delivery:</strong> To provide AI-powered customer support, bookings, and product inquiries (legitimate interest / contract performance).</li>
+    <li><strong>Communication:</strong> To send SMS replies and appointment confirmations (consent / contract performance).</li>
+    <li><strong>Improvement:</strong> To improve AI response quality and service reliability (legitimate interest).</li>
+    <li><strong>Security:</strong> To detect fraud and protect against unauthorized access (legitimate interest).</li>
+  </ul>
+
+  <h2>5. Data Retention</h2>
+  <ul>
+    <li>Voice call metadata: 90 days</li>
+    <li>SMS messages: 30 days</li>
+    <li>Booking records: duration of service relationship + 12 months</li>
+    <li>Session data: automatically purged on session end or within 24 hours</li>
+  </ul>
+
+  <h2>6. Your Rights</h2>
+  <p>Under the Nigeria Data Protection Act 2023 (NDPA), you have the right to:</p>
+  <ul>
+    <li><strong>Access:</strong> Request a copy of your personal data.</li>
+    <li><strong>Rectification:</strong> Correct inaccurate or incomplete data.</li>
+    <li><strong>Erasure:</strong> Request deletion of your personal data.</li>
+    <li><strong>Portability:</strong> Receive your data in a structured, machine-readable format.</li>
+    <li><strong>Object:</strong> Object to processing based on legitimate interest.</li>
+    <li><strong>Withdraw consent:</strong> Where processing is based on consent, withdraw at any time.</li>
+  </ul>
+  <p>To exercise any of these rights, contact <a href="mailto:privacy@bacitechnologies.com">privacy@bacitechnologies.com</a>.</p>
+
+  <h2>7. Third-Party Services</h2>
+  <p>We use the following third-party services to deliver Ekaette:</p>
+  <ul>
+    <li><strong>Google Cloud Platform:</strong> Infrastructure, AI model hosting (Gemini), Firestore database.</li>
+    <li><strong>Africa's Talking:</strong> SMS and voice call delivery.</li>
+    <li><strong>Paystack:</strong> Payment processing (card data handled entirely by Paystack; we do not store card numbers).</li>
+  </ul>
+
+  <h2>8. Cross-Border Data Transfers</h2>
+  <p>Your data may be processed on servers located outside Nigeria (Google Cloud, US region). We ensure adequate safeguards through service provider data processing agreements and industry-standard security measures.</p>
+
+  <h2>9. Security</h2>
+  <p>We implement technical and organizational measures including:</p>
+  <ul>
+    <li>Tenant-isolated data architecture (scoped Firestore queries)</li>
+    <li>Encryption in transit (TLS 1.3)</li>
+    <li>CORS allowlisting and webhook verification</li>
+    <li>PII redaction in application logs</li>
+    <li>Role-based access control for admin operations</li>
+  </ul>
+
+  <h2>10. SMS Opt-Out</h2>
+  <p>To stop receiving SMS messages from Ekaette, reply <strong>STOP</strong> to any message. You can re-subscribe at any time by contacting us.</p>
+
+  <h2>11. Complaints</h2>
+  <p>If you believe your data rights have been violated, you may lodge a complaint with the Nigeria Data Protection Commission (NDPC) at <a href="https://ndpc.gov.ng">ndpc.gov.ng</a>.</p>
+
+  <h2>12. Changes to This Policy</h2>
+  <p>We may update this policy from time to time. Material changes will be communicated via in-app notice. Continued use of the service constitutes acceptance of the updated policy.</p>
+
+  <hr class="divider">
+  <p style="font-size: 0.8rem; color: var(--muted);">&copy; 2026 Baci Technologies Limited. All rights reserved.</p>
+</div>
+</body>
+</html>

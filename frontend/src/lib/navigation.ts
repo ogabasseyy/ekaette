@@ -1,0 +1,35 @@
+export type AppPage = 'voice' | 'admin' | 'analytics' | 'marketing'
+
+const PAGE_PATHS: Record<AppPage, string> = {
+  voice: '/',
+  admin: '/admin',
+  analytics: '/analytics',
+  marketing: '/marketing',
+}
+
+export const NAV_ITEMS: ReadonlyArray<{
+  page: AppPage
+  label: string
+  iconName: string
+}> = [
+  { page: 'voice', label: 'Voice', iconName: 'Mic' },
+  { page: 'analytics', label: 'Analytics', iconName: 'BarChart3' },
+  { page: 'marketing', label: 'Marketing', iconName: 'Megaphone' },
+  { page: 'admin', label: 'Admin', iconName: 'Settings' },
+]
+
+export function currentPage(): AppPage {
+  const pathname = window.location.pathname
+  if (pathname === '/admin' || pathname.startsWith('/admin/')) return 'admin'
+  if (pathname === '/analytics' || pathname.startsWith('/analytics/')) return 'analytics'
+  if (pathname === '/marketing' || pathname.startsWith('/marketing/')) return 'marketing'
+  return 'voice'
+}
+
+// NOTE: Deliberate MPA navigation — 4 static pages with no shared state benefit
+// from full page loads. A client-side router adds complexity without value here.
+export function navigateTo(page: AppPage): void {
+  const path = PAGE_PATHS[page]
+  if (path === undefined) return
+  window.location.assign(path)
+}

@@ -1,18 +1,24 @@
-import { renderHook, act } from '@testing-library/react'
-import { describe, it, expect } from 'vitest'
+import { act, renderHook } from '@testing-library/react'
 import { useRef } from 'react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { useAudioWorklet } from '../useAudioWorklet'
 
 // Helper to create the ref that useAudioWorklet expects
-function renderAudioWorklet() {
+function renderAudioWorklet(options?: Parameters<typeof useAudioWorklet>[1]) {
   return renderHook(() => {
     const onAudioChunk = useRef<((data: ArrayBuffer) => void) | null>(null)
-    const worklet = useAudioWorklet(onAudioChunk)
+    const worklet = useAudioWorklet(onAudioChunk, options)
     return { worklet, onAudioChunk }
   })
 }
 
 describe('useAudioWorklet', () => {
+  const OriginalAudioContext = globalThis.AudioContext
+
+  afterEach(() => {
+    globalThis.AudioContext = OriginalAudioContext
+    vi.restoreAllMocks()
+  })
   it('startRecording creates AudioContext at 16kHz', async () => {
     const { result } = renderAudioWorklet()
 
@@ -91,6 +97,181 @@ describe('useAudioWorklet', () => {
       value: { getUserMedia: original },
       configurable: true,
     })
+  })
+
+  it('requests browser audio processing constraints by default', async () => {
+    const getUserMediaSpy = vi.spyOn(navigator.mediaDevices, 'getUserMedia').mockResolvedValue({
+      getTracks: () => [{ stop: () => {} }],
+      getAudioTracks: () => [{ getSettings: () => ({}) }],
+    } as unknown as MediaStream)
+
+    const { result } = renderAudioWorklet()
+    await act(async () => {
+      await result.current.worklet.startRecording()
+    })
+
+    expect(getUserMediaSpy).toHaveBeenCalledTimes(1)
+    const constraints = getUserMediaSpy.mock.calls[0]?.[0]
+    const audio = constraints?.audio as MediaTrackConstraints
+    expect(audio.echoCancellation).toBe(true)
+    expect(audio.noiseSuppression).toBe(true)
+    expect(audio.autoGainControl).toBe(true)
+  })
+
+  it('allows disabling capture processing constraints', async () => {
+    const getUserMediaSpy = vi.spyOn(navigator.mediaDevices, 'getUserMedia').mockResolvedValue({
+      getTracks: () => [{ stop: () => {} }],
+      getAudioTracks: () => [{ getSettings: () => ({}) }],
+    } as unknown as MediaStream)
+
+    const { result } = renderAudioWorklet({ noiseCancellationLevel: 'off' })
+    await act(async () => {
+      await result.current.worklet.startRecording()
+    })
+
+    const constraints = getUserMediaSpy.mock.calls[0]?.[0]
+    const audio = constraints?.audio as MediaTrackConstraints
+    expect(audio.echoCancellation).toBe(false)
+    expect(audio.noiseSuppression).toBe(false)
+    expect(audio.autoGainControl).toBe(false)
+  })
+
+  it('captures applied mic processing diagnostics', async () => {
+    vi.spyOn(navigator.mediaDevices, 'getUserMedia').mockResolvedValue({
+      getTracks: () => [{ stop: () => {} }],
+      getAudioTracks: () => [
+        {
+          applyConstraints: async () => {},
+          getSettings: () => ({
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+            sampleRate: 16000,
+            channelCount: 1,
+          }),
+        },
+      ],
+    } as unknown as MediaStream)
+
+    const { result } = renderAudioWorklet({ noiseCancellationLevel: 'aggressive' })
+    await act(async () => {
+      await result.current.worklet.startRecording()
+    })
+
+    expect(result.current.worklet.micCaptureDiagnostics).toMatchObject({
+      noiseCancellationLevel: 'aggressive',
+      softwareDenoiserEnabled: true,
+      appliedSettings: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+        sampleRate: 16000,
+        channelCount: 1,
+      },
+    })
+  })
+
+  it('recovers when addModule fails', async () => {
+    // Override AudioContext to have addModule throw
+    class FailingModuleContext {
+      sampleRate: number
+      state = 'running'
+      constructor(options?: { sampleRate?: number }) {
+        this.sampleRate = options?.sampleRate ?? 44100
+      }
+      async resume() {
+        this.state = 'running'
+      }
+      createMediaStreamSource(_stream?: MediaStream) {
+        return { connect: () => {} }
+      }
+      get audioWorklet() {
+        return {
+          addModule: async () => {
+            throw new Error('Failed to load worklet module')
+          },
+        }
+      }
+      async close() {
+        this.state = 'closed'
+      }
+    }
+    globalThis.AudioContext = FailingModuleContext as unknown as typeof AudioContext
+
+    const { result } = renderAudioWorklet()
+
+    await act(async () => {
+      await result.current.worklet.startRecording()
+    })
+
+    expect(result.current.worklet.error).toBe('Failed to load worklet module')
+  })
+
+  it('handles initPlayer failure gracefully', async () => {
+    class FailingPlayerContext {
+      sampleRate: number
+      state = 'running'
+      constructor(options?: { sampleRate?: number }) {
+        this.sampleRate = options?.sampleRate ?? 44100
+      }
+      async resume() {
+        this.state = 'running'
+      }
+      createMediaStreamSource(_stream?: MediaStream) {
+        return { connect: () => {} }
+      }
+      get audioWorklet() {
+        return {
+          addModule: async () => {
+            throw new Error('Player worklet load failed')
+          },
+        }
+      }
+      async close() {
+        this.state = 'closed'
+      }
+    }
+    globalThis.AudioContext = FailingPlayerContext as unknown as typeof AudioContext
+
+    const { result } = renderAudioWorklet()
+
+    await act(async () => {
+      await result.current.worklet.initPlayer()
+    })
+
+    expect(result.current.worklet.error).toBe('Player worklet load failed')
+  })
+
+  it('resumes suspended AudioContext on start (Safari fix)', async () => {
+    const resumeSpy = vi.fn().mockResolvedValue(undefined)
+
+    class SuspendedContext {
+      sampleRate: number
+      state = 'suspended'
+      constructor(options?: { sampleRate?: number }) {
+        this.sampleRate = options?.sampleRate ?? 44100
+      }
+      resume = resumeSpy
+      createMediaStreamSource(_stream?: MediaStream) {
+        return { connect: () => {} }
+      }
+      get audioWorklet() {
+        return { addModule: async () => {} }
+      }
+      async close() {
+        this.state = 'closed'
+      }
+    }
+    globalThis.AudioContext = SuspendedContext as unknown as typeof AudioContext
+
+    const { result } = renderAudioWorklet()
+
+    await act(async () => {
+      await result.current.worklet.startRecording()
+    })
+
+    expect(resumeSpy).toHaveBeenCalled()
+    expect(result.current.worklet.error).toBeNull()
   })
 
   it('forwards recorder chunks to callback', async () => {

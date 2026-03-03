@@ -60,7 +60,15 @@ class MockAudioWorkletNode {
     onmessage: null as ((ev: MessageEvent) => void) | null,
     postMessage: (_data: unknown) => {},
   }
-  constructor(_context: AudioContext, _name: string) {}
+  parameters = new Map<string, { value: number }>()
+  processorOptions: Record<string, unknown> | undefined
+  constructor(
+    _context: AudioContext,
+    _name: string,
+    options?: { processorOptions?: Record<string, unknown> },
+  ) {
+    this.processorOptions = options?.processorOptions
+  }
   connect() {}
   disconnect() {}
 }
@@ -77,7 +85,7 @@ class MockAudioContext {
     this.state = 'running'
   }
 
-  createMediaStreamSource() {
+  createMediaStreamSource(_stream?: MediaStream) {
     return { connect: () => {} }
   }
 
@@ -107,3 +115,7 @@ Object.defineProperty(globalThis.navigator, 'mediaDevices', {
   },
   configurable: true,
 })
+
+if (!Element.prototype.scrollIntoView) {
+  Element.prototype.scrollIntoView = () => {}
+}

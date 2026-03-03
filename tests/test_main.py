@@ -43,12 +43,14 @@ async def client(app):
 
 
 @pytest.fixture(autouse=True)
-def reset_rate_limit_state(main_module):
+def reset_rate_limit_state(main_module, monkeypatch):
     """Keep in-memory rate-limit state isolated between tests."""
     from app.api.v1.admin import settings as admin_settings
 
     main_module._rate_limit_buckets.clear()
     admin_settings.reset_runtime_state()
+    # Force memory backend so tests don't depend on .env Firestore setting
+    monkeypatch.setattr(admin_settings, "IDEMPOTENCY_STORE_BACKEND", "memory")
     yield
     main_module._rate_limit_buckets.clear()
     admin_settings.reset_runtime_state()
@@ -247,7 +249,7 @@ class TestSecurityHelpers:
         assert main_module._is_origin_allowed("http://evil.example.com") is False
 
     def test_is_origin_allowed_true_when_origin_missing(self, main_module):
-        """None origin = same-origin proxy request (Vite/nginx), always allowed."""
+        """None origin is allowed (same-origin / server-to-server requests omit Origin header)."""
         assert main_module._is_origin_allowed(None) is True
 
     def test_websocket_origin_allowed_false_when_origin_missing_by_default(self, main_module):

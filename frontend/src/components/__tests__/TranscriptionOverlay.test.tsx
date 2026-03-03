@@ -1,0 +1,76 @@
+import { render, screen } from '@testing-library/react'
+import { describe, expect, it, vi } from 'vitest'
+import type { TranscriptMessage } from '../../lib/transcript'
+import { TranscriptionOverlay } from '../layout/TranscriptionOverlay'
+
+describe('TranscriptionOverlay', () => {
+  it('renders user right-aligned and agent left-aligned messages', () => {
+    const messages: TranscriptMessage[] = [
+      { type: 'transcription', role: 'user', text: 'Hi', partial: false },
+      { type: 'transcription', role: 'agent', text: 'Hello', partial: false },
+    ]
+
+    render(<TranscriptionOverlay messages={messages} />)
+
+    const userArticle = screen.getByText('Hi').closest('article')
+    const agentArticle = screen.getByText('Hello').closest('article')
+    expect(userArticle).toHaveClass('message-user')
+    expect(agentArticle).toHaveClass('message-agent')
+  })
+
+  it('renders partial messages with partial class', () => {
+    const messages: TranscriptMessage[] = [
+      { type: 'transcription', role: 'agent', text: 'Listening', partial: true },
+    ]
+    render(<TranscriptionOverlay messages={messages} />)
+    const article = screen.getByText('Listening').closest('article')
+    expect(article).toHaveClass('message-partial')
+  })
+
+  it('auto-scrolls when messages update', () => {
+    const scrollSpy = vi.spyOn(Element.prototype, 'scrollIntoView').mockImplementation(() => {})
+
+    const messages: TranscriptMessage[] = [
+      { type: 'transcription', role: 'agent', text: 'One', partial: false },
+    ]
+    const { rerender } = render(<TranscriptionOverlay messages={messages} />)
+    expect(scrollSpy).toHaveBeenCalledTimes(1)
+    scrollSpy.mockClear()
+
+    rerender(
+      <TranscriptionOverlay
+        messages={[
+          ...messages,
+          { type: 'transcription', role: 'agent', text: 'Two', partial: false },
+        ]}
+      />,
+    )
+    expect(scrollSpy).toHaveBeenCalledTimes(1)
+    scrollSpy.mockRestore()
+  })
+
+  it('renders empty state when no messages', () => {
+    render(<TranscriptionOverlay messages={[]} />)
+    expect(screen.getByText('No live transcript yet.')).toBeInTheDocument()
+  })
+
+  it('auto-scrolls when latest partial message updates in place', () => {
+    const scrollSpy = vi.spyOn(Element.prototype, 'scrollIntoView').mockImplementation(() => {})
+
+    const { rerender } = render(
+      <TranscriptionOverlay
+        messages={[{ type: 'transcription', role: 'agent', text: 'Hello', partial: true }]}
+      />,
+    )
+    expect(scrollSpy).toHaveBeenCalledTimes(1)
+    scrollSpy.mockClear()
+
+    rerender(
+      <TranscriptionOverlay
+        messages={[{ type: 'transcription', role: 'agent', text: 'Hello there', partial: true }]}
+      />,
+    )
+    expect(scrollSpy).toHaveBeenCalledTimes(1)
+    scrollSpy.mockRestore()
+  })
+})

@@ -2,9 +2,23 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App'
+import { AdminDashboard } from './components/admin/AdminDashboard'
+import { AnalyticsDashboard } from './components/analytics/AnalyticsDashboard'
+import { MarketingDashboard } from './components/marketing/MarketingDashboard'
 
-createRoot(document.getElementById('root')!).render(
+function RootPage() {
+  const pathname = window.location.pathname
+  if (pathname === '/admin' || pathname.startsWith('/admin/')) return <AdminDashboard />
+  if (pathname === '/analytics' || pathname.startsWith('/analytics/')) return <AnalyticsDashboard />
+  if (pathname === '/marketing' || pathname.startsWith('/marketing/')) return <MarketingDashboard />
+  // voice page is the default for all unmatched paths
+  return <App />
+}
+
+const root = document.getElementById('root')
+if (!root) throw new Error('Root element not found')
+createRoot(root).render(
   <StrictMode>
-    <App />
+    <RootPage />
   </StrictMode>,
 )
