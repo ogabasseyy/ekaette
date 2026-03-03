@@ -71,21 +71,23 @@ function routeFetch(
     connector?: ReturnType<typeof mockSuccess>
   } = {},
 ) {
-  fetchSpy.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
-    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
-    if (url.includes('/mcp/providers'))
-      return overrides.providers ?? (mockProviders() as unknown as Response)
-    // Match specific connector ID path (e.g. /connectors/crm/test, /connectors/crm)
-    if (/\/connectors\/[^/]+/.test(url))
-      return overrides.connector ?? (mockSuccess() as unknown as Response)
-    // Match POST/DELETE to /connectors collection (create new connector)
-    if (url.includes('/connectors') && init?.method && init.method !== 'GET')
-      return mockSuccess() as unknown as Response
-    // GET /connectors falls through to company detail (list connectors via company)
-    if (url.includes('/companies/'))
-      return overrides.company ?? (mockCompanyDetail() as unknown as Response)
-    return overrides.company ?? (mockCompanyDetail() as unknown as Response)
-  })
+  fetchSpy.mockImplementation(
+    async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
+      if (url.includes('/mcp/providers'))
+        return (overrides.providers ?? mockProviders()) as unknown as Response
+      // Match specific connector ID path (e.g. /connectors/crm/test, /connectors/crm)
+      if (/\/connectors\/[^/]+/.test(url))
+        return (overrides.connector ?? mockSuccess()) as unknown as Response
+      // Match POST/DELETE to /connectors collection (create new connector)
+      if (url.includes('/connectors') && init?.method && init.method !== 'GET')
+        return mockSuccess() as unknown as Response
+      // GET /connectors falls through to company detail (list connectors via company)
+      if (url.includes('/companies/'))
+        return (overrides.company ?? mockCompanyDetail()) as unknown as Response
+      return (overrides.company ?? mockCompanyDetail()) as unknown as Response
+    },
+  )
 }
 
 // Lazy import after mocks
