@@ -37,12 +37,18 @@ class TestEkaetteRouterAgent:
         expected = {"vision_agent", "valuation_agent", "booking_agent", "catalog_agent", "support_agent"}
         assert names == expected, f"Expected sub-agents {expected}, got {names}"
 
-    def test_sub_agents_use_standard_model(self):
-        """Sub-agents use the standard API model (not Live API)."""
+    def test_sub_agents_use_live_model(self):
+        """Sub-agents use the same Live API model as root (bidi requires it).
+
+        ADK creates separate Live sessions per agent in bidi-streaming mode,
+        so ALL agents (root + sub) must use a Live API-compatible model.
+        """
         from app.agents.ekaette_router.agent import ekaette_router
+        root_model = ekaette_router.model
         for sa in ekaette_router.sub_agents:
-            assert "native-audio" not in sa.model, (
-                f"Sub-agent {sa.name} should NOT use native-audio model, got: {sa.model}"
+            assert sa.model == root_model, (
+                f"Sub-agent {sa.name} should use the same Live model as root "
+                f"({root_model}), got: {sa.model}"
             )
 
     def test_agent_has_instruction(self):
