@@ -83,6 +83,10 @@ class WhatsAppBridgeConfig:
                 "WA_TLS_CERTFILE and WA_TLS_KEYFILE are required in production "
                 "(non-sandbox) mode — SIP over TLS is mandatory"
             )
+        # Port range validation
+        for port_name, port_val in [("WA_SIP_PORT", self.sip_port), ("WA_HEALTH_PORT", self.health_port)]:
+            if not (1 <= port_val <= 65535):
+                errors.append(f"{port_name}={port_val} is out of valid range (1-65535)")
         # Verify TLS cert/key files actually exist on disk
         if self.tls_certfile and not Path(self.tls_certfile).exists():
             errors.append(

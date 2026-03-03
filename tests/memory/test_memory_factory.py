@@ -35,7 +35,7 @@ class TestCreateMemoryService:
                 "google.adk.memory.VertexAiMemoryBankService"
             ) as mock_cls:
                 mock_cls.return_value = MagicMock()
-                _service = create_memory_service()  # noqa: F841
+                create_memory_service()
 
         mock_cls.assert_called_once_with(
             project="test-project",

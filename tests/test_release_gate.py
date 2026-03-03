@@ -19,7 +19,7 @@ def _write(path: Path, content: str) -> None:
 
 def test_validate_policy_files_detects_missing_test_policy(tmp_path: Path):
     _write(
-        tmp_path / "policies" / "mcp_providers.v1.yaml",
+        tmp_path / "policies" / "mcp_providers.v1.json",
         '{"policyVersion":"v1","providers":{"mock":{"label":"Mock"}}}',
     )
     _write(
@@ -31,7 +31,7 @@ def test_validate_policy_files_detects_missing_test_policy(tmp_path: Path):
         '{"policyVersion":"v1","slos":{"onboarding_config":{"path":"/api/onboarding/config","latencyP95Ms":300,"errorRatePercent":1},"runtime_bootstrap":{"path":"/api/v1/runtime/bootstrap","latencyP95Ms":300,"errorRatePercent":1},"token":{"path":"/api/token","latencyP95Ms":500,"errorRatePercent":1,"registryMissRatePercent":0.1},"websocket_startup":{"path":"/ws/{user_id}/{session_id}","latencyP95Ms":1500,"errorRatePercent":1},"registry_resolution":{"metric":"registry_resolution_ms","latencyP95Ms":100}}}',
     )
     _write(
-        tmp_path / "policies" / "alert_policies.v1.yaml",
+        tmp_path / "policies" / "alert_policies.v1.json",
         '{"policyVersion":"v1","alerts":[{"id":"registry_miss_spike","severity":"warning","metric":"registry_miss_total","window":"5m","condition":{"operator":"gt","threshold":1},"description":"test"}]}',
     )
 
@@ -41,7 +41,7 @@ def test_validate_policy_files_detects_missing_test_policy(tmp_path: Path):
 
 def test_run_release_gates_passes_with_required_files(tmp_path: Path):
     _write(
-        tmp_path / "policies" / "mcp_providers.v1.yaml",
+        tmp_path / "policies" / "mcp_providers.v1.json",
         """
         {
           "policyVersion": "v1",
@@ -90,7 +90,7 @@ def test_run_release_gates_passes_with_required_files(tmp_path: Path):
         """,
     )
     _write(
-        tmp_path / "policies" / "alert_policies.v1.yaml",
+        tmp_path / "policies" / "alert_policies.v1.json",
         """
         {
           "policyVersion": "v1",
@@ -120,7 +120,7 @@ def test_run_release_gates_passes_with_required_files(tmp_path: Path):
 
 def test_validate_policy_files_detects_missing_slo_entries(tmp_path: Path):
     _write(
-        tmp_path / "policies" / "mcp_providers.v1.yaml",
+        tmp_path / "policies" / "mcp_providers.v1.json",
         '{"policyVersion":"v1","providers":{"mock":{"label":"Mock","testPolicy":{"timeoutSeconds":1,"maxRetries":0,"circuitOpenAfterFailures":2,"circuitOpenSeconds":10,"allowedHosts":[]}}}}',
     )
     _write(
@@ -132,7 +132,7 @@ def test_validate_policy_files_detects_missing_slo_entries(tmp_path: Path):
         '{"policyVersion":"v1","slos":{"runtime_bootstrap":{"path":"/api/v1/runtime/bootstrap","latencyP95Ms":300,"errorRatePercent":1}}}',
     )
     _write(
-        tmp_path / "policies" / "alert_policies.v1.yaml",
+        tmp_path / "policies" / "alert_policies.v1.json",
         '{"policyVersion":"v1","alerts":[{"id":"ok","severity":"warning","metric":"m","window":"5m","condition":{"operator":"gt","threshold":1},"description":"ok"}]}',
     )
 

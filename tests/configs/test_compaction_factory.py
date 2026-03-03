@@ -250,7 +250,7 @@ class TestCreateSummarizer:
 
         with patch(
             "app.configs.compaction_factory.Gemini",
-            side_effect=Exception("Import failed"),
+            side_effect=ImportError("Import failed"),
         ):
             result = _create_summarizer("gemini-3-flash-preview")
 

@@ -147,8 +147,8 @@ class TestSMSSend:
         assert resp.status_code == 200
         # Verify the message sent via provider was truncated
         call_kwargs = mock_send.call_args[1]
-        sent_msg = call_kwargs.get("message", call_kwargs.get("msg"))
-        assert sent_msg is not None, "message kwarg not found in send_sms call"
+        assert "message" in call_kwargs, "send_sms must use 'message' kwarg"
+        sent_msg = call_kwargs["message"]
         assert len(sent_msg) <= 160
         assert sent_msg.endswith("...")
 

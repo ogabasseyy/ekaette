@@ -39,11 +39,7 @@ logger = logging.getLogger(__name__)
 
 
 def _detect_local_ip() -> str:
-    """Detect the host's routable IP address (not 127.0.0.1).
-
-    Uses a UDP connect trick to find the default route's source IP without
-    actually sending any traffic.  Falls back to gethostbyname if that fails.
-    """
+    """Detect routable IP via UDP connect trick; falls back to gethostbyname."""
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         try:
@@ -55,7 +51,7 @@ def _detect_local_ip() -> str:
         if ip and ip != "0.0.0.0":
             return ip
     except OSError:
-        pass
+        logger.debug("UDP route-based IP detection failed", exc_info=True)
     try:
         return socket.gethostbyname(socket.gethostname())
     except socket.gaierror:
@@ -256,6 +252,11 @@ class WaSIPServer:
     async def _handle_invite(self, invite: SipMessage) -> SipMessage:
         """Handle INVITE: challenge or authenticate then create session."""
         call_id = resolve_call_id(invite.headers) or invite.headers.get("call-id", "")
+
+        if not call_id:  # missing Call-ID
+            return self._error_response("SIP/2.0 400 Bad Request", invite)
+        if call_id in self.active_sessions:  # duplicate
+            return self._error_response("SIP/2.0 482 Loop Detected", invite)
 
         # Concurrency limit
         if len(self.active_sessions) >= self.max_concurrent_calls:

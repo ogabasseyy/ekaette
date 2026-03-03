@@ -552,7 +552,7 @@ class TestBookingToolsNoCompanyScopingBaseline:
                 id="slot-1",
                 to_dict=MagicMock(
                     return_value={
-                        "date": "2026-03-01",
+                        "date": "2030-03-01",
                         "time": "10:00",
                         "location": "Lagos - Ikeja",
                         "available": True,
@@ -566,14 +566,14 @@ class TestBookingToolsNoCompanyScopingBaseline:
         with pytest.MonkeyPatch.context() as mp:
             mp.setattr(booking_tools, "_get_firestore_db", lambda: db)
             result = await booking_tools.check_availability(
-                date="2026-03-01",
+                date="2030-03-01",
                 location="Lagos - Ikeja",
             )
 
         assert "error" not in result
         db.collection.assert_called_once_with("booking_slots")
         where_calls = [call.args for call in query.where.call_args_list]
-        assert ("date", "==", "2026-03-01") in where_calls
+        assert ("date", "==", "2030-03-01") in where_calls
         assert ("location", "==", "Lagos - Ikeja") in where_calls
         assert not any(args and args[0] == "company_id" for args in where_calls), (
             "Phase 0 baseline: check_availability should NOT filter by company_id yet. "

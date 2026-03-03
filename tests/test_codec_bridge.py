@@ -35,13 +35,13 @@ class TestCodecBridgeABC:
     def test_abc_has_rtp_payload_type(self):
         from sip_bridge.codec_bridge import CodecBridge
 
-        # Verified on concrete subclass instances
-        assert hasattr(CodecBridge, "rtp_payload_type") or "rtp_payload_type" in dir(CodecBridge)
+        # Annotation-only attributes are not visible via hasattr/dir on the ABC
+        assert "rtp_payload_type" in CodecBridge.__annotations__
 
     def test_abc_has_rtp_clock_rate(self):
         from sip_bridge.codec_bridge import CodecBridge
 
-        assert hasattr(CodecBridge, "rtp_clock_rate") or "rtp_clock_rate" in dir(CodecBridge)
+        assert "rtp_clock_rate" in CodecBridge.__annotations__
 
     def test_abc_has_frame_duration_ms(self):
         from sip_bridge.codec_bridge import CodecBridge
