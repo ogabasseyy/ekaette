@@ -6,8 +6,6 @@ import logging
 
 from fastapi import APIRouter, HTTPException, Query
 
-from app.configs import sanitize_log
-
 logger = logging.getLogger(__name__)
 
 from app.tools.shipping_tools import (
@@ -72,9 +70,10 @@ async def _resolve_quote_or_raise(
     if result.get("status") == "ok":
         return result
 
-    code = str(result.get("code") or "TOPSHIP_ERROR")
+    raw_code = str(result.get("code") or "TOPSHIP_ERROR")
+    code = raw_code if raw_code in _TOPSHIP_ERROR_STATUS_MAP else "TOPSHIP_ERROR"
     status_code = _TOPSHIP_ERROR_STATUS_MAP.get(code, 500)
-    logger.warning("Topship quote error", extra={"code": sanitize_log(code)})
+    logger.warning("Topship quote error", extra={"code": code})
     raise HTTPException(status_code=status_code, detail={"code": code, "error": "Shipping quote request failed"})
 
 
@@ -112,9 +111,10 @@ async def topship_quote_get(
 
 
 def _raise_order_tool_error(result: dict) -> None:
-    code = str(result.get("code") or "SHIPPING_ORDER_ERROR")
+    raw_code = str(result.get("code") or "SHIPPING_ORDER_ERROR")
+    code = raw_code if raw_code in _SHIPPING_ORDER_ERROR_STATUS_MAP else "SHIPPING_ORDER_ERROR"
     status_code = _SHIPPING_ORDER_ERROR_STATUS_MAP.get(code, 500)
-    logger.warning("Shipping order error", extra={"code": sanitize_log(code)})
+    logger.warning("Shipping order error", extra={"code": code})
     raise HTTPException(status_code=status_code, detail={"code": code, "error": "Shipping order operation failed"})
 
 
