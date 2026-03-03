@@ -39,9 +39,8 @@ class TestSessionStateSchema:
             "electronics",
         )
 
-        # Temp keys are optional but when present must be prefixed
-        temp_keys = [k for k in state if k.startswith("temp:")]
-        # No assertion on count — just verify structure is valid
+        # Verify no non-prefixed keys leaked
+        assert all(k.startswith(("app:", "user:", "temp:")) for k in state)
 
 
 class TestDatabaseSessionServiceIntegration:

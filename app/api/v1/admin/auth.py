@@ -342,7 +342,7 @@ async def require_admin_present(request: Request):
                 parsed = json.loads(raw_body.decode("utf-8"))
                 if isinstance(parsed, dict):
                     detail = parsed
-        except Exception:
+        except (ValueError, UnicodeDecodeError):
             pass
         raise _http_error(error_response.status_code, detail)
     if context is None:

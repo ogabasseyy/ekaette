@@ -28,9 +28,7 @@ async def _doc_set(doc_ref: object, payload: dict[str, object], *, merge: bool =
     if asyncio.iscoroutinefunction(set_fn):
         await set_fn(payload, merge=merge)
         return
-    result = await asyncio.to_thread(set_fn, payload, merge)
-    if asyncio.iscoroutine(result):
-        await result
+    await asyncio.to_thread(set_fn, payload, merge)
 
 
 async def _doc_create(doc_ref: object, payload: dict[str, object]) -> None:
@@ -40,9 +38,7 @@ async def _doc_create(doc_ref: object, payload: dict[str, object]) -> None:
     if asyncio.iscoroutinefunction(create_fn):
         await create_fn(payload)
         return
-    result = await asyncio.to_thread(create_fn, payload)
-    if asyncio.iscoroutine(result):
-        await result
+    await asyncio.to_thread(create_fn, payload)
 
 
 async def _doc_update(doc_ref: object, payload: dict[str, object]) -> None:
@@ -52,9 +48,7 @@ async def _doc_update(doc_ref: object, payload: dict[str, object]) -> None:
     if asyncio.iscoroutinefunction(update_fn):
         await update_fn(payload)
         return
-    result = await asyncio.to_thread(update_fn, payload)
-    if asyncio.iscoroutine(result):
-        await result
+    await asyncio.to_thread(update_fn, payload)
 
 
 async def _doc_delete(doc_ref: object) -> None:
@@ -64,9 +58,7 @@ async def _doc_delete(doc_ref: object) -> None:
     if asyncio.iscoroutinefunction(delete_fn):
         await delete_fn()
         return
-    result = await asyncio.to_thread(delete_fn)
-    if asyncio.iscoroutine(result):
-        await result
+    await asyncio.to_thread(delete_fn)
 
 
 async def _batch_set_documents(
@@ -91,9 +83,7 @@ async def _batch_set_documents(
     if asyncio.iscoroutinefunction(commit_fn):
         await commit_fn()
         return
-    result = await asyncio.to_thread(commit_fn)
-    if asyncio.iscoroutine(result):
-        await result
+    await asyncio.to_thread(commit_fn)
 
 
 async def _batch_delete_documents(db: object, doc_refs: list[object]) -> None:
@@ -113,6 +103,4 @@ async def _batch_delete_documents(db: object, doc_refs: list[object]) -> None:
     if asyncio.iscoroutinefunction(commit_fn):
         await commit_fn()
         return
-    result = await asyncio.to_thread(commit_fn)
-    if asyncio.iscoroutine(result):
-        await result
+    await asyncio.to_thread(commit_fn)

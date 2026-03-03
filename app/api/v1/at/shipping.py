@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, HTTPException, Query
+
+logger = logging.getLogger(__name__)
 
 from app.tools.shipping_tools import (
     create_order_record,
@@ -68,7 +72,8 @@ async def _resolve_quote_or_raise(
 
     code = str(result.get("code") or "TOPSHIP_ERROR")
     status_code = _TOPSHIP_ERROR_STATUS_MAP.get(code, 500)
-    raise HTTPException(status_code=status_code, detail=result)
+    logger.warning("Topship quote error: %s", result)
+    raise HTTPException(status_code=status_code, detail={"code": code, "error": "Shipping quote request failed"})
 
 
 @router.post("/shipping/topship/quote")
@@ -107,7 +112,8 @@ async def topship_quote_get(
 def _raise_order_tool_error(result: dict) -> None:
     code = str(result.get("code") or "SHIPPING_ORDER_ERROR")
     status_code = _SHIPPING_ORDER_ERROR_STATUS_MAP.get(code, 500)
-    raise HTTPException(status_code=status_code, detail=result)
+    logger.warning("Shipping order error: %s", result)
+    raise HTTPException(status_code=status_code, detail={"code": code, "error": "Shipping order operation failed"})
 
 
 @router.post("/shipping/orders")

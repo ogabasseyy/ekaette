@@ -7,7 +7,6 @@ RTP packet parse/serialize, and frame timing.
 from __future__ import annotations
 
 import struct
-import time
 
 import pytest
 from sip_bridge.audio_codec import (

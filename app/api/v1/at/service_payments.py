@@ -12,6 +12,8 @@ import threading
 import uuid
 from typing import Any
 
+from app.configs import sanitize_log
+
 from . import campaign_analytics
 from . import providers
 from .settings import (
@@ -744,8 +746,8 @@ def process_gateway_event(payload: dict[str, Any]) -> dict[str, Any]:
     logger.info(
         "Paystack event processed",
         extra={
-            "event": event,
-            "reference": reference,
+            "event": sanitize_log(event),
+            "reference": sanitize_log(reference),
             "tenant_id": tenant_id,
             "company_id": company_id,
             "campaign_id": campaign_id,
@@ -788,7 +790,7 @@ async def send_va_notification_sms(
 ) -> bool:
     """Fire-and-forget SMS with virtual account details. Returns True on success."""
     if not AT_SMS_ENABLED:
-        logger.debug("SMS disabled — skipping VA notification to %s", phone)
+        logger.debug("SMS disabled — skipping VA notification to %s", sanitize_log(phone))
         return False
     if not phone or not phone.strip():
         return False
@@ -796,10 +798,10 @@ async def send_va_notification_sms(
     message = _format_va_sms(account_number, bank_name, account_name, amount_kobo)
     try:
         await providers.send_sms(message=message, recipients=[phone.strip()])
-        logger.info("VA SMS sent to %s", phone)
+        logger.info("VA SMS sent to %s", sanitize_log(phone))
         return True
     except Exception:
-        logger.warning("VA SMS failed for %s", phone, exc_info=True)
+        logger.warning("VA SMS failed for %s", sanitize_log(phone), exc_info=True)
         return False
 
 
@@ -813,7 +815,7 @@ async def send_va_notification_whatsapp(
 ) -> bool:
     """Fire-and-forget WhatsApp text with virtual account details. Returns True on success."""
     if not WHATSAPP_ENABLED:
-        logger.debug("WhatsApp disabled — skipping VA notification to %s", phone)
+        logger.debug("WhatsApp disabled — skipping VA notification to %s", sanitize_log(phone))
         return False
     if not phone or not phone.strip():
         return False
@@ -831,12 +833,12 @@ async def send_va_notification_whatsapp(
         )
         if status_code >= 400:
             wa_error = body.get("error", {}).get("message", "") if isinstance(body, dict) else ""
-            logger.warning("WhatsApp send failed (%s): %s", status_code, wa_error)
+            logger.warning("WhatsApp send failed (%s): %s", status_code, sanitize_log(wa_error))
             return False
-        logger.info("VA WhatsApp sent to %s", phone)
+        logger.info("VA WhatsApp sent to %s", sanitize_log(phone))
         return True
     except Exception:
-        logger.warning("VA WhatsApp failed for %s", phone, exc_info=True)
+        logger.warning("VA WhatsApp failed for %s", sanitize_log(phone), exc_info=True)
         return False
 
 

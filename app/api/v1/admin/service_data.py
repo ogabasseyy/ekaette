@@ -146,7 +146,7 @@ def _json_response_error_message(response: object, *, fallback: str) -> str:
             parsed = json.loads(body.decode("utf-8"))
             if isinstance(parsed, dict) and isinstance(parsed.get("error"), str) and parsed["error"].strip():
                 return parsed["error"].strip()
-        except Exception:
+        except (ValueError, UnicodeDecodeError):
             pass
     return fallback
 
