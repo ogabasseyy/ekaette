@@ -1,0 +1,30 @@
+[
+  {
+    "id": "kb-hotel-checkout",
+    "title": "Checkout and late checkout policy",
+    "text": "Standard checkout is 12:00 PM. Late checkout until 2 PM is available for premium and loyalty guests at no extra charge. Extended late checkout (until 4 PM) can be requested at NGN 5,000.",
+    "tags": ["checkout", "policy"],
+    "source": "seed"
+  },
+  {
+    "id": "kb-hotel-breakfast",
+    "title": "Breakfast schedule and options",
+    "text": "Complimentary breakfast buffet is served from 6:30 AM to 10:30 AM daily in the main restaurant. Room service breakfast is available from 6:00 AM at an additional charge. Continental, Nigerian, and international options available.",
+    "tags": ["breakfast", "amenities", "dining"],
+    "source": "seed"
+  },
+  {
+    "id": "kb-hotel-cancellation",
+    "title": "Cancellation and refund policy",
+    "text": "Free cancellation up to 24 hours before check-in. Cancellations within 24 hours incur a one-night charge. No-shows are charged for the full stay. Refunds are processed within 5-7 business days.",
+    "tags": ["cancellation", "refund", "policy"],
+    "source": "seed"
+  },
+  {
+    "id": "kb-hotel-amenities",
+    "title": "Hotel amenities and services",
+    "text": "Amenities include: outdoor pool, fitness center (6 AM - 10 PM), free Wi-Fi, airport shuttle (NGN 15,000), laundry service (same-day), 24-hour concierge, business center, and complimentary parking.",
+    "tags": ["amenities", "services", "facilities"],
+    "source": "seed"
+  }
+]

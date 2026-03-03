@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "company_id": "ekaette-fashion",
+  "tenant_id": "public",
+  "industry_template_id": "fashion",
+  "display_name": "Ekaette Fashion",
+  "overview": "Catalog recommendations and consultation workflows.",
+  "facts": {
+    "speciality": "Contemporary Nigerian fashion",
+    "designers": 15
+  },
+  "links": [],
+  "connectors": {},
+  "capability_overrides": {},
+  "ui_overrides": {},
+  "status": "active"
+}

@@ -1,0 +1,92 @@
+[
+  {
+    "id": "slot-hotel-0301-standard",
+    "date": "2027-03-01",
+    "time": "14:00",
+    "location": "Main Building",
+    "slot_type": "Standard Room",
+    "available": true,
+    "data_tier": "demo"
+  },
+  {
+    "id": "slot-hotel-0301-deluxe",
+    "date": "2027-03-01",
+    "time": "14:00",
+    "location": "Main Building",
+    "slot_type": "Deluxe Room",
+    "available": true,
+    "data_tier": "demo"
+  },
+  {
+    "id": "slot-hotel-0308-standard",
+    "date": "2027-03-08",
+    "time": "14:00",
+    "location": "Main Building",
+    "slot_type": "Standard Room",
+    "available": true,
+    "data_tier": "demo"
+  },
+  {
+    "id": "slot-hotel-0308-ocean",
+    "date": "2027-03-08",
+    "time": "14:00",
+    "location": "Ocean Wing",
+    "slot_type": "Ocean View Room",
+    "available": true,
+    "data_tier": "demo"
+  },
+  {
+    "id": "slot-hotel-0315-suite",
+    "date": "2027-03-15",
+    "time": "14:00",
+    "location": "Executive Floor",
+    "slot_type": "Suite",
+    "available": true,
+    "data_tier": "demo"
+  },
+  {
+    "id": "slot-hotel-0315-deluxe",
+    "date": "2027-03-15",
+    "time": "14:00",
+    "location": "Main Building",
+    "slot_type": "Deluxe Room",
+    "available": false,
+    "data_tier": "demo"
+  },
+  {
+    "id": "slot-hotel-0322-standard",
+    "date": "2027-03-22",
+    "time": "14:00",
+    "location": "Main Building",
+    "slot_type": "Standard Room",
+    "available": true,
+    "data_tier": "demo"
+  },
+  {
+    "id": "slot-hotel-0322-ocean",
+    "date": "2027-03-22",
+    "time": "14:00",
+    "location": "Ocean Wing",
+    "slot_type": "Ocean View Room",
+    "available": true,
+    "data_tier": "demo"
+  },
+  {
+    "id": "slot-hotel-0329-suite",
+    "date": "2027-03-29",
+    "time": "14:00",
+    "location": "Executive Floor",
+    "slot_type": "Suite",
+    "available": true,
+    "data_tier": "demo"
+  },
+  {
+    "id": "slot-hotel-0329-deluxe",
+    "date": "2027-03-29",
+    "time": "14:00",
+    "location": "Main Building",
+    "slot_type": "Deluxe Room",
+    "available": false,
+    "data_tier": "demo"
+  }
+]

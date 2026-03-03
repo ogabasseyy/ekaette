@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "company_id": "ekaette-automotive",
+  "tenant_id": "public",
+  "industry_template_id": "automotive",
+  "display_name": "Ekaette Auto",
+  "overview": "Vehicle inspection, trade-in, and service scheduling.",
+  "facts": {
+    "brands": "Toyota, Honda, Mercedes",
+    "location": "Lekki, Lagos"
+  },
+  "links": [],
+  "connectors": {},
+  "capability_overrides": {},
+  "ui_overrides": {},
+  "status": "active"
+}

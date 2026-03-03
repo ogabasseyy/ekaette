@@ -1,6 +1,13 @@
 queries:
   - uses: security-and-quality
 
+query-filters:
+  # SIP digest authentication (RFC 2617/7616) requires MD5 and SHA-256 as
+  # challenge-response hashes — NOT password storage. This project uses
+  # Firebase Auth for credential management; no password hashing exists.
+  - exclude:
+      id: py/weak-sensitive-data-hashing
+
 paths-ignore:
   # Local tooling and scripts
   - "scripts/**"

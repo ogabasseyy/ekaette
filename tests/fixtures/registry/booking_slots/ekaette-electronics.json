@@ -1,0 +1,74 @@
+[
+  {
+    "id": "slot-elec-0301-10-ikeja",
+    "date": "2027-03-01",
+    "time": "10:00",
+    "location": "Lagos - Ikeja",
+    "slot_type": "pickup",
+    "available": true,
+    "data_tier": "demo"
+  },
+  {
+    "id": "slot-elec-0301-14-ikeja",
+    "date": "2027-03-01",
+    "time": "14:00",
+    "location": "Lagos - Ikeja",
+    "slot_type": "pickup",
+    "available": true,
+    "data_tier": "demo"
+  },
+  {
+    "id": "slot-elec-0308-10-ikeja",
+    "date": "2027-03-08",
+    "time": "10:00",
+    "location": "Lagos - Ikeja",
+    "slot_type": "pickup",
+    "available": true,
+    "data_tier": "demo"
+  },
+  {
+    "id": "slot-elec-0308-14-wuse",
+    "date": "2027-03-08",
+    "time": "14:00",
+    "location": "Abuja - Wuse",
+    "slot_type": "pickup",
+    "available": true,
+    "data_tier": "demo"
+  },
+  {
+    "id": "slot-elec-0315-10-ikeja",
+    "date": "2027-03-15",
+    "time": "10:00",
+    "location": "Lagos - Ikeja",
+    "slot_type": "drop-off",
+    "available": true,
+    "data_tier": "demo"
+  },
+  {
+    "id": "slot-elec-0315-16-wuse",
+    "date": "2027-03-15",
+    "time": "16:00",
+    "location": "Abuja - Wuse",
+    "slot_type": "drop-off",
+    "available": true,
+    "data_tier": "demo"
+  },
+  {
+    "id": "slot-elec-0322-10-ikeja",
+    "date": "2027-03-22",
+    "time": "10:00",
+    "location": "Lagos - Ikeja",
+    "slot_type": "pickup",
+    "available": false,
+    "data_tier": "demo"
+  },
+  {
+    "id": "slot-elec-0322-14-vi",
+    "date": "2027-03-22",
+    "time": "14:00",
+    "location": "Lagos - Victoria Island",
+    "slot_type": "pickup",
+    "available": true,
+    "data_tier": "demo"
+  }
+]
