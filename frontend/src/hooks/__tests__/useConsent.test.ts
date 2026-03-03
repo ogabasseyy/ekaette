@@ -27,6 +27,12 @@ describe('useConsent', () => {
     expect(result.current.hasConsented).toBe(true)
   })
 
+  it('returns false and does not throw when localStorage has malformed JSON', () => {
+    localStorage.setItem(STORAGE_KEY, '{not-valid-json')
+    const { result } = renderHook(() => useConsent())
+    expect(result.current.hasConsented).toBe(false)
+  })
+
   it('acceptConsent sets localStorage JSON with accepted, timestamp, version and returns true', () => {
     const { result } = renderHook(() => useConsent())
     expect(result.current.hasConsented).toBe(false)

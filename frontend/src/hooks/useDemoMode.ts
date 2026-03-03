@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ServerMessage } from '../types'
 import {
-  type DemoStep,
   DEMO_STEPS_BY_TEMPLATE,
+  type DemoStep,
   ELECTRONICS_DEMO_STEPS,
   GENERIC_SUPPORT_DEMO_STEPS,
 } from '../utils/mockData'

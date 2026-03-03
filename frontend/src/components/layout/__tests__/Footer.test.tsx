@@ -17,5 +17,6 @@ describe('Footer', () => {
     expect(link).toHaveAttribute('href', '/privacy.html')
     expect(link).toHaveAttribute('target', '_blank')
     expect(link).toHaveAttribute('rel', expect.stringContaining('noopener'))
+    expect(link).toHaveAttribute('rel', expect.stringContaining('noreferrer'))
   })
 })

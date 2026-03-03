@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 describe('navigation', () => {
   beforeEach(() => {
@@ -58,6 +58,24 @@ describe('navigation', () => {
       })
       const mod = await import('../navigation')
       expect(mod.currentPage()).toBe('voice')
+    })
+
+    it('returns "admin" for prefix-matching path like /administrator (startsWith behavior)', async () => {
+      Object.defineProperty(window, 'location', {
+        value: { pathname: '/administrator' },
+        writable: true,
+      })
+      const mod = await import('../navigation')
+      expect(mod.currentPage()).toBe('admin')
+    })
+
+    it('returns "analytics" for /analytics-extra (startsWith behavior)', async () => {
+      Object.defineProperty(window, 'location', {
+        value: { pathname: '/analytics-extra' },
+        writable: true,
+      })
+      const mod = await import('../navigation')
+      expect(mod.currentPage()).toBe('analytics')
     })
   })
 

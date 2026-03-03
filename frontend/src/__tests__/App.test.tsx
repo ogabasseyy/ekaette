@@ -101,31 +101,29 @@ describe('App', () => {
   })
 
   it('applies runtime bootstrap response and skips onboarding', async () => {
-    const fetchMock = vi
-      .spyOn(globalThis, 'fetch')
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            apiVersion: 'v1',
-            tenantId: 'public',
-            companyId: 'ekaette-telecom',
-            industryTemplateId: 'telecom',
-            industry: 'telecom',
-            voice: 'Charon',
-            capabilities: ['policy_qa'],
-            onboardingRequired: false,
-            sessionPolicy: {
-              industryLocked: true,
-              companyLocked: true,
-              switchRequiresDisconnect: true,
-            },
-          }),
-          {
-            status: 200,
-            headers: { 'Content-Type': 'application/json' },
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          apiVersion: 'v1',
+          tenantId: 'public',
+          companyId: 'ekaette-telecom',
+          industryTemplateId: 'telecom',
+          industry: 'telecom',
+          voice: 'Charon',
+          capabilities: ['policy_qa'],
+          onboardingRequired: false,
+          sessionPolicy: {
+            industryLocked: true,
+            companyLocked: true,
+            switchRequiresDisconnect: true,
           },
-        ),
-      )
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        },
+      ),
+    )
 
     render(<App />)
 
@@ -164,6 +162,25 @@ describe('App', () => {
     ).toBeInTheDocument()
   })
 
+  it('falls back to vendor setup when bootstrap returns malformed payload', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({ unexpected: 'shape' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    )
+
+    render(<App />)
+
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(screen.getByText('Vendor Setup')).toBeInTheDocument()
+  })
+
   it('renders main layout after industry is stored (skips to Live Desk)', () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
       return await new Promise<Response>(() => {})
@@ -177,8 +194,6 @@ describe('App', () => {
   it('includes company_id in WebSocket URL when connecting', async () => {
     window.localStorage.setItem(INDUSTRY_STORAGE_KEY, 'electronics')
     render(<App />)
-
-
 
     const micButton = screen.getByRole('button', { name: /start call/i })
     await act(async () => {
@@ -433,7 +448,6 @@ describe('App', () => {
     window.localStorage.setItem(INDUSTRY_STORAGE_KEY, 'electronics')
     render(<App />)
 
-
     const micButton = screen.getByRole('button', { name: /start call/i })
     await act(async () => {
       micButton.click()
@@ -494,7 +508,7 @@ describe('App', () => {
     globalThis.WebSocket = NeverOpenWebSocket as unknown as typeof WebSocket
     try {
       render(<App />)
-  
+
       const micButton = screen.getByRole('button', { name: /start call/i })
       await act(async () => {
         micButton.click()
@@ -555,7 +569,6 @@ describe('App', () => {
     window.localStorage.setItem(INDUSTRY_STORAGE_KEY, 'electronics')
     window.history.replaceState({}, '', '/?demo=1')
     render(<App />)
-
 
     const startButton = screen.getByRole('button', { name: /start call/i })
     await act(async () => {

@@ -1,10 +1,10 @@
 import { useState } from 'react'
-import { NavBar } from '../layout/NavBar'
-import { KpiCards } from './KpiCards'
-import { CampaignTable } from './CampaignTable'
-import { CampaignDetail } from './CampaignDetail'
 import { useAnalytics } from '../../hooks/useAnalytics'
 import { cn } from '../../lib/utils'
+import { NavBar } from '../layout/NavBar'
+import { CampaignDetail } from './CampaignDetail'
+import { CampaignTable } from './CampaignTable'
+import { KpiCards } from './KpiCards'
 
 const DAYS_OPTIONS = [7, 30, 90] as const
 
@@ -13,15 +13,8 @@ export function AnalyticsDashboard() {
   const [companyId] = useState('ekaette-electronics')
   const [days, setDays] = useState<number>(30)
 
-  const {
-    summary,
-    campaigns,
-    selectedCampaign,
-    loading,
-    error,
-    selectCampaign,
-    clearSelection,
-  } = useAnalytics({ tenantId, companyId, days })
+  const { summary, campaigns, selectedCampaign, loading, error, selectCampaign, clearSelection } =
+    useAnalytics({ tenantId, companyId, days })
 
   return (
     <main className="app-shell min-h-screen">
@@ -31,8 +24,10 @@ export function AnalyticsDashboard() {
         {/* Header */}
         <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
           <div>
-            <p className="text-[0.65rem] uppercase tracking-[0.25em] text-primary">Analytics</p>
-            <h1 className="font-display text-2xl text-foreground sm:text-3xl">Campaign Analytics</h1>
+            <p className="text-[0.65rem] text-primary uppercase tracking-[0.25em]">Analytics</p>
+            <h1 className="font-display text-2xl text-foreground sm:text-3xl">
+              Campaign Analytics
+            </h1>
           </div>
 
           {/* Days filter pills */}
@@ -40,9 +35,10 @@ export function AnalyticsDashboard() {
             {DAYS_OPTIONS.map(d => (
               <button
                 key={d}
+                type="button"
                 onClick={() => setDays(d)}
                 className={cn(
-                  'rounded-full border px-3 py-1 text-[0.65rem] font-semibold uppercase tracking-[0.15em] transition-colors',
+                  'rounded-full border px-3 py-1 font-semibold text-[0.65rem] uppercase tracking-[0.15em] transition-colors',
                   d === days
                     ? 'border-primary/40 bg-primary/15 text-primary'
                     : 'border-border/60 bg-card/30 text-muted-foreground hover:text-foreground',
@@ -82,10 +78,7 @@ export function AnalyticsDashboard() {
 
         {/* Campaign detail slide-up */}
         {selectedCampaign && (
-          <CampaignDetail
-            campaign={selectedCampaign}
-            onClose={clearSelection}
-          />
+          <CampaignDetail campaign={selectedCampaign} onClose={clearSelection} />
         )}
       </div>
     </main>

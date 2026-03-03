@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, afterEach } from 'vitest'
-import { renderHook, act } from '@testing-library/react'
+import { act, renderHook } from '@testing-library/react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { useMarketing } from '../useMarketing'
 
 afterEach(() => {
@@ -201,6 +201,56 @@ describe('useMarketing', () => {
         json: () => Promise.resolve({ status: 'ok', campaign_id: 'cmp-001' }),
       })
       await sendPromise!
+    })
+
+    expect(result.current.sending).toBe(false)
+  })
+
+  it('sending stays true until both concurrent requests resolve', async () => {
+    let resolve1!: (value: unknown) => void
+    let resolve2!: (value: unknown) => void
+    const fetchMock = vi
+      .fn()
+      .mockReturnValueOnce(
+        new Promise(r => {
+          resolve1 = r
+        }),
+      )
+      .mockReturnValueOnce(
+        new Promise(r => {
+          resolve2 = r
+        }),
+      )
+    global.fetch = fetchMock
+
+    const { result } = renderHook(() => useMarketing())
+
+    const campaignArgs = {
+      channel: 'sms' as const,
+      recipients: ['+2348011111111'],
+      message: 'Test',
+      campaignName: 'Test',
+      tenantId: 'public',
+      companyId: 'ekaette-electronics',
+    }
+
+    let p1: Promise<unknown>
+    let p2: Promise<unknown>
+    act(() => {
+      p1 = result.current.sendCampaign(campaignArgs)
+      p2 = result.current.sendCampaign(campaignArgs)
+    })
+
+    expect(result.current.sending).toBe(true)
+
+    await act(async () => {
+      resolve1({ ok: true, json: () => Promise.resolve({ status: 'ok' }) })
+      await p1!
+    })
+
+    await act(async () => {
+      resolve2({ ok: true, json: () => Promise.resolve({ status: 'ok' }) })
+      await p2!
     })
 
     expect(result.current.sending).toBe(false)

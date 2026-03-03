@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type {
-  AnalyticsSummary,
-  CampaignSnapshot,
   AnalyticsOverviewResponse,
+  AnalyticsSummary,
   CampaignDetailResponse,
+  CampaignSnapshot,
 } from '../types/analytics'
 
 const POLL_INTERVAL_MS = 30_000
@@ -25,7 +25,11 @@ interface UseAnalyticsResult {
   clearSelection: () => void
 }
 
-export function useAnalytics({ tenantId, companyId, days = 30 }: UseAnalyticsOptions): UseAnalyticsResult {
+export function useAnalytics({
+  tenantId,
+  companyId,
+  days = 30,
+}: UseAnalyticsOptions): UseAnalyticsResult {
   const [summary, setSummary] = useState<AnalyticsSummary | null>(null)
   const [campaigns, setCampaigns] = useState<CampaignSnapshot[]>([])
   const [selectedCampaign, setSelectedCampaign] = useState<CampaignSnapshot | null>(null)
@@ -58,9 +62,9 @@ export function useAnalytics({ tenantId, companyId, days = 30 }: UseAnalyticsOpt
       setSummary(data.summary)
       setCampaigns(data.campaigns ?? [])
       setError(null)
-    } catch (err) {
-      if ((err as Error).name === 'AbortError') return
-      setError((err as Error).message || 'Failed to fetch analytics')
+    } catch (err: unknown) {
+      if (err instanceof DOMException && err.name === 'AbortError') return
+      setError(err instanceof Error ? err.message : 'Failed to fetch analytics')
       setSummary(null)
       setCampaigns([])
     } finally {
@@ -83,15 +87,20 @@ export function useAnalytics({ tenantId, companyId, days = 30 }: UseAnalyticsOpt
 
   const selectCampaign = useCallback(async (campaignId: string) => {
     try {
-      const response = await fetch(`/api/v1/at/analytics/campaigns/${encodeURIComponent(campaignId)}`)
+      const controller = new AbortController()
+      const response = await fetch(
+        `/api/v1/at/analytics/campaigns/${encodeURIComponent(campaignId)}`,
+        { signal: controller.signal },
+      )
       if (!response.ok) {
         throw new Error(`${response.status} ${response.statusText}`)
       }
       const data: CampaignDetailResponse = await response.json()
       setSelectedCampaign(data.campaign ?? null)
-    } catch (err) {
+    } catch (err: unknown) {
+      if (err instanceof DOMException && err.name === 'AbortError') return
       setSelectedCampaign(null)
-      setError((err as Error).message || 'Failed to fetch campaign detail')
+      setError(err instanceof Error ? err.message : 'Failed to fetch campaign detail')
     }
   }, [])
 

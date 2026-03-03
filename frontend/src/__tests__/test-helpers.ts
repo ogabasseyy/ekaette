@@ -2,7 +2,7 @@
  * Shared test helpers for frontend tests.
  * Phase 0 refactor: centralizes common patterns.
  */
-import type { Industry, ServerMessage } from '../types'
+import type { Industry, ServerMessage, SessionStartedMessage } from '../types'
 
 /** Mock WebSocket interface matching the global mock in setup.ts. */
 export interface MockSocket {
@@ -42,7 +42,7 @@ export function setStoredIndustry(industry: Industry): void {
 /** Build a session_started ServerMessage for tests. */
 export function makeSessionStarted(
   industry: Industry = 'electronics',
-  overrides: Partial<Record<string, unknown>> = {},
+  overrides: Partial<Omit<SessionStartedMessage, 'type'>> = {},
 ): ServerMessage {
   return {
     type: 'session_started',

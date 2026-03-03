@@ -114,7 +114,10 @@ function buildCaptureConstraintSupport(): MicConstraintSupport {
 function createAudioConstraints(
   level: NoiseCancellationLevel,
   support: MicConstraintSupport,
-): { requested: MediaTrackConstraints; requestedFlags: MicCaptureDiagnostics['requestedConstraints'] } {
+): {
+  requested: MediaTrackConstraints
+  requestedFlags: MicCaptureDiagnostics['requestedConstraints']
+} {
   const processingEnabled = RECORDER_DENOISE_PRESETS[level].captureProcessingEnabled
   const requestedFlags = {
     echoCancellation: processingEnabled,
@@ -234,10 +237,7 @@ export function useAudioWorklet(
         if (support.autoGainControl) {
           processingOnly.autoGainControl = requestedFlags.autoGainControl
         }
-        if (
-          Object.keys(processingOnly).length > 0 &&
-          requestedFlags.echoCancellation === true
-        ) {
+        if (Object.keys(processingOnly).length > 0 && requestedFlags.echoCancellation === true) {
           try {
             await track.applyConstraints(processingOnly)
           } catch {

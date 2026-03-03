@@ -1,17 +1,17 @@
-import { useState } from 'react'
 import { cva } from 'class-variance-authority'
-import { Phone, MessageSquare } from 'lucide-react'
-import { NavBar } from '../layout/NavBar'
-import { CampaignTable } from '../analytics/CampaignTable'
-import { CampaignDetail } from '../analytics/CampaignDetail'
+import { MessageSquare, Phone } from 'lucide-react'
+import { useState } from 'react'
+import { useAnalytics } from '../../hooks/useAnalytics'
 import { useContacts } from '../../hooks/useContacts'
 import { useMarketing } from '../../hooks/useMarketing'
-import { useAnalytics } from '../../hooks/useAnalytics'
 import { cn } from '../../lib/utils'
 import type { CampaignChannel } from '../../types/marketing'
+import { CampaignDetail } from '../analytics/CampaignDetail'
+import { CampaignTable } from '../analytics/CampaignTable'
+import { NavBar } from '../layout/NavBar'
 
 const channelToggleVariants = cva(
-  'rounded-full border px-3 py-1 text-[0.65rem] font-semibold uppercase tracking-[0.15em] transition-colors',
+  'rounded-full border px-3 py-1 font-semibold text-[0.65rem] uppercase tracking-[0.15em] transition-colors',
   {
     variants: {
       active: {
@@ -61,6 +61,7 @@ export function MarketingDashboard() {
   const {
     campaigns,
     selectedCampaign,
+    loading: _campaignsLoading,
     selectCampaign,
     clearSelection,
   } = useAnalytics({ tenantId, companyId })
@@ -117,7 +118,7 @@ export function MarketingDashboard() {
       <div className="mx-auto flex max-w-6xl flex-col gap-5 px-4 py-6">
         {/* Header */}
         <div>
-          <p className="text-[0.65rem] uppercase tracking-[0.25em] text-primary">Marketing</p>
+          <p className="text-[0.65rem] text-primary uppercase tracking-[0.25em]">Marketing</p>
           <h1 className="font-display text-2xl text-foreground sm:text-3xl">Marketing Campaigns</h1>
         </div>
 
@@ -141,7 +142,7 @@ export function MarketingDashboard() {
             {/* Known Contacts panel */}
             <div className="panel-glass flex flex-col gap-3 p-4">
               <div className="flex items-center justify-between">
-                <span className="text-[0.65rem] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                <span className="font-semibold text-[0.65rem] text-muted-foreground uppercase tracking-[0.18em]">
                   Known Contacts
                 </span>
                 <div className="flex gap-1.5">
@@ -149,7 +150,7 @@ export function MarketingDashboard() {
                     type="button"
                     aria-label="Select All"
                     onClick={selectAll}
-                    className="rounded border border-border/60 px-2 py-0.5 text-[0.6rem] font-semibold uppercase tracking-wider text-muted-foreground transition-colors hover:text-foreground"
+                    className="rounded border border-border/60 px-2 py-0.5 font-semibold text-[0.6rem] text-muted-foreground uppercase tracking-wider transition-colors hover:text-foreground"
                   >
                     Select All
                   </button>
@@ -157,7 +158,7 @@ export function MarketingDashboard() {
                     type="button"
                     aria-label="Clear"
                     onClick={deselectAll}
-                    className="rounded border border-border/60 px-2 py-0.5 text-[0.6rem] font-semibold uppercase tracking-wider text-muted-foreground transition-colors hover:text-foreground"
+                    className="rounded border border-border/60 px-2 py-0.5 font-semibold text-[0.6rem] text-muted-foreground uppercase tracking-wider transition-colors hover:text-foreground"
                   >
                     Clear
                   </button>
@@ -165,7 +166,7 @@ export function MarketingDashboard() {
               </div>
 
               {contacts.length === 0 ? (
-                <p className="py-8 text-center text-sm text-muted-foreground">
+                <p className="py-8 text-center text-muted-foreground text-sm">
                   No contacts yet. Send a campaign first.
                 </p>
               ) : (
@@ -182,8 +183,10 @@ export function MarketingDashboard() {
                         onChange={() => toggle(contact.phone)}
                         className="accent-primary"
                       />
-                      <span className="flex-1 font-mono text-sm text-foreground">{contact.phone}</span>
-                      <span className="channel-badge rounded-full border border-border/60 px-2 py-0.5 text-[0.55rem] font-bold uppercase tracking-wider text-muted-foreground">
+                      <span className="flex-1 font-mono text-foreground text-sm">
+                        {contact.phone}
+                      </span>
+                      <span className="channel-badge rounded-full border border-border/60 px-2 py-0.5 font-bold text-[0.55rem] text-muted-foreground uppercase tracking-wider">
                         {contact.channel}
                       </span>
                       <button
@@ -210,7 +213,7 @@ export function MarketingDashboard() {
 
             {/* New Campaign composer */}
             <div className="panel-glass flex flex-col gap-3 p-4">
-              <span className="text-[0.65rem] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+              <span className="font-semibold text-[0.65rem] text-muted-foreground uppercase tracking-[0.18em]">
                 New Campaign
               </span>
 
@@ -219,7 +222,7 @@ export function MarketingDashboard() {
                 placeholder="Campaign name"
                 value={campaignName}
                 onChange={e => setCampaignName(e.target.value)}
-                className="composer-input rounded-lg border border-border/60 bg-card/30 px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary/50 focus:outline-none"
+                className="composer-input rounded-lg border border-border/60 bg-card/30 px-3 py-2 text-foreground text-sm placeholder:text-muted-foreground focus:border-primary/50 focus:outline-none"
               />
 
               {/* Channel toggle */}
@@ -241,22 +244,24 @@ export function MarketingDashboard() {
               </div>
 
               <textarea
+                aria-label="Campaign message"
                 placeholder="Message"
                 rows={3}
                 value={message}
                 onChange={e => setMessage(e.target.value)}
-                className="composer-input rounded-lg border border-border/60 bg-card/30 px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary/50 focus:outline-none"
+                className="composer-input rounded-lg border border-border/60 bg-card/30 px-3 py-2 text-foreground text-sm placeholder:text-muted-foreground focus:border-primary/50 focus:outline-none"
               />
 
               <p className="text-[0.65rem] text-muted-foreground">
-                {selectedContacts.length} recipient{selectedContacts.length !== 1 ? 's' : ''} selected
+                {selectedContacts.length} recipient{selectedContacts.length !== 1 ? 's' : ''}{' '}
+                selected
               </p>
 
               <button
                 type="button"
                 disabled={!canSend}
                 onClick={handleSendCampaign}
-                className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground transition-opacity disabled:opacity-40"
+                className="rounded-lg bg-primary px-4 py-2 font-semibold text-primary-foreground text-sm transition-opacity disabled:opacity-40"
               >
                 Send Campaign
               </button>
@@ -282,7 +287,7 @@ export function MarketingDashboard() {
         {!loading && campaigns.length > 0 && (
           <>
             <div className="mt-2">
-              <span className="text-[0.65rem] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+              <span className="font-semibold text-[0.65rem] text-muted-foreground uppercase tracking-[0.18em]">
                 Active Campaigns
               </span>
             </div>

@@ -19,6 +19,7 @@ export const NAV_ITEMS: ReadonlyArray<{
 ]
 
 export function currentPage(): AppPage {
+  if (typeof window === 'undefined') return 'voice'
   const pathname = window.location.pathname
   if (pathname.startsWith('/admin')) return 'admin'
   if (pathname.startsWith('/analytics')) return 'analytics'
@@ -27,5 +28,7 @@ export function currentPage(): AppPage {
 }
 
 export function navigateTo(page: AppPage): void {
-  window.location.assign(PAGE_PATHS[page])
+  const path = PAGE_PATHS[page]
+  if (path === undefined) return
+  window.location.assign(path)
 }

@@ -20,6 +20,7 @@ describe('IndustryOnboarding', () => {
     await user.click(screen.getByRole('radio', { name: /hotel/i }))
     await user.click(screen.getByRole('button', { name: /launch live desk/i }))
 
+    expect(onComplete).toHaveBeenCalledTimes(1)
     expect(onComplete).toHaveBeenCalledWith({
       templateId: 'hotel',
       companyId: 'ekaette-hotel',

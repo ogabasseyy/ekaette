@@ -18,8 +18,9 @@ describe('MicButton', () => {
 
   it('renders processing variant classes', () => {
     render(<MicButton status="processing" onClick={() => {}} />)
-    const button = screen.getByRole('button', { name: /start call/i })
+    const button = screen.getByRole('button', { name: /processing/i })
     expect(button).toHaveClass('bg-warning/90')
+    expect(button).toBeDisabled()
   })
 
   it('fires onClick', async () => {
@@ -34,5 +35,14 @@ describe('MicButton', () => {
     const button = screen.getByRole('button', { name: /start call/i })
     expect(button).toHaveClass('w-auto')
     expect(button).toHaveClass('px-3')
+  })
+
+  it('does not fire onClick when disabled', async () => {
+    const onClick = vi.fn()
+    render(<MicButton status="idle" onClick={onClick} disabled />)
+    const button = screen.getByRole('button', { name: /start call/i })
+    expect(button).toBeDisabled()
+    await userEvent.click(button)
+    expect(onClick).not.toHaveBeenCalled()
   })
 })

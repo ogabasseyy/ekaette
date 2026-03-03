@@ -6,15 +6,11 @@ import { AdminDashboard } from './components/admin/AdminDashboard'
 import { AnalyticsDashboard } from './components/analytics/AnalyticsDashboard'
 import { MarketingDashboard } from './components/marketing/MarketingDashboard'
 
-const pathname = window.location.pathname
-const isAdminPath = pathname.startsWith('/admin')
-const isAnalyticsPath = pathname.startsWith('/analytics')
-const isMarketingPath = pathname.startsWith('/marketing')
-
 function RootPage() {
-  if (isAdminPath) return <AdminDashboard />
-  if (isAnalyticsPath) return <AnalyticsDashboard />
-  if (isMarketingPath) return <MarketingDashboard />
+  const pathname = window.location.pathname
+  if (pathname.startsWith('/admin')) return <AdminDashboard />
+  if (pathname.startsWith('/analytics')) return <AnalyticsDashboard />
+  if (pathname.startsWith('/marketing')) return <MarketingDashboard />
   return <App />
 }
 

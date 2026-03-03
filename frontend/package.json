@@ -40,6 +40,9 @@
   "pnpm": {
     "onlyBuiltDependencies": [
       "esbuild"
-    ]
+    ],
+    "overrides": {
+      "minimatch": ">=10.0.1"
+    }
   }
 }

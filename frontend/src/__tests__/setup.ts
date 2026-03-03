@@ -60,7 +60,15 @@ class MockAudioWorkletNode {
     onmessage: null as ((ev: MessageEvent) => void) | null,
     postMessage: (_data: unknown) => {},
   }
-  constructor(_context: AudioContext, _name: string, _options?: Record<string, unknown>) {}
+  parameters = new Map<string, { value: number }>()
+  processorOptions: Record<string, unknown> | undefined
+  constructor(
+    _context: AudioContext,
+    _name: string,
+    options?: { processorOptions?: Record<string, unknown> },
+  ) {
+    this.processorOptions = options?.processorOptions
+  }
   connect() {}
   disconnect() {}
 }

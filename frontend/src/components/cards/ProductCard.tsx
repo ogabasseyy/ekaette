@@ -15,10 +15,11 @@ export default function ProductCard({
   available,
   description,
 }: ProductCardProps) {
+  const safePrice = Number.isFinite(price) ? price : 0
   const displayPrice =
     currency === 'NGN' || currency === '₦'
-      ? formatNaira(price)
-      : `${currency} ${price.toLocaleString()}`
+      ? formatNaira(safePrice)
+      : `${currency} ${safePrice.toLocaleString()}`
 
   return (
     <article className="animate-slide-up rounded-2xl border border-border/70 bg-card/65 p-4">

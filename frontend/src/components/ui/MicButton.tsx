@@ -31,15 +31,16 @@ interface MicButtonProps extends VariantProps<typeof micButtonVariants> {
 
 export function MicButton({ onClick, disabled = false, className, status, size }: MicButtonProps) {
   const isRecording = status === 'recording'
-  const label = isRecording ? 'End call' : 'Start call'
+  const isProcessing = status === 'processing'
+  const label = isRecording ? 'End call' : isProcessing ? 'Processing…' : 'Start call'
   return (
     <button
       type="button"
       onClick={onClick}
-      disabled={disabled}
+      disabled={disabled || isProcessing}
       className={cn(
         micButtonVariants({ status, size }),
-        disabled && 'cursor-not-allowed opacity-70',
+        (disabled || isProcessing) && 'cursor-not-allowed opacity-70',
         className,
       )}
       aria-label={label}
@@ -47,6 +48,10 @@ export function MicButton({ onClick, disabled = false, className, status, size }
       {isRecording ? (
         <>
           <MicOff className="size-4" /> End call
+        </>
+      ) : isProcessing ? (
+        <>
+          <Mic className="size-4" /> Processing…
         </>
       ) : (
         <>

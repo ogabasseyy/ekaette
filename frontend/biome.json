@@ -53,7 +53,7 @@
   },
   "overrides": [
     {
-      "includes": ["src/__tests__/**"],
+      "includes": ["src/**/__tests__/**", "src/**/*.test.ts", "src/**/*.test.tsx"],
       "linter": {
         "rules": {
           "complexity": {

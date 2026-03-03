@@ -19,8 +19,8 @@ import { ConsentModal } from './components/layout/ConsentModal'
 import { Footer } from './components/layout/Footer'
 import { Header } from './components/layout/Header'
 import { NavBar } from './components/layout/NavBar'
-import { VendorSetupWizard } from './components/layout/VendorSetupWizard'
 import { TranscriptionOverlay } from './components/layout/TranscriptionOverlay'
+import { VendorSetupWizard } from './components/layout/VendorSetupWizard'
 import { VoicePanel } from './components/layout/VoicePanel'
 import { ImagePreview } from './components/media/ImagePreview'
 import {
@@ -130,10 +130,10 @@ function parseStoredValue(value: string | null): string | null {
   return value.trim()
 }
 
-
 function readDemoModeFlag(): boolean {
   if (typeof window === 'undefined') return false
-  if (window.location.search.includes('demo=1')) return true
+  const params = new URLSearchParams(window.location.search)
+  if (params.get('demo') === '1') return true
   return String(import.meta.env.VITE_DEMO_MODE ?? '').toLowerCase() === 'true'
 }
 
@@ -159,10 +159,7 @@ function resolveNoiseCancellationLevel(): NoiseCancellationLevel {
   return 'aggressive'
 }
 
-function resolveTheme(
-  templateId: string,
-  templates: IndustryTemplateMeta[] | null,
-): ThemeConfig {
+function resolveTheme(templateId: string, templates: IndustryTemplateMeta[] | null): ThemeConfig {
   // Server-provided templates take priority
   if (templates) {
     const match = templates.find(t => t.id === templateId)
@@ -189,7 +186,9 @@ function resolveCompanyFromConfig(
   if (
     defaults &&
     defaults.templateId === templateId &&
-    companies.some(company => company.id === defaults.companyId && company.templateId === templateId)
+    companies.some(
+      company => company.id === defaults.companyId && company.templateId === templateId,
+    )
   ) {
     return defaults.companyId
   }
@@ -254,9 +253,7 @@ function formatBooleanish(value: boolean | string | null | undefined): string {
   return value
 }
 
-function isRuntimeBootstrapResponse(
-  value: unknown,
-): value is RuntimeBootstrapResponse {
+function isRuntimeBootstrapResponse(value: unknown): value is RuntimeBootstrapResponse {
   if (typeof value !== 'object' || value === null) return false
   const data = value as Partial<RuntimeBootstrapResponse> & Record<string, unknown>
   return (
@@ -296,7 +293,7 @@ function App() {
   const [runtimeBootstrapStatus, setRuntimeBootstrapStatus] =
     useState<RuntimeBootstrapStatus>('idle')
   const [runtimeBootstrapError, setRuntimeBootstrapError] = useState<string | null>(null)
-  const [onboardingReloadNonce, setOnboardingReloadNonce] = useState(0)
+  const [_onboardingReloadNonce, setOnboardingReloadNonce] = useState(0)
   const userId = 'demo-user'
   const [sessionId] = useState<string>(() => createClientSessionId())
   const [isStarting, setIsStarting] = useState(false)
@@ -313,9 +310,10 @@ function App() {
   const debugEventIdRef = useRef(0)
   const activeIndustry = industry ?? 'electronics'
   const { hasConsented, acceptConsent, declineConsent } = useConsent()
-  const [aiBannerDismissed, setAiBannerDismissed] = useState(() =>
-    typeof window !== 'undefined' &&
-    window.sessionStorage.getItem('ekaette:ui:ai-banner-dismissed') === '1',
+  const [aiBannerDismissed, setAiBannerDismissed] = useState(
+    () =>
+      typeof window !== 'undefined' &&
+      window.sessionStorage.getItem('ekaette:ui:ai-banner-dismissed') === '1',
   )
   const handleDismissBanner = useCallback(() => {
     setAiBannerDismissed(true)
@@ -335,12 +333,12 @@ function App() {
       String(import.meta.env.VITE_ONBOARDING_COMPAT_FALLBACK ?? '').toLowerCase() === 'true')
   const forceManualOnboarding =
     customerOnboardingEnabled &&
-    ((import.meta.env.DEV && import.meta.env.MODE !== 'test') || endUserOnboardingEnabled || manualOnboardingOverride)
+    ((import.meta.env.DEV && import.meta.env.MODE !== 'test') ||
+      endUserOnboardingEnabled ||
+      manualOnboardingOverride)
   const showRuntimeBootstrapLoading = !forceManualOnboarding && runtimeBootstrapStatus === 'loading'
   const showRuntimeBootstrapError =
-    !forceManualOnboarding &&
-    runtimeBootstrapStatus === 'error' &&
-    !allowOnboardingCompatFallback
+    !forceManualOnboarding && runtimeBootstrapStatus === 'error' && !allowOnboardingCompatFallback
   const canRenderOnboardingSelection =
     customerOnboardingEnabled &&
     (forceManualOnboarding ||
@@ -528,9 +526,7 @@ function App() {
     const displayReady = sanitizeTranscriptForDisplay(normalized, {
       preferredUserScript: preferLatinTranscriptDisplay ? 'latin' : null,
     })
-    return preferFinalTranscriptDisplay
-      ? preferFinalTranscriptMessages(displayReady)
-      : displayReady
+    return preferFinalTranscriptDisplay ? preferFinalTranscriptMessages(displayReady) : displayReady
   }, [derived.transcripts, preferFinalTranscriptDisplay, preferLatinTranscriptDisplay])
   const rawTranscriptTail = useMemo(
     () => (debugOpen ? socket.messages.filter(msg => msg.type === 'transcription').slice(-10) : []),
@@ -595,9 +591,7 @@ function App() {
         const bootstrap = payload
         if (disposed) return
         const nextTemplate =
-          (bootstrap.industryTemplateId && bootstrap.industryTemplateId.trim()) ||
-          (bootstrap.industry && bootstrap.industry.trim()) ||
-          'electronics'
+          bootstrap.industryTemplateId?.trim() || bootstrap.industry?.trim() || 'electronics'
         const nextCompany = bootstrap.companyId?.trim() || ''
         const nextTenant = bootstrap.tenantId?.trim() || tenantId
 
@@ -629,12 +623,7 @@ function App() {
       disposed = true
       controller.abort()
     }
-  }, [
-    allowOnboardingCompatFallback,
-    forceManualOnboarding,
-    onboardingReloadNonce,
-    tenantId,
-  ])
+  }, [allowOnboardingCompatFallback, forceManualOnboarding, tenantId])
 
   useEffect(() => {
     const shouldLoadOnboardingConfig = canRenderOnboardingSelection
@@ -676,12 +665,7 @@ function App() {
       disposed = true
       controller.abort()
     }
-  }, [
-    allowOnboardingCompatFallback,
-    canRenderOnboardingSelection,
-    onboardingReloadNonce,
-    tenantId,
-  ])
+  }, [allowOnboardingCompatFallback, canRenderOnboardingSelection, tenantId])
 
   useEffect(() => {
     if (!onboardingConfig || !industry || companySelection) return
@@ -943,18 +927,21 @@ function App() {
     [isConnected, socket],
   )
 
-  const handleOnboardingComplete = useCallback((selection: { templateId: string; companyId: string }) => {
-    setManualOnboardingOverride(false)
-    setIndustry(selection.templateId)
-    setCompanySelection(selection.companyId)
-    setTenantSelection(tenantId)
-    if (typeof window !== 'undefined') {
-      window.localStorage.setItem(INDUSTRY_STORAGE_KEY, selection.templateId)
-      window.localStorage.setItem(TEMPLATE_STORAGE_KEY, selection.templateId)
-      window.localStorage.setItem(COMPANY_STORAGE_KEY, selection.companyId)
-      window.localStorage.setItem(TENANT_STORAGE_KEY, tenantId)
-    }
-  }, [tenantId])
+  const handleOnboardingComplete = useCallback(
+    (selection: { templateId: string; companyId: string }) => {
+      setManualOnboardingOverride(false)
+      setIndustry(selection.templateId)
+      setCompanySelection(selection.companyId)
+      setTenantSelection(tenantId)
+      if (typeof window !== 'undefined') {
+        window.localStorage.setItem(INDUSTRY_STORAGE_KEY, selection.templateId)
+        window.localStorage.setItem(TEMPLATE_STORAGE_KEY, selection.templateId)
+        window.localStorage.setItem(COMPANY_STORAGE_KEY, selection.companyId)
+        window.localStorage.setItem(TENANT_STORAGE_KEY, tenantId)
+      }
+    },
+    [tenantId],
+  )
 
   const handleAcceptValuation = useCallback(() => {
     if (derived.valuation) {
@@ -992,15 +979,12 @@ function App() {
   }, [socket.clearMessages])
   void _resetClientUiState
 
-
   return (
     <div
       className="app-shell h-screen min-h-screen overflow-hidden text-foreground supports-[height:100dvh]:h-dvh supports-[height:100dvh]:min-h-dvh"
       style={rootStyle}
     >
-      {!hasConsented && (
-        <ConsentModal onAccept={acceptConsent} onDecline={declineConsent} />
-      )}
+      {!hasConsented && <ConsentModal onAccept={acceptConsent} onDecline={declineConsent} />}
       <div className="atmosphere-layer" aria-hidden />
       <NavBar activePage="voice" />
 
@@ -1046,7 +1030,7 @@ function App() {
               ) : null}
 
               {onboardingConfigStatus === 'compat' ? (
-                <div className="panel-glass px-4 py-3 text-xs text-muted-foreground sm:px-5">
+                <div className="panel-glass px-4 py-3 text-muted-foreground text-xs sm:px-5">
                   Using local configuration because the backend setup service is unavailable.
                 </div>
               ) : null}
@@ -1087,30 +1071,28 @@ function App() {
                     </button>
                   </div>
                 </section>
-              ) : (
-                <>
-                  {canRenderOnboardingSelection && !showOnboardingConfigLoading ? (
-                    <VendorSetupWizard
-                      templates={templates ?? undefined}
-                      companies={companies ?? undefined}
-                      defaultTemplateId={onboardingConfig?.defaults.templateId ?? industry}
-                      defaultCompanyId={onboardingConfig?.defaults.companyId ?? companySelection}
-                      onComplete={handleOnboardingComplete}
-                    />
-                  ) : null}
-                </>
-              )}
+              ) : canRenderOnboardingSelection && !showOnboardingConfigLoading ? (
+                <VendorSetupWizard
+                  templates={templates ?? undefined}
+                  companies={companies ?? undefined}
+                  defaultTemplateId={onboardingConfig?.defaults.templateId ?? industry}
+                  defaultCompanyId={onboardingConfig?.defaults.companyId ?? companySelection}
+                  onComplete={handleOnboardingComplete}
+                />
+              ) : null}
             </div>
           </main>
         ) : (
           <>
             <div className="hidden lg:block">
-              <Header hint={theme.hint} templateLabel={templateLabel} connectionState={socket.state} />
+              <Header
+                hint={theme.hint}
+                templateLabel={templateLabel}
+                connectionState={socket.state}
+              />
             </div>
 
-            {!aiBannerDismissed && (
-              <AiDisclosureBanner onDismiss={handleDismissBanner} />
-            )}
+            {!aiBannerDismissed && <AiDisclosureBanner onDismiss={handleDismissBanner} />}
 
             <main className="conversation-stage mt-3 flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto pb-1 sm:mt-4 sm:pb-0 lg:grid lg:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)] lg:overflow-hidden lg:pb-0">
               <div className="lg:hidden">
@@ -1307,10 +1289,10 @@ function App() {
                     {micCaptureDiagnostics?.softwareDenoiserEnabled ? 'on' : 'off'}
                   </p>
                   <p className="mt-1 text-[10px] text-muted-foreground">
-                    AEC {formatBooleanish(micCaptureDiagnostics?.appliedSettings.echoCancellation)} ·
-                    NS {formatBooleanish(micCaptureDiagnostics?.appliedSettings.noiseSuppression)} ·
-                    AGC {formatBooleanish(micCaptureDiagnostics?.appliedSettings.autoGainControl)} ·
-                    sr {micCaptureDiagnostics?.appliedSettings.sampleRate ?? 'n/a'}Hz · ch{' '}
+                    AEC {formatBooleanish(micCaptureDiagnostics?.appliedSettings.echoCancellation)}{' '}
+                    · NS {formatBooleanish(micCaptureDiagnostics?.appliedSettings.noiseSuppression)}{' '}
+                    · AGC {formatBooleanish(micCaptureDiagnostics?.appliedSettings.autoGainControl)}{' '}
+                    · sr {micCaptureDiagnostics?.appliedSettings.sampleRate ?? 'n/a'}Hz · ch{' '}
                     {micCaptureDiagnostics?.appliedSettings.channelCount ?? 'n/a'}
                   </p>
                 </div>

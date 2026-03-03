@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { AdminKnowledgeEntry } from './useWizardApi'
-import { useWizardApi, parseCsv } from './useWizardApi'
+import { parseCsv, useWizardApi } from './useWizardApi'
 
 interface StepKnowledgeProps {
   companyId: string
@@ -12,7 +12,6 @@ interface StepKnowledgeProps {
 export function StepKnowledge({ companyId, tenantId, onNext, onBack }: StepKnowledgeProps) {
   const [title, setTitle] = useState('FAQ')
   const [text, setText] = useState('')
-  const [url] = useState('')
   const [file, setFile] = useState<File | null>(null)
   const [entries, setEntries] = useState<AdminKnowledgeEntry[]>([])
   const [status, setStatus] = useState<string | null>(null)
@@ -39,13 +38,13 @@ export function StepKnowledge({ companyId, tenantId, onNext, onBack }: StepKnowl
       await api.callJson(`${companyUrl}/knowledge/import-text`, {
         method: 'POST',
         idempotencyPrefix: 'wizard-knowledge-text',
-        payload: { title, text, tags: parseCsv(title), source: 'wizard', url: url || undefined },
+        payload: { title, text, tags: parseCsv(title), source: 'wizard' },
       })
       setStatus('Knowledge text imported')
       setText('')
       await loadEntries()
     })
-  }, [api, companyUrl, loadEntries, text, title, url])
+  }, [api, companyUrl, loadEntries, text, title])
 
   const importFile = useCallback(async () => {
     if (!file) return
@@ -104,7 +103,7 @@ export function StepKnowledge({ companyId, tenantId, onNext, onBack }: StepKnowl
               type="button"
               disabled={api.busy || !text.trim()}
               onClick={importText}
-              className="rounded-full border border-primary/50 bg-primary/10 px-4 py-1.5 text-xs font-semibold text-primary transition hover:bg-primary/15 disabled:opacity-50"
+              className="rounded-full border border-primary/50 bg-primary/10 px-4 py-1.5 font-semibold text-primary text-xs transition hover:bg-primary/15 disabled:opacity-50"
             >
               Import Text
             </button>
@@ -113,7 +112,7 @@ export function StepKnowledge({ companyId, tenantId, onNext, onBack }: StepKnowl
               aria-label="Knowledge file"
               accept=".pdf,.docx,.doc,.xlsx,.xls,.xlsm,.pptx,.ppt,.odt,.ods,.html,.htm,.txt,.md,.csv,.tsv,.json,.yaml,.toml,.xml,.epub,.rtf,.eml,.msg,.jpg,.jpeg,.png,.gif,.bmp,.tiff,.tif,.webp,.svg,.zip,.tar,.gz,.7z"
               onChange={e => setFile(e.target.files?.[0] ?? null)}
-              className="cursor-pointer text-xs text-muted-foreground transition hover:text-white file:mr-2 file:cursor-pointer file:rounded-full file:border file:border-primary/40 file:bg-primary/10 file:px-3 file:py-1 file:text-xs file:font-medium file:text-primary file:transition file:hover:border-primary/70 file:hover:bg-primary/20"
+              className="cursor-pointer text-muted-foreground text-xs transition file:mr-2 file:cursor-pointer file:rounded-full file:border file:border-primary/40 file:bg-primary/10 file:px-3 file:py-1 file:font-medium file:text-primary file:text-xs file:transition hover:text-white file:hover:border-primary/70 file:hover:bg-primary/20"
             />
             <p className="w-full text-[0.6rem] text-muted-foreground/60">
               PDF, DOCX, XLSX, PPTX, Images, HTML, TXT, MD, CSV, JSON{' '}
@@ -126,20 +125,26 @@ export function StepKnowledge({ companyId, tenantId, onNext, onBack }: StepKnowl
               </button>
             </p>
             {showAllFormats ? (
-              <div className="w-full rounded-lg border border-border/30 bg-card/20 px-3 py-2 text-[0.6rem] leading-relaxed text-muted-foreground/60">
-                <span className="font-medium text-muted-foreground/80">Documents:</span> PDF, DOCX, DOC, ODT, RTF, TXT, MD, EPUB
+              <div className="w-full rounded-lg border border-border/30 bg-card/20 px-3 py-2 text-[0.6rem] text-muted-foreground/60 leading-relaxed">
+                <span className="font-medium text-muted-foreground/80">Documents:</span> PDF, DOCX,
+                DOC, ODT, RTF, TXT, MD, EPUB
                 <br />
-                <span className="font-medium text-muted-foreground/80">Spreadsheets:</span> XLSX, XLS, XLSM, ODS, CSV, TSV
+                <span className="font-medium text-muted-foreground/80">Spreadsheets:</span> XLSX,
+                XLS, XLSM, ODS, CSV, TSV
                 <br />
-                <span className="font-medium text-muted-foreground/80">Presentations:</span> PPTX, PPT
+                <span className="font-medium text-muted-foreground/80">Presentations:</span> PPTX,
+                PPT
                 <br />
-                <span className="font-medium text-muted-foreground/80">Images (OCR):</span> JPEG, PNG, GIF, BMP, TIFF, WebP, SVG
+                <span className="font-medium text-muted-foreground/80">Images (OCR):</span> JPEG,
+                PNG, GIF, BMP, TIFF, WebP, SVG
                 <br />
-                <span className="font-medium text-muted-foreground/80">Web &amp; Data:</span> HTML, XML, JSON, YAML, TOML
+                <span className="font-medium text-muted-foreground/80">Web &amp; Data:</span> HTML,
+                XML, JSON, YAML, TOML
                 <br />
                 <span className="font-medium text-muted-foreground/80">Email:</span> EML, MSG
                 <br />
-                <span className="font-medium text-muted-foreground/80">Archives:</span> ZIP, TAR, GZ, 7Z
+                <span className="font-medium text-muted-foreground/80">Archives:</span> ZIP, TAR,
+                GZ, 7Z
               </div>
             ) : null}
             {file ? (
@@ -147,7 +152,7 @@ export function StepKnowledge({ companyId, tenantId, onNext, onBack }: StepKnowl
                 type="button"
                 disabled={api.busy}
                 onClick={importFile}
-                className="rounded-full border border-primary/50 bg-primary/10 px-4 py-1.5 text-xs font-semibold text-primary transition hover:bg-primary/15 disabled:opacity-50"
+                className="rounded-full border border-primary/50 bg-primary/10 px-4 py-1.5 font-semibold text-primary text-xs transition hover:bg-primary/15 disabled:opacity-50"
               >
                 Upload File
               </button>
@@ -156,15 +161,15 @@ export function StepKnowledge({ companyId, tenantId, onNext, onBack }: StepKnowl
         </div>
 
         {api.error ? (
-          <p className="text-xs text-destructive" role="alert">{api.error}</p>
+          <p className="text-destructive text-xs" role="alert">
+            {api.error}
+          </p>
         ) : null}
-        {status ? (
-          <p className="text-xs text-emerald-400">{status}</p>
-        ) : null}
+        {status ? <p className="text-emerald-400 text-xs">{status}</p> : null}
 
         {entries.length > 0 ? (
           <div className="space-y-1">
-            <p className="text-xs text-muted-foreground uppercase tracking-wider">
+            <p className="text-muted-foreground text-xs uppercase tracking-wider">
               Existing entries ({entries.length})
             </p>
             {entries.map(entry => (
@@ -175,13 +180,13 @@ export function StepKnowledge({ companyId, tenantId, onNext, onBack }: StepKnowl
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm text-white">{entry.title ?? entry.id}</p>
                   {entry.tags && entry.tags.length > 0 ? (
-                    <p className="text-xs text-muted-foreground">{entry.tags.join(', ')}</p>
+                    <p className="text-muted-foreground text-xs">{entry.tags.join(', ')}</p>
                   ) : null}
                 </div>
                 <button
                   type="button"
                   onClick={() => deleteEntry(entry.id)}
-                  className="ml-2 shrink-0 text-xs text-destructive/70 hover:text-destructive"
+                  className="ml-2 shrink-0 text-destructive/70 text-xs hover:text-destructive"
                 >
                   Delete
                 </button>
@@ -195,7 +200,7 @@ export function StepKnowledge({ companyId, tenantId, onNext, onBack }: StepKnowl
         <button
           type="button"
           onClick={onBack}
-          className="rounded-full border border-border/50 bg-card/40 px-5 py-2 text-sm text-muted-foreground transition hover:text-white"
+          className="rounded-full border border-border/50 bg-card/40 px-5 py-2 text-muted-foreground text-sm transition hover:text-white"
         >
           Back
         </button>
@@ -203,7 +208,7 @@ export function StepKnowledge({ companyId, tenantId, onNext, onBack }: StepKnowl
           <button
             type="button"
             onClick={onNext}
-            className="rounded-full border border-border/50 bg-card/40 px-5 py-2 text-sm text-muted-foreground transition hover:text-white"
+            className="rounded-full border border-border/50 bg-card/40 px-5 py-2 text-muted-foreground text-sm transition hover:text-white"
           >
             Skip
           </button>

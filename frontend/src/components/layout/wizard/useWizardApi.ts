@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 // ── Shared helpers (extracted from AdminDashboard patterns) ──
 
 export function makeIdempotencyKey(prefix: string): string {
-  return `${prefix}-${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`
+  return `${prefix}-${Date.now()}-${crypto.randomUUID().slice(0, 12)}`
 }
 
 export function parseCsv(raw: string): string[] {
@@ -158,20 +158,17 @@ export function useWizardApi({ tenantId, userId = 'admin-user' }: UseWizardApiOp
     [tenantId, userId],
   )
 
-  const runAction = useCallback(
-    async (action: () => Promise<void>) => {
-      setBusy(true)
-      setError(null)
-      try {
-        await action()
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Action failed')
-      } finally {
-        setBusy(false)
-      }
-    },
-    [],
-  )
+  const runAction = useCallback(async (action: () => Promise<void>) => {
+    setBusy(true)
+    setError(null)
+    try {
+      await action()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Action failed')
+    } finally {
+      setBusy(false)
+    }
+  }, [])
 
   return { callJson, callFormData, runAction, busy, error, setError, setBusy }
 }

@@ -76,11 +76,13 @@ export function StepLaunch({
           }
         }
 
-        setCounts({
-          knowledge: knowledgeCount,
-          connectors: connectorCount,
-          products: null,
-        })
+        if (!disposed) {
+          setCounts({
+            knowledge: knowledgeCount,
+            connectors: connectorCount,
+            products: null,
+          })
+        }
       } catch {
         /* non-blocking — counts will show as "—" */
       }
@@ -97,7 +99,10 @@ export function StepLaunch({
     { label: 'Industry', value: title },
     { label: 'Company', value: companyId },
     { label: 'Voice', value: voice },
-    { label: 'Knowledge entries', value: counts.knowledge !== null ? String(counts.knowledge) : '—' },
+    {
+      label: 'Knowledge entries',
+      value: counts.knowledge !== null ? String(counts.knowledge) : '—',
+    },
     { label: 'Connectors', value: counts.connectors !== null ? String(counts.connectors) : '—' },
   ]
 
@@ -112,8 +117,8 @@ export function StepLaunch({
               key={item.label}
               className="flex items-center justify-between rounded-lg border border-border/40 bg-card/30 px-4 py-2.5"
             >
-              <span className="text-sm text-muted-foreground">{item.label}</span>
-              <span className="text-sm font-medium text-white">{item.value}</span>
+              <span className="text-muted-foreground text-sm">{item.label}</span>
+              <span className="font-medium text-sm text-white">{item.value}</span>
             </div>
           ))}
         </div>
@@ -123,7 +128,7 @@ export function StepLaunch({
         <button
           type="button"
           onClick={onBack}
-          className="rounded-full border border-border/50 bg-card/40 px-5 py-2 text-sm text-muted-foreground transition hover:text-white"
+          className="rounded-full border border-border/50 bg-card/40 px-5 py-2 text-muted-foreground text-sm transition hover:text-white"
         >
           Back
         </button>

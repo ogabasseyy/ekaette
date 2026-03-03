@@ -63,7 +63,12 @@ export function isServerMessage(value: unknown): value is ServerMessage {
         typeof data.service === 'string'
       )
     case 'product_recommendation':
-      return Array.isArray(data.products)
+      return (
+        Array.isArray(data.products) &&
+        data.products.every(
+          (p: unknown) => typeof p === 'object' && p !== null && 'name' in p && 'price' in p,
+        )
+      )
     case 'image_received':
       return data.status === 'analyzing' || data.status === 'complete'
     case 'agent_transfer':
@@ -582,5 +587,5 @@ export function getDemoStep(stepIndex: number): DemoStep | undefined {
 export function cloneDemoMessage(stepIndex: number): ServerMessage | undefined {
   const step = getDemoStep(stepIndex)
   if (!step || !isRecord(step.message)) return undefined
-  return { ...step.message } as ServerMessage
+  return structuredClone(step.message) as ServerMessage
 }

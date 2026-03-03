@@ -403,12 +403,13 @@ export function preferFinalTranscriptMessages(messages: TranscriptMessage[]): Tr
     // Preserve stable finalized transcript history, but keep the newest in-progress
     // partial visible when it arrives after the latest final bubble.
     if (latestPartial && latestPartialIndex > lastFinalIndex) {
+      const partial = latestPartial
       const duplicatesFinal = finals.some(
         final =>
-          final.role === latestPartial.role && isEquivalentTranscriptText(final.text, latestPartial.text),
+          final.role === partial.role && isEquivalentTranscriptText(final.text, partial.text),
       )
       if (!duplicatesFinal) {
-        return [...finals, latestPartial]
+        return [...finals, partial]
       }
     }
     return finals

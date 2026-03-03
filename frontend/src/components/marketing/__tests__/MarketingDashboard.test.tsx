@@ -1,9 +1,9 @@
-import { describe, it, expect, vi, afterEach } from 'vitest'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { MarketingDashboard } from '../MarketingDashboard'
-import type { ContactsResponse } from '../../../types/marketing'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { AnalyticsOverviewResponse } from '../../../types/analytics'
+import type { ContactsResponse } from '../../../types/marketing'
+import { MarketingDashboard } from '../MarketingDashboard'
 
 vi.mock('../../../lib/navigation', () => ({
   NAV_ITEMS: [
@@ -21,8 +21,18 @@ const MOCK_CONTACTS: ContactsResponse = {
   tenant_id: 'public',
   company_id: 'ekaette-electronics',
   contacts: [
-    { phone: '+2348011111111', last_campaign_id: 'cmp-001', last_campaign_name: 'Promo A', channel: 'sms' },
-    { phone: '+2348022222222', last_campaign_id: 'cmp-002', last_campaign_name: 'Follow-up', channel: 'voice' },
+    {
+      phone: '+2348011111111',
+      last_campaign_id: 'cmp-001',
+      last_campaign_name: 'Promo A',
+      channel: 'sms',
+    },
+    {
+      phone: '+2348022222222',
+      last_campaign_id: 'cmp-002',
+      last_campaign_name: 'Follow-up',
+      channel: 'voice',
+    },
   ],
   count: 2,
 }
@@ -56,7 +66,10 @@ const MOCK_ANALYTICS: AnalyticsOverviewResponse = {
   campaigns: [],
 }
 
-function mockFetchResponses(contactsResp: ContactsResponse, analyticsResp: AnalyticsOverviewResponse = MOCK_ANALYTICS) {
+function mockFetchResponses(
+  contactsResp: ContactsResponse,
+  analyticsResp: AnalyticsOverviewResponse = MOCK_ANALYTICS,
+) {
   return vi.fn((url: string) => {
     if (url.includes('/analytics/contacts')) {
       return Promise.resolve({ ok: true, json: () => Promise.resolve(contactsResp) })
@@ -209,6 +222,32 @@ describe('MarketingDashboard', () => {
     expect(sendBtn).toBeDisabled()
   })
 
+  it('Send Campaign button submits when recipients and message are provided', async () => {
+    const user = userEvent.setup()
+    const fetchMock = mockFetchResponses(MOCK_CONTACTS)
+    global.fetch = fetchMock
+    render(<MarketingDashboard />)
+
+    await waitFor(() => {
+      expect(screen.getByText('+2348011111111')).toBeInTheDocument()
+    })
+
+    await user.click(screen.getByRole('button', { name: /select all/i }))
+    await user.type(screen.getByPlaceholderText(/campaign name/i), 'Spring Sale')
+    await user.type(screen.getByPlaceholderText(/message/i), 'Big deals this week')
+
+    const sendBtn = screen.getByRole('button', { name: /send campaign/i })
+    expect(sendBtn).not.toBeDisabled()
+    await user.click(sendBtn)
+
+    await waitFor(() => {
+      const campaignCalls = fetchMock.mock.calls.filter(
+        ([url]: [string]) => url.includes('/sms/campaign') || url.includes('/voice/campaign'),
+      )
+      expect(campaignCalls.length).toBe(1)
+    })
+  })
+
   it('quick SMS button triggers fetch to /sms/send', async () => {
     const user = userEvent.setup()
     const fetchMock = mockFetchResponses(MOCK_CONTACTS)
@@ -223,10 +262,13 @@ describe('MarketingDashboard', () => {
     const smsBtn = within(row as HTMLElement).getByRole('button', { name: /sms/i })
     await user.click(smsBtn)
 
-    // Quick SMS should prompt or send — either way fetch was called
     await waitFor(() => {
       const smsCalls = fetchMock.mock.calls.filter(([url]: [string]) => url.includes('/sms/send'))
       expect(smsCalls.length).toBe(1)
+      const [_url, opts] = smsCalls[0] as [string, RequestInit]
+      expect(opts.method).toBe('POST')
+      const body = JSON.parse(opts.body as string)
+      expect(body.to).toBe('+2348011111111')
     })
   })
 
@@ -245,8 +287,14 @@ describe('MarketingDashboard', () => {
     await user.click(callBtn)
 
     await waitFor(() => {
-      const callCalls = fetchMock.mock.calls.filter(([url]: [string]) => url.includes('/voice/call'))
+      const callCalls = fetchMock.mock.calls.filter(([url]: [string]) =>
+        url.includes('/voice/call'),
+      )
       expect(callCalls.length).toBe(1)
+      const [_url, opts] = callCalls[0] as [string, RequestInit]
+      expect(opts.method).toBe('POST')
+      const body = JSON.parse(opts.body as string)
+      expect(body.to).toBe('+2348011111111')
     })
   })
 

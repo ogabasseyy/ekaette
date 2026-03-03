@@ -10,7 +10,7 @@ export function ConsentModal({ onAccept, onDecline }: ConsentModalProps) {
         role="dialog"
         aria-modal="true"
         aria-labelledby="consent-title"
-        className="panel-glass max-w-lg w-full mx-4 px-6 py-6 sm:px-8 sm:py-8 animate-slide-up"
+        className="panel-glass mx-4 w-full max-w-lg animate-slide-up px-6 py-6 sm:px-8 sm:py-8"
       >
         <h2
           id="consent-title"
@@ -19,7 +19,7 @@ export function ConsentModal({ onAccept, onDecline }: ConsentModalProps) {
           Data &amp; AI Usage Consent
         </h2>
 
-        <ul className="mt-4 space-y-2 text-xs leading-relaxed text-muted-foreground sm:text-sm">
+        <ul className="mt-4 space-y-2 text-muted-foreground text-xs leading-relaxed sm:text-sm">
           <li className="flex gap-2">
             <span className="shrink-0 text-accent">&#x2022;</span>
             <span>
@@ -29,8 +29,8 @@ export function ConsentModal({ onAccept, onDecline }: ConsentModalProps) {
           <li className="flex gap-2">
             <span className="shrink-0 text-accent">&#x2022;</span>
             <span>
-              Your interactions are processed by AI models. Responses are generated automatically and
-              may not always be accurate.
+              Your interactions are processed by AI models. Responses are generated automatically
+              and may not always be accurate.
             </span>
           </li>
           <li className="flex gap-2">
@@ -48,7 +48,7 @@ export function ConsentModal({ onAccept, onDecline }: ConsentModalProps) {
             href="/privacy.html"
             target="_blank"
             rel="noopener noreferrer"
-            className="text-accent underline underline-offset-2 hover:text-accent-foreground transition"
+            className="text-accent underline underline-offset-2 transition hover:text-accent-foreground"
           >
             Privacy Policy
           </a>
@@ -59,14 +59,14 @@ export function ConsentModal({ onAccept, onDecline }: ConsentModalProps) {
           <button
             type="button"
             onClick={onDecline}
-            className="flex-1 rounded-full border border-border px-4 py-2 text-xs font-semibold uppercase tracking-widest text-muted-foreground transition hover:border-foreground hover:text-foreground sm:text-sm"
+            className="flex-1 rounded-full border border-border px-4 py-2 font-semibold text-muted-foreground text-xs uppercase tracking-widest transition hover:border-foreground hover:text-foreground sm:text-sm"
           >
             Decline
           </button>
           <button
             type="button"
             onClick={onAccept}
-            className="flex-1 rounded-full border border-accent px-4 py-2 text-xs font-semibold uppercase tracking-widest text-accent transition hover:bg-accent/10 hover:text-accent-foreground sm:text-sm"
+            className="flex-1 rounded-full border border-accent px-4 py-2 font-semibold text-accent text-xs uppercase tracking-widest transition hover:bg-accent/10 hover:text-accent-foreground sm:text-sm"
           >
             Accept
           </button>

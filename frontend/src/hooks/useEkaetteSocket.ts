@@ -378,7 +378,9 @@ export function useEkaetteSocket(
           shouldReconnectRef.current = false
           setState('disconnected')
           cleanup()
-          rejectPendingConnect(new SocketConnectError('CONNECT_TIMEOUT', 'WebSocket connection timeout'))
+          rejectPendingConnect(
+            new SocketConnectError('CONNECT_TIMEOUT', 'WebSocket connection timeout'),
+          )
         }, timeoutMs)
       }
 
@@ -572,10 +574,7 @@ export function useEkaetteSocket(
     if (reconnectAttemptRef.current >= MAX_RECONNECT_ATTEMPTS) {
       setState('disconnected')
       rejectPendingConnect(
-        new SocketConnectError(
-          'CONNECT_FAILED',
-          'Unable to establish WebSocket connection',
-        ),
+        new SocketConnectError('CONNECT_FAILED', 'Unable to establish WebSocket connection'),
       )
       return
     }
@@ -788,6 +787,12 @@ export function useEkaetteSocket(
     }
     if (!shouldReconnectRef.current) {
       connectingRef.current = false
+      setState('disconnected')
+      rejectPendingConnect(
+        new SocketConnectError('CONNECT_CANCELLED', 'Connection cancelled before WebSocket open', {
+          retryable: false,
+        }),
+      )
       return
     }
 
@@ -795,11 +800,11 @@ export function useEkaetteSocket(
     const industryQuery = encodeURIComponent(industry)
     const companyQuery = companyId ? `&company_id=${encodeURIComponent(companyId)}` : ''
     const tenantQuery = tenantId ? `&tenant_id=${encodeURIComponent(tenantId)}` : ''
-    const tokenQuery = wsTokenRef.current
-      ? `&token=${encodeURIComponent(wsTokenRef.current)}`
-      : ''
+    const tokenQuery = wsTokenRef.current ? `&token=${encodeURIComponent(wsTokenRef.current)}` : ''
+    const encodedUserId = encodeURIComponent(userId)
+    const encodedSessionId = encodeURIComponent(currentSessionIdRef.current)
     const ws = new WebSocket(
-      `${protocol}//${window.location.host}/ws/${userId}/${currentSessionIdRef.current}?industry=${industryQuery}${companyQuery}${tenantQuery}${tokenQuery}`,
+      `${protocol}//${window.location.host}/ws/${encodedUserId}/${encodedSessionId}?industry=${industryQuery}${companyQuery}${tenantQuery}${tokenQuery}`,
     )
     ws.binaryType = 'arraybuffer'
     wsRef.current = ws
@@ -1064,21 +1069,24 @@ export function useEkaetteSocket(
     connectInternalRef.current = connectInternal
   }, [connectInternal])
 
-  const connect = useCallback((connectOptions: ConnectOptions = {}) => {
-    if (state === 'connected') {
-      return Promise.resolve()
-    }
-    if (pendingConnectRef.current) {
-      return pendingConnectRef.current.promise
-    }
+  const connect = useCallback(
+    (connectOptions: ConnectOptions = {}) => {
+      if (state === 'connected') {
+        return Promise.resolve()
+      }
+      if (pendingConnectRef.current) {
+        return pendingConnectRef.current.promise
+      }
 
-    reconnectAttemptRef.current = 0
-    rapidFailCountRef.current = 0
-    const timeoutMs = connectOptions.timeoutMs ?? defaultConnectTimeoutMs
-    const pendingConnect = createPendingConnect(timeoutMs)
-    connectInternal()
-    return pendingConnect
-  }, [connectInternal, createPendingConnect, defaultConnectTimeoutMs, state])
+      reconnectAttemptRef.current = 0
+      rapidFailCountRef.current = 0
+      const timeoutMs = connectOptions.timeoutMs ?? defaultConnectTimeoutMs
+      const pendingConnect = createPendingConnect(timeoutMs)
+      connectInternal()
+      return pendingConnect
+    },
+    [connectInternal, createPendingConnect, defaultConnectTimeoutMs, state],
+  )
 
   const disconnect = useCallback(() => {
     shouldReconnectRef.current = false
@@ -1253,12 +1261,14 @@ export function useEkaetteSocket(
     appendMessage(setMessages, message)
   }, [])
 
-  // Cleanup on unmount
+  // Cleanup on unmount only — use ref to avoid re-firing when deps change
+  const cleanupRef = useRef(cleanup)
+  cleanupRef.current = cleanup
   useEffect(() => {
     return () => {
-      cleanup()
+      cleanupRef.current()
     }
-  }, [cleanup])
+  }, [])
 
   return {
     state,

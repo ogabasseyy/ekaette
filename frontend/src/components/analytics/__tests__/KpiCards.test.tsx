@@ -1,7 +1,7 @@
-import { describe, it, expect } from 'vitest'
 import { render, screen } from '@testing-library/react'
-import { KpiCards } from '../KpiCards'
+import { describe, expect, it } from 'vitest'
 import type { AnalyticsSummary } from '../../../types/analytics'
+import { KpiCards } from '../KpiCards'
 
 const MOCK_SUMMARY: AnalyticsSummary = {
   window_days: 30,
@@ -44,6 +44,12 @@ describe('KpiCards', () => {
   it('displays sent count', () => {
     render(<KpiCards summary={MOCK_SUMMARY} />)
     expect(screen.getByText('200')).toBeInTheDocument()
+  })
+
+  it('displays compact-formatted sent count for large values', () => {
+    const largeSummary = { ...MOCK_SUMMARY, total_sent: 1500 }
+    render(<KpiCards summary={largeSummary} />)
+    expect(screen.getByText('1.5K')).toBeInTheDocument()
   })
 
   it('renders empty state when summary is null', () => {

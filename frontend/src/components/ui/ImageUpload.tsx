@@ -31,6 +31,7 @@ export function ImageUpload({
     const file = event.target.files?.[0]
     if (!file) return
 
+    event.target.value = ''
     setValidationError(null)
 
     if (!ALLOWED_MIME_TYPES.has(file.type)) {

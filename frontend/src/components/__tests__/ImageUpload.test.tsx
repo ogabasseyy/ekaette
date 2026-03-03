@@ -24,15 +24,27 @@ describe('ImageUpload', () => {
     ;(globalThis as unknown as { FileReader: typeof FileReader }).FileReader =
       MockFileReader as unknown as typeof FileReader
 
-    render(<ImageUpload onImageSelected={onImageSelected} showPreview />)
+    try {
+      render(<ImageUpload onImageSelected={onImageSelected} showPreview />)
+
+      const input = screen.getByLabelText(/upload photo/i, { selector: 'input' })
+      const file = new File(['content'], 'device.jpg', { type: 'image/jpeg' })
+      fireEvent.change(input, { target: { files: [file] } })
+
+      expect(onImageSelected).toHaveBeenCalledWith('ZmFrZS1pbWFnZS1iYXNlNjQ=', 'image/jpeg')
+      expect(screen.getByAltText(/upload preview/i)).toBeInTheDocument()
+    } finally {
+      ;(globalThis as unknown as { FileReader: typeof FileReader }).FileReader = original
+    }
+  })
+
+  it('does not call onImageSelected when no file is selected', () => {
+    const onImageSelected = vi.fn()
+    render(<ImageUpload onImageSelected={onImageSelected} />)
 
     const input = screen.getByLabelText(/upload photo/i, { selector: 'input' })
-    const file = new File(['content'], 'device.jpg', { type: 'image/jpeg' })
-    fireEvent.change(input, { target: { files: [file] } })
+    fireEvent.change(input, { target: { files: [] } })
 
-    expect(onImageSelected).toHaveBeenCalledWith('ZmFrZS1pbWFnZS1iYXNlNjQ=', 'image/jpeg')
-    expect(screen.getByAltText(/upload preview/i)).toBeInTheDocument()
-
-    ;(globalThis as unknown as { FileReader: typeof FileReader }).FileReader = original
+    expect(onImageSelected).not.toHaveBeenCalled()
   })
 })

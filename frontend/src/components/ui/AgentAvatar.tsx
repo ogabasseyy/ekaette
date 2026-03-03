@@ -26,7 +26,7 @@ export function AgentAvatar({ label, active = false, className }: AgentAvatarPro
       >
         {initials || 'AI'}
       </span>
-      <span className="text-muted-foreground text-xs">{label}</span>
+      {label ? <span className="text-muted-foreground text-xs">{label}</span> : null}
     </div>
   )
 }

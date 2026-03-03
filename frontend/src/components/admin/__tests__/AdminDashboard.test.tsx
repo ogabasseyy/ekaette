@@ -97,7 +97,9 @@ describe('AdminDashboard', () => {
     })
 
     const firstCall = fetchMock.mock.calls[0] as [string, RequestInit]
-    expect(firstCall[0]).toContain('/api/v1/admin/companies/ekaette-electronics/knowledge/import-file')
+    expect(firstCall[0]).toContain(
+      '/api/v1/admin/companies/ekaette-electronics/knowledge/import-file',
+    )
     expect(firstCall[0]).toContain('tenantId=public')
     expect(firstCall[1].method).toBe('POST')
     const headers = firstCall[1].headers as Record<string, string>
@@ -218,7 +220,11 @@ describe('AdminDashboard', () => {
 
     const call = fetchMock.mock.calls[0] as [string, RequestInit]
     expect(call[0]).toContain('/api/v1/admin/companies/ekaette-electronics/inventory/sync')
+    expect(call[0]).toContain('tenantId=public')
     expect(call[1].method).toBe('POST')
+    const headers = call[1].headers as Record<string, string>
+    expect(headers['Content-Type']).toBe('application/json')
+    expect(headers['x-tenant-id']).toBe('public')
     const payload = JSON.parse(String(call[1].body)) as Record<string, unknown>
     expect(payload.sourceType).toBe('google_sheets')
     expect(payload.sourceUrl).toBe('https://docs.google.com/spreadsheets/d/test/edit#gid=0')
@@ -251,7 +257,11 @@ describe('AdminDashboard', () => {
 
     const call = fetchMock.mock.calls[0] as [string, RequestInit]
     expect(call[0]).toContain('/api/v1/admin/companies/ekaette-electronics/inventory/sync/config')
+    expect(call[0]).toContain('tenantId=public')
     expect(call[1].method).toBe('PUT')
+    const headers = call[1].headers as Record<string, string>
+    expect(headers['Content-Type']).toBe('application/json')
+    expect(headers['x-tenant-id']).toBe('public')
     const payload = JSON.parse(String(call[1].body)) as Record<string, unknown>
     expect(payload.autoEnabled).toBe(true)
     expect(payload.intervalMinutes).toBe(30)

@@ -63,8 +63,9 @@ export default function ValuationCard({
         <input
           id="counter-offer"
           type="number"
+          min={0}
           value={counterOffer}
-          onChange={event => setCounterOffer(Number(event.target.value || 0))}
+          onChange={event => setCounterOffer(Math.max(0, Number(event.target.value || 0)))}
           className="w-full rounded-xl border border-border/80 bg-black/35 px-3 py-2 text-foreground text-sm outline-none focus:border-primary/60"
         />
       </div>

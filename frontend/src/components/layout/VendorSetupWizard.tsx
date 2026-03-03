@@ -1,6 +1,7 @@
 import { lazy, Suspense, useCallback, useReducer } from 'react'
 import type { IndustryTemplateMeta, OnboardingCompanyMeta, WizardStepId } from '../../types'
 import { WizardStepIndicator } from './wizard/WizardStepIndicator'
+
 // --- Lazy-loaded step components (bundle-dynamic-imports) ---
 const StepIndustry = lazy(() =>
   import('./wizard/StepIndustry').then(m => ({ default: m.StepIndustry })),
@@ -14,9 +15,7 @@ const StepConnectors = lazy(() =>
 const StepCatalog = lazy(() =>
   import('./wizard/StepCatalog').then(m => ({ default: m.StepCatalog })),
 )
-const StepLaunch = lazy(() =>
-  import('./wizard/StepLaunch').then(m => ({ default: m.StepLaunch })),
-)
+const StepLaunch = lazy(() => import('./wizard/StepLaunch').then(m => ({ default: m.StepLaunch })))
 
 // --- Fallback templates (same as IndustryOnboarding, for title/hint resolution) ---
 const FALLBACK_OPTIONS: IndustryTemplateMeta[] = [
@@ -26,7 +25,57 @@ const FALLBACK_OPTIONS: IndustryTemplateMeta[] = [
     category: 'retail',
     description: 'Trade-ins, valuation, negotiation, pickup booking.',
     defaultVoice: 'Aoede',
-    theme: { accent: 'oklch(74% 0.21 158)', accentSoft: 'oklch(62% 0.14 172)', title: 'Hardware Trade Desk', hint: 'Inspect. Value. Negotiate. Book pickup.' },
+    theme: {
+      accent: 'oklch(74% 0.21 158)',
+      accentSoft: 'oklch(62% 0.14 172)',
+      title: 'Hardware Trade Desk',
+      hint: 'Inspect. Value. Negotiate. Book pickup.',
+    },
+    capabilities: [],
+    status: 'active',
+  },
+  {
+    id: 'hotel',
+    label: 'Hotel',
+    category: 'hospitality',
+    description: 'Reservations, room search, stay assistance workflows.',
+    defaultVoice: 'Puck',
+    theme: {
+      accent: 'oklch(78% 0.15 55)',
+      accentSoft: 'oklch(70% 0.12 75)',
+      title: 'Hospitality Concierge',
+      hint: 'Real-time booking and guest support voice assistant.',
+    },
+    capabilities: [],
+    status: 'active',
+  },
+  {
+    id: 'automotive',
+    label: 'Automotive',
+    category: 'automotive',
+    description: 'Service lane support, estimates, and booking.',
+    defaultVoice: 'Kore',
+    theme: {
+      accent: 'oklch(71% 0.18 240)',
+      accentSoft: 'oklch(63% 0.15 260)',
+      title: 'Automotive Service Lane',
+      hint: 'Trade-ins, inspections, parts and service scheduling.',
+    },
+    capabilities: [],
+    status: 'active',
+  },
+  {
+    id: 'fashion',
+    label: 'Fashion',
+    category: 'retail',
+    description: 'Catalog assistance and customer styling support.',
+    defaultVoice: 'Aoede',
+    theme: {
+      accent: 'oklch(74% 0.2 20)',
+      accentSoft: 'oklch(66% 0.16 345)',
+      title: 'Fashion Client Studio',
+      hint: 'Catalog recommendations and consultation workflows.',
+    },
     capabilities: [],
     status: 'active',
   },

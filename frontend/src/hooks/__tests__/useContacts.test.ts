@@ -1,7 +1,7 @@
-import { describe, it, expect, vi, afterEach } from 'vitest'
-import { renderHook, waitFor, act } from '@testing-library/react'
-import { useContacts } from '../useContacts'
+import { act, renderHook, waitFor } from '@testing-library/react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ContactsResponse, KnownContact } from '../../types/marketing'
+import { useContacts } from '../useContacts'
 
 const MOCK_CONTACT_A: KnownContact = {
   phone: '+2348011111111',
@@ -62,9 +62,7 @@ describe('useContacts', () => {
       json: () => Promise.resolve(MOCK_RESPONSE),
     })
 
-    renderHook(() =>
-      useContacts({ tenantId: 'public', companyId: 'ekaette-electronics' }),
-    )
+    renderHook(() => useContacts({ tenantId: 'public', companyId: 'ekaette-electronics' }))
 
     await waitFor(() => {
       expect(global.fetch).toHaveBeenCalled()
@@ -188,7 +186,7 @@ describe('useContacts', () => {
     expect(result.current.selectedContacts[0].phone).toBe('+2348022222222')
   })
 
-  it('refetch re-fetches contacts', async () => {
+  it('refetch re-fetches contacts and transitions loading state', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       json: () => Promise.resolve(MOCK_RESPONSE),
@@ -209,9 +207,16 @@ describe('useContacts', () => {
       result.current.refetch()
     })
 
+    expect(result.current.loading).toBe(true)
+
     await waitFor(() => {
       expect(fetchMock.mock.calls.length).toBeGreaterThan(callsBefore)
     })
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false)
+    })
+    expect(result.current.contacts).toHaveLength(2)
   })
 
   it('returns empty contacts on network error', async () => {

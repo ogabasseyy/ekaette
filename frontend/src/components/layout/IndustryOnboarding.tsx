@@ -88,7 +88,9 @@ export function IndustryOnboarding({
 }: IndustryOnboardingProps) {
   const options = templates && templates.length > 0 ? templates : FALLBACK_OPTIONS
   const initialTemplateId =
-    (defaultTemplateId && options.some(option => option.id === defaultTemplateId) && defaultTemplateId) ||
+    (defaultTemplateId &&
+      options.some(option => option.id === defaultTemplateId) &&
+      defaultTemplateId) ||
     options[0]?.id ||
     'electronics'
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>(initialTemplateId)
@@ -103,7 +105,7 @@ export function IndustryOnboarding({
   const [selectedCompanyId, setSelectedCompanyId] = useState<string>(
     defaultCompanyId && availableCompanies.some(company => company.id === defaultCompanyId)
       ? defaultCompanyId
-      : availableCompanies[0]?.id ?? fallbackCompanyId,
+      : (availableCompanies[0]?.id ?? fallbackCompanyId),
   )
 
   useEffect(() => {
@@ -147,11 +149,16 @@ export function IndustryOnboarding({
         behavior, and capabilities for customer calls.
       </p>
 
-      <div className="mt-5 grid gap-3 sm:mt-6 sm:grid-cols-2" role="radiogroup" aria-label="Industry selection">
+      <div
+        className="mt-5 grid gap-3 sm:mt-6 sm:grid-cols-2"
+        role="radiogroup"
+        aria-label="Industry selection"
+      >
         {options.map(option => {
           const active = selectedTemplateId === option.id
           const displayLabel = resolveTemplateDisplayLabel(option)
           return (
+            // biome-ignore lint/a11y/useSemanticElements: styled card radio group, native input would break layout
             <button
               key={option.id}
               type="button"
@@ -176,7 +183,10 @@ export function IndustryOnboarding({
       </div>
 
       <div className="mt-4">
-        <label htmlFor="vendor-company" className="block text-[0.68rem] text-muted-foreground uppercase tracking-[0.16em]">
+        <label
+          htmlFor="vendor-company"
+          className="block text-[0.68rem] text-muted-foreground uppercase tracking-[0.16em]"
+        >
           Company
         </label>
         <select
@@ -201,6 +211,7 @@ export function IndustryOnboarding({
       <div className="mt-6 flex justify-stretch sm:justify-end">
         <button
           type="button"
+          disabled={!options.some(o => o.id === selectedTemplateId)}
           onClick={() =>
             onComplete({
               templateId: selectedTemplateId,

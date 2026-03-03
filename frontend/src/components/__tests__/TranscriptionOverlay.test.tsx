@@ -49,6 +49,11 @@ describe('TranscriptionOverlay', () => {
     scrollSpy.mockRestore()
   })
 
+  it('renders empty state when no messages', () => {
+    render(<TranscriptionOverlay messages={[]} />)
+    expect(screen.getByText('No live transcript yet.')).toBeInTheDocument()
+  })
+
   it('auto-scrolls when latest partial message updates in place', () => {
     const scrollSpy = vi.spyOn(Element.prototype, 'scrollIntoView').mockImplementation(() => {})
 

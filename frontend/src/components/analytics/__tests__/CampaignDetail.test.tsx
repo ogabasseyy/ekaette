@@ -1,8 +1,8 @@
-import { describe, it, expect, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { CampaignDetail } from '../CampaignDetail'
+import { describe, expect, it, vi } from 'vitest'
 import type { CampaignSnapshot } from '../../../types/analytics'
+import { CampaignDetail } from '../CampaignDetail'
 
 const MOCK_CAMPAIGN: CampaignSnapshot = {
   campaign_id: 'cmp-sms-001',
@@ -41,6 +41,9 @@ describe('CampaignDetail', () => {
     expect(screen.getByText('Failed')).toBeInTheDocument()
     expect(screen.getByText('Replies')).toBeInTheDocument()
     expect(screen.getByText('Conversions')).toBeInTheDocument()
+    expect(screen.getByText('Revenue')).toBeInTheDocument()
+    expect(screen.getByText('Payments Init')).toBeInTheDocument()
+    expect(screen.getByText('Payments OK')).toBeInTheDocument()
   })
 
   it('renders message preview', () => {

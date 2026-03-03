@@ -8,9 +8,8 @@
 import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-
-import { getLastSocket, setStoredIndustry } from './test-helpers'
 import type { Industry } from '../types'
+import { getLastSocket, setStoredIndustry } from './test-helpers'
 
 async function startCallAndGetSocket() {
   const micButton = screen.getByRole('button', { name: /start call/i })
@@ -51,18 +50,17 @@ describe('Hardcoded industry maps (pre-migration baseline)', () => {
     ['hotel', 'ekaette-hotel'],
     ['automotive', 'ekaette-automotive'],
     ['fashion', 'ekaette-fashion'],
-  ] as Array<[Industry, string]>)(
-    'maps %s to company_id=%s in WebSocket URL (runtime behavior)',
-    async (industry, expectedCompanyId) => {
-      setStoredIndustry(industry)
-      const App = (await import('../App')).default
-      render(<App />)
+  ] as Array<
+    [Industry, string]
+  >)('maps %s to company_id=%s in WebSocket URL (runtime behavior)', async (industry, expectedCompanyId) => {
+    setStoredIndustry(industry)
+    const App = (await import('../App')).default
+    render(<App />)
 
-      const ws = await startCallAndGetSocket()
-      expect(ws.url).toContain(`industry=${industry}`)
-      expect(ws.url).toContain(`company_id=${expectedCompanyId}`)
-    },
-  )
+    const ws = await startCallAndGetSocket()
+    expect(ws.url).toContain(`industry=${industry}`)
+    expect(ws.url).toContain(`company_id=${expectedCompanyId}`)
+  })
 
   // Transitional baseline test: expected to change once onboarding/themes become registry-driven.
   it.each([
@@ -90,35 +88,33 @@ describe('Hardcoded industry maps (pre-migration baseline)', () => {
       'Catalog recommendations and consultation workflows.',
       'oklch(74% 0.2 20)',
     ],
-  ] as Array<[Industry, string, string, string]>)(
-    'renders hardcoded theme for %s (title/hint/accent)',
-    async (industry, expectedTitle, expectedHint, expectedAccent) => {
-      setStoredIndustry(industry)
-      const App = (await import('../App')).default
-      const { container } = render(<App />)
+  ] as Array<
+    [Industry, string, string, string]
+  >)('renders hardcoded theme for %s (title/hint/accent)', async (industry, expectedTitle, expectedHint, expectedAccent) => {
+    setStoredIndustry(industry)
+    const App = (await import('../App')).default
+    const { container } = render(<App />)
 
+    expect(screen.getByText(expectedTitle)).toBeInTheDocument()
+    expect(screen.getAllByText(expectedHint).length).toBeGreaterThanOrEqual(1)
 
-      expect(screen.getByText(expectedTitle)).toBeInTheDocument()
-      expect(screen.getAllByText(expectedHint).length).toBeGreaterThanOrEqual(1)
-
-      const appShell = container.querySelector('.app-shell') as HTMLElement | null
-      expect(appShell).not.toBeNull()
-      const accent = appShell?.style.getPropertyValue('--industry-accent').trim()
-      expect(accent).toBe(expectedAccent)
-      expect(appShell?.getAttribute('style')).toContain('oklch(')
-    },
-  )
+    const appShell = container.querySelector('.app-shell') as HTMLElement | null
+    expect(appShell).not.toBeNull()
+    const accent = appShell?.style.getPropertyValue('--industry-accent').trim()
+    expect(accent).toBe(expectedAccent)
+    expect(appShell?.getAttribute('style')).toContain('oklch(')
+  })
 })
 
 // ═══ Onboarding Component Characterization ═══
 
 describe('IndustryOnboarding characterization', () => {
   it('renders exactly 4 industry option buttons', async () => {
-    const { IndustryOnboarding } = await import(
-      '../components/layout/IndustryOnboarding'
-    )
+    const { IndustryOnboarding } = await import('../components/layout/IndustryOnboarding')
     render(<IndustryOnboarding onComplete={() => {}} />)
 
+    const radios = screen.getAllByRole('radio')
+    expect(radios).toHaveLength(4)
     expect(screen.getByRole('radio', { name: /hardware/i })).toBeInTheDocument()
     expect(screen.getByRole('radio', { name: /hotel/i })).toBeInTheDocument()
     expect(screen.getByRole('radio', { name: /automotive/i })).toBeInTheDocument()
@@ -126,9 +122,7 @@ describe('IndustryOnboarding characterization', () => {
   })
 
   it('defaults to electronics selected', async () => {
-    const { IndustryOnboarding } = await import(
-      '../components/layout/IndustryOnboarding'
-    )
+    const { IndustryOnboarding } = await import('../components/layout/IndustryOnboarding')
     const onComplete = vi.fn()
     render(<IndustryOnboarding onComplete={onComplete} />)
 
@@ -142,9 +136,7 @@ describe('IndustryOnboarding characterization', () => {
   })
 
   it('calls onComplete with selected industry', async () => {
-    const { IndustryOnboarding } = await import(
-      '../components/layout/IndustryOnboarding'
-    )
+    const { IndustryOnboarding } = await import('../components/layout/IndustryOnboarding')
     const onComplete = vi.fn()
     const user = userEvent.setup()
     render(<IndustryOnboarding onComplete={onComplete} />)
@@ -158,9 +150,7 @@ describe('IndustryOnboarding characterization', () => {
   })
 
   it('each option has a description', async () => {
-    const { IndustryOnboarding } = await import(
-      '../components/layout/IndustryOnboarding'
-    )
+    const { IndustryOnboarding } = await import('../components/layout/IndustryOnboarding')
     render(<IndustryOnboarding onComplete={() => {}} />)
 
     // Verify descriptions exist (these are the hardcoded strings)
@@ -230,7 +220,6 @@ describe('WebSocket connection characterization', () => {
     const App = (await import('../App')).default
     render(<App />)
 
-
     const ws = await startCallAndGetSocket()
     expect(ws.url).toContain('industry=hotel')
   })
@@ -240,7 +229,6 @@ describe('WebSocket connection characterization', () => {
 
     const App = (await import('../App')).default
     render(<App />)
-
 
     const ws = await startCallAndGetSocket()
     expect(ws.url).toContain('company_id=ekaette-automotive')
@@ -281,14 +269,28 @@ describe('Demo mode characterization', () => {
     expect(electronicsEntry).toBeDefined()
   })
 
-  it('useDemoMode defaults to electronics steps regardless of industry', async () => {
-    const { renderHook } = await import('@testing-library/react')
+  it('useDemoMode defaults to electronics steps when no template specified', async () => {
+    const { renderHook, act: hookAct } = await import('@testing-library/react')
     const { useDemoMode } = await import('../hooks/useDemoMode')
+    const { ELECTRONICS_DEMO_STEPS } = await import('../utils/mockData')
 
-    // No steps or industry parameter — should default to electronics
-    const { result } = renderHook(() => useDemoMode())
-    expect(result.current.messages).toHaveLength(0)
-    expect(result.current.isPlaying).toBe(false)
+    vi.useFakeTimers()
+    try {
+      const { result } = renderHook(() => useDemoMode())
+      expect(result.current.messages).toHaveLength(0)
+      expect(result.current.isPlaying).toBe(false)
+
+      hookAct(() => {
+        result.current.play()
+      })
+      hookAct(() => {
+        vi.advanceTimersByTime(100)
+      })
+      expect(result.current.isPlaying).toBe(true)
+      expect(result.current.messages[0]?.type).toBe(ELECTRONICS_DEMO_STEPS[0].message.type)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
 

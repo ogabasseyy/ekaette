@@ -39,6 +39,8 @@ describe('ConsentModal', () => {
     const link = screen.getByRole('link', { name: /privacy policy/i })
     expect(link).toHaveAttribute('href', '/privacy.html')
     expect(link).toHaveAttribute('target', '_blank')
+    expect(link).toHaveAttribute('rel', expect.stringContaining('noopener'))
+    expect(link).toHaveAttribute('rel', expect.stringContaining('noreferrer'))
   })
 
   it('has correct accessibility attributes', () => {

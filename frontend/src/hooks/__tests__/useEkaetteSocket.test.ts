@@ -26,6 +26,16 @@ function getLastSocket(): MockSocket {
   return ws
 }
 
+async function _flushSocketOpen() {
+  await act(async () => {
+    await Promise.resolve()
+    await Promise.resolve()
+    await Promise.resolve()
+    await Promise.resolve()
+    vi.advanceTimersByTime(1)
+  })
+}
+
 describe('useEkaetteSocket', () => {
   beforeEach(() => {
     vi.useFakeTimers()
@@ -794,10 +804,7 @@ describe('useEkaetteSocket', () => {
       vi.advanceTimersByTime(1)
     })
 
-    expect(fetchSpy).toHaveBeenCalledWith(
-      '/api/token',
-      expect.objectContaining({ method: 'POST' }),
-    )
+    expect(fetchSpy).toHaveBeenCalledWith('/api/token', expect.objectContaining({ method: 'POST' }))
     const ws = getLastSocket()
     expect(ws.url).toContain('token=ws-auth-token-abc')
     expect(ws.url).toContain('/ws/user1/session1')
