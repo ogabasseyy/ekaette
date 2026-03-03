@@ -96,7 +96,7 @@ graph TB
 
 **Dual-model strategy**: The root agent uses `gemini-2.5-flash-native-audio` via the Live API for real-time voice I/O. Specialist agents use `gemini-3-flash` via the Standard API for reasoning-heavy tasks (vision analysis, pricing calculations). This keeps voice latency low while allowing deep analysis when needed.
 
-For the full architecture with all data flows, memory tiers, and latency mitigations, see [Ekaette_Architecture.md](Ekaette_Architecture.md).
+For full architecture details including all data flows, memory tiers, and latency mitigations, see the Architecture section in the project documentation.
 
 ---
 

@@ -218,6 +218,14 @@ async def admin_auth_middleware(request: Request, call_next):
             return error_response
         if context is not None:
             request.state.admin_auth_context = context
+            # Prefer authenticated tenant over spoofable query/header values
+            ctx_tenant = None
+            if isinstance(context, dict):
+                ctx_tenant = context.get("tenant_id") or context.get("tenantId")
+            else:
+                ctx_tenant = getattr(context, "tenant_id", None) or getattr(context, "tenantId", None)
+            if ctx_tenant:
+                tenant_id = _normalize_tenant_id(ctx_tenant, default=tenant_id)
 
     response = await call_next(request)
 
