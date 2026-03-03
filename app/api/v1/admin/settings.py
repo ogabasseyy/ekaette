@@ -226,6 +226,15 @@ RATE_LIMIT_MAX_BUCKETS = int(_cfg.rate_limit_max_buckets)
 _rate_limit_buckets: dict[str, list[float]] = {}
 _rate_limit_last_global_prune = 0.0
 
+__all__ = [
+    "google_id_token",
+    "_GOOGLE_AUTH_REQUEST",
+    "_policy_cache",
+    "_connector_test_circuit_state",
+    "_connector_lock_state",
+    "_rate_limit_last_global_prune",
+]
+
 
 def reset_runtime_state() -> None:
     """Reset mutable in-memory state (used by tests)."""

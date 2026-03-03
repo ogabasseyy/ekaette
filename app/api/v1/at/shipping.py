@@ -71,7 +71,18 @@ async def _resolve_quote_or_raise(
     )
 
     if result.get("status") == "ok":
-        return result
+        return {
+            "status": "ok",
+            "provider": str(result.get("provider") or "topship"),
+            "route": str(result.get("route") or ""),
+            "sender_city": str(result.get("sender_city") or ""),
+            "receiver_city": str(result.get("receiver_city") or ""),
+            "weight_kg": result.get("weight_kg"),
+            "recommended": result.get("recommended"),
+            "cheapest": result.get("cheapest"),
+            "fastest": result.get("fastest"),
+            "quotes": result.get("quotes"),
+        }
 
     code = _TOPSHIP_CODE_SAFE.get(str(result.get("code") or ""), "TOPSHIP_ERROR")
     status_code = _TOPSHIP_ERROR_STATUS_MAP.get(code, 500)
@@ -140,7 +151,12 @@ async def shipping_order_create(req: ShippingOrderCreateRequest) -> dict:
     )
     if result.get("status") != "ok":
         _raise_order_tool_error(result)
-    return result
+    return {
+        "status": "ok",
+        "order_id": result.get("order_id"),
+        "order": result.get("order"),
+        "storage": result.get("storage"),
+    }
 
 
 @router.get("/shipping/orders/{order_id}/tracking")
@@ -159,7 +175,20 @@ async def shipping_order_track_get(
     )
     if result.get("status") != "ok":
         _raise_order_tool_error(result)
-    return result
+    provider_tracking = result.get("provider_tracking")
+    if isinstance(provider_tracking, dict) and provider_tracking.get("status") != "ok":
+        provider_tracking = {
+            "status": "error",
+            "code": provider_tracking.get("code"),
+            "provider": provider_tracking.get("provider"),
+        }
+    return {
+        "status": "ok",
+        "order_id": result.get("order_id"),
+        "order": result.get("order"),
+        "tracking": result.get("tracking"),
+        "provider_tracking": provider_tracking,
+    }
 
 
 @router.post("/shipping/orders/{order_id}/tracking/status")

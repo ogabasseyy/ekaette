@@ -743,20 +743,7 @@ def process_gateway_event(payload: dict[str, Any]) -> dict[str, Any]:
                 },
             )
 
-    logger.info(
-        "Paystack event processed",
-        extra={
-            "event": sanitize_log(event),
-            "reference": sanitize_log(reference),
-            "tenant_id": sanitize_log(tenant_id),
-            "company_id": sanitize_log(company_id),
-            "campaign_id": sanitize_log(campaign_id),
-            "status": sanitize_log(status),
-            "payment_method": sanitize_log(payment_method),
-            "payment_channel": sanitize_log(payment_channel),
-            "virtual_account_reference": sanitize_log(virtual_account_reference),
-        },
-    )
+    logger.info("Paystack event processed")
 
     return {
         "event": event,

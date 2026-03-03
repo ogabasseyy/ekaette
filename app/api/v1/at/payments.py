@@ -7,7 +7,6 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from app.configs import sanitize_log
 from .idempotency import idempotency_commit, idempotency_preflight, require_idempotency_key
 from .models import PaystackInitializeRequest, PaystackVirtualAccountCreateRequest
 from .service_payments import PaymentGatewayError
@@ -208,14 +207,7 @@ async def paystack_webhook(request: Request) -> dict:
     except PaymentGatewayError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
 
-    logger.info(
-        "Paystack webhook accepted",
-        extra={
-            "reference": sanitize_log(processed.get("reference")),
-            "event": sanitize_log(processed.get("event")),
-            "campaign_id": sanitize_log(processed.get("campaign_id")),
-        },
-    )
+    logger.info("Paystack webhook accepted")
     return {
         "status": "ok",
         "processed": processed,

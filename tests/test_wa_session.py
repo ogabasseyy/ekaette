@@ -315,7 +315,6 @@ class TestWaSessionFirestorePersistence:
         )
 
         async def stop_soon():
-            import asyncio
             await asyncio.sleep(0.05)
             s.shutdown()
 
@@ -350,7 +349,6 @@ class TestWaSessionFirestorePersistence:
         )
 
         async def stop_soon():
-            import asyncio
             await asyncio.sleep(0.05)
             s.shutdown()
 
@@ -385,7 +383,6 @@ class TestWaSessionFirestorePersistence:
         )
 
         async def stop_soon():
-            import asyncio
             await asyncio.sleep(0.05)
             s.shutdown()
 

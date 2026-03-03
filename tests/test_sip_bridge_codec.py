@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import struct
 
-import pytest
 from sip_bridge.audio_codec import (
     alaw_to_pcm16,
     ulaw_to_pcm16,
@@ -19,7 +18,6 @@ from sip_bridge.audio_codec import (
 from sip_bridge.rtp import (
     PCMA_PAYLOAD_TYPE,
     PCMU_PAYLOAD_TYPE,
-    RTP_HEADER_SIZE,
     RTPPacket,
     RTPTimer,
 )
