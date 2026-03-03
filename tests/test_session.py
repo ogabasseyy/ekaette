@@ -30,8 +30,8 @@ class TestSessionStateSchema:
         app_keys = [k for k in state if k.startswith("app:")]
         assert len(app_keys) >= 3  # industry, industry_config, voice, greeting
 
-    def test_temp_prefix_for_transient_data(self):
-        """Temporary/transient data must use temp: prefix."""
+    def test_all_keys_use_valid_prefix(self):
+        """All session state keys must use app:, user:, or temp: prefix."""
         from app.configs.industry_loader import build_session_state
 
         state = build_session_state(
