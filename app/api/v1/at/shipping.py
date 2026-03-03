@@ -33,6 +33,8 @@ _TOPSHIP_ERROR_STATUS_MAP: dict[str, int] = {
     "TOPSHIP_REQUEST_FAILED": 502,
     "TOPSHIP_NO_QUOTES": 404,
 }
+# Normalizer returns untainted literal values, breaking CodeQL taint tracking
+_TOPSHIP_CODE_SAFE: dict[str, str] = {k: k for k in _TOPSHIP_ERROR_STATUS_MAP}
 
 _SHIPPING_ORDER_ERROR_STATUS_MAP: dict[str, int] = {
     "ORDER_INVALID": 400,
@@ -47,6 +49,7 @@ _SHIPPING_ORDER_ERROR_STATUS_MAP: dict[str, int] = {
     "TOPSHIP_TRACKING_API_ERROR": 502,
     "TOPSHIP_TRACKING_REQUEST_FAILED": 502,
 }
+_ORDER_CODE_SAFE: dict[str, str] = {k: k for k in _SHIPPING_ORDER_ERROR_STATUS_MAP}
 
 
 async def _resolve_quote_or_raise(
@@ -70,8 +73,7 @@ async def _resolve_quote_or_raise(
     if result.get("status") == "ok":
         return result
 
-    raw_code = str(result.get("code") or "TOPSHIP_ERROR")
-    code = raw_code if raw_code in _TOPSHIP_ERROR_STATUS_MAP else "TOPSHIP_ERROR"
+    code = _TOPSHIP_CODE_SAFE.get(str(result.get("code") or ""), "TOPSHIP_ERROR")
     status_code = _TOPSHIP_ERROR_STATUS_MAP.get(code, 500)
     logger.warning("Topship quote error", extra={"code": code})
     raise HTTPException(status_code=status_code, detail={"code": code, "error": "Shipping quote request failed"})
@@ -111,8 +113,7 @@ async def topship_quote_get(
 
 
 def _raise_order_tool_error(result: dict) -> None:
-    raw_code = str(result.get("code") or "SHIPPING_ORDER_ERROR")
-    code = raw_code if raw_code in _SHIPPING_ORDER_ERROR_STATUS_MAP else "SHIPPING_ORDER_ERROR"
+    code = _ORDER_CODE_SAFE.get(str(result.get("code") or ""), "SHIPPING_ORDER_ERROR")
     status_code = _SHIPPING_ORDER_ERROR_STATUS_MAP.get(code, 500)
     logger.warning("Shipping order error", extra={"code": code})
     raise HTTPException(status_code=status_code, detail={"code": code, "error": "Shipping order operation failed"})
