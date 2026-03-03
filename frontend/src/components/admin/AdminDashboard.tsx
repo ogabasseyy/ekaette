@@ -571,6 +571,10 @@ export function AdminDashboard() {
   }
 
   async function importProducts() {
+    if (!activeCompanyId.trim()) {
+      setErrorMessage('Active company id is required.')
+      return
+    }
     await runAction(async () => {
       const products = parseJsonArray(productsJson, 'Products payload')
       const payload = await callAdminJson(
@@ -586,6 +590,10 @@ export function AdminDashboard() {
   }
 
   async function importBookingSlots() {
+    if (!activeCompanyId.trim()) {
+      setErrorMessage('Active company id is required.')
+      return
+    }
     await runAction(async () => {
       const slots = parseJsonArray(slotsJson, 'Booking slots payload')
       const payload = await callAdminJson(

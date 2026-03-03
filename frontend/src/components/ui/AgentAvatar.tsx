@@ -17,6 +17,7 @@ export function AgentAvatar({ label, active = false, className }: AgentAvatarPro
   return (
     <div className={cn('inline-flex items-center gap-2', className)}>
       <span
+        aria-hidden="true"
         className={cn(
           'inline-flex h-8 w-8 items-center justify-center rounded-full border font-semibold text-xs uppercase',
           active

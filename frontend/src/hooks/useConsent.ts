@@ -14,6 +14,7 @@ function readConsent(): boolean {
     const raw = localStorage.getItem(STORAGE_KEY)
     if (!raw) return false
     const parsed: ConsentRecord = JSON.parse(raw)
+    if (parsed.version !== CONSENT_VERSION) return false
     return parsed.accepted === true
   } catch {
     return false
@@ -38,6 +39,18 @@ export function useConsent() {
   }, [])
 
   const declineConsent = useCallback(() => {
+    try {
+      localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({
+          accepted: false,
+          timestamp: new Date().toISOString(),
+          version: CONSENT_VERSION,
+        }),
+      )
+    } catch {
+      // localStorage may throw in private browsing or when quota is exceeded.
+    }
     setHasConsented(false)
   }, [])
 

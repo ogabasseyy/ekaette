@@ -54,22 +54,15 @@ class PCMProcessor extends AudioWorkletProcessor {
     if (inputs.length > 0 && inputs[0].length > 0) {
       // Use first channel (mono). Convert Float32 -> Int16 PCM little-endian.
       const inputChannel = inputs[0][0];
-      let rawEnergy = 0;
-      for (let i = 0; i < inputChannel.length; i++) {
-        const sample = Math.max(-1, Math.min(1, inputChannel[i]));
-        rawEnergy += sample * sample;
-      }
-      const rawRms = Math.sqrt(rawEnergy / inputChannel.length);
-      const likelySpeech = this.isSpeaking || rawRms >= this.vadStartThreshold * 0.75;
-
-      if (this.denoiseEnabled && !likelySpeech) {
-        this.noiseFloorEma = this.noiseFloorEma * 0.985 + rawRms * 0.015;
-      }
+      // Noise gate threshold uses the previous frame's noise floor estimate.
+      // The one-frame lag (~8ms) is inaudible and avoids a costly two-pass loop.
+      const likelySpeech = this.isSpeaking || this.rmsEma >= this.vadStartThreshold * 0.75;
       const adaptiveGateThreshold = Math.max(
         this.noiseGateFloor,
         this.noiseFloorEma * this.noiseGateMultiplier
       );
 
+      let filteredEnergy = 0;
       let energy = 0;
       for (let i = 0; i < inputChannel.length; i++) {
         const sample = Math.max(-1, Math.min(1, inputChannel[i]));
@@ -83,6 +76,8 @@ class PCMProcessor extends AudioWorkletProcessor {
           this.highPassPrevInput = sample;
           this.highPassPrevOutput = processed;
         }
+        // Accumulate energy after high-pass for accurate noise floor estimation.
+        filteredEnergy += processed * processed;
         if (this.denoiseEnabled && !likelySpeech) {
           const amplitude = Math.abs(processed);
           if (amplitude < adaptiveGateThreshold) {
@@ -111,6 +106,12 @@ class PCMProcessor extends AudioWorkletProcessor {
           this.pcmView = new DataView(this.pcmBytes);
           this.writeIndex = 0;
         }
+      }
+
+      // Update noise floor from high-pass filtered signal (not gated output).
+      const filteredRms = Math.sqrt(filteredEnergy / inputChannel.length);
+      if (this.denoiseEnabled && !likelySpeech) {
+        this.noiseFloorEma = this.noiseFloorEma * 0.985 + filteredRms * 0.015;
       }
 
       // Speech activity events for manual activity signaling.

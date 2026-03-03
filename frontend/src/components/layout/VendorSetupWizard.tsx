@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useReducer } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useReducer } from 'react'
 import type { IndustryTemplateMeta, OnboardingCompanyMeta, WizardStepId } from '../../types'
 import { WizardStepIndicator } from './wizard/WizardStepIndicator'
 
@@ -96,6 +96,7 @@ type WizardAction =
   | { type: 'ADVANCE'; templateId?: string; companyId?: string }
   | { type: 'GO_BACK' }
   | { type: 'GO_TO_STEP'; step: number }
+  | { type: 'SYNC'; templateId: string; companyId: string }
 
 function wizardReducer(state: WizardState, action: WizardAction): WizardState {
   switch (action.type) {
@@ -120,6 +121,13 @@ function wizardReducer(state: WizardState, action: WizardAction): WizardState {
         return { ...state, currentStep: action.step }
       }
       return state
+    }
+    case 'SYNC': {
+      return {
+        ...state,
+        templateId: action.templateId,
+        companyId: action.companyId,
+      }
     }
     default:
       return state
@@ -189,6 +197,17 @@ function NormalWizard({
     templateId: initialTemplateId,
     companyId: initialCompanyId,
   })
+
+  // Sync wizard state when async-fetched defaults arrive after mount
+  useEffect(() => {
+    if (defaultTemplateId && defaultTemplateId !== state.templateId && state.currentStep === 0) {
+      dispatch({
+        type: 'SYNC',
+        templateId: defaultTemplateId,
+        companyId: defaultCompanyId ?? `ekaette-${defaultTemplateId}`,
+      })
+    }
+  }, [defaultTemplateId, defaultCompanyId, state.templateId, state.currentStep])
 
   const tenantId = String(import.meta.env.VITE_TENANT_ID ?? 'public')
 

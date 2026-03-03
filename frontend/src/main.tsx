@@ -8,9 +8,9 @@ import { MarketingDashboard } from './components/marketing/MarketingDashboard'
 
 function RootPage() {
   const pathname = window.location.pathname
-  if (pathname.startsWith('/admin')) return <AdminDashboard />
-  if (pathname.startsWith('/analytics')) return <AnalyticsDashboard />
-  if (pathname.startsWith('/marketing')) return <MarketingDashboard />
+  if (pathname === '/admin' || pathname.startsWith('/admin/')) return <AdminDashboard />
+  if (pathname === '/analytics' || pathname.startsWith('/analytics/')) return <AnalyticsDashboard />
+  if (pathname === '/marketing' || pathname.startsWith('/marketing/')) return <MarketingDashboard />
   // voice page is the default for all unmatched paths
   return <App />
 }

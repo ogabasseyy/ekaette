@@ -133,7 +133,11 @@ describe('WebSocket → UI integration', () => {
         status: 'active',
       })
     })
+
+    // Verify the transfer is reflected in the UI: new agent is displayed as active
     expect(screen.getByText(/Valuation Agent/i)).toBeInTheDocument()
+    // The previous router agent should no longer be the displayed active agent
+    expect(screen.queryByText(/Ekaette Router/i)).not.toBeInTheDocument()
 
     // Subsequent messages should still render correctly
     await act(async () => {

@@ -31,6 +31,7 @@ export function TextInput({ connected, onSend }: TextInputProps) {
         onChange={event => setDraft(event.target.value)}
         onKeyDown={handleKeyDown}
         disabled={!connected}
+        aria-label="Message input"
         placeholder={connected ? 'Type a message and press Enter...' : 'Connect call to send text'}
         className="w-full min-w-0 bg-transparent text-foreground text-sm outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-50"
       />

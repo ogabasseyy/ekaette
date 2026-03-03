@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import { useWizardApi } from './useWizardApi'
 
 interface StepCatalogProps {
@@ -19,6 +19,7 @@ export function StepCatalog({ companyId, tenantId, onNext, onBack }: StepCatalog
   const [sourceUrl, setSourceUrl] = useState('')
   const [status, setStatus] = useState<string | null>(null)
   const [file, setFile] = useState<File | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const api = useWizardApi({ tenantId })
   const companyUrl = `/api/v1/admin/companies/${encodeURIComponent(companyId)}`
 
@@ -60,6 +61,7 @@ export function StepCatalog({ companyId, tenantId, onNext, onBack }: StepCatalog
       const written = typeof payload.written === 'number' ? payload.written : '?'
       setStatus(`Uploaded ${written} items`)
       setFile(null)
+      if (fileInputRef.current) fileInputRef.current.value = ''
     })
   }, [api, companyUrl, file])
 
@@ -113,6 +115,7 @@ export function StepCatalog({ companyId, tenantId, onNext, onBack }: StepCatalog
           <p className="text-muted-foreground text-xs uppercase tracking-wider">Upload CSV/XLSX</p>
           <div className="flex flex-wrap items-center gap-2">
             <input
+              ref={fileInputRef}
               type="file"
               aria-label="Inventory file"
               accept=".csv,.xlsx"

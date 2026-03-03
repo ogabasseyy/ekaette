@@ -85,7 +85,7 @@ class MockAudioContext {
     this.state = 'running'
   }
 
-  createMediaStreamSource() {
+  createMediaStreamSource(_stream?: MediaStream) {
     return { connect: () => {} }
   }
 

@@ -265,7 +265,7 @@ describe('MarketingDashboard', () => {
     await waitFor(() => {
       const smsCalls = fetchMock.mock.calls.filter(([url]: [string]) => url.includes('/sms/send'))
       expect(smsCalls.length).toBe(1)
-      const [_url, opts] = smsCalls[0] as [string, RequestInit]
+      const [, opts] = smsCalls[0] as [string, RequestInit]
       expect(opts.method).toBe('POST')
       const body = JSON.parse(opts.body as string)
       expect(body.to).toBe('+2348011111111')
@@ -291,7 +291,7 @@ describe('MarketingDashboard', () => {
         url.includes('/voice/call'),
       )
       expect(callCalls.length).toBe(1)
-      const [_url, opts] = callCalls[0] as [string, RequestInit]
+      const [, opts] = callCalls[0] as [string, RequestInit]
       expect(opts.method).toBe('POST')
       const body = JSON.parse(opts.body as string)
       expect(body.to).toBe('+2348011111111')
@@ -303,7 +303,7 @@ describe('MarketingDashboard', () => {
     render(<MarketingDashboard />)
 
     await waitFor(() => {
-      expect(screen.getByText(/500/)).toBeInTheDocument()
+      expect(screen.getAllByText(/500/).length).toBeGreaterThanOrEqual(1)
     })
   })
 })

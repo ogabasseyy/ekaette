@@ -26,16 +26,6 @@ function getLastSocket(): MockSocket {
   return ws
 }
 
-async function _flushSocketOpen() {
-  await act(async () => {
-    await Promise.resolve()
-    await Promise.resolve()
-    await Promise.resolve()
-    await Promise.resolve()
-    vi.advanceTimersByTime(1)
-  })
-}
-
 describe('useEkaetteSocket', () => {
   beforeEach(() => {
     vi.useFakeTimers()

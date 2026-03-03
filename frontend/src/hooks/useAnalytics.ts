@@ -45,6 +45,7 @@ export function useAnalytics({
 
     try {
       setLoading(true)
+      setSelectedCampaign(null)
       const params = new URLSearchParams({
         tenantId,
         companyId,

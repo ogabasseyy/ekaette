@@ -20,9 +20,9 @@ export const NAV_ITEMS: ReadonlyArray<{
 
 export function currentPage(): AppPage {
   const pathname = window.location.pathname
-  if (pathname.startsWith('/admin')) return 'admin'
-  if (pathname.startsWith('/analytics')) return 'analytics'
-  if (pathname.startsWith('/marketing')) return 'marketing'
+  if (pathname === '/admin' || pathname.startsWith('/admin/')) return 'admin'
+  if (pathname === '/analytics' || pathname.startsWith('/analytics/')) return 'analytics'
+  if (pathname === '/marketing' || pathname.startsWith('/marketing/')) return 'marketing'
   return 'voice'
 }
 

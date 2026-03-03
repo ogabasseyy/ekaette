@@ -117,7 +117,10 @@ const DEFAULT_THEME: ThemeConfig = {
 }
 
 function createClientSessionId(): string {
-  return `session-${Date.now()}-${crypto.randomUUID().slice(0, 12)}`
+  // crypto.randomUUID() is cryptographically secure (Web Crypto API).
+  // Date.now() prefix aids log correlation / debugging; uniqueness is guaranteed by the UUID.
+  const uuid = crypto.randomUUID()
+  return `session-${Date.now()}-${uuid.slice(0, 12)}`
 }
 
 function parseStoredIndustry(value: string | null): string | null {
@@ -163,15 +166,7 @@ function resolveTheme(templateId: string, templates: IndustryTemplateMeta[] | nu
   // Server-provided templates take priority
   if (templates) {
     const match = templates.find(t => t.id === templateId)
-    if (match) {
-      if (templateId === 'electronics') {
-        return {
-          ...match.theme,
-          title: 'Hardware Trade Desk',
-        }
-      }
-      return match.theme
-    }
+    if (match) return match.theme
   }
   // Fallback to hardcoded
   return (FALLBACK_THEMES as Record<string, ThemeConfig>)[templateId] ?? DEFAULT_THEME
@@ -213,7 +208,6 @@ function resolveTemplateLabel(
   templateId: string,
   templates: IndustryTemplateMeta[] | null,
 ): string {
-  if (templateId === 'electronics') return 'Hardware'
   if (templates) {
     const match = templates.find(t => t.id === templateId)
     if (match) return match.label

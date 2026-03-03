@@ -61,7 +61,7 @@ export function MarketingDashboard() {
   const {
     campaigns,
     selectedCampaign,
-    loading: _campaignsLoading,
+    error: analyticsError,
     selectCampaign,
     clearSelection,
   } = useAnalytics({ tenantId, companyId })
@@ -281,6 +281,13 @@ export function MarketingDashboard() {
                 </div>
               )}
             </div>
+          </div>
+        )}
+
+        {/* Analytics error */}
+        {analyticsError && (
+          <div className="panel-glass border-destructive/30 py-8 text-center text-destructive">
+            {analyticsError}
           </div>
         )}
 

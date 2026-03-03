@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { AdminKnowledgeEntry } from './useWizardApi'
 import { parseCsv, useWizardApi } from './useWizardApi'
 
@@ -13,6 +13,7 @@ export function StepKnowledge({ companyId, tenantId, onNext, onBack }: StepKnowl
   const [title, setTitle] = useState('FAQ')
   const [text, setText] = useState('')
   const [file, setFile] = useState<File | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const [entries, setEntries] = useState<AdminKnowledgeEntry[]>([])
   const [status, setStatus] = useState<string | null>(null)
   const [showAllFormats, setShowAllFormats] = useState(false)
@@ -58,6 +59,7 @@ export function StepKnowledge({ companyId, tenantId, onNext, onBack }: StepKnowl
       })
       setStatus('Knowledge file imported')
       setFile(null)
+      if (fileInputRef.current) fileInputRef.current.value = ''
       await loadEntries()
     })
   }, [api, companyUrl, file, loadEntries, title])
@@ -108,6 +110,7 @@ export function StepKnowledge({ companyId, tenantId, onNext, onBack }: StepKnowl
               Import Text
             </button>
             <input
+              ref={fileInputRef}
               type="file"
               aria-label="Knowledge file"
               accept=".pdf,.docx,.doc,.xlsx,.xls,.xlsm,.pptx,.ppt,.odt,.ods,.html,.htm,.txt,.md,.csv,.tsv,.json,.yaml,.toml,.xml,.epub,.rtf,.eml,.msg,.jpg,.jpeg,.png,.gif,.bmp,.tiff,.tif,.webp,.svg,.zip,.tar,.gz,.7z"

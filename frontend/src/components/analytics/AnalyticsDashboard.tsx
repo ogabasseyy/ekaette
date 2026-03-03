@@ -8,9 +8,21 @@ import { KpiCards } from './KpiCards'
 
 const DAYS_OPTIONS = [7, 30, 90] as const
 
+function readStoredOrDefault(key: string, fallback: string): string {
+  try {
+    const stored = localStorage.getItem(key)
+    if (stored && stored.trim()) return stored.trim()
+  } catch {
+    // localStorage may be unavailable in private browsing
+  }
+  return fallback
+}
+
 export function AnalyticsDashboard() {
-  const [tenantId] = useState('public')
-  const [companyId] = useState('ekaette-electronics')
+  const [tenantId] = useState(() => readStoredOrDefault('ekaette:onboarding:tenantId', 'public'))
+  const [companyId] = useState(() =>
+    readStoredOrDefault('ekaette:onboarding:companyId', 'ekaette-electronics'),
+  )
   const [days, setDays] = useState<number>(30)
 
   const { summary, campaigns, selectedCampaign, loading, error, selectCampaign, clearSelection } =
@@ -68,7 +80,7 @@ export function AnalyticsDashboard() {
         {summary && <KpiCards summary={summary} />}
 
         {/* Campaign table */}
-        {!loading && (
+        {!loading && !error && (
           <CampaignTable
             campaigns={campaigns}
             selectedId={selectedCampaign?.campaign_id}

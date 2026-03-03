@@ -75,7 +75,6 @@ interface IndustryOnboardingProps {
 }
 
 function resolveTemplateDisplayLabel(option: IndustryTemplateMeta): string {
-  if (option.id === 'electronics') return 'Hardware'
   return option.label
 }
 
