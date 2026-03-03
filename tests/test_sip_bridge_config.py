@@ -129,6 +129,22 @@ class TestBridgeConfigValidation:
         errors = cfg.validate()
         assert any("SIP_PASSWORD" in e for e in errors)
 
+    def test_unsupported_live_model_rejected(self) -> None:
+        from sip_bridge.config import BridgeConfig
+
+        env = {
+            "GOOGLE_API_KEY": "test-key-123",
+            "LIVE_MODEL_ID": "gemini-3-flash-preview",
+            "SIP_PUBLIC_IP": "203.0.113.1",
+            "SIP_USERNAME": "agent1@sip.example.com",
+            "SIP_PASSWORD": "secret-pass",
+        }
+        with patch.dict("os.environ", env, clear=True):
+            cfg = BridgeConfig.from_env()
+        errors = cfg.validate()
+        assert any("gemini-3-flash-preview" in e for e in errors)
+        assert any("bidiGenerateContent" in e for e in errors)
+
     def test_valid_config_no_errors(self) -> None:
         from sip_bridge.config import BridgeConfig
 

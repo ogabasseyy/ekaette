@@ -9,21 +9,27 @@ from unittest.mock import patch
 from fastapi import FastAPI, Depends
 from fastapi.testclient import TestClient
 
+import pytest
 
-def _build_app(
-    *,
-    allowed_ips: set[str] | None = None,
-    rate_limit: int = 30,
-    rate_window: int = 60,
-) -> FastAPI:
+import app.api.v1.at.security as sec_mod
+
+
+@pytest.fixture(autouse=True)
+def _reset_rate_limit_state():
+    """Clear rate-limit buckets between tests to prevent cross-test leakage."""
+    sec_mod._at_rate_buckets.clear()
+    sec_mod._at_last_prune = 0.0
+    yield
+    sec_mod._at_rate_buckets.clear()
+    sec_mod._at_last_prune = 0.0
+
+
+def _build_app() -> FastAPI:
     """Build a minimal FastAPI app with AT security dependency for testing."""
-    import app.api.v1.at.security as sec_mod
-    verify_at_webhook = sec_mod.verify_at_webhook
-
     app = FastAPI()
 
     @app.post("/test-webhook")
-    async def _webhook(_: None = Depends(verify_at_webhook)) -> dict:
+    async def _webhook(_: None = Depends(sec_mod.verify_at_webhook)) -> dict:
         return {"ok": True}
 
     return app
@@ -76,11 +82,6 @@ class TestRateLimiting:
             patch("app.api.v1.at.security.AT_RATE_LIMIT", 5),
             patch("app.api.v1.at.security.AT_RATE_WINDOW", 60),
         ):
-            # Reset bucket state
-            import app.api.v1.at.security as sec_mod
-            sec_mod._at_rate_buckets.clear()
-            sec_mod._at_last_prune = 0.0
-
             app = _build_app()
             client = TestClient(app)
             for _ in range(5):
@@ -94,10 +95,6 @@ class TestRateLimiting:
             patch("app.api.v1.at.security.AT_RATE_LIMIT", 3),
             patch("app.api.v1.at.security.AT_RATE_WINDOW", 60),
         ):
-            import app.api.v1.at.security as sec_mod
-            sec_mod._at_rate_buckets.clear()
-            sec_mod._at_last_prune = 0.0
-
             app = _build_app()
             client = TestClient(app)
             # First 3 should pass
@@ -122,10 +119,6 @@ class TestCombinedSecurity:
             patch("app.api.v1.at.security.ALLOWED_SOURCE_IPS", {"10.0.0.1"}),
             patch("app.api.v1.at.security.AT_RATE_LIMIT", 1),
         ):
-            import app.api.v1.at.security as sec_mod
-            sec_mod._at_rate_buckets.clear()
-            sec_mod._at_last_prune = 0.0
-
             app = _build_app()
             client = TestClient(app)
             # This request from unknown IP should be 403, not consume budget

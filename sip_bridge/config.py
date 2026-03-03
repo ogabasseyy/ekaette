@@ -82,6 +82,11 @@ class BridgeConfig:
             errors.append("GOOGLE_API_KEY is required for Gemini Live")
         if not self.live_model_id:
             errors.append("LIVE_MODEL_ID is required")
+        elif self.live_model_id == "gemini-3-flash-preview":
+            errors.append(
+                "LIVE_MODEL_ID 'gemini-3-flash-preview' does not support "
+                "bidiGenerateContent — use a Live API-compatible model"
+            )
         if not self.sip_public_ip or self.sip_public_ip == "127.0.0.1":
             errors.append("SIP_PUBLIC_IP should be set to a reachable public IP")
         if not self.sip_username:

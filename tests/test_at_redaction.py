@@ -23,6 +23,12 @@ FORBIDDEN_LOG_PATTERNS = [
     r"AT_WEBHOOK_SHARED_SECRET",
     r"sip_credential",
     r"password",
+    r"\baccess_token\b",
+    r"\buser_token\b",
+    r"\bclient_secret\b",
+    r"\bauth_token\b",
+    r"\bbearer\b",
+    r"\bsecret_key\b",
 ]
 
 
@@ -30,7 +36,12 @@ class TestNoSecretsInLogs:
     """Ensure log calls don't include secret values."""
 
     def _get_log_lines(self, root: Path) -> list[tuple[Path, int, str]]:
-        """Extract all lines containing logger calls from Python files."""
+        """Extract all lines containing logger calls from Python files.
+
+        Limitations: only detects lines starting with ``logger.<level>(...)``.
+        Aliased loggers (e.g. ``log.info()``) and multiline calls spanning
+        multiple lines are not detected.
+        """
         results = []
         if not root.exists():
             return results
