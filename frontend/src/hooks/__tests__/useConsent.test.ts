@@ -1,5 +1,5 @@
 import { act, renderHook } from '@testing-library/react'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useConsent } from '../useConsent'
 
 const STORAGE_KEY = 'ekaette:privacy:consent'
@@ -65,5 +65,27 @@ describe('useConsent', () => {
       const stored = JSON.parse(raw)
       expect(stored.accepted).not.toBe(true)
     }
+  })
+
+  it('gracefully falls back to false when localStorage.getItem throws (private browsing)', () => {
+    const spy = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+      throw new DOMException('QuotaExceededError')
+    })
+    const { result } = renderHook(() => useConsent())
+    expect(result.current.hasConsented).toBe(false)
+    spy.mockRestore()
+  })
+
+  it('still updates in-memory state when localStorage.setItem throws', () => {
+    const spy = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new DOMException('QuotaExceededError')
+    })
+    const { result } = renderHook(() => useConsent())
+    act(() => {
+      result.current.acceptConsent()
+    })
+    // In-memory state should still be updated even if localStorage fails
+    expect(result.current.hasConsented).toBe(true)
+    spy.mockRestore()
   })
 })

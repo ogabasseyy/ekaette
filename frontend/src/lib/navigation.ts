@@ -19,7 +19,6 @@ export const NAV_ITEMS: ReadonlyArray<{
 ]
 
 export function currentPage(): AppPage {
-  if (typeof window === 'undefined') return 'voice'
   const pathname = window.location.pathname
   if (pathname.startsWith('/admin')) return 'admin'
   if (pathname.startsWith('/analytics')) return 'analytics'
@@ -27,6 +26,8 @@ export function currentPage(): AppPage {
   return 'voice'
 }
 
+// NOTE: Deliberate MPA navigation — 4 static pages with no shared state benefit
+// from full page loads. A client-side router adds complexity without value here.
 export function navigateTo(page: AppPage): void {
   const path = PAGE_PATHS[page]
   if (path === undefined) return

@@ -68,14 +68,14 @@ interface ThemeConfig {
   hint: string
 }
 
-const FALLBACK_COMPANY_MAP: Record<string, string> = {
+const FALLBACK_COMPANY_MAP = {
   electronics: 'ekaette-electronics',
   hotel: 'ekaette-hotel',
   automotive: 'ekaette-automotive',
   fashion: 'ekaette-fashion',
-}
+} satisfies Record<string, string>
 
-const FALLBACK_THEMES: Record<string, ThemeConfig> = {
+const FALLBACK_THEMES = {
   electronics: {
     accent: 'oklch(74% 0.21 158)',
     accentSoft: 'oklch(62% 0.14 172)',
@@ -100,14 +100,14 @@ const FALLBACK_THEMES: Record<string, ThemeConfig> = {
     title: 'Fashion Client Studio',
     hint: 'Catalog recommendations and consultation workflows.',
   },
-}
+} satisfies Record<string, ThemeConfig>
 
-const FALLBACK_LABELS: Record<string, string> = {
+const FALLBACK_LABELS = {
   electronics: 'Hardware',
   hotel: 'Hotel',
   automotive: 'Automotive',
   fashion: 'Fashion',
-}
+} satisfies Record<string, string>
 
 const DEFAULT_THEME: ThemeConfig = {
   accent: 'oklch(74% 0.21 158)',
@@ -174,7 +174,7 @@ function resolveTheme(templateId: string, templates: IndustryTemplateMeta[] | nu
     }
   }
   // Fallback to hardcoded
-  return FALLBACK_THEMES[templateId] ?? DEFAULT_THEME
+  return (FALLBACK_THEMES as Record<string, ThemeConfig>)[templateId] ?? DEFAULT_THEME
 }
 
 function resolveCompanyFromConfig(
@@ -206,7 +206,7 @@ function resolveCompanyId(
     onboardingConfig?.defaults ?? null,
   )
   if (fromConfig) return fromConfig
-  return FALLBACK_COMPANY_MAP[templateId] ?? `ekaette-${templateId}`
+  return (FALLBACK_COMPANY_MAP as Record<string, string>)[templateId] ?? `ekaette-${templateId}`
 }
 
 function resolveTemplateLabel(
@@ -218,7 +218,7 @@ function resolveTemplateLabel(
     const match = templates.find(t => t.id === templateId)
     if (match) return match.label
   }
-  return FALLBACK_LABELS[templateId] ?? templateId
+  return (FALLBACK_LABELS as Record<string, string>)[templateId] ?? templateId
 }
 
 const ERROR_TOAST_DURATION = 8000
@@ -1036,7 +1036,7 @@ function App() {
               ) : null}
 
               {showOnboardingConfigLoading ? (
-                <section className="panel-glass w-full px-4 py-5 sm:px-7 sm:py-8">
+                <section className="panel-glass w-full px-4 py-5 sm:px-7 sm:py-8" aria-busy="true">
                   <p className="text-[0.58rem] text-muted-foreground uppercase tracking-[0.24em] sm:text-[0.64rem] sm:tracking-[0.3em]">
                     Vendor Setup
                   </p>
@@ -1046,6 +1046,7 @@ function App() {
                   <p className="mt-2 max-w-2xl text-muted-foreground text-xs leading-relaxed sm:text-sm">
                     Fetching available industries and companies for your tenant.
                   </p>
+                  <span className="sr-only">Loading industry options</span>
                 </section>
               ) : null}
 

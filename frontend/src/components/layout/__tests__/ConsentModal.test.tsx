@@ -1,7 +1,17 @@
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ConsentModal } from '../ConsentModal'
+
+// jsdom does not implement HTMLDialogElement.showModal / .close
+beforeEach(() => {
+  HTMLDialogElement.prototype.showModal ??= vi.fn(function (this: HTMLDialogElement) {
+    this.setAttribute('open', '')
+  })
+  HTMLDialogElement.prototype.close ??= vi.fn(function (this: HTMLDialogElement) {
+    this.removeAttribute('open')
+  })
+})
 
 describe('ConsentModal', () => {
   it('renders modal with consent disclosure text', () => {
@@ -43,9 +53,19 @@ describe('ConsentModal', () => {
     expect(link).toHaveAttribute('rel', expect.stringContaining('noreferrer'))
   })
 
-  it('has correct accessibility attributes', () => {
+  it('uses native <dialog> element with showModal', () => {
     render(<ConsentModal onAccept={() => {}} onDecline={() => {}} />)
     const dialog = screen.getByRole('dialog')
-    expect(dialog).toHaveAttribute('aria-modal', 'true')
+    expect(dialog.tagName).toBe('DIALOG')
+    expect(dialog).toHaveAttribute('aria-labelledby', 'consent-title')
+    expect(HTMLDialogElement.prototype.showModal).toHaveBeenCalled()
+  })
+
+  it('calls onDecline when dialog is closed natively (Escape key)', () => {
+    const onDecline = vi.fn()
+    render(<ConsentModal onAccept={() => {}} onDecline={onDecline} />)
+    const dialog = screen.getByRole('dialog')
+    dialog.dispatchEvent(new Event('close', { bubbles: false }))
+    expect(onDecline).toHaveBeenCalledTimes(1)
   })
 })

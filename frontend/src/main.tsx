@@ -11,6 +11,7 @@ function RootPage() {
   if (pathname.startsWith('/admin')) return <AdminDashboard />
   if (pathname.startsWith('/analytics')) return <AnalyticsDashboard />
   if (pathname.startsWith('/marketing')) return <MarketingDashboard />
+  // voice page is the default for all unmatched paths
   return <App />
 }
 

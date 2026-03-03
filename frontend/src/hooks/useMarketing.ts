@@ -34,6 +34,7 @@ interface QuickCallParams {
 
 interface UseMarketingResult {
   sending: boolean
+  error: string | null
   sendCampaign: (params: SendCampaignParams) => Promise<unknown>
   quickSms: (params: QuickSmsParams) => Promise<unknown>
   quickCall: (params: QuickCallParams) => Promise<unknown>
@@ -41,8 +42,10 @@ interface UseMarketingResult {
 
 export function useMarketing(): UseMarketingResult {
   const [sending, setSending] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   const sendCampaign = useCallback(async (params: SendCampaignParams) => {
+    setError(null)
     setSending(true)
     try {
       const isVoice = params.channel === 'voice'
@@ -72,12 +75,16 @@ export function useMarketing(): UseMarketingResult {
       }
 
       return await resp.json()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+      throw err
     } finally {
       setSending(false)
     }
   }, [])
 
   const quickSms = useCallback(async (params: QuickSmsParams) => {
+    setError(null)
     setSending(true)
     try {
       const resp = await fetch('/api/v1/at/sms/send', {
@@ -96,12 +103,16 @@ export function useMarketing(): UseMarketingResult {
       }
 
       return await resp.json()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+      throw err
     } finally {
       setSending(false)
     }
   }, [])
 
   const quickCall = useCallback(async (params: QuickCallParams) => {
+    setError(null)
     setSending(true)
     try {
       const resp = await fetch('/api/v1/at/voice/call', {
@@ -122,10 +133,13 @@ export function useMarketing(): UseMarketingResult {
       }
 
       return await resp.json()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+      throw err
     } finally {
       setSending(false)
     }
   }, [])
 
-  return { sending, sendCampaign, quickSms, quickCall }
+  return { sending, error, sendCampaign, quickSms, quickCall }
 }

@@ -53,7 +53,7 @@ export function useContacts({ tenantId, companyId }: UseContactsOptions): UseCon
   }, [tenantId, companyId])
 
   useEffect(() => {
-    fetchContacts()
+    void fetchContacts()
     return () => {
       abortRef.current?.abort()
     }

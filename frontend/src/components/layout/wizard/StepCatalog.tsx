@@ -137,7 +137,14 @@ export function StepCatalog({ companyId, tenantId, onNext, onBack }: StepCatalog
             {api.error}
           </p>
         ) : null}
-        {status ? <p className="text-emerald-400 text-xs">{status}</p> : null}
+        {status ? (
+          <p className="text-emerald-400 text-xs">{status}</p>
+        ) : (
+          <p className="text-muted-foreground/60 text-xs">
+            No products imported yet. Add products via JSON, Google Sheets, or file upload above, or
+            skip this step to add them later.
+          </p>
+        )}
       </div>
 
       <div className="mt-6 flex justify-between">

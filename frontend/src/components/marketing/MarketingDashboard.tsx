@@ -181,6 +181,7 @@ export function MarketingDashboard() {
                         type="checkbox"
                         checked={selected.has(contact.phone)}
                         onChange={() => toggle(contact.phone)}
+                        aria-label={`Select contact ${contact.phone}`}
                         className="accent-primary"
                       />
                       <span className="flex-1 font-mono text-foreground text-sm">

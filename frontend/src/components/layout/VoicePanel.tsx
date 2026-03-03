@@ -57,7 +57,7 @@ export function VoicePanel({
         </div>
       </div>
 
-      <div className="mt-4 space-y-2">
+      <div className="mt-4 space-y-2" aria-live="polite">
         <p className="voice-panel__session rounded-xl border border-border/70 bg-card/50 px-3 py-2 text-[11px] text-muted-foreground leading-5 sm:text-xs">
           Session: <span className="break-all text-foreground">{sessionId}</span>
         </p>

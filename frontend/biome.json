@@ -47,7 +47,8 @@
           "options": {
             "functions": ["cn", "cva", "clsx"]
           }
-        }
+        },
+        "noFloatingPromises": "warn"
       }
     }
   },

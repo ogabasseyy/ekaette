@@ -75,9 +75,9 @@ export function useAnalytics({
   }, [tenantId, companyId, days])
 
   useEffect(() => {
-    fetchOverview()
+    void fetchOverview()
 
-    const interval = setInterval(fetchOverview, POLL_INTERVAL_MS)
+    const interval = setInterval(() => void fetchOverview(), POLL_INTERVAL_MS)
 
     return () => {
       clearInterval(interval)

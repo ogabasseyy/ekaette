@@ -62,4 +62,22 @@ describe('NavBar', () => {
     const adminBtn = screen.getByRole('tab', { name: /admin/i })
     expect(adminBtn.className).toContain('nav-tab-active')
   })
+
+  it('triggers navigateTo on Enter key for inactive tab', async () => {
+    const user = userEvent.setup()
+    render(<NavBar activePage="voice" />)
+    const adminBtn = screen.getByRole('tab', { name: /admin/i })
+    adminBtn.focus()
+    await user.keyboard('{Enter}')
+    expect(navigateTo).toHaveBeenCalledWith('admin')
+  })
+
+  it('triggers navigateTo on Space key for inactive tab', async () => {
+    const user = userEvent.setup()
+    render(<NavBar activePage="voice" />)
+    const analyticsBtn = screen.getByRole('tab', { name: /analytics/i })
+    analyticsBtn.focus()
+    await user.keyboard(' ')
+    expect(navigateTo).toHaveBeenCalledWith('analytics')
+  })
 })
