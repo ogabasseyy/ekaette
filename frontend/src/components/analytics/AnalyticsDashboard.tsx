@@ -11,7 +11,7 @@ const DAYS_OPTIONS = [7, 30, 90] as const
 function readStoredOrDefault(key: string, fallback: string): string {
   try {
     const stored = localStorage.getItem(key)
-    if (stored && stored.trim()) return stored.trim()
+    if (stored?.trim()) return stored.trim()
   } catch {
     // localStorage may be unavailable in private browsing
   }

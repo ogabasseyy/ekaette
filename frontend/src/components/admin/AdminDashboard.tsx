@@ -218,7 +218,7 @@ export function AdminDashboard() {
         String(Math.max(1, Math.min(1440, Math.round(sync.interval_minutes)))),
       )
     }
-  }, [companyDetail?.inventorySync])
+  }, [companyDetail])
 
   const adminHeaders = useMemo(() => {
     const headers: Record<string, string> = {
