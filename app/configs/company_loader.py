@@ -406,30 +406,30 @@ async def load_company_profile(
                 f"Firestore client required when REGISTRY_ENABLED=true "
                 f"(company='{_sanitize_log(normalized_id)}')"
             )
-        try:
-            registry_loader = importlib.import_module("app.configs.registry_loader")
-            load_tenant_company = getattr(registry_loader, "load_tenant_company")
-            resolved_tenant = (tenant_id or _default_registry_tenant_id()).strip().lower() or "public"
-            company_doc = await load_tenant_company(db, resolved_tenant, normalized_id)
-            if isinstance(company_doc, dict):
-                return _normalize_registry_company_profile(normalized_id, company_doc)
-        except RegistryDataMissingError:
-            raise
-        except Exception as exc:
-            logger.warning(
-                "Registry company profile lookup failed '%s' (tenant=%s): %s",
-                _sanitize_log(normalized_id),
-                _sanitize_log((tenant_id or _default_registry_tenant_id())),
-                exc,
-            )
-            raise RegistryDataMissingError(
-                f"Registry company not found for company='{_sanitize_log(normalized_id)}' "
-                f"(REGISTRY_ENABLED=true)"
-            ) from exc
-        raise RegistryDataMissingError(
+        missing_error = (
             f"Registry company not found for company='{_sanitize_log(normalized_id)}' "
             f"(REGISTRY_ENABLED=true)"
         )
+        try:
+            registry_loader = importlib.import_module("app.configs.registry_loader")
+            load_tenant_company = getattr(registry_loader, "load_tenant_company")
+        except (ImportError, AttributeError) as exc:
+            logger.warning(
+                "Registry loader wiring failed for company profile '%s': %s",
+                _sanitize_log(normalized_id),
+                exc,
+            )
+            raise
+
+        resolved_tenant = (tenant_id or _default_registry_tenant_id()).strip().lower() or "public"
+        try:
+            company_doc = await load_tenant_company(db, resolved_tenant, normalized_id)
+        except RegistryDataMissingError as exc:
+            raise RegistryDataMissingError(missing_error) from exc
+
+        if isinstance(company_doc, dict):
+            return _normalize_registry_company_profile(normalized_id, company_doc)
+        raise RegistryDataMissingError(missing_error)
 
     # Legacy mode: REGISTRY_ENABLED=false
     if db is None:

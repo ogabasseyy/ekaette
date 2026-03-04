@@ -120,32 +120,33 @@ async def load_industry_config(
                 f"Firestore client required when REGISTRY_ENABLED=true "
                 f"(industry='{_sanitize_log(industry)}')"
             )
+        missing_error = (
+            f"Registry template not found for industry='{_sanitize_log(industry)}' "
+            f"(REGISTRY_ENABLED=true)"
+        )
         try:
             registry_loader = importlib.import_module("app.configs.registry_loader")
             load_industry_template = getattr(registry_loader, "load_industry_template")
-            template = await load_industry_template(db, industry)
-            if isinstance(template, dict):
-                return _legacy_config_from_registry_template(industry, template)
-        except RegistryDataMissingError:
-            raise
-        except Exception as exc:
+        except (ImportError, AttributeError) as exc:
             logger.warning(
-                "Registry industry template lookup failed for '%s': %s",
+                "Registry loader wiring failed for industry template '%s': %s",
                 _sanitize_log(industry),
                 exc,
             )
-            raise RegistryDataMissingError(
-                f"Registry template not found for industry='{_sanitize_log(industry)}' "
-                f"(REGISTRY_ENABLED=true)"
-            ) from exc
+            raise
+
+        try:
+            template = await load_industry_template(db, industry)
+        except RegistryDataMissingError as exc:
+            raise RegistryDataMissingError(missing_error) from exc
+
+        if isinstance(template, dict):
+            return _legacy_config_from_registry_template(industry, template)
         logger.warning(
             "Registry template not found for industry='%s' (REGISTRY_ENABLED=true)",
             _sanitize_log(industry),
         )
-        raise RegistryDataMissingError(
-            f"Registry template not found for industry='{_sanitize_log(industry)}' "
-            f"(REGISTRY_ENABLED=true)"
-        )
+        raise RegistryDataMissingError(missing_error)
 
     # Legacy mode: REGISTRY_ENABLED=false
     if db is None:
