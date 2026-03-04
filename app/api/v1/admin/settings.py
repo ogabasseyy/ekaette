@@ -227,7 +227,10 @@ _rate_limit_buckets: dict[str, list[float]] = {}
 _rate_limit_last_global_prune = 0.0
 _rate_limit_lock = threading.Lock()
 
-# Explicit exports for runtime proxy lookups from sibling admin modules.
+# Explicit __all__ exports exist to satisfy static-analysis/CodeQL "unused symbol"
+# checks for cross-module runtime symbols. Runtime resolution does not use __all__:
+# RuntimeProxy.__getattr__ walks _MODULE_SEARCH_ORDER and resolves names via
+# hasattr()/getattr() on each module.
 __all__ = [
     "google_id_token",
     "_GOOGLE_AUTH_REQUEST",

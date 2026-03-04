@@ -134,6 +134,10 @@ async def load_industry_config(
                 _sanitize_log(industry),
                 exc,
             )
+            raise RegistryDataMissingError(
+                f"Registry template not found for industry='{_sanitize_log(industry)}' "
+                f"(REGISTRY_ENABLED=true)"
+            ) from exc
         logger.warning(
             "Registry template not found for industry='%s' (REGISTRY_ENABLED=true)",
             _sanitize_log(industry),

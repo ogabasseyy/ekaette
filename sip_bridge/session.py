@@ -111,8 +111,8 @@ class CallSession:
         if self.media_transport is None and self.local_rtp_port:
             bind_host = (
                 self.rtp_bind_host.strip()
-                or os.getenv("SIP_RTP_BIND_HOST", "127.0.0.1").strip()
-                or "127.0.0.1"
+                or os.getenv("SIP_RTP_BIND_HOST", "0.0.0.0").strip()
+                or "0.0.0.0"
             )
             self.media_transport = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             self.media_transport.setblocking(False)

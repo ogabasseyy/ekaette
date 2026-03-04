@@ -422,6 +422,10 @@ async def load_company_profile(
                 _sanitize_log((tenant_id or _default_registry_tenant_id())),
                 exc,
             )
+            raise RegistryDataMissingError(
+                f"Registry company not found for company='{_sanitize_log(normalized_id)}' "
+                f"(REGISTRY_ENABLED=true)"
+            ) from exc
         raise RegistryDataMissingError(
             f"Registry company not found for company='{_sanitize_log(normalized_id)}' "
             f"(REGISTRY_ENABLED=true)"
