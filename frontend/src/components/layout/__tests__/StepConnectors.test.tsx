@@ -65,11 +65,7 @@ function mockError(status: number, error: string) {
 
 // Route fetch calls based on URL
 function routeFetch(
-  overrides: {
-    providers?: Response
-    company?: Response
-    connector?: Response
-  } = {},
+  overrides: { providers?: Response; company?: Response; connector?: Response } = {},
 ) {
   fetchSpy.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
@@ -215,7 +211,10 @@ describe('StepConnectors', () => {
       company: mockCompanyDetail({
         'crm-salesforce': { id: 'crm-salesforce', provider: 'salesforce', enabled: true },
       }) as unknown as Response,
-      connector: mockSuccess({ ok: true, details: 'Connector probe passed.' }) as unknown as Response,
+      connector: mockSuccess({
+        ok: true,
+        details: 'Connector probe passed.',
+      }) as unknown as Response,
     })
     const user = userEvent.setup()
     await renderStep()

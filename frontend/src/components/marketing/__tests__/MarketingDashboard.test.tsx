@@ -101,7 +101,9 @@ describe('MarketingDashboard', () => {
   })
 
   it('shows loading state while fetching', () => {
-    global.fetch = vi.fn().mockReturnValue(new Promise<Response>(() => {})) as unknown as typeof fetch
+    global.fetch = vi
+      .fn()
+      .mockReturnValue(new Promise<Response>(() => {})) as unknown as typeof fetch
     render(<MarketingDashboard />)
     expect(screen.getByText('Loading contacts…')).toBeInTheDocument()
   })
@@ -240,7 +242,8 @@ describe('MarketingDashboard', () => {
     // Quick SMS should prompt or send — either way fetch was called
     await waitFor(() => {
       const smsCalls = fetchMock.mock.calls.filter(([input]: [RequestInfo | URL]) => {
-        const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
+        const url =
+          typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
         return url.includes('/sms/send')
       })
       expect(smsCalls.length).toBe(1)
@@ -263,7 +266,8 @@ describe('MarketingDashboard', () => {
 
     await waitFor(() => {
       const callCalls = fetchMock.mock.calls.filter(([input]: [RequestInfo | URL]) => {
-        const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
+        const url =
+          typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
         return url.includes('/voice/call')
       })
       expect(callCalls.length).toBe(1)
