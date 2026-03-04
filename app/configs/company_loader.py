@@ -7,6 +7,7 @@ keys so agents can ground responses in business-specific data.
 from __future__ import annotations
 
 import asyncio
+import importlib
 import inspect
 import logging
 import os
@@ -406,8 +407,8 @@ async def load_company_profile(
                 f"(company='{_sanitize_log(normalized_id)}')"
             )
         try:
-            from app.configs.registry_loader import load_tenant_company
-
+            registry_loader = importlib.import_module("app.configs.registry_loader")
+            load_tenant_company = getattr(registry_loader, "load_tenant_company")
             resolved_tenant = (tenant_id or _default_registry_tenant_id()).strip().lower() or "public"
             company_doc = await load_tenant_company(db, resolved_tenant, normalized_id)
             if isinstance(company_doc, dict):

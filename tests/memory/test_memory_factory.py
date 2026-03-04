@@ -3,9 +3,6 @@
 import os
 from unittest.mock import MagicMock, patch
 
-import pytest
-
-
 class TestCreateMemoryService:
     """Test memory service factory with backend switching."""
 

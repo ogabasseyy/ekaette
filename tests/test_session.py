@@ -212,7 +212,8 @@ class TestAsyncSessionSave:
 
         # Should return a Task, not block
         assert isinstance(task, asyncio.Task)
-        await task  # Let it complete
+        completed = await task
+        assert completed is None
         mock_session_service.append_event.assert_awaited_once()
         appended_event = mock_session_service.append_event.await_args.kwargs["event"]
         assert appended_event.actions.state_delta["app:last_agent"] == "vision_agent"

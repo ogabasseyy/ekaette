@@ -87,8 +87,7 @@ company_config_client = None
 memory_service = None
 runner = None
 TOKEN_CLIENT = None
-_PUBLIC_RUNTIME_WIRED = False
-_REALTIME_RUNTIME_WIRED = False
+_runtime_wiring_state = {"public": False, "realtime": False}
 
 
 def _ensure_singletons_initialized() -> None:
@@ -514,11 +513,10 @@ TOKEN_RATE_LIMIT = public_settings.TOKEN_RATE_LIMIT  # requests/minute
 UPLOAD_RATE_LIMIT = public_settings.UPLOAD_RATE_LIMIT  # requests/minute
 RATE_LIMIT_WINDOW = public_settings.RATE_LIMIT_WINDOW  # seconds
 RATE_LIMIT_MAX_BUCKETS = public_settings.RATE_LIMIT_MAX_BUCKETS
-_rate_limit_last_global_prune = 0.0
+_rate_limit_state = {"last_global_prune": 0.0}
 
 
 def _check_rate_limit(client_ip: str, bucket: str, limit: int) -> bool:
-    global _rate_limit_last_global_prune
     allowed, updated_last_prune = public_core.check_rate_limit(
         client_ip=client_ip,
         bucket=bucket,
@@ -526,9 +524,9 @@ def _check_rate_limit(client_ip: str, bucket: str, limit: int) -> bool:
         window_seconds=RATE_LIMIT_WINDOW,
         max_buckets=RATE_LIMIT_MAX_BUCKETS,
         buckets=_rate_limit_buckets,
-        last_global_prune=_rate_limit_last_global_prune,
+        last_global_prune=_rate_limit_state["last_global_prune"],
     )
-    _rate_limit_last_global_prune = updated_last_prune
+    _rate_limit_state["last_global_prune"] = updated_last_prune
     return allowed
 
 
@@ -698,9 +696,8 @@ def _effective_runtime_sync_mode() -> str:
 
 def _sync_public_runtime() -> None:
     """Sync public HTTP runtime dependencies into extracted module handlers."""
-    global _PUBLIC_RUNTIME_WIRED
     mode = _effective_runtime_sync_mode()
-    if mode == "startup" and _PUBLIC_RUNTIME_WIRED:
+    if mode == "startup" and _runtime_wiring_state["public"]:
         return
     public_http.configure_runtime(
         logger=logger,
@@ -738,7 +735,7 @@ def _sync_public_runtime() -> None:
         UPLOAD_RATE_LIMIT=UPLOAD_RATE_LIMIT,
         _validate_upload_bytes=_validate_upload_bytes,
     )
-    _PUBLIC_RUNTIME_WIRED = True
+    _runtime_wiring_state["public"] = True
 
 
 @app.post("/api/token")
@@ -785,9 +782,8 @@ async def validate_upload(
 
 def _sync_realtime_runtime() -> None:
     """Sync websocket runtime dependencies into the extracted realtime module."""
-    global _REALTIME_RUNTIME_WIRED
     mode = _effective_runtime_sync_mode()
-    if mode == "startup" and _REALTIME_RUNTIME_WIRED:
+    if mode == "startup" and _runtime_wiring_state["realtime"]:
         return
     realtime_ws.configure_runtime(
         _WS_PATH_ID_RE=_WS_PATH_ID_RE,
@@ -844,7 +840,7 @@ def _sync_realtime_runtime() -> None:
         cache_latest_image=cache_latest_image,
         runner=runner,
     )
-    _REALTIME_RUNTIME_WIRED = True
+    _runtime_wiring_state["realtime"] = True
 
 
 @app.websocket("/ws/{user_id}/{session_id}")

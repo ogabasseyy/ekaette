@@ -444,6 +444,7 @@ async def _run(config: WhatsAppBridgeConfig) -> None:
     try:
         await asyncio.Event().wait()  # Run until cancelled
     except asyncio.CancelledError:
+        # Normal shutdown path when service receives termination signal.
         pass
     finally:
         await server.stop()

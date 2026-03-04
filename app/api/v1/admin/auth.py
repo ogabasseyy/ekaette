@@ -343,6 +343,7 @@ async def require_admin_present(request: Request):
                 if isinstance(parsed, dict):
                     detail = parsed
         except Exception:
+            # Non-JSON body; keep default sanitized Unauthorized detail payload.
             pass
         raise _http_error(error_response.status_code, detail)
     if context is None:

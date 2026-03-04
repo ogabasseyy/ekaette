@@ -26,7 +26,6 @@ def _install_with_fake_module(monkeypatch):
         return _make_event()
 
     setattr(fake_module, "__build_response_event", _original_build_response_event)
-    monkeypatch.setattr(tool_scheduling, "_PATCH_INSTALLED", False)
     monkeypatch.setattr(tool_scheduling, "_ORIGINAL_BUILD_RESPONSE_EVENT", None)
     monkeypatch.setattr(
         tool_scheduling.importlib,

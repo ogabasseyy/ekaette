@@ -6,7 +6,6 @@ Receives config via env vars — no app.* imports.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 
 from .config import BridgeConfig
@@ -36,45 +35,26 @@ class GeminiLiveClient:
                 "company_id": self.config.company_id,
             },
         )
-        # TODO: Establish connection using google.genai Live API
-        # session = client.aio.live.connect(
-        #     model=config.live_model_id,
-        #     config=types.LiveConnectConfig(
-        #         response_modalities=["AUDIO"],
-        #         speech_config=types.SpeechConfig(
-        #             voice_config=types.VoiceConfig(
-        #                 prebuilt_voice_config=types.PrebuiltVoiceConfig(
-        #                     voice_name=config.gemini_voice,
-        #                 )
-        #             )
-        #         ),
-        #         system_instruction=config.system_instruction,
-        #     ),
-        # )
+        # Live API session wiring is intentionally deferred in this placeholder.
         self._connected = True
 
     async def send_audio(self, pcm16_data: bytes) -> None:
         """Send PCM16 audio chunk to Gemini Live."""
         if not self._connected:
             return
-        # TODO: session.send(input=types.LiveClientRealtimeInput(
-        #     media_chunks=[types.Blob(data=pcm16_data, mime_type="audio/pcm")]
-        # ))
+        # TODO: Forward PCM16 chunk to active Live session.
 
     async def receive_audio(self) -> bytes | None:
         """Receive PCM16 audio chunk from Gemini Live response."""
         if not self._connected:
             return None
-        # TODO: async for response in session.receive():
-        #     for part in response.server_content.model_turn.parts:
-        #         if part.inline_data:
-        #             return part.inline_data.data
+        # TODO: Read next audio chunk from active Live session.
         return None
 
     async def close(self) -> None:
         """Close the Gemini Live session."""
         if self._session:
-            # TODO: await session.close()
-            pass
+            # TODO: Close the active Live session when implemented.
+            self._session = None
         self._connected = False
         logger.info("Gemini Live session closed")

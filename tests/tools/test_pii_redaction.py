@@ -1,6 +1,5 @@
 """Tests for PII redaction utility."""
 
-import pytest
 from app.tools.pii_redaction import redact_pii, redact_dict_pii
 
 

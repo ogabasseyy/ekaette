@@ -728,7 +728,7 @@ class TestSDPErrorHandling:
             body=bad_sdp,
         )
         with patch("sip_bridge.wa_main.socket.socket", side_effect=tracking_socket):
-            resp2 = await server.handle_sip_message(invite2, ("10.0.0.1", 5061))
+            await server.handle_sip_message(invite2, ("10.0.0.1", 5061))
 
         # Socket must have been created and then closed (not leaked)
         assert len(created_sockets) >= 1

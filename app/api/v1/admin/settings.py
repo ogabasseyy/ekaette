@@ -227,6 +227,17 @@ _rate_limit_buckets: dict[str, list[float]] = {}
 _rate_limit_last_global_prune = 0.0
 _rate_limit_lock = threading.Lock()
 
+# Explicit exports for runtime proxy lookups from sibling admin modules.
+__all__ = [
+    "google_id_token",
+    "_GOOGLE_AUTH_REQUEST",
+    "_policy_cache",
+    "_connector_lock_state_guard",
+    "_idempotency_store_lock",
+    "_rate_limit_last_global_prune",
+    "_rate_limit_lock",
+]
+
 
 def reset_runtime_state() -> None:
     """Reset mutable in-memory state (used by tests)."""

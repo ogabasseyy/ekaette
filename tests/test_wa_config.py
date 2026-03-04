@@ -5,8 +5,6 @@ Follows the BridgeConfig pattern — frozen dataclass, env vars, WA_* prefix.
 
 from __future__ import annotations
 
-import os
-
 import pytest
 
 

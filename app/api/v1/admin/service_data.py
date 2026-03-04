@@ -147,6 +147,7 @@ def _json_response_error_message(response: object, *, fallback: str) -> str:
             if isinstance(parsed, dict) and isinstance(parsed.get("error"), str) and parsed["error"].strip():
                 return parsed["error"].strip()
         except Exception:
+            # Response body may be non-JSON (for example, HTML proxy errors).
             pass
     return fallback
 

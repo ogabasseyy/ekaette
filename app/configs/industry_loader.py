@@ -1,6 +1,7 @@
 """Industry config loader — loads config from Firestore and builds session state."""
 
 import asyncio
+import importlib
 import logging
 import os
 from typing import Any
@@ -120,8 +121,8 @@ async def load_industry_config(
                 f"(industry='{_sanitize_log(industry)}')"
             )
         try:
-            from app.configs.registry_loader import load_industry_template
-
+            registry_loader = importlib.import_module("app.configs.registry_loader")
+            load_industry_template = getattr(registry_loader, "load_industry_template")
             template = await load_industry_template(db, industry)
             if isinstance(template, dict):
                 return _legacy_config_from_registry_template(industry, template)

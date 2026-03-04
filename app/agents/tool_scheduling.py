@@ -11,7 +11,6 @@ from google.genai import types
 logger = logging.getLogger(__name__)
 
 # One-time patch state (kept module-level for deterministic test monkeypatching).
-_PATCH_INSTALLED = False
 _ORIGINAL_BUILD_RESPONSE_EVENT: Callable[..., Any] | None = None
 
 # S11 scheduling matrix:
@@ -67,8 +66,8 @@ def _apply_response_scheduling(event: Any, tool_name: str) -> None:
 
 def install_tool_response_scheduling_patch() -> bool:
     """Install one-time patch to set FunctionResponse.scheduling by tool name."""
-    global _PATCH_INSTALLED, _ORIGINAL_BUILD_RESPONSE_EVENT
-    if _PATCH_INSTALLED:
+    global _ORIGINAL_BUILD_RESPONSE_EVENT
+    if _ORIGINAL_BUILD_RESPONSE_EVENT is not None:
         return True
 
     try:
@@ -95,7 +94,6 @@ def install_tool_response_scheduling_patch() -> bool:
             return event
 
         setattr(functions_mod, "__build_response_event", _patched_build_response_event)
-        _PATCH_INSTALLED = True
         logger.info("Installed live tool response scheduling patch")
         return True
     except Exception as exc:
