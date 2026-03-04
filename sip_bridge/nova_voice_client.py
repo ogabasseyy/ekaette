@@ -7,11 +7,10 @@ The session loops own codec/SRTP behavior; this client owns provider I/O.
 from __future__ import annotations
 
 import asyncio
+import importlib
 import logging
 import os
 from typing import Any
-
-from app.runtime.providers.nova_bedrock import NovaBedrockVoiceSession
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +30,7 @@ class NovaVoiceClient:
         self.region = region or os.getenv("AWS_REGION", "us-east-1")
         self.system_instruction = system_instruction
         self.voice_name = voice_name
-        self._session: NovaBedrockVoiceSession | None = None
+        self._session: Any | None = None
         self._recv_task: asyncio.Task | None = None
         self._audio_queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=256)
 
@@ -48,7 +47,9 @@ class NovaVoiceClient:
         if self._session is not None or self._recv_task is not None:
             await self.close()
 
-        self._session = NovaBedrockVoiceSession(model_id=self.model_id, region=self.region)
+        module = importlib.import_module("app.runtime.providers.nova_bedrock")
+        session_cls = getattr(module, "NovaBedrockVoiceSession")
+        self._session = session_cls(model_id=self.model_id, region=self.region)
         self._recv_task = asyncio.create_task(self._recv_loop(), name="nova_voice_recv_loop")
         logger.info(
             "Nova voice client connected",

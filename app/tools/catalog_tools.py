@@ -10,7 +10,7 @@ import logging
 import re
 from typing import Any
 
-from app.tools.scoped_queries import scoped_collection
+from app.tools.scoped_queries import scoped_collection_or_global
 
 logger = logging.getLogger(__name__)
 
@@ -259,7 +259,7 @@ async def search_catalog(
         }
 
     try:
-        collection = scoped_collection(db, tool_context, "products")
+        collection = scoped_collection_or_global(db, tool_context, "products")
         if collection is None:
             return {
                 "error": "Catalog scope unavailable; using demo fallback data.",
