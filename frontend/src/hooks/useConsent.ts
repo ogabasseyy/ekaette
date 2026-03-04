@@ -29,7 +29,11 @@ export function useConsent() {
       timestamp: new Date().toISOString(),
       version: CONSENT_VERSION,
     }
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(record))
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(record))
+    } catch {
+      // Storage unavailable (private browsing, quota exceeded).
+    }
     setHasConsented(true)
   }, [])
 

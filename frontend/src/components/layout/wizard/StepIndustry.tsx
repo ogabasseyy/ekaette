@@ -204,7 +204,7 @@ export function StepIndustry({
           onClick={() =>
             onNext({
               templateId: selectedTemplateId,
-              companyId: selectedCompanyId || fallbackCompanyId,
+              companyId: selectedCompanyId.trim() || fallbackCompanyId,
             })
           }
           className="rounded-full bg-[color:var(--industry-accent)] px-5 py-2.5 font-semibold text-black text-sm transition hover:brightness-110 sm:py-2"

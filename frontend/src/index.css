@@ -5,6 +5,7 @@
   --color-background: oklch(13% 0.02 264);
   --color-foreground: oklch(93% 0.01 264);
   --color-card: oklch(17% 0.02 264);
+  --color-surface: var(--color-card);
   --color-card-foreground: oklch(87% 0.01 264);
   --color-border: oklch(27% 0.02 264);
   --color-muted: oklch(55% 0.02 264);
@@ -407,4 +408,3 @@
     transform: translateY(0.5rem);
   }
 }
-

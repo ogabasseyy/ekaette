@@ -73,6 +73,7 @@ export function useWizardApi({ tenantId, userId = 'admin-user' }: UseWizardApiOp
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const abortControllersRef = useRef<Set<AbortController>>(new Set())
+  const activeActionsRef = useRef(0)
 
   useEffect(() => {
     return () => {
@@ -170,6 +171,7 @@ export function useWizardApi({ tenantId, userId = 'admin-user' }: UseWizardApiOp
   )
 
   const runAction = useCallback(async (action: () => Promise<void>) => {
+    activeActionsRef.current += 1
     setBusy(true)
     setError(null)
     try {
@@ -177,7 +179,10 @@ export function useWizardApi({ tenantId, userId = 'admin-user' }: UseWizardApiOp
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Action failed')
     } finally {
-      setBusy(false)
+      activeActionsRef.current = Math.max(0, activeActionsRef.current - 1)
+      if (activeActionsRef.current === 0) {
+        setBusy(false)
+      }
     }
   }, [])
 

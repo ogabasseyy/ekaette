@@ -19,6 +19,7 @@ export function StepCatalog({ companyId, tenantId, onNext, onBack }: StepCatalog
   const [sourceUrl, setSourceUrl] = useState('')
   const [status, setStatus] = useState<string | null>(null)
   const [file, setFile] = useState<File | null>(null)
+  const [fileInputKey, setFileInputKey] = useState(0)
   const api = useWizardApi({ tenantId })
   const companyUrl = `/api/v1/admin/companies/${encodeURIComponent(companyId)}`
 
@@ -60,6 +61,7 @@ export function StepCatalog({ companyId, tenantId, onNext, onBack }: StepCatalog
       const written = typeof payload.written === 'number' ? payload.written : '?'
       setStatus(`Uploaded ${written} items`)
       setFile(null)
+      setFileInputKey(key => key + 1)
     })
   }, [api, companyUrl, file])
 
@@ -113,6 +115,7 @@ export function StepCatalog({ companyId, tenantId, onNext, onBack }: StepCatalog
           <p className="text-xs text-muted-foreground uppercase tracking-wider">Upload CSV/XLSX</p>
           <div className="flex flex-wrap items-center gap-2">
             <input
+              key={fileInputKey}
               type="file"
               aria-label="Inventory file"
               accept=".csv,.xlsx"

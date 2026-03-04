@@ -250,7 +250,7 @@ export function MarketingDashboard() {
                       </span>
                       <button
                         type="button"
-                        aria-label="SMS"
+                        aria-label={`Send SMS to ${contact.phone}`}
                         onClick={() => handleQuickSms(contact.phone)}
                         className="quick-action-btn rounded p-1 text-muted-foreground transition-colors hover:bg-primary/10 hover:text-primary"
                       >
@@ -258,7 +258,7 @@ export function MarketingDashboard() {
                       </button>
                       <button
                         type="button"
-                        aria-label="Call"
+                        aria-label={`Call ${contact.phone}`}
                         onClick={() => handleQuickCall(contact.phone)}
                         className="quick-action-btn rounded p-1 text-muted-foreground transition-colors hover:bg-primary/10 hover:text-primary"
                       >

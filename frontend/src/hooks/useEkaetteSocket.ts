@@ -357,6 +357,9 @@ export function useEkaetteSocket(
         resolvePromise = resolve
         rejectPromise = error => reject(error)
       })
+      // If callers abandon connect() during teardown, keep cancellations from surfacing as
+      // unhandled rejections while still rejecting awaited callers.
+      void promise.catch(() => {})
 
       const pending: PendingConnectRequest = {
         promise,
@@ -795,8 +798,10 @@ export function useEkaetteSocket(
     const companyQuery = companyId ? `&company_id=${encodeURIComponent(companyId)}` : ''
     const tenantQuery = tenantId ? `&tenant_id=${encodeURIComponent(tenantId)}` : ''
     const tokenQuery = wsTokenRef.current ? `&token=${encodeURIComponent(wsTokenRef.current)}` : ''
+    const encodedUserId = encodeURIComponent(userId)
+    const encodedSessionId = encodeURIComponent(currentSessionIdRef.current)
     const ws = new WebSocket(
-      `${protocol}//${window.location.host}/ws/${userId}/${currentSessionIdRef.current}?industry=${industryQuery}${companyQuery}${tenantQuery}${tokenQuery}`,
+      `${protocol}//${window.location.host}/ws/${encodedUserId}/${encodedSessionId}?industry=${industryQuery}${companyQuery}${tenantQuery}${tokenQuery}`,
     )
     ws.binaryType = 'arraybuffer'
     wsRef.current = ws
@@ -1256,9 +1261,12 @@ export function useEkaetteSocket(
   // Cleanup on unmount
   useEffect(() => {
     return () => {
+      rejectPendingConnect(
+        new SocketConnectError('CONNECT_CANCELLED', 'Connection cancelled', { retryable: false }),
+      )
       cleanup()
     }
-  }, [cleanup])
+  }, [cleanup, rejectPendingConnect])
 
   return {
     state,

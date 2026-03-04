@@ -175,29 +175,66 @@ describe('useDemoMode with industryTemplateId', () => {
   it('selects hotel steps when industryTemplateId is hotel', async () => {
     const { renderHook, act: hookAct } = await import('@testing-library/react')
     const { useDemoMode } = await import('../hooks/useDemoMode')
+    const { DEMO_STEPS_BY_TEMPLATE } = await import('../utils/mockData')
+    const emitted: Array<Record<string, unknown>> = []
+    const firstDelay = DEMO_STEPS_BY_TEMPLATE.hotel[0]?.delayMs ?? 0
 
-    const { result } = renderHook(() => useDemoMode({ industryTemplateId: 'hotel' }))
+    const { result } = renderHook(() =>
+      useDemoMode({
+        industryTemplateId: 'hotel',
+        onEmit: message => emitted.push(message as unknown as Record<string, unknown>),
+      }),
+    )
+    vi.useFakeTimers()
 
-    hookAct(() => {
-      result.current.play()
-    })
+    try {
+      hookAct(() => {
+        result.current.play()
+      })
 
-    // The steps used should match hotel
-    expect(result.current.isPlaying).toBe(true)
+      hookAct(() => {
+        vi.advanceTimersByTime(firstDelay)
+      })
+
+      expect(result.current.isPlaying).toBe(true)
+      expect(emitted[0]).toMatchObject({ type: 'session_started', industryTemplateId: 'hotel' })
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('falls back to generic support demo for unknown template', async () => {
     const { renderHook, act: hookAct } = await import('@testing-library/react')
     const { useDemoMode } = await import('../hooks/useDemoMode')
+    const { GENERIC_SUPPORT_DEMO_STEPS } = await import('../utils/mockData')
+    const emitted: Array<Record<string, unknown>> = []
+    const firstDelay = GENERIC_SUPPORT_DEMO_STEPS[0]?.delayMs ?? 0
 
-    const { result } = renderHook(() => useDemoMode({ industryTemplateId: 'unknown-industry-xyz' }))
+    const { result } = renderHook(() =>
+      useDemoMode({
+        industryTemplateId: 'unknown-industry-xyz',
+        onEmit: message => emitted.push(message as unknown as Record<string, unknown>),
+      }),
+    )
+    vi.useFakeTimers()
 
-    hookAct(() => {
-      result.current.play()
-    })
+    try {
+      hookAct(() => {
+        result.current.play()
+      })
 
-    // Should still be playable with a fallback set of steps
-    expect(result.current.isPlaying).toBe(true)
+      hookAct(() => {
+        vi.advanceTimersByTime(firstDelay)
+      })
+
+      expect(result.current.isPlaying).toBe(true)
+      expect(emitted[0]).toMatchObject({
+        type: 'session_started',
+        industryTemplateId: 'generic-support',
+      })
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('defaults to electronics when no industryTemplateId given', async () => {

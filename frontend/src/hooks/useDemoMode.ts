@@ -39,6 +39,13 @@ function resolveSteps(options: UseDemoModeOptions): DemoStep[] {
   return ELECTRONICS_DEMO_STEPS
 }
 
+function cloneServerMessage(message: ServerMessage): ServerMessage {
+  if (typeof globalThis.structuredClone === 'function') {
+    return globalThis.structuredClone(message)
+  }
+  return JSON.parse(JSON.stringify(message)) as ServerMessage
+}
+
 export function useDemoMode(options: UseDemoModeOptions = {}): UseDemoModeReturn {
   const steps = resolveSteps(options)
   const onEmit = options.onEmit
@@ -77,7 +84,7 @@ export function useDemoMode(options: UseDemoModeOptions = {}): UseDemoModeReturn
         return
       }
 
-      const nextMessage = { ...step.message }
+      const nextMessage = cloneServerMessage(step.message)
       setMessages(prev => [...prev, nextMessage])
       onEmit?.(nextMessage)
 

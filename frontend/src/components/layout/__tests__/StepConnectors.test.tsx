@@ -71,13 +71,19 @@ function routeFetch(
     connector?: Response
   } = {},
 ) {
-  fetchSpy.mockImplementation(async (input: RequestInfo | URL) => {
+  fetchSpy.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
+    const method =
+      typeof input === 'string' || input instanceof URL
+        ? (init?.method ?? 'GET')
+        : input instanceof Request
+          ? input.method
+          : 'GET'
     if (url.includes('/mcp/providers'))
       return overrides.providers ?? (mockProviders() as unknown as Response)
-    if (url.includes('/connectors') && !url.includes('/companies/'))
-      return mockSuccess() as unknown as Response
     if (url.includes('/connectors/'))
+      return overrides.connector ?? (mockSuccess() as unknown as Response)
+    if (url.includes('/companies/') && url.endsWith('/connectors') && method === 'POST')
       return overrides.connector ?? (mockSuccess() as unknown as Response)
     // Company detail
     return overrides.company ?? (mockCompanyDetail() as unknown as Response)
