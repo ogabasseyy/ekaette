@@ -1,6 +1,6 @@
 import { cva } from 'class-variance-authority'
 import { MessageSquare, Phone } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useAnalytics } from '../../hooks/useAnalytics'
 import { useContacts } from '../../hooks/useContacts'
 import { useMarketing } from '../../hooks/useMarketing'
@@ -36,13 +36,75 @@ const contactRowVariants = cva(
   },
 )
 
+const TENANT_STORAGE_KEY = 'ekaette:onboarding:tenantId'
+const COMPANY_STORAGE_KEY = 'ekaette:onboarding:companyId'
+
+function readStoredValue(key: string): string | null {
+  if (typeof window === 'undefined') return null
+  const value = window.localStorage.getItem(key)
+  if (!value || !value.trim()) return null
+  return value.trim()
+}
+
 export function MarketingDashboard() {
-  const [tenantId] = useState('public')
-  const [companyId] = useState('ekaette-electronics')
+  const [tenantId, setTenantId] = useState(
+    () => readStoredValue(TENANT_STORAGE_KEY) ?? String(import.meta.env.VITE_TENANT_ID ?? 'public'),
+  )
+  const [companyId, setCompanyId] = useState(() => readStoredValue(COMPANY_STORAGE_KEY) ?? '')
   const [channel, setChannel] = useState<CampaignChannel>('sms')
   const [campaignName, setCampaignName] = useState('')
   const [message, setMessage] = useState('')
   const [feedback, setFeedback] = useState<{ type: 'ok' | 'error'; text: string } | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function hydrateIdentity() {
+      try {
+        const response = await fetch(
+          `/api/onboarding/config?tenantId=${encodeURIComponent(tenantId)}`,
+          {
+            headers: { Accept: 'application/json' },
+          },
+        )
+        if (!response.ok) return
+        const payload = (await response.json()) as {
+          tenantId?: string
+          defaults?: { companyId?: string }
+        }
+        if (cancelled) return
+
+        const nextTenant =
+          typeof payload.tenantId === 'string' && payload.tenantId.trim()
+            ? payload.tenantId.trim()
+            : tenantId
+        const nextCompany =
+          typeof payload.defaults?.companyId === 'string' && payload.defaults.companyId.trim()
+            ? payload.defaults.companyId.trim()
+            : companyId
+
+        if (nextTenant !== tenantId) {
+          setTenantId(nextTenant)
+          if (typeof window !== 'undefined') {
+            window.localStorage.setItem(TENANT_STORAGE_KEY, nextTenant)
+          }
+        }
+        if (nextCompany && nextCompany !== companyId) {
+          setCompanyId(nextCompany)
+          if (typeof window !== 'undefined') {
+            window.localStorage.setItem(COMPANY_STORAGE_KEY, nextCompany)
+          }
+        }
+      } catch {
+        // Keep stored/runtime fallback identity when config cannot be loaded.
+      }
+    }
+
+    void hydrateIdentity()
+    return () => {
+      cancelled = true
+    }
+  }, [companyId, tenantId])
 
   const {
     contacts,

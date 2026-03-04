@@ -37,6 +37,7 @@ export function useAnalytics({
   const [error, setError] = useState<string | null>(null)
 
   const abortRef = useRef<AbortController | null>(null)
+  const selectCampaignAbortRef = useRef<AbortController | null>(null)
 
   const fetchOverview = useCallback(async () => {
     abortRef.current?.abort()
@@ -82,20 +83,28 @@ export function useAnalytics({
     return () => {
       clearInterval(interval)
       abortRef.current?.abort()
+      selectCampaignAbortRef.current?.abort()
     }
   }, [fetchOverview])
 
   const selectCampaign = useCallback(async (campaignId: string) => {
+    selectCampaignAbortRef.current?.abort()
+    const controller = new AbortController()
+    selectCampaignAbortRef.current = controller
     try {
       const response = await fetch(
         `/api/v1/at/analytics/campaigns/${encodeURIComponent(campaignId)}`,
+        { signal: controller.signal },
       )
       if (!response.ok) {
         throw new Error(`${response.status} ${response.statusText}`)
       }
       const data: CampaignDetailResponse = await response.json()
+      if (controller.signal.aborted) return
       setSelectedCampaign(data.campaign ?? null)
     } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') return
+      if (controller.signal.aborted) return
       setSelectedCampaign(null)
       setError((err as Error).message || 'Failed to fetch campaign detail')
     }

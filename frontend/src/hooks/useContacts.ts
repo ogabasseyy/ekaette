@@ -48,7 +48,9 @@ export function useContacts({ tenantId, companyId }: UseContactsOptions): UseCon
       setError(err instanceof Error ? err.message : 'Failed to fetch contacts')
       setContacts([])
     } finally {
-      setLoading(false)
+      if (abortRef.current === controller && !controller.signal.aborted) {
+        setLoading(false)
+      }
     }
   }, [tenantId, companyId])
 

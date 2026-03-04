@@ -105,7 +105,7 @@ export function StepConnectors({ companyId, tenantId, onNext, onBack }: StepConn
       const payload = await api.callJson(companyUrl)
       const detail = payload.company as AdminCompanyDetail | undefined
       const map = detail?.connectors ?? {}
-      setConnectors(Object.entries(map).map(([id, entry]) => ({ id, ...entry })))
+      setConnectors(Object.entries(map).map(([id, entry]) => ({ ...entry, id })))
     } catch {
       /* non-blocking */
     }

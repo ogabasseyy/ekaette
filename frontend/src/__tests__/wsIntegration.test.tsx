@@ -1,7 +1,7 @@
 import { act, render, screen } from '@testing-library/react'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from '../App'
-import type { ServerMessage } from '../types'
+import { getLastSocket, sendServerMessage, type MockSocket } from './test-helpers'
 
 // Pre-warm dynamic imports so React.lazy resolves immediately under fake timers
 beforeAll(async () => {
@@ -9,29 +9,6 @@ beforeAll(async () => {
   await import('../components/cards/BookingConfirmationCard')
   await import('../components/cards/ProductCard')
 })
-
-interface MockSocket {
-  url: string
-  binaryType: string
-  sent: Array<string | ArrayBuffer>
-  readyState: number
-  onopen: ((ev: Event) => void) | null
-  onclose: ((ev: CloseEvent) => void) | null
-  onerror: ((ev: Event) => void) | null
-  onmessage: ((ev: MessageEvent) => void) | null
-  close: () => void
-  send: (data: string | ArrayBuffer) => void
-}
-
-function getLastSocket(): MockSocket {
-  const ws = (globalThis as { __lastMockWebSocket?: MockSocket }).__lastMockWebSocket
-  if (!ws) throw new Error('Expected mock websocket instance')
-  return ws
-}
-
-function sendServerMessage(ws: MockSocket, message: ServerMessage) {
-  ws.onmessage?.(new MessageEvent('message', { data: JSON.stringify(message) }))
-}
 
 async function connectCall() {
   const micButton = screen.getByRole('button', { name: /start call/i })

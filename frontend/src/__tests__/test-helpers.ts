@@ -39,15 +39,17 @@ export function setStoredIndustry(industry: Industry): void {
   window.localStorage.setItem('ekaette:onboarding:industry', industry)
 }
 
+type SessionStartedPayload = Extract<ServerMessage, { type: 'session_started' }>
+
 /** Build a session_started ServerMessage for tests. */
 export function makeSessionStarted(
   industry: Industry = 'electronics',
-  overrides: Partial<Record<string, unknown>> = {},
-): ServerMessage {
+  overrides: Partial<Omit<SessionStartedPayload, 'type'>> = {},
+): SessionStartedPayload {
   return {
     type: 'session_started',
     sessionId: `test-session-${Date.now()}`,
     industry,
     ...overrides,
-  } as ServerMessage
+  }
 }

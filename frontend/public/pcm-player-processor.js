@@ -73,7 +73,34 @@ class PCMPlayerProcessor extends AudioWorkletProcessor {
       }
 
       // Incoming audio data: Int16 PCM.
-      const int16Samples = new Int16Array(event.data);
+      const payload = event.data;
+      let int16Samples = null;
+      if (payload instanceof Int16Array) {
+        int16Samples = payload;
+      } else if (payload instanceof ArrayBuffer) {
+        if (payload.byteLength < 2 || payload.byteLength % 2 !== 0) {
+          return;
+        }
+        int16Samples = new Int16Array(payload);
+      } else if (ArrayBuffer.isView(payload)) {
+        if (
+          payload.byteLength < 2 ||
+          payload.byteLength % 2 !== 0 ||
+          payload.byteOffset % 2 !== 0
+        ) {
+          return;
+        }
+        int16Samples = new Int16Array(
+          payload.buffer,
+          payload.byteOffset,
+          payload.byteLength / 2
+        );
+      } else {
+        return;
+      }
+      if (int16Samples.length === 0) {
+        return;
+      }
       this._enqueue(int16Samples);
     };
   }

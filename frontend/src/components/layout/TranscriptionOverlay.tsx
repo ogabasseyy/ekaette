@@ -17,7 +17,10 @@ export function TranscriptionOverlay({ messages }: TranscriptionOverlayProps) {
 
   useEffect(() => {
     void latestMessageSignature
-    if (messageCount === 0 && !bottomRef.current && !transcriptRef.current) {
+    if (messageCount === 0) {
+      return
+    }
+    if (!bottomRef.current && !transcriptRef.current) {
       return
     }
     if (bottomRef.current) {
@@ -51,7 +54,7 @@ export function TranscriptionOverlay({ messages }: TranscriptionOverlayProps) {
 
         {messages.map((message, index) => (
           <article
-            key={`${index}-${message.role}-${message.text.slice(0, 12)}`}
+            key={`${index}-${message.role}-${message.partial ? '1' : '0'}`}
             className={cn(
               'message-bubble transcript-row',
               message.role === 'user' ? 'message-user ml-auto' : 'message-agent mr-auto',

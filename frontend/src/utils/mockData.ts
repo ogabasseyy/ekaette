@@ -31,6 +31,17 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object'
 }
 
+function isProductRecommendationItem(value: unknown): boolean {
+  if (!isRecord(value)) return false
+  return (
+    typeof value.name === 'string' &&
+    typeof value.price === 'number' &&
+    typeof value.currency === 'string' &&
+    typeof value.available === 'boolean' &&
+    typeof value.description === 'string'
+  )
+}
+
 export function isServerMessage(value: unknown): value is ServerMessage {
   if (!hasType(value)) return false
   if (!messageTypes.includes(value.type as ServerMessageType)) return false
@@ -63,7 +74,7 @@ export function isServerMessage(value: unknown): value is ServerMessage {
         typeof data.service === 'string'
       )
     case 'product_recommendation':
-      return Array.isArray(data.products)
+      return Array.isArray(data.products) && data.products.every(isProductRecommendationItem)
     case 'image_received':
       return data.status === 'analyzing' || data.status === 'complete'
     case 'agent_transfer':
@@ -582,5 +593,8 @@ export function getDemoStep(stepIndex: number): DemoStep | undefined {
 export function cloneDemoMessage(stepIndex: number): ServerMessage | undefined {
   const step = getDemoStep(stepIndex)
   if (!step || !isRecord(step.message)) return undefined
-  return { ...step.message } as ServerMessage
+  if (typeof globalThis.structuredClone === 'function') {
+    return globalThis.structuredClone(step.message) as ServerMessage
+  }
+  return JSON.parse(JSON.stringify(step.message)) as ServerMessage
 }

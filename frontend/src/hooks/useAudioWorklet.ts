@@ -211,7 +211,7 @@ export function useAudioWorklet(
         await ctx.resume()
       }
 
-      await ctx.audioWorklet.addModule('/pcm-recorder-processor.js')
+      await ctx.audioWorklet.addModule(`${import.meta.env.BASE_URL}pcm-recorder-processor.js`)
 
       const level = noiseCancellationLevelRef.current
       const support = buildCaptureConstraintSupport()
@@ -339,7 +339,7 @@ export function useAudioWorklet(
         await ctx.resume()
       }
 
-      await ctx.audioWorklet.addModule('/pcm-player-processor.js')
+      await ctx.audioWorklet.addModule(`${import.meta.env.BASE_URL}pcm-player-processor.js`)
       const player = new AudioWorkletNode(ctx, 'pcm-player-processor')
       playerNodeRef.current = player
       player.port.onmessage = (event: MessageEvent) => {

@@ -225,7 +225,7 @@ describe('IndustryOnboarding dynamic templates', () => {
     )
 
     // All 3 templates from props should render
-    expect(screen.getByRole('radio', { name: /hardware/i })).toBeInTheDocument()
+    expect(screen.getByRole('radio', { name: /electronics/i })).toBeInTheDocument()
     expect(screen.getByRole('radio', { name: /hospitality/i })).toBeInTheDocument()
     expect(screen.getByRole('radio', { name: /telecom/i })).toBeInTheDocument()
   })

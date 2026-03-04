@@ -85,9 +85,10 @@ def install_tool_response_scheduling_patch() -> bool:
             tool_context: Any,
             invocation_context: Any,
         ) -> Any:
-            if _ORIGINAL_BUILD_RESPONSE_EVENT is None:
+            original_hook = _ORIGINAL_BUILD_RESPONSE_EVENT
+            if original_hook is None:
                 return None
-            event = _ORIGINAL_BUILD_RESPONSE_EVENT(tool, function_result, tool_context, invocation_context)
+            event = original_hook(tool, function_result, tool_context, invocation_context)
             tool_name = getattr(tool, "name", "")
             if isinstance(tool_name, str) and tool_name:
                 _apply_response_scheduling(event, tool_name)

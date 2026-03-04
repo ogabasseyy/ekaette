@@ -54,7 +54,14 @@ export function CampaignTable({ campaigns, selectedId, onSelect, className }: Ca
                 'cursor-pointer border-b border-border/20 transition-colors hover:bg-card/40',
                 selectedId === campaign.campaign_id && 'bg-primary/5 border-l-2 border-l-primary',
               )}
+              tabIndex={0}
               onClick={() => onSelect(campaign.campaign_id)}
+              onKeyDown={event => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                  event.preventDefault()
+                  onSelect(campaign.campaign_id)
+                }
+              }}
             >
               <td className="px-4 py-3 font-medium text-foreground">{campaign.campaign_name}</td>
               <td className="px-4 py-3">

@@ -21,18 +21,20 @@ describe('ImageUpload', () => {
       }
     }
 
-    ;(globalThis as unknown as { FileReader: typeof FileReader }).FileReader =
-      MockFileReader as unknown as typeof FileReader
+    try {
+      ;(globalThis as unknown as { FileReader: typeof FileReader }).FileReader =
+        MockFileReader as unknown as typeof FileReader
 
-    render(<ImageUpload onImageSelected={onImageSelected} showPreview />)
+      render(<ImageUpload onImageSelected={onImageSelected} showPreview />)
 
-    const input = screen.getByLabelText(/upload photo/i, { selector: 'input' })
-    const file = new File(['content'], 'device.jpg', { type: 'image/jpeg' })
-    fireEvent.change(input, { target: { files: [file] } })
+      const input = screen.getByLabelText(/upload photo/i, { selector: 'input' })
+      const file = new File(['content'], 'device.jpg', { type: 'image/jpeg' })
+      fireEvent.change(input, { target: { files: [file] } })
 
-    expect(onImageSelected).toHaveBeenCalledWith('ZmFrZS1pbWFnZS1iYXNlNjQ=', 'image/jpeg')
-    expect(screen.getByAltText(/upload preview/i)).toBeInTheDocument()
-
-    ;(globalThis as unknown as { FileReader: typeof FileReader }).FileReader = original
+      expect(onImageSelected).toHaveBeenCalledWith('ZmFrZS1pbWFnZS1iYXNlNjQ=', 'image/jpeg')
+      expect(screen.getByAltText(/upload preview/i)).toBeInTheDocument()
+    } finally {
+      ;(globalThis as unknown as { FileReader: typeof FileReader }).FileReader = original
+    }
   })
 })

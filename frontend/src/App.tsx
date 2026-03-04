@@ -139,7 +139,8 @@ function parseStoredValue(value: string | null): string | null {
 
 function readDemoModeFlag(): boolean {
   if (typeof window === 'undefined') return false
-  if (window.location.search.includes('demo=1')) return true
+  const params = new URLSearchParams(window.location.search)
+  if (params.get('demo') === '1') return true
   return String(import.meta.env.VITE_DEMO_MODE ?? '').toLowerCase() === 'true'
 }
 
@@ -170,12 +171,6 @@ function resolveTheme(templateId: string, templates: IndustryTemplateMeta[] | nu
   if (templates) {
     const match = templates.find(t => t.id === templateId)
     if (match) {
-      if (templateId === 'electronics') {
-        return {
-          ...match.theme,
-          title: 'Hardware Trade Desk',
-        }
-      }
       return match.theme
     }
   }

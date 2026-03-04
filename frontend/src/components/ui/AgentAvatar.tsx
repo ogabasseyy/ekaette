@@ -1,3 +1,4 @@
+import { cva } from 'class-variance-authority'
 import { cn } from '../../lib/utils'
 
 interface AgentAvatarProps {
@@ -6,27 +7,37 @@ interface AgentAvatarProps {
   className?: string
 }
 
+const avatarVariants = cva(
+  'inline-flex h-8 w-8 items-center justify-center rounded-full border font-semibold text-xs uppercase',
+  {
+    variants: {
+      active: {
+        true: 'border-primary/50 bg-primary/20 text-primary',
+        false: 'border-border/70 bg-card/60 text-muted-foreground',
+      },
+    },
+    defaultVariants: {
+      active: false,
+    },
+  },
+)
+
 export function AgentAvatar({ label, active = false, className }: AgentAvatarProps) {
-  const initials = label
+  const normalizedLabel = label.trim().replace(/\s+/g, ' ')
+  const initials = normalizedLabel
     .split(/\s+/)
     .filter(Boolean)
     .slice(0, 2)
     .map(part => part[0]?.toUpperCase() ?? '')
     .join('')
+  const displayLabel = normalizedLabel || 'Agent'
 
   return (
     <div className={cn('inline-flex items-center gap-2', className)}>
-      <span
-        className={cn(
-          'inline-flex h-8 w-8 items-center justify-center rounded-full border font-semibold text-xs uppercase',
-          active
-            ? 'border-primary/50 bg-primary/20 text-primary'
-            : 'border-border/70 bg-card/60 text-muted-foreground',
-        )}
-      >
+      <span aria-hidden="true" className={avatarVariants({ active })}>
         {initials || 'AI'}
       </span>
-      <span className="text-muted-foreground text-xs">{label}</span>
+      <span className="text-muted-foreground text-xs">{displayLabel}</span>
     </div>
   )
 }

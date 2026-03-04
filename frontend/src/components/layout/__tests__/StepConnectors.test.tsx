@@ -66,9 +66,9 @@ function mockError(status: number, error: string) {
 // Route fetch calls based on URL
 function routeFetch(
   overrides: {
-    providers?: ReturnType<typeof mockProviders>
-    company?: ReturnType<typeof mockCompanyDetail>
-    connector?: ReturnType<typeof mockSuccess>
+    providers?: Response
+    company?: Response
+    connector?: Response
   } = {},
 ) {
   fetchSpy.mockImplementation(async (input: RequestInfo | URL) => {
@@ -100,6 +100,10 @@ async function renderStep(props?: Partial<{ companyId: string; tenantId: string 
   return { onNext, onBack }
 }
 
+function getProviderCardButton(providerLabel: string) {
+  return screen.getByRole('button', { name: new RegExp(providerLabel, 'i') })
+}
+
 describe('StepConnectors', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -127,7 +131,7 @@ describe('StepConnectors', () => {
     routeFetch({
       company: mockCompanyDetail({
         'mock-provider': { id: 'mock-provider', provider: 'mock', enabled: true },
-      }),
+      }) as unknown as Response,
     })
     await renderStep()
     await waitFor(() => {
@@ -141,10 +145,8 @@ describe('StepConnectors', () => {
     await renderStep()
     await waitFor(() => expect(screen.getByText('Mock Provider')).toBeInTheDocument())
 
-    // Find the Connect button for the mock card
-    const connectButtons = screen.getAllByRole('button', { name: /connect/i })
-    const mockConnect = connectButtons[0]
-    await user.click(mockConnect)
+    const mockProviderCard = getProviderCardButton('Mock Provider')
+    await user.click(mockProviderCard)
 
     // Should call POST to /connectors (not show a secret input)
     await waitFor(() => {
@@ -164,10 +166,8 @@ describe('StepConnectors', () => {
     await renderStep()
     await waitFor(() => expect(screen.getByText('Salesforce')).toBeInTheDocument())
 
-    // Click Connect on Salesforce (requires secret)
-    const connectButtons = screen.getAllByRole('button', { name: /connect/i })
-    // Salesforce is the second card
-    await user.click(connectButtons[1])
+    const salesforceCard = getProviderCardButton('Salesforce')
+    await user.click(salesforceCard)
 
     // Should show the secret input
     await waitFor(() => {
@@ -181,8 +181,8 @@ describe('StepConnectors', () => {
     await renderStep()
     await waitFor(() => expect(screen.getByText('Salesforce')).toBeInTheDocument())
 
-    const connectButtons = screen.getAllByRole('button', { name: /connect/i })
-    await user.click(connectButtons[1])
+    const salesforceCard = getProviderCardButton('Salesforce')
+    await user.click(salesforceCard)
 
     const secretInput = await screen.findByLabelText(/api key|secret/i)
     await user.type(secretInput, 'sk-test-123')
@@ -208,10 +208,8 @@ describe('StepConnectors', () => {
     routeFetch({
       company: mockCompanyDetail({
         'crm-salesforce': { id: 'crm-salesforce', provider: 'salesforce', enabled: true },
-      }),
-      connector: mockSuccess({ ok: true, details: 'Connector probe passed.' }) as ReturnType<
-        typeof mockSuccess
-      >,
+      }) as unknown as Response,
+      connector: mockSuccess({ ok: true, details: 'Connector probe passed.' }) as unknown as Response,
     })
     const user = userEvent.setup()
     await renderStep()
@@ -234,7 +232,7 @@ describe('StepConnectors', () => {
     routeFetch({
       company: mockCompanyDetail({
         'crm-salesforce': { id: 'crm-salesforce', provider: 'salesforce', enabled: true },
-      }),
+      }) as unknown as Response,
     })
     const user = userEvent.setup()
     await renderStep()
@@ -296,8 +294,8 @@ describe('StepConnectors', () => {
     await renderStep()
     await waitFor(() => expect(screen.getByText('Mock Provider')).toBeInTheDocument())
 
-    const connectButtons = screen.getAllByRole('button', { name: /connect/i })
-    await user.click(connectButtons[0])
+    const mockProviderCard = getProviderCardButton('Mock Provider')
+    await user.click(mockProviderCard)
 
     await waitFor(() => {
       expect(screen.getByRole('alert')).toBeInTheDocument()

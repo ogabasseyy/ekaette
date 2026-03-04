@@ -1,15 +1,81 @@
+import { type KeyboardEvent, useEffect, useRef } from 'react'
+
 interface ConsentModalProps {
   onAccept: () => void
   onDecline: () => void
 }
 
 export function ConsentModal({ onAccept, onDecline }: ConsentModalProps) {
+  const dialogRef = useRef<HTMLDivElement>(null)
+  const acceptButtonRef = useRef<HTMLButtonElement>(null)
+
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow
+    const previousFocus =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null
+    document.body.style.overflow = 'hidden'
+    acceptButtonRef.current?.focus()
+
+    return () => {
+      document.body.style.overflow = previousOverflow
+      previousFocus?.focus()
+    }
+  }, [])
+
+  const handleDialogKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      onDecline()
+      return
+    }
+
+    if (event.key !== 'Tab') return
+
+    const container = dialogRef.current
+    if (!container) return
+
+    const focusable = Array.from(
+      container.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      ),
+    ).filter(element => !element.hasAttribute('aria-hidden'))
+
+    if (focusable.length === 0) {
+      event.preventDefault()
+      return
+    }
+
+    const first = focusable[0]
+    const last = focusable[focusable.length - 1]
+    const activeElement = document.activeElement
+
+    if (!activeElement || !container.contains(activeElement)) {
+      event.preventDefault()
+      first.focus()
+      return
+    }
+
+    if (event.shiftKey && activeElement === first) {
+      event.preventDefault()
+      last.focus()
+      return
+    }
+
+    if (!event.shiftKey && activeElement === last) {
+      event.preventDefault()
+      first.focus()
+    }
+  }
+
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm">
       <div
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="consent-title"
+        tabIndex={-1}
+        onKeyDown={handleDialogKeyDown}
         className="panel-glass max-w-lg w-full mx-4 px-6 py-6 sm:px-8 sm:py-8 animate-slide-up"
       >
         <h2
@@ -65,6 +131,7 @@ export function ConsentModal({ onAccept, onDecline }: ConsentModalProps) {
           </button>
           <button
             type="button"
+            ref={acceptButtonRef}
             onClick={onAccept}
             className="flex-1 rounded-full border border-accent px-4 py-2 text-xs font-semibold uppercase tracking-widest text-accent transition hover:bg-accent/10 hover:text-accent-foreground sm:text-sm"
           >

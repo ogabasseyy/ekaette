@@ -28,6 +28,11 @@ export function VoicePanel({
   audioError,
   callError,
 }: VoicePanelProps) {
+  const sessionTotalTokens = latestTelemetry?.sessionTotalTokens
+  const sessionCostUsd = latestTelemetry?.sessionCostUsd
+  const safeTelemetryTokens = Number.isFinite(sessionTotalTokens) ? Number(sessionTotalTokens) : 0
+  const safeTelemetryCostUsd = Number.isFinite(sessionCostUsd) ? Number(sessionCostUsd) : 0
+
   return (
     <section className="panel-glass voice-panel flex min-h-0 flex-col justify-between px-4 py-4 sm:px-5 sm:py-5">
       <div>
@@ -57,7 +62,7 @@ export function VoicePanel({
         </div>
       </div>
 
-      <div className="mt-4 space-y-2">
+      <div className="mt-4 space-y-2" aria-live="polite" aria-atomic="true">
         <p className="voice-panel__session rounded-xl border border-border/70 bg-card/50 px-3 py-2 text-[11px] text-muted-foreground leading-5 sm:text-xs">
           Session: <span className="break-all text-foreground">{sessionId}</span>
         </p>
@@ -68,8 +73,7 @@ export function VoicePanel({
         )}
         {latestTelemetry && (
           <StatusBadge variant="muted" className="block break-words">
-            Tokens: {latestTelemetry.sessionTotalTokens} (cost: $
-            {latestTelemetry.sessionCostUsd.toFixed(4)})
+            Tokens: {safeTelemetryTokens} (cost: ${safeTelemetryCostUsd.toFixed(4)})
           </StatusBadge>
         )}
         {latestMemoryRecall && (

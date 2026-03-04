@@ -70,14 +70,15 @@ function mockFetchResponses(
   contactsResp: ContactsResponse,
   analyticsResp: AnalyticsOverviewResponse = MOCK_ANALYTICS,
 ) {
-  return vi.fn((url: string) => {
+  return vi.fn((input: RequestInfo | URL) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
     if (url.includes('/analytics/contacts')) {
-      return Promise.resolve({ ok: true, json: () => Promise.resolve(contactsResp) })
+      return Promise.resolve({ ok: true, json: () => Promise.resolve(contactsResp) } as Response)
     }
     if (url.includes('/analytics/overview')) {
-      return Promise.resolve({ ok: true, json: () => Promise.resolve(analyticsResp) })
+      return Promise.resolve({ ok: true, json: () => Promise.resolve(analyticsResp) } as Response)
     }
-    return Promise.resolve({ ok: true, json: () => Promise.resolve({ status: 'ok' }) })
+    return Promise.resolve({ ok: true, json: () => Promise.resolve({ status: 'ok' }) } as Response)
   })
 }
 
@@ -87,26 +88,26 @@ afterEach(() => {
 
 describe('MarketingDashboard', () => {
   it('renders page title', () => {
-    global.fetch = mockFetchResponses(MOCK_CONTACTS)
+    global.fetch = mockFetchResponses(MOCK_CONTACTS) as unknown as typeof fetch
     render(<MarketingDashboard />)
     expect(screen.getByText('Marketing Campaigns')).toBeInTheDocument()
   })
 
   it('renders NavBar with marketing active', () => {
-    global.fetch = mockFetchResponses(MOCK_CONTACTS)
+    global.fetch = mockFetchResponses(MOCK_CONTACTS) as unknown as typeof fetch
     render(<MarketingDashboard />)
-    const marketingTab = screen.getByRole('tab', { name: /marketing/i })
+    const marketingTab = screen.getByRole('button', { name: /marketing/i })
     expect(marketingTab).toHaveAttribute('aria-current', 'page')
   })
 
   it('shows loading state while fetching', () => {
-    global.fetch = vi.fn().mockReturnValue(new Promise(() => {}))
+    global.fetch = vi.fn().mockReturnValue(new Promise<Response>(() => {})) as unknown as typeof fetch
     render(<MarketingDashboard />)
     expect(screen.getByText('Loading contacts…')).toBeInTheDocument()
   })
 
   it('shows empty state when no contacts', async () => {
-    global.fetch = mockFetchResponses(MOCK_EMPTY_CONTACTS)
+    global.fetch = mockFetchResponses(MOCK_EMPTY_CONTACTS) as unknown as typeof fetch
     render(<MarketingDashboard />)
 
     await waitFor(() => {
@@ -115,7 +116,7 @@ describe('MarketingDashboard', () => {
   })
 
   it('renders contact list after data loads', async () => {
-    global.fetch = mockFetchResponses(MOCK_CONTACTS)
+    global.fetch = mockFetchResponses(MOCK_CONTACTS) as unknown as typeof fetch
     render(<MarketingDashboard />)
 
     await waitFor(() => {
@@ -125,7 +126,7 @@ describe('MarketingDashboard', () => {
   })
 
   it('renders channel badges on contact rows', async () => {
-    global.fetch = mockFetchResponses(MOCK_CONTACTS)
+    global.fetch = mockFetchResponses(MOCK_CONTACTS) as unknown as typeof fetch
     render(<MarketingDashboard />)
 
     await waitFor(() => {
@@ -138,7 +139,7 @@ describe('MarketingDashboard', () => {
 
   it('toggling a contact checkbox selects it', async () => {
     const user = userEvent.setup()
-    global.fetch = mockFetchResponses(MOCK_CONTACTS)
+    global.fetch = mockFetchResponses(MOCK_CONTACTS) as unknown as typeof fetch
     render(<MarketingDashboard />)
 
     await waitFor(() => {
@@ -154,7 +155,7 @@ describe('MarketingDashboard', () => {
 
   it('Select All selects all contacts', async () => {
     const user = userEvent.setup()
-    global.fetch = mockFetchResponses(MOCK_CONTACTS)
+    global.fetch = mockFetchResponses(MOCK_CONTACTS) as unknown as typeof fetch
     render(<MarketingDashboard />)
 
     await waitFor(() => {
@@ -169,7 +170,7 @@ describe('MarketingDashboard', () => {
 
   it('Clear deselects all contacts', async () => {
     const user = userEvent.setup()
-    global.fetch = mockFetchResponses(MOCK_CONTACTS)
+    global.fetch = mockFetchResponses(MOCK_CONTACTS) as unknown as typeof fetch
     render(<MarketingDashboard />)
 
     await waitFor(() => {
@@ -184,7 +185,7 @@ describe('MarketingDashboard', () => {
   })
 
   it('renders channel toggle with SMS and Voice options', async () => {
-    global.fetch = mockFetchResponses(MOCK_CONTACTS)
+    global.fetch = mockFetchResponses(MOCK_CONTACTS) as unknown as typeof fetch
     render(<MarketingDashboard />)
 
     await waitFor(() => {
@@ -199,7 +200,7 @@ describe('MarketingDashboard', () => {
   })
 
   it('renders campaign name and message fields', async () => {
-    global.fetch = mockFetchResponses(MOCK_CONTACTS)
+    global.fetch = mockFetchResponses(MOCK_CONTACTS) as unknown as typeof fetch
     render(<MarketingDashboard />)
 
     await waitFor(() => {
@@ -211,7 +212,7 @@ describe('MarketingDashboard', () => {
   })
 
   it('Send Campaign button is disabled without recipients or message', async () => {
-    global.fetch = mockFetchResponses(MOCK_CONTACTS)
+    global.fetch = mockFetchResponses(MOCK_CONTACTS) as unknown as typeof fetch
     render(<MarketingDashboard />)
 
     await waitFor(() => {
@@ -225,7 +226,7 @@ describe('MarketingDashboard', () => {
   it('quick SMS button triggers fetch to /sms/send', async () => {
     const user = userEvent.setup()
     const fetchMock = mockFetchResponses(MOCK_CONTACTS)
-    global.fetch = fetchMock
+    global.fetch = fetchMock as unknown as typeof fetch
     render(<MarketingDashboard />)
 
     await waitFor(() => {
@@ -238,7 +239,10 @@ describe('MarketingDashboard', () => {
 
     // Quick SMS should prompt or send — either way fetch was called
     await waitFor(() => {
-      const smsCalls = fetchMock.mock.calls.filter(([url]: [string]) => url.includes('/sms/send'))
+      const smsCalls = fetchMock.mock.calls.filter(([input]: [RequestInfo | URL]) => {
+        const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
+        return url.includes('/sms/send')
+      })
       expect(smsCalls.length).toBe(1)
     })
   })
@@ -246,7 +250,7 @@ describe('MarketingDashboard', () => {
   it('quick Call button triggers fetch to /voice/call', async () => {
     const user = userEvent.setup()
     const fetchMock = mockFetchResponses(MOCK_CONTACTS)
-    global.fetch = fetchMock
+    global.fetch = fetchMock as unknown as typeof fetch
     render(<MarketingDashboard />)
 
     await waitFor(() => {
@@ -258,15 +262,21 @@ describe('MarketingDashboard', () => {
     await user.click(callBtn)
 
     await waitFor(() => {
-      const callCalls = fetchMock.mock.calls.filter(([url]: [string]) =>
-        url.includes('/voice/call'),
-      )
+      const callCalls = fetchMock.mock.calls.filter(([input]: [RequestInfo | URL]) => {
+        const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
+        return url.includes('/voice/call')
+      })
       expect(callCalls.length).toBe(1)
     })
   })
 
   it('shows error on fetch failure', async () => {
-    global.fetch = vi.fn().mockResolvedValue({ ok: false, status: 500, statusText: 'Server Error' })
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 500,
+      statusText: 'Server Error',
+      json: () => Promise.resolve({ message: 'Internal Server Error' }),
+    } as unknown as Response) as unknown as typeof fetch
     render(<MarketingDashboard />)
 
     await waitFor(() => {

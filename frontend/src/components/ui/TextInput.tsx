@@ -1,4 +1,4 @@
-import { type KeyboardEvent, useMemo, useState, useTransition } from 'react'
+import { type KeyboardEvent, useMemo, useState } from 'react'
 import { cn } from '../../lib/utils'
 
 interface TextInputProps {
@@ -8,12 +8,8 @@ interface TextInputProps {
 
 export function TextInput({ connected, onSend }: TextInputProps) {
   const [draft, setDraft] = useState('')
-  const [isPending, startTransition] = useTransition()
 
-  const canSend = useMemo(
-    () => connected && draft.trim().length > 0 && !isPending,
-    [connected, draft, isPending],
-  )
+  const canSend = useMemo(() => connected && draft.trim().length > 0, [connected, draft])
 
   const handleSend = () => {
     const text = draft.trim()
@@ -23,9 +19,7 @@ export function TextInput({ connected, onSend }: TextInputProps) {
   }
 
   const handleChange = (next: string) => {
-    startTransition(() => {
-      setDraft(next)
-    })
+    setDraft(next)
   }
 
   const handleKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
@@ -37,6 +31,7 @@ export function TextInput({ connected, onSend }: TextInputProps) {
   return (
     <div className="flex min-w-0 flex-1 items-center gap-2 rounded-2xl border border-border/80 bg-black/35 px-2.5 py-2 sm:px-3">
       <input
+        aria-label="Message input"
         value={draft}
         onChange={event => handleChange(event.target.value)}
         onKeyDown={handleKeyDown}

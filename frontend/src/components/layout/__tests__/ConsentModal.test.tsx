@@ -43,7 +43,8 @@ describe('ConsentModal', () => {
 
   it('has correct accessibility attributes', () => {
     render(<ConsentModal onAccept={() => {}} onDecline={() => {}} />)
-    const dialog = screen.getByRole('dialog')
+    const dialog = screen.getByRole('dialog', { name: /data & ai usage consent/i })
     expect(dialog).toHaveAttribute('aria-modal', 'true')
+    expect(dialog).toHaveAttribute('aria-labelledby', 'consent-title')
   })
 })

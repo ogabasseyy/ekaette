@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useAnalytics } from '../../hooks/useAnalytics'
 import { cn } from '../../lib/utils'
 import { NavBar } from '../layout/NavBar'
@@ -7,11 +7,72 @@ import { CampaignTable } from './CampaignTable'
 import { KpiCards } from './KpiCards'
 
 const DAYS_OPTIONS = [7, 30, 90] as const
+const TENANT_STORAGE_KEY = 'ekaette:onboarding:tenantId'
+const COMPANY_STORAGE_KEY = 'ekaette:onboarding:companyId'
+
+function readStoredValue(key: string): string | null {
+  if (typeof window === 'undefined') return null
+  const value = window.localStorage.getItem(key)
+  if (!value || !value.trim()) return null
+  return value.trim()
+}
 
 export function AnalyticsDashboard() {
-  const [tenantId] = useState('public')
-  const [companyId] = useState('ekaette-electronics')
+  const [tenantId, setTenantId] = useState(
+    () => readStoredValue(TENANT_STORAGE_KEY) ?? String(import.meta.env.VITE_TENANT_ID ?? 'public'),
+  )
+  const [companyId, setCompanyId] = useState(() => readStoredValue(COMPANY_STORAGE_KEY) ?? '')
   const [days, setDays] = useState<number>(30)
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function hydrateIdentity() {
+      try {
+        const response = await fetch(
+          `/api/onboarding/config?tenantId=${encodeURIComponent(tenantId)}`,
+          {
+            headers: { Accept: 'application/json' },
+          },
+        )
+        if (!response.ok) return
+        const payload = (await response.json()) as {
+          tenantId?: string
+          defaults?: { companyId?: string }
+        }
+        if (cancelled) return
+
+        const nextTenant =
+          typeof payload.tenantId === 'string' && payload.tenantId.trim()
+            ? payload.tenantId.trim()
+            : tenantId
+        const nextCompany =
+          typeof payload.defaults?.companyId === 'string' && payload.defaults.companyId.trim()
+            ? payload.defaults.companyId.trim()
+            : companyId
+
+        if (nextTenant !== tenantId) {
+          setTenantId(nextTenant)
+          if (typeof window !== 'undefined') {
+            window.localStorage.setItem(TENANT_STORAGE_KEY, nextTenant)
+          }
+        }
+        if (nextCompany && nextCompany !== companyId) {
+          setCompanyId(nextCompany)
+          if (typeof window !== 'undefined') {
+            window.localStorage.setItem(COMPANY_STORAGE_KEY, nextCompany)
+          }
+        }
+      } catch {
+        // Keep stored/runtime fallback identity when config cannot be loaded.
+      }
+    }
+
+    void hydrateIdentity()
+    return () => {
+      cancelled = true
+    }
+  }, [companyId, tenantId])
 
   const { summary, campaigns, selectedCampaign, loading, error, selectCampaign, clearSelection } =
     useAnalytics({ tenantId, companyId, days })

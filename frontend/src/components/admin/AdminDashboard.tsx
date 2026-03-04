@@ -178,6 +178,7 @@ export function AdminDashboard() {
   const [busy, setBusy] = useState(false)
   const [statusMessage, setStatusMessage] = useState<string | null>(null)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
+  const busyCountRef = useRef(0)
   const abortControllersRef = useRef<Set<AbortController>>(new Set())
 
   useEffect(() => {
@@ -191,7 +192,16 @@ export function AdminDashboard() {
 
   useEffect(() => {
     const sync = companyDetail?.inventorySync
-    if (!sync) return
+    if (!sync) {
+      setInventorySourceType('google_sheets')
+      setInventorySourceUrl('')
+      setInventoryConnectorId('inventory')
+      setInventorySheetName('')
+      setInventoryDryRun(false)
+      setInventoryAutoEnabled(false)
+      setInventoryIntervalMinutes('15')
+      return
+    }
     if (sync.source_type === 'google_sheets' || sync.source_type === 'mcp_connector') {
       setInventorySourceType(sync.source_type)
     }
@@ -307,6 +317,7 @@ export function AdminDashboard() {
   }
 
   async function runAction(action: () => Promise<void>) {
+    busyCountRef.current += 1
     setBusy(true)
     setErrorMessage(null)
     setStatusMessage(null)
@@ -315,7 +326,8 @@ export function AdminDashboard() {
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Action failed')
     } finally {
-      setBusy(false)
+      busyCountRef.current = Math.max(0, busyCountRef.current - 1)
+      setBusy(busyCountRef.current > 0)
     }
   }
 

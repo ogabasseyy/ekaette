@@ -7,7 +7,8 @@ interface RateBarProps {
 }
 
 export function RateBar({ rate, colorClass = 'bg-primary', className }: RateBarProps) {
-  const clampedRate = Math.max(0, Math.min(1, rate))
+  const safeRate = Number.isFinite(rate) ? rate : 0
+  const clampedRate = Math.max(0, Math.min(1, safeRate))
   return (
     <div className={cn('rate-bar-track', className)}>
       <div className={cn('rate-bar-fill', colorClass)} style={{ width: `${clampedRate * 100}%` }} />

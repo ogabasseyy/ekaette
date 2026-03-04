@@ -1,5 +1,5 @@
 import { cva } from 'class-variance-authority'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { formatNaira } from '../../lib/format'
 import { cn } from '../../lib/utils'
 
@@ -40,6 +40,10 @@ export default function ValuationCard({
 }: ValuationCardProps) {
   const [counterOffer, setCounterOffer] = useState(price)
 
+  useEffect(() => {
+    setCounterOffer(price)
+  }, [price])
+
   const formattedPrice = useMemo(() => {
     if (currency === 'NGN' || currency === '₦') {
       return formatNaira(price)
@@ -64,7 +68,10 @@ export default function ValuationCard({
           id="counter-offer"
           type="number"
           value={counterOffer}
-          onChange={event => setCounterOffer(Number(event.target.value || 0))}
+          onChange={event => {
+            const next = event.currentTarget.valueAsNumber
+            setCounterOffer(Number.isFinite(next) ? next : 0)
+          }}
           className="w-full rounded-xl border border-border/80 bg-black/35 px-3 py-2 text-foreground text-sm outline-none focus:border-primary/60"
         />
       </div>

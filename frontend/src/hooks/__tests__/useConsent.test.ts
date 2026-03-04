@@ -60,4 +60,21 @@ describe('useConsent', () => {
       expect(stored.accepted).not.toBe(true)
     }
   })
+
+  it('declineConsent clears previously accepted consent from localStorage', () => {
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({ accepted: true, timestamp: '2026-03-01T00:00:00.000Z', version: '1.0' }),
+    )
+
+    const { result } = renderHook(() => useConsent())
+    expect(result.current.hasConsented).toBe(true)
+
+    act(() => {
+      result.current.declineConsent()
+    })
+
+    expect(result.current.hasConsented).toBe(false)
+    expect(localStorage.getItem(STORAGE_KEY)).toBeNull()
+  })
 })

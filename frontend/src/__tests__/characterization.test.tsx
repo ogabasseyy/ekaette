@@ -267,7 +267,7 @@ describe('Demo mode characterization', () => {
     expect(electronicsEntry).toBeDefined()
   })
 
-  it('useDemoMode defaults to electronics steps regardless of industry', async () => {
+  it('useDemoMode starts with zero messages and not playing', async () => {
     const { renderHook } = await import('@testing-library/react')
     const { useDemoMode } = await import('../hooks/useDemoMode')
 

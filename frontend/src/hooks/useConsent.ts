@@ -34,6 +34,11 @@ export function useConsent() {
   }, [])
 
   const declineConsent = useCallback(() => {
+    try {
+      localStorage.removeItem(STORAGE_KEY)
+    } catch {
+      // Ignore storage failures and still update in-memory consent state.
+    }
     setHasConsented(false)
   }, [])
 
