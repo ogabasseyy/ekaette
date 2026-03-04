@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type {
-  AnalyticsOverviewResponse,
   AnalyticsSummary,
-  CampaignDetailResponse,
   CampaignSnapshot,
+  AnalyticsOverviewResponse,
+  CampaignDetailResponse,
 } from '../types/analytics'
 
 const POLL_INTERVAL_MS = 30_000
@@ -25,11 +25,7 @@ interface UseAnalyticsResult {
   clearSelection: () => void
 }
 
-export function useAnalytics({
-  tenantId,
-  companyId,
-  days = 30,
-}: UseAnalyticsOptions): UseAnalyticsResult {
+export function useAnalytics({ tenantId, companyId, days = 30 }: UseAnalyticsOptions): UseAnalyticsResult {
   const [summary, setSummary] = useState<AnalyticsSummary | null>(null)
   const [campaigns, setCampaigns] = useState<CampaignSnapshot[]>([])
   const [selectedCampaign, setSelectedCampaign] = useState<CampaignSnapshot | null>(null)
@@ -37,7 +33,6 @@ export function useAnalytics({
   const [error, setError] = useState<string | null>(null)
 
   const abortRef = useRef<AbortController | null>(null)
-  const selectCampaignAbortRef = useRef<AbortController | null>(null)
 
   const fetchOverview = useCallback(async () => {
     abortRef.current?.abort()
@@ -63,9 +58,9 @@ export function useAnalytics({
       setSummary(data.summary)
       setCampaigns(data.campaigns ?? [])
       setError(null)
-    } catch (err: unknown) {
-      if (err instanceof DOMException && err.name === 'AbortError') return
-      setError(err instanceof Error ? err.message : 'Failed to fetch analytics')
+    } catch (err) {
+      if ((err as Error).name === 'AbortError') return
+      setError((err as Error).message || 'Failed to fetch analytics')
       setSummary(null)
       setCampaigns([])
     } finally {
@@ -76,42 +71,27 @@ export function useAnalytics({
   }, [tenantId, companyId, days])
 
   useEffect(() => {
-    void fetchOverview()
+    fetchOverview()
 
-    const interval = setInterval(() => void fetchOverview(), POLL_INTERVAL_MS)
+    const interval = setInterval(fetchOverview, POLL_INTERVAL_MS)
 
     return () => {
       clearInterval(interval)
       abortRef.current?.abort()
-      selectCampaignAbortRef.current?.abort()
     }
   }, [fetchOverview])
 
-  // Clear selected campaign when the analytics scope changes, not on every poll tick.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: scope args trigger reset intentionally
-  useEffect(() => {
-    setSelectedCampaign(null)
-  }, [tenantId, companyId, days])
-
   const selectCampaign = useCallback(async (campaignId: string) => {
-    selectCampaignAbortRef.current?.abort()
-    const controller = new AbortController()
-    selectCampaignAbortRef.current = controller
-    setError(null)
     try {
-      const response = await fetch(
-        `/api/v1/at/analytics/campaigns/${encodeURIComponent(campaignId)}`,
-        { signal: controller.signal },
-      )
+      const response = await fetch(`/api/v1/at/analytics/campaigns/${encodeURIComponent(campaignId)}`)
       if (!response.ok) {
         throw new Error(`${response.status} ${response.statusText}`)
       }
       const data: CampaignDetailResponse = await response.json()
       setSelectedCampaign(data.campaign ?? null)
-    } catch (err: unknown) {
-      if (err instanceof DOMException && err.name === 'AbortError') return
+    } catch (err) {
       setSelectedCampaign(null)
-      setError(err instanceof Error ? err.message : 'Failed to fetch campaign detail')
+      setError((err as Error).message || 'Failed to fetch campaign detail')
     }
   }, [])
 

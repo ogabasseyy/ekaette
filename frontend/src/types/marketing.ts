@@ -4,7 +4,7 @@ export interface KnownContact {
   phone: string
   last_campaign_id: string
   last_campaign_name: string
-  channel: CampaignChannel
+  channel: string
 }
 
 export interface ContactsResponse {

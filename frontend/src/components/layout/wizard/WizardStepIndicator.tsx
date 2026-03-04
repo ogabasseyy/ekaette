@@ -1,11 +1,11 @@
-import { cva } from 'class-variance-authority'
+import { cva, type VariantProps } from 'class-variance-authority'
 import { cn } from '../../../lib/utils'
 import type { WizardStepStatus } from '../../../types'
 
 const STEP_LABELS = ['Industry', 'Knowledge', 'Connectors', 'Catalog', 'Launch'] as const
 
 const stepDotVariants = cva(
-  'flex size-8 items-center justify-center rounded-full font-medium text-xs transition',
+  'flex size-8 items-center justify-center rounded-full text-xs font-medium transition',
   {
     variants: {
       status: {
@@ -41,10 +41,7 @@ export function WizardStepIndicator({
   onStepClick,
 }: WizardStepIndicatorProps) {
   return (
-    <nav
-      aria-label="Vendor setup steps"
-      className="flex items-center justify-center gap-2 sm:gap-3"
-    >
+    <nav aria-label="Vendor setup steps" className="flex items-center justify-center gap-2 sm:gap-3">
       {STEP_LABELS.map((label, index) => {
         const status = resolveStepStatus(index, currentStep, completedSteps)
         const canClick = completedSteps.has(index) && index !== currentStep

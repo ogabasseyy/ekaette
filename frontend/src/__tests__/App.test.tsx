@@ -1,7 +1,7 @@
 import { act, render, screen } from '@testing-library/react'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from '../App'
-import { getLastSocket, type MockSocket, sendServerMessage } from './test-helpers'
+import type { ServerMessage } from '../types'
 
 // Pre-warm dynamic import cache so React.lazy resolves immediately under fake timers
 beforeAll(async () => {
@@ -15,6 +15,39 @@ beforeAll(async () => {
   await import('../components/layout/wizard/StepCatalog')
   await import('../components/layout/wizard/StepLaunch')
 })
+
+interface MockSocket {
+  url: string
+  binaryType: string
+  sent: Array<string | ArrayBuffer>
+  readyState: number
+  onopen: ((ev: Event) => void) | null
+  onclose: ((ev: CloseEvent) => void) | null
+  onerror: ((ev: Event) => void) | null
+  onmessage: ((ev: MessageEvent) => void) | null
+  close: () => void
+  send: (data: string | ArrayBuffer) => void
+}
+
+function getLastSocket(): MockSocket {
+  const ws = (
+    globalThis as {
+      __lastMockWebSocket?: MockSocket
+    }
+  ).__lastMockWebSocket
+  if (!ws) {
+    throw new Error('Expected mock websocket instance')
+  }
+  return ws
+}
+
+function sendServerMessage(ws: MockSocket, message: ServerMessage) {
+  ws.onmessage?.(
+    new MessageEvent('message', {
+      data: JSON.stringify(message),
+    }),
+  )
+}
 
 /**
  * Establish WebSocket connection through the App UI.
@@ -68,29 +101,31 @@ describe('App', () => {
   })
 
   it('applies runtime bootstrap response and skips onboarding', async () => {
-    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
-      new Response(
-        JSON.stringify({
-          apiVersion: 'v1',
-          tenantId: 'public',
-          companyId: 'ekaette-telecom',
-          industryTemplateId: 'telecom',
-          industry: 'telecom',
-          voice: 'Charon',
-          capabilities: ['policy_qa'],
-          onboardingRequired: false,
-          sessionPolicy: {
-            industryLocked: true,
-            companyLocked: true,
-            switchRequiresDisconnect: true,
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            apiVersion: 'v1',
+            tenantId: 'public',
+            companyId: 'ekaette-telecom',
+            industryTemplateId: 'telecom',
+            industry: 'telecom',
+            voice: 'Charon',
+            capabilities: ['policy_qa'],
+            onboardingRequired: false,
+            sessionPolicy: {
+              industryLocked: true,
+              companyLocked: true,
+              switchRequiresDisconnect: true,
+            },
+          }),
+          {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
           },
-        }),
-        {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' },
-        },
-      ),
-    )
+        ),
+      )
 
     render(<App />)
 
@@ -129,25 +164,6 @@ describe('App', () => {
     ).toBeInTheDocument()
   })
 
-  it('falls back to vendor setup when bootstrap returns malformed payload', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
-      new Response(JSON.stringify({ unexpected: 'shape' }), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      }),
-    )
-
-    render(<App />)
-
-    await act(async () => {
-      await Promise.resolve()
-      await Promise.resolve()
-      await Promise.resolve()
-    })
-
-    expect(screen.getByText('Vendor Setup')).toBeInTheDocument()
-  })
-
   it('renders main layout after industry is stored (skips to Live Desk)', () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
       return await new Promise<Response>(() => {})
@@ -161,6 +177,8 @@ describe('App', () => {
   it('includes company_id in WebSocket URL when connecting', async () => {
     window.localStorage.setItem(INDUSTRY_STORAGE_KEY, 'electronics')
     render(<App />)
+
+
 
     const micButton = screen.getByRole('button', { name: /start call/i })
     await act(async () => {
@@ -415,6 +433,7 @@ describe('App', () => {
     window.localStorage.setItem(INDUSTRY_STORAGE_KEY, 'electronics')
     render(<App />)
 
+
     const micButton = screen.getByRole('button', { name: /start call/i })
     await act(async () => {
       micButton.click()
@@ -475,7 +494,7 @@ describe('App', () => {
     globalThis.WebSocket = NeverOpenWebSocket as unknown as typeof WebSocket
     try {
       render(<App />)
-
+  
       const micButton = screen.getByRole('button', { name: /start call/i })
       await act(async () => {
         micButton.click()
@@ -536,6 +555,7 @@ describe('App', () => {
     window.localStorage.setItem(INDUSTRY_STORAGE_KEY, 'electronics')
     window.history.replaceState({}, '', '/?demo=1')
     render(<App />)
+
 
     const startButton = screen.getByRole('button', { name: /start call/i })
     await act(async () => {

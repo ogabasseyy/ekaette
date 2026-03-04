@@ -1,8 +1,8 @@
 import { X } from 'lucide-react'
-import { formatNaira, formatPercent } from '../../lib/format'
 import { cn } from '../../lib/utils'
-import type { CampaignSnapshot } from '../../types/analytics'
+import { formatNaira, formatPercent } from '../../lib/format'
 import { RateBar } from './RateBar'
+import type { CampaignSnapshot } from '../../types/analytics'
 
 interface CampaignDetailProps {
   campaign: CampaignSnapshot
@@ -20,25 +20,10 @@ interface MetricRow {
 export function CampaignDetail({ campaign, onClose, className }: CampaignDetailProps) {
   const metrics: MetricRow[] = [
     { label: 'Sent', value: campaign.sent_total },
-    {
-      label: 'Delivered',
-      value: campaign.delivered_total,
-      rate: campaign.delivery_rate,
-      colorClass: 'bg-primary',
-    },
-    {
-      label: 'Failed',
-      value: campaign.failed_total,
-      rate: campaign.sent_total > 0 ? campaign.failed_total / campaign.sent_total : 0,
-      colorClass: 'bg-destructive',
-    },
+    { label: 'Delivered', value: campaign.delivered_total, rate: campaign.delivery_rate, colorClass: 'bg-primary' },
+    { label: 'Failed', value: campaign.failed_total, rate: campaign.sent_total > 0 ? campaign.failed_total / campaign.sent_total : 0, colorClass: 'bg-destructive' },
     { label: 'Replies', value: campaign.replies_total },
-    {
-      label: 'Conversions',
-      value: campaign.conversions_total,
-      rate: campaign.conversion_rate,
-      colorClass: 'bg-warning',
-    },
+    { label: 'Conversions', value: campaign.conversions_total, rate: campaign.conversion_rate, colorClass: 'bg-warning' },
     { label: 'Revenue', value: formatNaira(campaign.revenue_kobo / 100) },
     { label: 'Payments Init', value: campaign.payments_initialized_total },
     { label: 'Payments OK', value: campaign.payments_success_total },
@@ -48,13 +33,12 @@ export function CampaignDetail({ campaign, onClose, className }: CampaignDetailP
     <div className={cn('campaign-detail-panel panel-glass p-5', className)}>
       <div className="mb-4 flex items-start justify-between gap-3">
         <div>
-          <h3 className="font-display text-foreground text-xl">{campaign.campaign_name}</h3>
-          <span className="font-semibold text-[0.62rem] text-muted-foreground uppercase tracking-[0.18em]">
+          <h3 className="font-display text-xl text-foreground">{campaign.campaign_name}</h3>
+          <span className="text-[0.62rem] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
             {campaign.channel} &middot; {campaign.campaign_id}
           </span>
         </div>
         <button
-          type="button"
           onClick={onClose}
           aria-label="Close"
           className="rounded-full p-1.5 text-muted-foreground transition-colors hover:bg-card/60 hover:text-foreground"
@@ -64,7 +48,7 @@ export function CampaignDetail({ campaign, onClose, className }: CampaignDetailP
       </div>
 
       {campaign.message && (
-        <div className="mb-4 rounded-xl border border-border/30 bg-card/30 px-4 py-3 text-foreground/80 text-sm">
+        <div className="mb-4 rounded-xl border border-border/30 bg-card/30 px-4 py-3 text-sm text-foreground/80">
           {campaign.message}
         </div>
       )}
@@ -72,12 +56,10 @@ export function CampaignDetail({ campaign, onClose, className }: CampaignDetailP
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         {metrics.map(metric => (
           <div key={metric.label} className="flex flex-col gap-1">
-            <span className="font-semibold text-[0.6rem] text-muted-foreground uppercase tracking-[0.18em]">
+            <span className="text-[0.6rem] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
               {metric.label}
             </span>
-            <span className="font-display text-foreground text-lg tabular-nums">
-              {metric.value}
-            </span>
+            <span className="font-display text-lg tabular-nums text-foreground">{metric.value}</span>
             {metric.rate !== undefined && (
               <RateBar rate={metric.rate} colorClass={metric.colorClass} />
             )}
@@ -85,7 +67,7 @@ export function CampaignDetail({ campaign, onClose, className }: CampaignDetailP
         ))}
       </div>
 
-      <div className="mt-4 flex gap-4 text-muted-foreground text-xs">
+      <div className="mt-4 flex gap-4 text-xs text-muted-foreground">
         <span>Delivery: {formatPercent(campaign.delivery_rate)}</span>
         <span>Engagement: {formatPercent(campaign.engagement_rate)}</span>
         <span>Conversion: {formatPercent(campaign.conversion_rate)}</span>

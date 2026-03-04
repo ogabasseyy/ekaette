@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 // ── Shared helpers (extracted from AdminDashboard patterns) ──
 
 export function makeIdempotencyKey(prefix: string): string {
-  return `${prefix}-${Date.now()}-${crypto.randomUUID().slice(0, 12)}`
+  return `${prefix}-${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`
 }
 
 export function parseCsv(raw: string): string[] {
@@ -60,7 +60,6 @@ interface UseWizardApiOptions {
 
 export function useWizardApi({ tenantId, userId = 'admin-user' }: UseWizardApiOptions) {
   const [busy, setBusy] = useState(false)
-  const busyCountRef = useRef(0)
   const [error, setError] = useState<string | null>(null)
   const abortControllersRef = useRef<Set<AbortController>>(new Set())
 
@@ -159,19 +158,20 @@ export function useWizardApi({ tenantId, userId = 'admin-user' }: UseWizardApiOp
     [tenantId, userId],
   )
 
-  const runAction = useCallback(async (action: () => Promise<void>) => {
-    busyCountRef.current++
-    setBusy(true)
-    setError(null)
-    try {
-      await action()
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Action failed')
-    } finally {
-      busyCountRef.current--
-      setBusy(busyCountRef.current > 0)
-    }
-  }, [])
+  const runAction = useCallback(
+    async (action: () => Promise<void>) => {
+      setBusy(true)
+      setError(null)
+      try {
+        await action()
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Action failed')
+      } finally {
+        setBusy(false)
+      }
+    },
+    [],
+  )
 
   return { callJson, callFormData, runAction, busy, error, setError, setBusy }
 }

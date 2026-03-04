@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useState } from 'react'
 import { useWizardApi } from './useWizardApi'
 
 interface StepCatalogProps {
@@ -19,7 +19,6 @@ export function StepCatalog({ companyId, tenantId, onNext, onBack }: StepCatalog
   const [sourceUrl, setSourceUrl] = useState('')
   const [status, setStatus] = useState<string | null>(null)
   const [file, setFile] = useState<File | null>(null)
-  const fileInputRef = useRef<HTMLInputElement>(null)
   const api = useWizardApi({ tenantId })
   const companyUrl = `/api/v1/admin/companies/${encodeURIComponent(companyId)}`
 
@@ -61,7 +60,6 @@ export function StepCatalog({ companyId, tenantId, onNext, onBack }: StepCatalog
       const written = typeof payload.written === 'number' ? payload.written : '?'
       setStatus(`Uploaded ${written} items`)
       setFile(null)
-      if (fileInputRef.current) fileInputRef.current.value = ''
     })
   }, [api, companyUrl, file])
 
@@ -71,28 +69,26 @@ export function StepCatalog({ companyId, tenantId, onNext, onBack }: StepCatalog
         <h2 className="font-semibold text-white">Product Catalog</h2>
 
         <div className="space-y-2">
-          <p className="text-muted-foreground text-xs uppercase tracking-wider">Import JSON</p>
+          <p className="text-xs text-muted-foreground uppercase tracking-wider">Import JSON</p>
           <textarea
             aria-label="Products JSON"
             value={productsJson}
             onChange={e => setProductsJson(e.target.value)}
             rows={5}
-            className="w-full rounded-xl border border-border/70 bg-card/60 px-3 py-2 font-mono text-white text-xs outline-none focus:border-primary/60"
+            className="w-full rounded-xl border border-border/70 bg-card/60 px-3 py-2 font-mono text-xs text-white outline-none focus:border-primary/60"
           />
           <button
             type="button"
             disabled={api.busy}
             onClick={importProducts}
-            className="rounded-full border border-primary/50 bg-primary/10 px-4 py-1.5 font-semibold text-primary text-xs transition hover:bg-primary/15 disabled:opacity-50"
+            className="rounded-full border border-primary/50 bg-primary/10 px-4 py-1.5 text-xs font-semibold text-primary transition hover:bg-primary/15 disabled:opacity-50"
           >
             Import Products
           </button>
         </div>
 
         <div className="space-y-2">
-          <p className="text-muted-foreground text-xs uppercase tracking-wider">
-            Sync from Google Sheets
-          </p>
+          <p className="text-xs text-muted-foreground uppercase tracking-wider">Sync from Google Sheets</p>
           <input
             type="url"
             aria-label="Google Sheets URL"
@@ -105,29 +101,28 @@ export function StepCatalog({ companyId, tenantId, onNext, onBack }: StepCatalog
             type="button"
             disabled={api.busy || !sourceUrl.trim()}
             onClick={syncFromSheets}
-            className="rounded-full border border-primary/50 bg-primary/10 px-4 py-1.5 font-semibold text-primary text-xs transition hover:bg-primary/15 disabled:opacity-50"
+            className="rounded-full border border-primary/50 bg-primary/10 px-4 py-1.5 text-xs font-semibold text-primary transition hover:bg-primary/15 disabled:opacity-50"
           >
             Sync Sheets
           </button>
         </div>
 
         <div className="space-y-2">
-          <p className="text-muted-foreground text-xs uppercase tracking-wider">Upload CSV/XLSX</p>
+          <p className="text-xs text-muted-foreground uppercase tracking-wider">Upload CSV/XLSX</p>
           <div className="flex flex-wrap items-center gap-2">
             <input
-              ref={fileInputRef}
               type="file"
               aria-label="Inventory file"
               accept=".csv,.xlsx"
               onChange={e => setFile(e.target.files?.[0] ?? null)}
-              className="text-muted-foreground text-xs file:mr-2 file:rounded-full file:border-0 file:bg-primary/10 file:px-3 file:py-1 file:font-medium file:text-primary file:text-xs"
+              className="text-xs text-muted-foreground file:mr-2 file:rounded-full file:border-0 file:bg-primary/10 file:px-3 file:py-1 file:text-xs file:font-medium file:text-primary"
             />
             {file ? (
               <button
                 type="button"
                 disabled={api.busy}
                 onClick={uploadFile}
-                className="rounded-full border border-primary/50 bg-primary/10 px-4 py-1.5 font-semibold text-primary text-xs transition hover:bg-primary/15 disabled:opacity-50"
+                className="rounded-full border border-primary/50 bg-primary/10 px-4 py-1.5 text-xs font-semibold text-primary transition hover:bg-primary/15 disabled:opacity-50"
               >
                 Upload
               </button>
@@ -136,25 +131,18 @@ export function StepCatalog({ companyId, tenantId, onNext, onBack }: StepCatalog
         </div>
 
         {api.error ? (
-          <p className="text-destructive text-xs" role="alert">
-            {api.error}
-          </p>
+          <p className="text-xs text-destructive" role="alert">{api.error}</p>
         ) : null}
         {status ? (
-          <p className="text-emerald-400 text-xs">{status}</p>
-        ) : (
-          <p className="text-muted-foreground/60 text-xs">
-            No products imported yet. Add products via JSON, Google Sheets, or file upload above, or
-            skip this step to add them later.
-          </p>
-        )}
+          <p className="text-xs text-emerald-400">{status}</p>
+        ) : null}
       </div>
 
       <div className="mt-6 flex justify-between">
         <button
           type="button"
           onClick={onBack}
-          className="rounded-full border border-border/50 bg-card/40 px-5 py-2 text-muted-foreground text-sm transition hover:text-white"
+          className="rounded-full border border-border/50 bg-card/40 px-5 py-2 text-sm text-muted-foreground transition hover:text-white"
         >
           Back
         </button>
@@ -162,7 +150,7 @@ export function StepCatalog({ companyId, tenantId, onNext, onBack }: StepCatalog
           <button
             type="button"
             onClick={onNext}
-            className="rounded-full border border-border/50 bg-card/40 px-5 py-2 text-muted-foreground text-sm transition hover:text-white"
+            className="rounded-full border border-border/50 bg-card/40 px-5 py-2 text-sm text-muted-foreground transition hover:text-white"
           >
             Skip
           </button>

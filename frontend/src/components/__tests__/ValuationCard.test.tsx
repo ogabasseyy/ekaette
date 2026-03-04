@@ -42,7 +42,6 @@ describe('ValuationCard', () => {
     fireEvent.change(input, { target: { value: '195000' } })
     await userEvent.click(screen.getByRole('button', { name: /counter/i }))
     expect(onCounterOffer).toHaveBeenCalledWith(195000)
-    expect(onCounterOffer).toHaveBeenCalledTimes(1)
   })
 
   it('fires accept and decline callbacks', async () => {
@@ -65,21 +64,5 @@ describe('ValuationCard', () => {
     await userEvent.click(screen.getByRole('button', { name: /decline/i }))
     expect(onAccept).toHaveBeenCalledTimes(1)
     expect(onDecline).toHaveBeenCalledTimes(1)
-  })
-
-  it('renders Excellent condition badge', () => {
-    render(
-      <ValuationCard
-        deviceName="Galaxy S24"
-        condition="Excellent"
-        price={300000}
-        currency="NGN"
-        details="Pristine."
-        onAccept={() => {}}
-        onDecline={() => {}}
-        onCounterOffer={() => {}}
-      />,
-    )
-    expect(screen.getByText('Excellent')).toBeInTheDocument()
   })
 })

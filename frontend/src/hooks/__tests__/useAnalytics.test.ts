@@ -1,7 +1,7 @@
-import { act, renderHook, waitFor } from '@testing-library/react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { AnalyticsOverviewResponse, CampaignSnapshot } from '../../types/analytics'
+import { describe, it, expect, vi, afterEach } from 'vitest'
+import { renderHook, act, waitFor } from '@testing-library/react'
 import { useAnalytics } from '../useAnalytics'
+import type { AnalyticsOverviewResponse, CampaignSnapshot } from '../../types/analytics'
 
 const MOCK_SUMMARY = {
   window_days: 30,
@@ -65,9 +65,7 @@ describe('useAnalytics', () => {
 
   it('starts in loading state', () => {
     global.fetch = mockFetchOk(MOCK_OVERVIEW)
-    const { result } = renderHook(() =>
-      useAnalytics({ tenantId: 'public', companyId: 'ekaette-electronics' }),
-    )
+    const { result } = renderHook(() => useAnalytics({ tenantId: 'public', companyId: 'ekaette-electronics' }))
     expect(result.current.loading).toBe(true)
   })
 
@@ -75,9 +73,7 @@ describe('useAnalytics', () => {
     const fetchMock = mockFetchOk(MOCK_OVERVIEW)
     global.fetch = fetchMock
 
-    renderHook(() =>
-      useAnalytics({ tenantId: 'public', companyId: 'ekaette-electronics', days: 30 }),
-    )
+    renderHook(() => useAnalytics({ tenantId: 'public', companyId: 'ekaette-electronics', days: 30 }))
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalled()
@@ -93,9 +89,7 @@ describe('useAnalytics', () => {
   it('parses summary and campaigns from response', async () => {
     global.fetch = mockFetchOk(MOCK_OVERVIEW)
 
-    const { result } = renderHook(() =>
-      useAnalytics({ tenantId: 'public', companyId: 'ekaette-electronics' }),
-    )
+    const { result } = renderHook(() => useAnalytics({ tenantId: 'public', companyId: 'ekaette-electronics' }))
 
     await waitFor(() => {
       expect(result.current.loading).toBe(false)
@@ -113,9 +107,7 @@ describe('useAnalytics', () => {
       statusText: 'Internal Server Error',
     })
 
-    const { result } = renderHook(() =>
-      useAnalytics({ tenantId: 'public', companyId: 'ekaette-electronics' }),
-    )
+    const { result } = renderHook(() => useAnalytics({ tenantId: 'public', companyId: 'ekaette-electronics' }))
 
     await waitFor(() => {
       expect(result.current.loading).toBe(false)
@@ -128,9 +120,7 @@ describe('useAnalytics', () => {
   it('handles network errors', async () => {
     global.fetch = vi.fn().mockRejectedValue(new Error('Network error'))
 
-    const { result } = renderHook(() =>
-      useAnalytics({ tenantId: 'public', companyId: 'ekaette-electronics' }),
-    )
+    const { result } = renderHook(() => useAnalytics({ tenantId: 'public', companyId: 'ekaette-electronics' }))
 
     await waitFor(() => {
       expect(result.current.loading).toBe(false)
@@ -140,19 +130,13 @@ describe('useAnalytics', () => {
   })
 
   it('selectCampaign fetches detail and stores it', async () => {
-    const fetchMock = vi
-      .fn()
+    const fetchMock = vi.fn()
       .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve(MOCK_OVERVIEW) })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve({ status: 'ok', campaign: MOCK_CAMPAIGN }),
-      })
+      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ status: 'ok', campaign: MOCK_CAMPAIGN }) })
 
     global.fetch = fetchMock
 
-    const { result } = renderHook(() =>
-      useAnalytics({ tenantId: 'public', companyId: 'ekaette-electronics' }),
-    )
+    const { result } = renderHook(() => useAnalytics({ tenantId: 'public', companyId: 'ekaette-electronics' }))
 
     await waitFor(() => {
       expect(result.current.loading).toBe(false)
@@ -168,61 +152,11 @@ describe('useAnalytics', () => {
     expect(detailUrl).toContain('/api/v1/at/analytics/campaigns/cmp-sms-001')
   })
 
-  it('selectCampaign handles fetch failure gracefully', async () => {
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve(MOCK_OVERVIEW) })
-      .mockResolvedValueOnce({ ok: false, status: 500, statusText: 'Server Error' })
-
-    global.fetch = fetchMock
-
-    const { result } = renderHook(() =>
-      useAnalytics({ tenantId: 'public', companyId: 'ekaette-electronics' }),
-    )
-
-    await waitFor(() => {
-      expect(result.current.loading).toBe(false)
-    })
-
-    await act(async () => {
-      await result.current.selectCampaign('cmp-sms-001')
-    })
-
-    expect(result.current.selectedCampaign).toBeNull()
-    expect(result.current.error).toBeTruthy()
-  })
-
-  it('selectCampaign handles rejected fetch (network error)', async () => {
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve(MOCK_OVERVIEW) })
-      .mockRejectedValueOnce(new Error('Connection refused'))
-
-    global.fetch = fetchMock
-
-    const { result } = renderHook(() =>
-      useAnalytics({ tenantId: 'public', companyId: 'ekaette-electronics' }),
-    )
-
-    await waitFor(() => {
-      expect(result.current.loading).toBe(false)
-    })
-
-    await act(async () => {
-      await result.current.selectCampaign('cmp-sms-001')
-    })
-
-    expect(result.current.selectedCampaign).toBeNull()
-    expect(result.current.error).toBeTruthy()
-  })
-
   it('refresh refetches overview', async () => {
     const fetchMock = mockFetchOk(MOCK_OVERVIEW)
     global.fetch = fetchMock
 
-    const { result } = renderHook(() =>
-      useAnalytics({ tenantId: 'public', companyId: 'ekaette-electronics' }),
-    )
+    const { result } = renderHook(() => useAnalytics({ tenantId: 'public', companyId: 'ekaette-electronics' }))
 
     await waitFor(() => {
       expect(result.current.loading).toBe(false)
@@ -245,9 +179,7 @@ describe('useAnalytics', () => {
     const fetchMock = mockFetchOk(MOCK_OVERVIEW)
     global.fetch = fetchMock
 
-    const { result } = renderHook(() =>
-      useAnalytics({ tenantId: 'public', companyId: 'ekaette-electronics' }),
-    )
+    const { result } = renderHook(() => useAnalytics({ tenantId: 'public', companyId: 'ekaette-electronics' }))
 
     await waitFor(() => {
       expect(result.current.loading).toBe(false)

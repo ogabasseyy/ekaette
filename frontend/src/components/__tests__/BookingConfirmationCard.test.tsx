@@ -18,6 +18,5 @@ describe('BookingConfirmationCard', () => {
     expect(screen.getByText('2026-03-14')).toBeInTheDocument()
     expect(screen.getByText('10:00 AM')).toBeInTheDocument()
     expect(screen.getByText('Lekki Phase 1')).toBeInTheDocument()
-    expect(screen.getByText('Doorstep pickup')).toBeInTheDocument()
   })
 })

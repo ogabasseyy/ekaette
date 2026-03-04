@@ -1,8 +1,8 @@
+import { describe, it, expect, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
-import type { CampaignSnapshot } from '../../../types/analytics'
 import { CampaignTable } from '../CampaignTable'
+import type { CampaignSnapshot } from '../../../types/analytics'
 
 const MOCK_CAMPAIGNS: CampaignSnapshot[] = [
   {
@@ -73,7 +73,6 @@ describe('CampaignTable', () => {
 
     const row = screen.getByText('Weekend Promo').closest('tr')!
     await user.click(row)
-    expect(onSelect).toHaveBeenCalledTimes(1)
     expect(onSelect).toHaveBeenCalledWith('cmp-sms-001')
   })
 

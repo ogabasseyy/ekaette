@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
-import type { ContactsResponse, KnownContact } from '../types/marketing'
+import { useState, useEffect, useCallback, useRef } from 'react'
+import type { KnownContact, ContactsResponse } from '../types/marketing'
 
 interface UseContactsOptions {
   tenantId: string
@@ -48,14 +48,12 @@ export function useContacts({ tenantId, companyId }: UseContactsOptions): UseCon
       setError(err instanceof Error ? err.message : 'Failed to fetch contacts')
       setContacts([])
     } finally {
-      if (!controller.signal.aborted) {
-        setLoading(false)
-      }
+      setLoading(false)
     }
   }, [tenantId, companyId])
 
   useEffect(() => {
-    void fetchContacts()
+    fetchContacts()
     return () => {
       abortRef.current?.abort()
     }

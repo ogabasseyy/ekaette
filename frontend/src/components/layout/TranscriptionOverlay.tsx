@@ -9,14 +9,15 @@ interface TranscriptionOverlayProps {
 export function TranscriptionOverlay({ messages }: TranscriptionOverlayProps) {
   const transcriptRef = useRef<HTMLDivElement | null>(null)
   const bottomRef = useRef<HTMLDivElement | null>(null)
+  const latestMessage = messages[messages.length - 1]
+
   useEffect(() => {
-    if (messages.length === 0) return
     if (bottomRef.current) {
       bottomRef.current.scrollIntoView({ block: 'end' })
     } else if (transcriptRef.current) {
       transcriptRef.current.scrollTop = transcriptRef.current.scrollHeight
     }
-  }, [messages])
+  }, [messages.length, latestMessage?.role, latestMessage?.partial, latestMessage?.text])
 
   return (
     <section className="panel-glass transcript-panel flex max-h-[15rem] min-h-[12rem] shrink-0 flex-col px-4 py-4 sm:max-h-[18rem] sm:min-h-[14rem] sm:px-5 lg:h-full lg:max-h-none lg:min-h-0">
@@ -42,7 +43,7 @@ export function TranscriptionOverlay({ messages }: TranscriptionOverlayProps) {
 
         {messages.map((message, index) => (
           <article
-            key={`${index}-${message.role}-${message.partial ? 'p' : 'f'}`}
+            key={`${index}-${message.role}-${message.text.slice(0, 12)}`}
             className={cn(
               'message-bubble transcript-row',
               message.role === 'user' ? 'message-user ml-auto' : 'message-agent mr-auto',

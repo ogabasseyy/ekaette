@@ -207,7 +207,9 @@ describe('useDemoMode', () => {
 
   it('completes full electronics 10-step demo', () => {
     const onEmit = vi.fn()
-    const { result } = renderHook(() => useDemoMode({ steps: ELECTRONICS_DEMO_STEPS, onEmit }))
+    const { result } = renderHook(() =>
+      useDemoMode({ steps: ELECTRONICS_DEMO_STEPS, onEmit }),
+    )
 
     act(() => {
       result.current.play()

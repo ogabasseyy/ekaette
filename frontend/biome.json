@@ -47,14 +47,13 @@
           "options": {
             "functions": ["cn", "cva", "clsx"]
           }
-        },
-        "noFloatingPromises": "warn"
+        }
       }
     }
   },
   "overrides": [
     {
-      "includes": ["src/**/__tests__/**", "src/**/*.test.ts", "src/**/*.test.tsx"],
+      "includes": ["src/__tests__/**"],
       "linter": {
         "rules": {
           "complexity": {

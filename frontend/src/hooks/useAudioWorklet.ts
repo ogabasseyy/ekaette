@@ -114,10 +114,7 @@ function buildCaptureConstraintSupport(): MicConstraintSupport {
 function createAudioConstraints(
   level: NoiseCancellationLevel,
   support: MicConstraintSupport,
-): {
-  requested: MediaTrackConstraints
-  requestedFlags: MicCaptureDiagnostics['requestedConstraints']
-} {
+): { requested: MediaTrackConstraints; requestedFlags: MicCaptureDiagnostics['requestedConstraints'] } {
   const processingEnabled = RECORDER_DENOISE_PRESETS[level].captureProcessingEnabled
   const requestedFlags = {
     echoCancellation: processingEnabled,
@@ -198,7 +195,6 @@ export function useAudioWorklet(
   }, [options.noiseCancellationLevel])
 
   const startRecording = useCallback(async () => {
-    if (recorderCtxRef.current) return
     try {
       setError(null)
       setMicCaptureDiagnostics(null)
@@ -212,7 +208,7 @@ export function useAudioWorklet(
         await ctx.resume()
       }
 
-      await ctx.audioWorklet.addModule(`${import.meta.env.BASE_URL}pcm-recorder-processor.js`)
+      await ctx.audioWorklet.addModule('/pcm-recorder-processor.js')
 
       const level = noiseCancellationLevelRef.current
       const support = buildCaptureConstraintSupport()
@@ -238,7 +234,10 @@ export function useAudioWorklet(
         if (support.autoGainControl) {
           processingOnly.autoGainControl = requestedFlags.autoGainControl
         }
-        if (Object.keys(processingOnly).length > 0 && requestedFlags.echoCancellation === true) {
+        if (
+          Object.keys(processingOnly).length > 0 &&
+          requestedFlags.echoCancellation === true
+        ) {
           try {
             await track.applyConstraints(processingOnly)
           } catch {
@@ -324,25 +323,11 @@ export function useAudioWorklet(
       source.connect(recorder)
       // FIX: Do NOT connect recorder to ctx.destination — that creates echo feedback!
     } catch (e) {
-      // Clean up partially initialized resources to prevent leaks
-      if (streamRef.current) {
-        for (const t of streamRef.current.getTracks()) t.stop()
-        streamRef.current = null
-      }
-      if (recorderNodeRef.current) {
-        recorderNodeRef.current.disconnect()
-        recorderNodeRef.current = null
-      }
-      if (recorderCtxRef.current) {
-        void recorderCtxRef.current.close().catch(() => {})
-        recorderCtxRef.current = null
-      }
       setError(e instanceof Error ? e.message : 'Microphone access denied')
     }
   }, [onAudioChunk])
 
   const initPlayer = useCallback(async () => {
-    if (playerCtxRef.current) return
     try {
       setError(null)
       // 24kHz for playback (Gemini Live API sends 24kHz PCM)
@@ -354,7 +339,7 @@ export function useAudioWorklet(
         await ctx.resume()
       }
 
-      await ctx.audioWorklet.addModule(`${import.meta.env.BASE_URL}pcm-player-processor.js`)
+      await ctx.audioWorklet.addModule('/pcm-player-processor.js')
       const player = new AudioWorkletNode(ctx, 'pcm-player-processor')
       playerNodeRef.current = player
       player.port.onmessage = (event: MessageEvent) => {
@@ -369,15 +354,6 @@ export function useAudioWorklet(
       })
       player.connect(ctx.destination)
     } catch (e) {
-      // Clean up partially initialized player resources to prevent leaks
-      if (playerNodeRef.current) {
-        playerNodeRef.current.disconnect()
-        playerNodeRef.current = null
-      }
-      if (playerCtxRef.current) {
-        void playerCtxRef.current.close().catch(() => {})
-        playerCtxRef.current = null
-      }
       setError(e instanceof Error ? e.message : 'Audio playback failed')
     }
   }, [])

@@ -292,10 +292,11 @@ export function useEkaetteSocket(
   }, [])
 
   const cleanup = useCallback(() => {
-    // Reject any pending connect promise so callers awaiting connect() don't hang on unmount.
-    rejectPendingConnect(
-      new SocketConnectError('CONNECT_CANCELLED', 'Connection cleaned up', { retryable: false }),
-    )
+    const pending = pendingConnectRef.current
+    if (pending?.timeoutTimer) {
+      clearTimeout(pending.timeoutTimer)
+      pending.timeoutTimer = null
+    }
     if (reconnectTimerRef.current) {
       clearTimeout(reconnectTimerRef.current)
       reconnectTimerRef.current = null
@@ -341,7 +342,7 @@ export function useEkaetteSocket(
       transport: 'backend-proxy',
     }
     setDebugMetrics(debugMetricsRef.current)
-  }, [rejectPendingConnect])
+  }, [])
 
   const createPendingConnect = useCallback(
     (timeoutMs: number) => {
@@ -356,9 +357,6 @@ export function useEkaetteSocket(
         resolvePromise = resolve
         rejectPromise = error => reject(error)
       })
-      // Prevent unhandled rejection warnings when cleanup rejects a promise
-      // that nobody is currently awaiting (e.g. component unmount).
-      promise.catch(() => {})
 
       const pending: PendingConnectRequest = {
         promise,
@@ -379,11 +377,8 @@ export function useEkaetteSocket(
           }
           shouldReconnectRef.current = false
           setState('disconnected')
-          // Reject with CONNECT_TIMEOUT before cleanup so cleanup's reject is a no-op.
-          rejectPendingConnect(
-            new SocketConnectError('CONNECT_TIMEOUT', 'WebSocket connection timeout'),
-          )
           cleanup()
+          rejectPendingConnect(new SocketConnectError('CONNECT_TIMEOUT', 'WebSocket connection timeout'))
         }, timeoutMs)
       }
 
@@ -577,7 +572,10 @@ export function useEkaetteSocket(
     if (reconnectAttemptRef.current >= MAX_RECONNECT_ATTEMPTS) {
       setState('disconnected')
       rejectPendingConnect(
-        new SocketConnectError('CONNECT_FAILED', 'Unable to establish WebSocket connection'),
+        new SocketConnectError(
+          'CONNECT_FAILED',
+          'Unable to establish WebSocket connection',
+        ),
       )
       return
     }
@@ -787,16 +785,9 @@ export function useEkaetteSocket(
       await requestEphemeralToken()
     } catch {
       // Token fetch is best-effort for backend-proxy; proceed without wsToken.
-      wsTokenRef.current = null
     }
     if (!shouldReconnectRef.current) {
       connectingRef.current = false
-      setState('disconnected')
-      rejectPendingConnect(
-        new SocketConnectError('CONNECT_CANCELLED', 'Connection cancelled before WebSocket open', {
-          retryable: false,
-        }),
-      )
       return
     }
 
@@ -804,11 +795,11 @@ export function useEkaetteSocket(
     const industryQuery = encodeURIComponent(industry)
     const companyQuery = companyId ? `&company_id=${encodeURIComponent(companyId)}` : ''
     const tenantQuery = tenantId ? `&tenant_id=${encodeURIComponent(tenantId)}` : ''
-    const tokenQuery = wsTokenRef.current ? `&token=${encodeURIComponent(wsTokenRef.current)}` : ''
-    const encodedUserId = encodeURIComponent(userId)
-    const encodedSessionId = encodeURIComponent(currentSessionIdRef.current)
+    const tokenQuery = wsTokenRef.current
+      ? `&token=${encodeURIComponent(wsTokenRef.current)}`
+      : ''
     const ws = new WebSocket(
-      `${protocol}//${window.location.host}/ws/${encodedUserId}/${encodedSessionId}?industry=${industryQuery}${companyQuery}${tenantQuery}${tokenQuery}`,
+      `${protocol}//${window.location.host}/ws/${userId}/${currentSessionIdRef.current}?industry=${industryQuery}${companyQuery}${tenantQuery}${tokenQuery}`,
     )
     ws.binaryType = 'arraybuffer'
     wsRef.current = ws
@@ -1073,24 +1064,21 @@ export function useEkaetteSocket(
     connectInternalRef.current = connectInternal
   }, [connectInternal])
 
-  const connect = useCallback(
-    (connectOptions: ConnectOptions = {}) => {
-      if (state === 'connected') {
-        return Promise.resolve()
-      }
-      if (pendingConnectRef.current) {
-        return pendingConnectRef.current.promise
-      }
+  const connect = useCallback((connectOptions: ConnectOptions = {}) => {
+    if (state === 'connected') {
+      return Promise.resolve()
+    }
+    if (pendingConnectRef.current) {
+      return pendingConnectRef.current.promise
+    }
 
-      reconnectAttemptRef.current = 0
-      rapidFailCountRef.current = 0
-      const timeoutMs = connectOptions.timeoutMs ?? defaultConnectTimeoutMs
-      const pendingConnect = createPendingConnect(timeoutMs)
-      connectInternal()
-      return pendingConnect
-    },
-    [connectInternal, createPendingConnect, defaultConnectTimeoutMs, state],
-  )
+    reconnectAttemptRef.current = 0
+    rapidFailCountRef.current = 0
+    const timeoutMs = connectOptions.timeoutMs ?? defaultConnectTimeoutMs
+    const pendingConnect = createPendingConnect(timeoutMs)
+    connectInternal()
+    return pendingConnect
+  }, [connectInternal, createPendingConnect, defaultConnectTimeoutMs, state])
 
   const disconnect = useCallback(() => {
     shouldReconnectRef.current = false
@@ -1265,14 +1253,12 @@ export function useEkaetteSocket(
     appendMessage(setMessages, message)
   }, [])
 
-  // Cleanup on unmount only — use ref to avoid re-firing when deps change
-  const cleanupRef = useRef(cleanup)
-  cleanupRef.current = cleanup
+  // Cleanup on unmount
   useEffect(() => {
     return () => {
-      cleanupRef.current()
+      cleanup()
     }
-  }, [])
+  }, [cleanup])
 
   return {
     state,

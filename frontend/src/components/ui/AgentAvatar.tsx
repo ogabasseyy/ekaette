@@ -1,18 +1,4 @@
-import { cva } from 'class-variance-authority'
 import { cn } from '../../lib/utils'
-
-const avatarVariants = cva(
-  'inline-flex h-8 w-8 items-center justify-center rounded-full border font-semibold text-xs uppercase',
-  {
-    variants: {
-      active: {
-        true: 'border-primary/50 bg-primary/20 text-primary',
-        false: 'border-border/70 bg-card/60 text-muted-foreground',
-      },
-    },
-    defaultVariants: { active: false },
-  },
-)
 
 interface AgentAvatarProps {
   label: string
@@ -21,8 +7,7 @@ interface AgentAvatarProps {
 }
 
 export function AgentAvatar({ label, active = false, className }: AgentAvatarProps) {
-  const normalizedLabel = label?.trim() ?? ''
-  const initials = normalizedLabel
+  const initials = label
     .split(/\s+/)
     .filter(Boolean)
     .slice(0, 2)
@@ -32,14 +17,16 @@ export function AgentAvatar({ label, active = false, className }: AgentAvatarPro
   return (
     <div className={cn('inline-flex items-center gap-2', className)}>
       <span
-        aria-hidden={normalizedLabel ? 'true' : undefined}
-        className={cn(avatarVariants({ active }))}
+        className={cn(
+          'inline-flex h-8 w-8 items-center justify-center rounded-full border font-semibold text-xs uppercase',
+          active
+            ? 'border-primary/50 bg-primary/20 text-primary'
+            : 'border-border/70 bg-card/60 text-muted-foreground',
+        )}
       >
         {initials || 'AI'}
       </span>
-      {normalizedLabel ? (
-        <span className="text-muted-foreground text-xs">{normalizedLabel}</span>
-      ) : null}
+      <span className="text-muted-foreground text-xs">{label}</span>
     </div>
   )
 }

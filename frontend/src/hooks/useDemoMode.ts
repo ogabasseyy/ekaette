@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ServerMessage } from '../types'
 import {
-  DEMO_STEPS_BY_TEMPLATE,
   type DemoStep,
+  DEMO_STEPS_BY_TEMPLATE,
   ELECTRONICS_DEMO_STEPS,
   GENERIC_SUPPORT_DEMO_STEPS,
 } from '../utils/mockData'
@@ -77,7 +77,7 @@ export function useDemoMode(options: UseDemoModeOptions = {}): UseDemoModeReturn
         return
       }
 
-      const nextMessage = structuredClone(step.message)
+      const nextMessage = { ...step.message }
       setMessages(prev => [...prev, nextMessage])
       onEmit?.(nextMessage)
 

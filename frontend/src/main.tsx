@@ -6,18 +6,19 @@ import { AdminDashboard } from './components/admin/AdminDashboard'
 import { AnalyticsDashboard } from './components/analytics/AnalyticsDashboard'
 import { MarketingDashboard } from './components/marketing/MarketingDashboard'
 
+const pathname = window.location.pathname
+const isAdminPath = pathname.startsWith('/admin')
+const isAnalyticsPath = pathname.startsWith('/analytics')
+const isMarketingPath = pathname.startsWith('/marketing')
+
 function RootPage() {
-  const pathname = window.location.pathname
-  if (pathname === '/admin' || pathname.startsWith('/admin/')) return <AdminDashboard />
-  if (pathname === '/analytics' || pathname.startsWith('/analytics/')) return <AnalyticsDashboard />
-  if (pathname === '/marketing' || pathname.startsWith('/marketing/')) return <MarketingDashboard />
-  // voice page is the default for all unmatched paths
+  if (isAdminPath) return <AdminDashboard />
+  if (isAnalyticsPath) return <AnalyticsDashboard />
+  if (isMarketingPath) return <MarketingDashboard />
   return <App />
 }
 
-const root = document.getElementById('root')
-if (!root) throw new Error('Root element not found')
-createRoot(root).render(
+createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <RootPage />
   </StrictMode>,

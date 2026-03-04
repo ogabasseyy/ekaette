@@ -57,7 +57,7 @@ export function VoicePanel({
         </div>
       </div>
 
-      <div className="mt-4 space-y-2" aria-live="polite">
+      <div className="mt-4 space-y-2">
         <p className="voice-panel__session rounded-xl border border-border/70 bg-card/50 px-3 py-2 text-[11px] text-muted-foreground leading-5 sm:text-xs">
           Session: <span className="break-all text-foreground">{sessionId}</span>
         </p>
@@ -68,8 +68,8 @@ export function VoicePanel({
         )}
         {latestTelemetry && (
           <StatusBadge variant="muted" className="block break-words">
-            Tokens: {latestTelemetry.sessionTotalTokens ?? 0} (cost: $
-            {(latestTelemetry.sessionCostUsd ?? 0).toFixed(4)})
+            Tokens: {latestTelemetry.sessionTotalTokens} (cost: $
+            {latestTelemetry.sessionCostUsd.toFixed(4)})
           </StatusBadge>
         )}
         {latestMemoryRecall && (

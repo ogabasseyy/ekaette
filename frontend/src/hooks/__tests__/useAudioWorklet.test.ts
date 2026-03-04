@@ -4,7 +4,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { useAudioWorklet } from '../useAudioWorklet'
 
 // Helper to create the ref that useAudioWorklet expects
-function renderAudioWorklet(options?: Parameters<typeof useAudioWorklet>[1]) {
+function renderAudioWorklet(
+  options?: Parameters<typeof useAudioWorklet>[1],
+) {
   return renderHook(() => {
     const onAudioChunk = useRef<((data: ArrayBuffer) => void) | null>(null)
     const worklet = useAudioWorklet(onAudioChunk, options)
@@ -100,10 +102,12 @@ describe('useAudioWorklet', () => {
   })
 
   it('requests browser audio processing constraints by default', async () => {
-    const getUserMediaSpy = vi.spyOn(navigator.mediaDevices, 'getUserMedia').mockResolvedValue({
-      getTracks: () => [{ stop: () => {} }],
-      getAudioTracks: () => [{ getSettings: () => ({}) }],
-    } as unknown as MediaStream)
+    const getUserMediaSpy = vi
+      .spyOn(navigator.mediaDevices, 'getUserMedia')
+      .mockResolvedValue({
+        getTracks: () => [{ stop: () => {} }],
+        getAudioTracks: () => [{ getSettings: () => ({}) }],
+      } as unknown as MediaStream)
 
     const { result } = renderAudioWorklet()
     await act(async () => {
@@ -119,10 +123,12 @@ describe('useAudioWorklet', () => {
   })
 
   it('allows disabling capture processing constraints', async () => {
-    const getUserMediaSpy = vi.spyOn(navigator.mediaDevices, 'getUserMedia').mockResolvedValue({
-      getTracks: () => [{ stop: () => {} }],
-      getAudioTracks: () => [{ getSettings: () => ({}) }],
-    } as unknown as MediaStream)
+    const getUserMediaSpy = vi
+      .spyOn(navigator.mediaDevices, 'getUserMedia')
+      .mockResolvedValue({
+        getTracks: () => [{ stop: () => {} }],
+        getAudioTracks: () => [{ getSettings: () => ({}) }],
+      } as unknown as MediaStream)
 
     const { result } = renderAudioWorklet({ noiseCancellationLevel: 'off' })
     await act(async () => {
@@ -182,7 +188,7 @@ describe('useAudioWorklet', () => {
       async resume() {
         this.state = 'running'
       }
-      createMediaStreamSource(_stream?: MediaStream) {
+      createMediaStreamSource() {
         return { connect: () => {} }
       }
       get audioWorklet() {
@@ -217,7 +223,7 @@ describe('useAudioWorklet', () => {
       async resume() {
         this.state = 'running'
       }
-      createMediaStreamSource(_stream?: MediaStream) {
+      createMediaStreamSource() {
         return { connect: () => {} }
       }
       get audioWorklet() {
@@ -252,7 +258,7 @@ describe('useAudioWorklet', () => {
         this.sampleRate = options?.sampleRate ?? 44100
       }
       resume = resumeSpy
-      createMediaStreamSource(_stream?: MediaStream) {
+      createMediaStreamSource() {
         return { connect: () => {} }
       }
       get audioWorklet() {

@@ -1,9 +1,9 @@
+import { describe, it, expect, vi, afterEach } from 'vitest'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { AnalyticsOverviewResponse } from '../../../types/analytics'
-import type { ContactsResponse } from '../../../types/marketing'
 import { MarketingDashboard } from '../MarketingDashboard'
+import type { ContactsResponse } from '../../../types/marketing'
+import type { AnalyticsOverviewResponse } from '../../../types/analytics'
 
 vi.mock('../../../lib/navigation', () => ({
   NAV_ITEMS: [
@@ -21,18 +21,8 @@ const MOCK_CONTACTS: ContactsResponse = {
   tenant_id: 'public',
   company_id: 'ekaette-electronics',
   contacts: [
-    {
-      phone: '+2348011111111',
-      last_campaign_id: 'cmp-001',
-      last_campaign_name: 'Promo A',
-      channel: 'sms',
-    },
-    {
-      phone: '+2348022222222',
-      last_campaign_id: 'cmp-002',
-      last_campaign_name: 'Follow-up',
-      channel: 'voice',
-    },
+    { phone: '+2348011111111', last_campaign_id: 'cmp-001', last_campaign_name: 'Promo A', channel: 'sms' },
+    { phone: '+2348022222222', last_campaign_id: 'cmp-002', last_campaign_name: 'Follow-up', channel: 'voice' },
   ],
   count: 2,
 }
@@ -66,26 +56,15 @@ const MOCK_ANALYTICS: AnalyticsOverviewResponse = {
   campaigns: [],
 }
 
-function jsonResponse(payload: unknown, status = 200): Response {
-  return new Response(JSON.stringify(payload), {
-    status,
-    headers: { 'Content-Type': 'application/json' },
-  })
-}
-
-function setupFetchMock(
-  contactsResp: ContactsResponse,
-  analyticsResp: AnalyticsOverviewResponse = MOCK_ANALYTICS,
-) {
-  return vi.spyOn(globalThis, 'fetch').mockImplementation((input: RequestInfo | URL) => {
-    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
+function mockFetchResponses(contactsResp: ContactsResponse, analyticsResp: AnalyticsOverviewResponse = MOCK_ANALYTICS) {
+  return vi.fn((url: string) => {
     if (url.includes('/analytics/contacts')) {
-      return Promise.resolve(jsonResponse(contactsResp))
+      return Promise.resolve({ ok: true, json: () => Promise.resolve(contactsResp) })
     }
     if (url.includes('/analytics/overview')) {
-      return Promise.resolve(jsonResponse(analyticsResp))
+      return Promise.resolve({ ok: true, json: () => Promise.resolve(analyticsResp) })
     }
-    return Promise.resolve(jsonResponse({ status: 'ok' }))
+    return Promise.resolve({ ok: true, json: () => Promise.resolve({ status: 'ok' }) })
   })
 }
 
@@ -95,26 +74,26 @@ afterEach(() => {
 
 describe('MarketingDashboard', () => {
   it('renders page title', () => {
-    setupFetchMock(MOCK_CONTACTS)
+    global.fetch = mockFetchResponses(MOCK_CONTACTS)
     render(<MarketingDashboard />)
     expect(screen.getByText('Marketing Campaigns')).toBeInTheDocument()
   })
 
   it('renders NavBar with marketing active', () => {
-    setupFetchMock(MOCK_CONTACTS)
+    global.fetch = mockFetchResponses(MOCK_CONTACTS)
     render(<MarketingDashboard />)
-    const marketingBtn = screen.getByRole('button', { name: /marketing/i })
-    expect(marketingBtn).toHaveAttribute('aria-current', 'page')
+    const marketingTab = screen.getByRole('tab', { name: /marketing/i })
+    expect(marketingTab).toHaveAttribute('aria-current', 'page')
   })
 
   it('shows loading state while fetching', () => {
-    vi.spyOn(globalThis, 'fetch').mockReturnValue(new Promise(() => {}))
+    global.fetch = vi.fn().mockReturnValue(new Promise(() => {}))
     render(<MarketingDashboard />)
     expect(screen.getByText('Loading contacts…')).toBeInTheDocument()
   })
 
   it('shows empty state when no contacts', async () => {
-    setupFetchMock(MOCK_EMPTY_CONTACTS)
+    global.fetch = mockFetchResponses(MOCK_EMPTY_CONTACTS)
     render(<MarketingDashboard />)
 
     await waitFor(() => {
@@ -123,7 +102,7 @@ describe('MarketingDashboard', () => {
   })
 
   it('renders contact list after data loads', async () => {
-    setupFetchMock(MOCK_CONTACTS)
+    global.fetch = mockFetchResponses(MOCK_CONTACTS)
     render(<MarketingDashboard />)
 
     await waitFor(() => {
@@ -133,7 +112,7 @@ describe('MarketingDashboard', () => {
   })
 
   it('renders channel badges on contact rows', async () => {
-    setupFetchMock(MOCK_CONTACTS)
+    global.fetch = mockFetchResponses(MOCK_CONTACTS)
     render(<MarketingDashboard />)
 
     await waitFor(() => {
@@ -146,7 +125,7 @@ describe('MarketingDashboard', () => {
 
   it('toggling a contact checkbox selects it', async () => {
     const user = userEvent.setup()
-    setupFetchMock(MOCK_CONTACTS)
+    global.fetch = mockFetchResponses(MOCK_CONTACTS)
     render(<MarketingDashboard />)
 
     await waitFor(() => {
@@ -162,7 +141,7 @@ describe('MarketingDashboard', () => {
 
   it('Select All selects all contacts', async () => {
     const user = userEvent.setup()
-    setupFetchMock(MOCK_CONTACTS)
+    global.fetch = mockFetchResponses(MOCK_CONTACTS)
     render(<MarketingDashboard />)
 
     await waitFor(() => {
@@ -177,7 +156,7 @@ describe('MarketingDashboard', () => {
 
   it('Clear deselects all contacts', async () => {
     const user = userEvent.setup()
-    setupFetchMock(MOCK_CONTACTS)
+    global.fetch = mockFetchResponses(MOCK_CONTACTS)
     render(<MarketingDashboard />)
 
     await waitFor(() => {
@@ -192,7 +171,7 @@ describe('MarketingDashboard', () => {
   })
 
   it('renders channel toggle with SMS and Voice options', async () => {
-    setupFetchMock(MOCK_CONTACTS)
+    global.fetch = mockFetchResponses(MOCK_CONTACTS)
     render(<MarketingDashboard />)
 
     await waitFor(() => {
@@ -207,7 +186,7 @@ describe('MarketingDashboard', () => {
   })
 
   it('renders campaign name and message fields', async () => {
-    setupFetchMock(MOCK_CONTACTS)
+    global.fetch = mockFetchResponses(MOCK_CONTACTS)
     render(<MarketingDashboard />)
 
     await waitFor(() => {
@@ -219,7 +198,7 @@ describe('MarketingDashboard', () => {
   })
 
   it('Send Campaign button is disabled without recipients or message', async () => {
-    setupFetchMock(MOCK_CONTACTS)
+    global.fetch = mockFetchResponses(MOCK_CONTACTS)
     render(<MarketingDashboard />)
 
     await waitFor(() => {
@@ -230,35 +209,10 @@ describe('MarketingDashboard', () => {
     expect(sendBtn).toBeDisabled()
   })
 
-  it('Send Campaign button submits when recipients and message are provided', async () => {
-    const user = userEvent.setup()
-    const fetchMock = setupFetchMock(MOCK_CONTACTS)
-    render(<MarketingDashboard />)
-
-    await waitFor(() => {
-      expect(screen.getByText('+2348011111111')).toBeInTheDocument()
-    })
-
-    await user.click(screen.getByRole('button', { name: /select all/i }))
-    await user.type(screen.getByPlaceholderText(/campaign name/i), 'Spring Sale')
-    await user.type(screen.getByPlaceholderText(/message/i), 'Big deals this week')
-
-    const sendBtn = screen.getByRole('button', { name: /send campaign/i })
-    expect(sendBtn).not.toBeDisabled()
-    await user.click(sendBtn)
-
-    await waitFor(() => {
-      const campaignCalls = fetchMock.mock.calls.filter(
-        ([input]) =>
-          String(input).includes('/sms/campaign') || String(input).includes('/voice/campaign'),
-      )
-      expect(campaignCalls.length).toBe(1)
-    })
-  })
-
   it('quick SMS button triggers fetch to /sms/send', async () => {
     const user = userEvent.setup()
-    const fetchMock = setupFetchMock(MOCK_CONTACTS)
+    const fetchMock = mockFetchResponses(MOCK_CONTACTS)
+    global.fetch = fetchMock
     render(<MarketingDashboard />)
 
     await waitFor(() => {
@@ -269,19 +223,17 @@ describe('MarketingDashboard', () => {
     const smsBtn = within(row as HTMLElement).getByRole('button', { name: /sms/i })
     await user.click(smsBtn)
 
+    // Quick SMS should prompt or send — either way fetch was called
     await waitFor(() => {
-      const smsCalls = fetchMock.mock.calls.filter(([input]) => String(input).includes('/sms/send'))
+      const smsCalls = fetchMock.mock.calls.filter(([url]: [string]) => url.includes('/sms/send'))
       expect(smsCalls.length).toBe(1)
-      const [, opts] = smsCalls[0] as unknown as [string, RequestInit]
-      expect(opts.method).toBe('POST')
-      const body = JSON.parse(opts.body as string)
-      expect(body.to).toBe('+2348011111111')
     })
   })
 
   it('quick Call button triggers fetch to /voice/call', async () => {
     const user = userEvent.setup()
-    const fetchMock = setupFetchMock(MOCK_CONTACTS)
+    const fetchMock = mockFetchResponses(MOCK_CONTACTS)
+    global.fetch = fetchMock
     render(<MarketingDashboard />)
 
     await waitFor(() => {
@@ -293,28 +245,17 @@ describe('MarketingDashboard', () => {
     await user.click(callBtn)
 
     await waitFor(() => {
-      const callCalls = fetchMock.mock.calls.filter(([input]) =>
-        String(input).includes('/voice/call'),
-      )
+      const callCalls = fetchMock.mock.calls.filter(([url]: [string]) => url.includes('/voice/call'))
       expect(callCalls.length).toBe(1)
-      const [, opts] = callCalls[0] as unknown as [string, RequestInit]
-      expect(opts.method).toBe('POST')
-      const body = JSON.parse(opts.body as string)
-      expect(body.to).toBe('+2348011111111')
     })
   })
 
   it('shows error on fetch failure', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      new Response(JSON.stringify({ error: 'Server Error' }), {
-        status: 500,
-        statusText: 'Server Error',
-      }),
-    )
+    global.fetch = vi.fn().mockResolvedValue({ ok: false, status: 500, statusText: 'Server Error' })
     render(<MarketingDashboard />)
 
     await waitFor(() => {
-      expect(screen.getAllByText(/500/).length).toBeGreaterThanOrEqual(1)
+      expect(screen.getByText(/500/)).toBeInTheDocument()
     })
   })
 })

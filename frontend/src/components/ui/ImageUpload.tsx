@@ -1,6 +1,5 @@
 import { Camera } from 'lucide-react'
 import { type ChangeEvent, useId, useState } from 'react'
-import { cn } from '../../lib/utils'
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024 // 10MB
 const ALLOWED_MIME_TYPES = new Set([
@@ -32,7 +31,6 @@ export function ImageUpload({
     const file = event.target.files?.[0]
     if (!file) return
 
-    event.target.value = ''
     setValidationError(null)
 
     if (!ALLOWED_MIME_TYPES.has(file.type)) {
@@ -53,32 +51,18 @@ export function ImageUpload({
     reader.onload = () => {
       const value = String(reader.result)
       const parts = value.split(',')
-      if (parts.length < 2) {
-        const msg = 'Failed to process image'
-        setValidationError(msg)
-        onError?.(msg)
-        return
-      }
+      if (parts.length < 2) return
       const base64 = parts[1]
       onImageSelected(base64, file.type)
       if (showPreview) {
         setPreviewSrc(value)
       }
     }
-    reader.onerror = () => {
-      const msg = 'Failed to read image file'
-      setValidationError(msg)
-      onError?.(msg)
-      setPreviewSrc(null)
-    }
-    reader.onabort = () => {
-      setPreviewSrc(null)
-    }
     reader.readAsDataURL(file)
   }
 
   return (
-    <div className={cn('w-full sm:w-auto', className)}>
+    <div className={['w-full sm:w-auto', className].filter(Boolean).join(' ')}>
       <label
         htmlFor={inputId}
         className="inline-flex w-full cursor-pointer items-center justify-center gap-2 rounded-2xl border border-border/80 bg-card/40 px-4 py-3 text-foreground text-sm transition hover:border-primary/60 hover:bg-card"
