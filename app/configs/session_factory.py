@@ -16,21 +16,25 @@ IMPORTANT (Vertex backend):
 import logging
 import os
 import importlib.util
-import re
 from pathlib import Path
 
 from google.adk.sessions import InMemorySessionService
 
+from app.configs import sanitize_log
 from app.configs.persistent_session_service import PersistentInMemorySessionService
 
 logger = logging.getLogger(__name__)
 
-_DB_URL_CREDENTIAL_RE = re.compile(r"://[^@/]+@")
+
+def _safe_db_url_label(db_url: str) -> str:
+    """Return a redacted DB URL label safe for logs."""
+    scheme, _, _rest = db_url.partition("://")
+    safe_scheme = scheme or "db"
+    return sanitize_log(f"{safe_scheme}://<redacted>")
 
 
-def _redact_db_url(url: str) -> str:
-    """Redact credentials from database URLs for safe logging."""
-    return _DB_URL_CREDENTIAL_RE.sub("://***@", url)
+def _safe_exception_text(exc: Exception) -> str:
+    return sanitize_log(str(exc))
 
 
 def get_effective_app_name() -> str:
@@ -84,7 +88,7 @@ def create_session_service(force_in_memory: bool = False):
         except Exception as exc:
             logger.warning(
                 "Failed to init VertexAiSessionService, falling back to InMemory: %s",
-                exc,
+                _safe_exception_text(exc),
             )
             return InMemorySessionService()
 
@@ -120,12 +124,12 @@ def create_session_service(force_in_memory: bool = False):
             db_path.parent.mkdir(parents=True, exist_ok=True)
 
         service = DatabaseSessionService(db_url=db_url)
-        logger.info("Using DatabaseSessionService (db_url=%s)", _redact_db_url(db_url))
+        logger.info("Using DatabaseSessionService (db_url=%s)", _safe_db_url_label(db_url))
         return service
     except Exception as exc:
         logger.warning(
             "Failed to init DatabaseSessionService, using PersistentInMemory fallback: %s",
-            type(exc).__name__,
+            _safe_exception_text(exc),
         )
         return PersistentInMemorySessionService(
             file_path=os.getenv(

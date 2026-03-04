@@ -27,7 +27,8 @@ def voice_client():
     with (
         patch("app.api.v1.at.security.ALLOWED_SOURCE_IPS", set()),
         patch("app.api.v1.at.voice.AT_VOICE_ENABLED", True),
-        patch("app.api.v1.at.voice.SIP_BRIDGE_ENDPOINT", "sip:ekaette@test.sip.africastalking.com"),
+        patch("app.api.v1.at.voice.SIP_BRIDGE_ENDPOINT", "sip:ekaette@xx.sip.africastalking.com"),
+        patch("app.api.v1.at.voice.AT_VIRTUAL_NUMBER", "+23417006000"),
     ):
         import app.api.v1.at.security as sec_mod
         import app.api.v1.at.idempotency as idem_mod

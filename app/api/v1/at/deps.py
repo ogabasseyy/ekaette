@@ -11,10 +11,13 @@ from .settings import AT_USERNAME, AT_API_KEY
 
 logger = logging.getLogger(__name__)
 
+_sdk_initialized: bool = False
+
 
 def init_at_sdk() -> None:
     """Initialize Africa's Talking SDK. Call once at app startup."""
-    if getattr(init_at_sdk, "_initialized", False):
+    global _sdk_initialized
+    if _sdk_initialized:
         return
     if not AT_API_KEY:
         logger.warning("AT credentials not set — SDK not initialized (sandbox mode)")
@@ -22,7 +25,7 @@ def init_at_sdk() -> None:
     try:
         import africastalking
         africastalking.initialize(AT_USERNAME, AT_API_KEY)
-        setattr(init_at_sdk, "_initialized", True)
+        _sdk_initialized = True
         logger.info("AT SDK initialized (username=%s)", AT_USERNAME)
     except Exception:
         logger.exception("Failed to initialize AT SDK")

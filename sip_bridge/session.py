@@ -56,6 +56,7 @@ class CallSession:
     # RTP media
     remote_rtp_addr: tuple[str, int] | None = None
     local_rtp_port: int = 0
+    rtp_bind_host: str = ""
     media_transport: Any = None
 
     # Gemini Live config
@@ -91,6 +92,7 @@ class CallSession:
     frames_sent: int = 0
     inbound_drops: int = 0
     outbound_drops: int = 0
+    gemini_input_drops: int = 0
 
     async def run(self) -> None:
         """Run the four concurrent tasks. Cancels all on first failure."""
@@ -107,12 +109,19 @@ class CallSession:
 
         # Create UDP socket for RTP if not injected
         if self.media_transport is None and self.local_rtp_port:
+            bind_host = (
+                self.rtp_bind_host.strip()
+                or os.getenv("SIP_RTP_BIND_HOST", "0.0.0.0").strip()
+                or "0.0.0.0"
+            )
             self.media_transport = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             self.media_transport.setblocking(False)
-            bind_addr = os.getenv("RTP_BIND_ADDRESS", "0.0.0.0")  # All interfaces for RTP media
-            self.media_transport.bind((bind_addr, self.local_rtp_port))
+            self.media_transport.bind((bind_host, self.local_rtp_port))
             self._owns_transport = True
-            logger.info("RTP socket bound", extra={"port": self.local_rtp_port})
+            logger.info(
+                "RTP socket bound",
+                extra={"host": bind_host, "port": self.local_rtp_port},
+            )
 
         # Connect to Gemini Live
         gemini_ctx = None
@@ -185,15 +194,14 @@ class CallSession:
                 try:
                     await gemini_ctx.__aexit__(None, None, None)
                 except Exception:
-                    pass  # Best-effort cleanup — session may already be closed
+                    logger.debug("Gemini context cleanup failed", exc_info=True)
 
             # Clean up UDP socket
             if self._owns_transport and self.media_transport is not None:
                 try:
                     self.media_transport.close()
                 except Exception:
-                    pass  # Best-effort socket cleanup
-
+                    logger.debug("RTP socket close failed", exc_info=True)
                 self.media_transport = None
 
             duration = time.time() - self.started_at
@@ -206,6 +214,7 @@ class CallSession:
                     "frames_sent": self.frames_sent,
                     "inbound_drops": self.inbound_drops,
                     "outbound_drops": self.outbound_drops,
+                    "gemini_input_drops": self.gemini_input_drops,
                 },
             )
 
@@ -323,7 +332,17 @@ class CallSession:
                     try:
                         self._gemini_in_queue.put_nowait(pcm16)
                     except asyncio.QueueFull:
-                        pass  # Drop frame — Gemini consumer is behind
+                        self.gemini_input_drops += 1
+                        if (
+                            self.gemini_input_drops <= 3
+                            or self.gemini_input_drops % 100 == 0
+                        ):
+                            logger.warning(
+                                "Dropping decoded PCM frame for Gemini input due to backpressure "
+                                "(drops=%d call_id=%s)",
+                                self.gemini_input_drops,
+                                self.call_id,
+                            )
             except Exception:
                 logger.debug("Inbound frame processing error", exc_info=True)
 

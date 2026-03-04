@@ -6,17 +6,12 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
-import pytest
-
-try:
-    from scripts.dr_restore_drill import (
-        delete_company_bundle,
-        export_company_snapshot,
-        restore_company_snapshot,
-        run_restore_drill,
-    )
-except ImportError:
-    pytest.skip("scripts.dr_restore_drill not yet implemented", allow_module_level=True)
+from scripts.dr_restore_drill import (
+    delete_company_bundle,
+    export_company_snapshot,
+    restore_company_snapshot,
+    run_restore_drill,
+)
 
 
 class _Snapshot:

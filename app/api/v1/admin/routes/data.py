@@ -25,6 +25,12 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _client_error_message(exc: Exception, *, fallback: str) -> str:
+    """Return a client-safe, sanitized error message."""
+    sanitized = _m.sanitize_log(str(exc))
+    return sanitized or fallback
+
+
 async def _persist_inventory_sync_metadata(
     *,
     tenant_id: str,
@@ -180,10 +186,12 @@ async def seed_admin_company_demo_route(
             data_tier="demo",
         )
     except ValueError as exc:
-        logger.warning("Demo seed validation error for %s/%s", tenant_id, normalized_company_id, exc_info=True)
         return JSONResponse(
             status_code=400,
-            content={"error": "Invalid demo seed request", "code": "DEMO_SEED_INVALID"},
+            content={
+                "error": _client_error_message(exc, fallback="Invalid demo seed request"),
+                "code": "DEMO_SEED_INVALID",
+            },
         )
     except Exception:
         return JSONResponse(
@@ -300,22 +308,28 @@ async def sync_admin_company_inventory_route(
                 content={"error": "Invalid sourceType", "code": "INVENTORY_SOURCE_INVALID"},
             )
     except NotImplementedError as exc:
-        logger.warning("Inventory source not implemented", exc_info=True)
         return JSONResponse(
             status_code=501,
-            content={"error": "Inventory source type not implemented", "code": "INVENTORY_SOURCE_NOT_IMPLEMENTED"},
+            content={
+                "error": _client_error_message(exc, fallback="Inventory source is not implemented"),
+                "code": "INVENTORY_SOURCE_NOT_IMPLEMENTED",
+            },
         )
     except ValueError as exc:
-        logger.warning("Inventory source validation error", exc_info=True)
         return JSONResponse(
             status_code=400,
-            content={"error": "Invalid inventory source configuration", "code": "INVENTORY_SOURCE_INVALID"},
+            content={
+                "error": _client_error_message(exc, fallback="Invalid inventory source request"),
+                "code": "INVENTORY_SOURCE_INVALID",
+            },
         )
     except RuntimeError as exc:
-        logger.warning("Inventory source fetch failed", exc_info=True)
         return JSONResponse(
             status_code=502,
-            content={"error": "Failed to fetch from inventory source", "code": "INVENTORY_SOURCE_FETCH_FAILED"},
+            content={
+                "error": _client_error_message(exc, fallback="Inventory source fetch failed"),
+                "code": "INVENTORY_SOURCE_FETCH_FAILED",
+            },
         )
     except Exception:
         return JSONResponse(status_code=503, content={"error": "Registry storage unavailable", "code": "REGISTRY_STORAGE_UNAVAILABLE"})
@@ -468,11 +482,21 @@ async def upload_admin_company_inventory_route(
             dry_run=bool(dry_run),
         )
     except ValueError as exc:
-        logger.warning("Inventory file validation error", exc_info=True)
-        return JSONResponse(status_code=400, content={"error": "Invalid inventory file", "code": "INVENTORY_FILE_INVALID"})
+        return JSONResponse(
+            status_code=400,
+            content={
+                "error": _client_error_message(exc, fallback="Invalid inventory file"),
+                "code": "INVENTORY_FILE_INVALID",
+            },
+        )
     except RuntimeError as exc:
-        logger.warning("XLSX processing unavailable", exc_info=True)
-        return JSONResponse(status_code=501, content={"error": "XLSX processing unavailable", "code": "INVENTORY_XLSX_UNAVAILABLE"})
+        return JSONResponse(
+            status_code=501,
+            content={
+                "error": _client_error_message(exc, fallback="XLSX processing unavailable"),
+                "code": "INVENTORY_XLSX_UNAVAILABLE",
+            },
+        )
     except Exception:
         return JSONResponse(status_code=503, content={"error": "Registry storage unavailable", "code": "REGISTRY_STORAGE_UNAVAILABLE"})
 
@@ -730,8 +754,13 @@ async def run_admin_inventory_sync_jobs_route(
             dry_run_override=payload.dry_run_override,
         )
     except ValueError as exc:
-        logger.warning("Inventory sync run validation error", exc_info=True)
-        return JSONResponse(status_code=400, content={"error": "Invalid inventory sync run request", "code": "INVENTORY_SYNC_RUN_INVALID"})
+        return JSONResponse(
+            status_code=400,
+            content={
+                "error": _client_error_message(exc, fallback="Invalid inventory sync run request"),
+                "code": "INVENTORY_SYNC_RUN_INVALID",
+            },
+        )
     except Exception:
         return JSONResponse(status_code=503, content={"error": "Registry storage unavailable", "code": "REGISTRY_STORAGE_UNAVAILABLE"})
 

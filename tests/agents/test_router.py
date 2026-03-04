@@ -37,17 +37,17 @@ class TestEkaetteRouterAgent:
         assert names == expected, f"Expected sub-agents {expected}, got {names}"
 
     def test_sub_agents_use_live_model(self):
-        """Sub-agents use the same Live API model as root (bidi requires it).
-
-        ADK creates separate Live sessions per agent in bidi-streaming mode,
-        so ALL agents (root + sub) must use a Live API-compatible model.
-        """
+        """Sub-agents must use a Live API-compatible model for bidi-streaming."""
         from app.agents.ekaette_router.agent import ekaette_router
-        root_model = ekaette_router.model
+        from app.configs.model_resolver import resolve_live_model_id
+
+        live_model_id = resolve_live_model_id()
         for sa in ekaette_router.sub_agents:
-            assert sa.model == root_model, (
-                f"Sub-agent {sa.name} should use the same Live model as root "
-                f"({root_model}), got: {sa.model}"
+            assert sa.model == live_model_id, (
+                f"Sub-agent {sa.name} must use LIVE_MODEL_ID={live_model_id}, got: {sa.model}"
+            )
+            assert sa.model != "gemini-3-flash-preview", (
+                f"Sub-agent {sa.name} must not use unsupported preview model {sa.model}"
             )
 
     def test_sub_agents_have_model_and_tool_callbacks(self):

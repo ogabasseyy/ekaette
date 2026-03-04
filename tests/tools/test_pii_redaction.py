@@ -1,11 +1,7 @@
 """Tests for PII redaction utility."""
 
 import pytest
-
-try:
-    from app.tools.pii_redaction import redact_pii, redact_dict_pii
-except ImportError:
-    pytest.skip("app.tools.pii_redaction not yet implemented", allow_module_level=True)
+from app.tools.pii_redaction import redact_pii, redact_dict_pii
 
 
 class TestRedactPii:

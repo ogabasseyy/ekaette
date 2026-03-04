@@ -22,8 +22,8 @@ _WS_TOKEN_SECRET: str = ""
 
 # In-memory used-JTI set for single-use enforcement.
 _used_jtis: dict[str, float] = {}  # jti -> expiration timestamp
-_used_jtis_lock = threading.Lock()
 _MAX_USED_JTIS = 10_000
+_used_jtis_lock = threading.Lock()
 
 
 class WsTokenClaims(NamedTuple):
@@ -106,8 +106,10 @@ def validate_ws_token(token: str, expected_user_id: str) -> WsTokenClaims | None
         return None
 
     # Check expiration
-    exp = payload.get("exp", 0)
-    if not isinstance(exp, (int, float)):
+    exp_raw = payload.get("exp", 0)
+    try:
+        exp = float(exp_raw)
+    except (TypeError, ValueError):
         return None
     if time.time() > exp:
         return None
@@ -124,7 +126,6 @@ def validate_ws_token(token: str, expected_user_id: str) -> WsTokenClaims | None
 
     with _used_jtis_lock:
         _prune_used_jtis()
-
         if jti in _used_jtis:
             return None
         _used_jtis[jti] = exp

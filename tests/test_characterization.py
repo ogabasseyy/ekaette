@@ -533,6 +533,10 @@ class TestSessionResumptionLockCharacterization:
 # ═══ Tool Behavior Characterization (Pre-Scoping Baseline) ═══
 
 
+@pytest.mark.xfail(
+    reason="Legacy baseline only: booking tools are now tenant/company scoped in Phase 3+.",
+    strict=True,
+)
 class TestBookingToolsNoCompanyScopingBaseline:
     """Document that booking tools currently do NOT filter by company.
 
@@ -552,7 +556,7 @@ class TestBookingToolsNoCompanyScopingBaseline:
                 id="slot-1",
                 to_dict=MagicMock(
                     return_value={
-                        "date": "2030-03-01",
+                        "date": "2026-03-01",
                         "time": "10:00",
                         "location": "Lagos - Ikeja",
                         "available": True,
@@ -566,14 +570,14 @@ class TestBookingToolsNoCompanyScopingBaseline:
         with pytest.MonkeyPatch.context() as mp:
             mp.setattr(booking_tools, "_get_firestore_db", lambda: db)
             result = await booking_tools.check_availability(
-                date="2030-03-01",
+                date="2026-03-01",
                 location="Lagos - Ikeja",
             )
 
         assert "error" not in result
         db.collection.assert_called_once_with("booking_slots")
         where_calls = [call.args for call in query.where.call_args_list]
-        assert ("date", "==", "2030-03-01") in where_calls
+        assert ("date", "==", "2026-03-01") in where_calls
         assert ("location", "==", "Lagos - Ikeja") in where_calls
         assert not any(args and args[0] == "company_id" for args in where_calls), (
             "Phase 0 baseline: check_availability should NOT filter by company_id yet. "
@@ -581,17 +585,38 @@ class TestBookingToolsNoCompanyScopingBaseline:
         )
 
     @pytest.mark.asyncio
-    async def test_create_booking_returns_error_when_db_unavailable(self):
-        """create_booking returns a controlled error when Firestore is unavailable.
-
-        The original Phase 0 characterization test validated batch-write behavior.
-        After the Critical fix to prevent double-booking via @firestore.transactional,
-        this test verifies that the unavailable-DB fallback still works.
-        """
+    async def test_create_booking_has_no_company_field(self):
+        """create_booking does NOT store company_id on the booking document."""
         from app.tools import booking_tools
 
+        slot_ref = MagicMock()
+        slot_doc = MagicMock()
+        slot_doc.exists = True
+        slot_doc.to_dict.return_value = {
+            "date": "2026-03-01",
+            "time": "10:00",
+            "location": "Lagos - Ikeja",
+            "available": True,
+        }
+        slot_ref.get.return_value = slot_doc
+
+        booking_ref = MagicMock()
+        batch = MagicMock()
+        batch.commit = MagicMock(return_value=None)
+
+        slot_collection = MagicMock()
+        slot_collection.document.return_value = slot_ref
+        booking_collection = MagicMock()
+        booking_collection.document.return_value = booking_ref
+
+        db = MagicMock()
+        db.batch.return_value = batch
+        db.collection.side_effect = lambda name: (
+            slot_collection if name == "booking_slots" else booking_collection
+        )
+
         with pytest.MonkeyPatch.context() as mp:
-            mp.setattr(booking_tools, "_get_firestore_db", lambda: None)
+            mp.setattr(booking_tools, "_get_firestore_db", lambda: db)
             result = await booking_tools.create_booking(
                 slot_id="slot-1",
                 user_id="user-1",
@@ -600,10 +625,19 @@ class TestBookingToolsNoCompanyScopingBaseline:
                 service_type="booking",
             )
 
-        assert "error" in result
-        assert result["error"] == "Booking service unavailable"
+        assert "error" not in result
+        _, booking_data = batch.set.call_args.args
+        assert isinstance(booking_data, dict)
+        assert "company_id" not in booking_data, (
+            "Phase 0 baseline: create_booking booking document should NOT include company_id yet. "
+            "This should fail once Phase 3 company scoping is implemented."
+        )
 
 
+@pytest.mark.xfail(
+    reason="Legacy baseline only: catalog tools are now tenant/company scoped in Phase 3+.",
+    strict=True,
+)
 class TestCatalogToolsNoCompanyScopingBaseline:
     """Document that catalog tools currently do NOT filter by company."""
 

@@ -12,8 +12,6 @@ import threading
 import uuid
 from typing import Any
 
-from app.configs import sanitize_log
-
 from . import campaign_analytics
 from . import providers
 from .settings import (
@@ -120,7 +118,7 @@ def _store_payment(reference: str, payload: dict[str, Any]) -> None:
         existing = _payment_records.get(reference, {})
         merged = {**existing, **payload}
         merged.setdefault("reference", reference)
-        merged["updated_at"] = _now_iso()
+        merged["updated_at"] = _coerce_str(payload.get("updated_at")) or _now_iso()
         _payment_records[reference] = merged
 
 
@@ -129,7 +127,7 @@ def _store_virtual_account(reference: str, payload: dict[str, Any]) -> None:
         existing = _virtual_account_records.get(reference, {})
         merged = {**existing, **payload}
         merged.setdefault("reference", reference)
-        merged["updated_at"] = _now_iso()
+        merged["updated_at"] = _coerce_str(payload.get("updated_at")) or _now_iso()
         _virtual_account_records[reference] = merged
         account_number = _normalize_account_number(_coerce_str(merged.get("account_number")))
         if account_number:
@@ -819,8 +817,7 @@ async def send_va_notification_whatsapp(
             body=message,
         )
         if status_code >= 400:
-            wa_error = body.get("error", {}).get("message", "") if isinstance(body, dict) else ""
-            logger.warning("WhatsApp send failed (%s): %s", status_code, sanitize_log(wa_error))
+            logger.warning("WhatsApp send failed (%s)", status_code)
             return False
         logger.info("VA WhatsApp sent")
         return True

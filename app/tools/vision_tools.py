@@ -13,12 +13,14 @@ import logging
 import os
 import re
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from google import genai
 from google.adk.tools.tool_context import ToolContext
 from google.genai import types
+
+from app.configs import sanitize_log
 
 logger = logging.getLogger(__name__)
 
@@ -27,8 +29,20 @@ MEDIA_BUCKET = os.getenv("MEDIA_BUCKET", "")
 
 _genai_client: genai.Client | None = None
 _storage_client: Any = None
-_MAX_IMAGE_CACHE_SIZE = 100
 _latest_images: dict[str, dict[str, Any]] = {}
+_PATH_SEGMENT_RE = re.compile(r"[^A-Za-z0-9._-]+")
+
+try:
+    _MAX_LATEST_IMAGES = max(1, int(os.getenv("VISION_LATEST_IMAGE_CACHE_SIZE", "500")))
+except (TypeError, ValueError):
+    _MAX_LATEST_IMAGES = 500
+
+try:
+    _LATEST_IMAGE_TTL = timedelta(
+        seconds=max(1, int(os.getenv("VISION_LATEST_IMAGE_TTL_SECONDS", "900")))
+    )
+except (TypeError, ValueError):
+    _LATEST_IMAGE_TTL = timedelta(seconds=900)
 
 ANALYSIS_PROMPT = """Analyze this device image for a trade-in valuation.
 Return a JSON object with exactly this structure:
@@ -77,6 +91,30 @@ def _cache_key(user_id: str, session_id: str) -> str:
     return f"{user_id}:{session_id}"
 
 
+def _prune_latest_images(now: datetime) -> None:
+    cutoff = now - _LATEST_IMAGE_TTL
+    stale_keys: list[str] = []
+    for key, payload in list(_latest_images.items()):
+        if not isinstance(payload, dict):
+            stale_keys.append(key)
+            continue
+        cached_at_raw = payload.get("cached_at")
+        if not isinstance(cached_at_raw, str) or not cached_at_raw:
+            stale_keys.append(key)
+            continue
+        try:
+            cached_at = datetime.fromisoformat(cached_at_raw)
+        except ValueError:
+            stale_keys.append(key)
+            continue
+        if cached_at.tzinfo is None:
+            cached_at = cached_at.replace(tzinfo=timezone.utc)
+        if cached_at < cutoff:
+            stale_keys.append(key)
+    for key in stale_keys:
+        _latest_images.pop(key, None)
+
+
 def cache_latest_image(
     user_id: str,
     session_id: str,
@@ -84,29 +122,22 @@ def cache_latest_image(
     mime_type: str,
 ) -> None:
     """Cache the most recent client image for this live websocket session."""
-    key = _cache_key(user_id, session_id)
-    _latest_images[key] = {
+    now = datetime.now(timezone.utc)
+    _prune_latest_images(now)
+    _latest_images[_cache_key(user_id, session_id)] = {
         "image_data": image_data,
         "mime_type": mime_type,
-        "cached_at": datetime.now(timezone.utc).isoformat(),
+        "cached_at": now.isoformat(),
     }
-    # Evict oldest entries to bound memory usage.
-    while len(_latest_images) > _MAX_IMAGE_CACHE_SIZE:
-        oldest = next(iter(_latest_images))
-        if oldest != key:
-            del _latest_images[oldest]
-        else:
-            break
+    while len(_latest_images) > _MAX_LATEST_IMAGES:
+        oldest_key = next(iter(_latest_images))
+        _latest_images.pop(oldest_key, None)
 
 
 def get_latest_image(user_id: str, session_id: str) -> dict[str, Any] | None:
     """Read cached image payload for this session, if available."""
+    _prune_latest_images(datetime.now(timezone.utc))
     return _latest_images.get(_cache_key(user_id, session_id))
-
-
-def _sanitize_path_segment(value: str) -> str:
-    """Restrict path segment to safe alphanumeric, dash, underscore characters."""
-    return re.sub(r"[^a-zA-Z0-9_\-]", "_", value)[:128]
 
 
 def _artifact_filename(mime_type: str) -> str:
@@ -119,6 +150,12 @@ def _artifact_filename(mime_type: str) -> str:
     }
     ext = ext_map.get(mime_type, "bin")
     return f"customer_image_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}.{ext}"
+
+
+def _sanitize_path_segment(value: str, *, fallback: str) -> str:
+    candidate = _PATH_SEGMENT_RE.sub("_", (value or "").strip())
+    candidate = candidate.strip("._")
+    return candidate or fallback
 
 
 async def analyze_device_image(
@@ -178,12 +215,12 @@ async def analyze_device_image(
             }
 
     except Exception as exc:
-        logger.error("Vision analysis failed: %s", exc)
+        logger.error("Vision analysis failed: %s", sanitize_log(str(exc)), exc_info=True)
         return {
             "device_name": "Unknown",
             "condition": "Unknown",
             "details": {},
-            "error": "Vision analysis failed. Please try again.",
+            "error": "Vision analysis failed",
         }
 
 
@@ -221,9 +258,9 @@ async def upload_to_cloud_storage(
     ext = ext_map.get(mime_type, "bin")
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     unique_id = uuid.uuid4().hex[:8]
-    safe_user = _sanitize_path_segment(user_id)
-    safe_session = _sanitize_path_segment(session_id)
-    blob_path = f"uploads/{safe_user}/{safe_session}/{timestamp}_{unique_id}.{ext}"
+    safe_user_id = _sanitize_path_segment(user_id, fallback="anonymous")
+    safe_session_id = _sanitize_path_segment(session_id, fallback="unknown-session")
+    blob_path = f"uploads/{safe_user_id}/{safe_session_id}/{timestamp}_{unique_id}.{ext}"
 
     try:
         bucket = storage_client.bucket(MEDIA_BUCKET)
@@ -235,7 +272,7 @@ async def upload_to_cloud_storage(
         return {"gcs_uri": gcs_uri, "blob_path": blob_path}
 
     except Exception as exc:
-        logger.error("Cloud Storage upload failed: %s", exc)
+        logger.error("Cloud Storage upload failed: %s", sanitize_log(str(exc)), exc_info=True)
         return {"error": "Cloud Storage upload failed"}
 
 

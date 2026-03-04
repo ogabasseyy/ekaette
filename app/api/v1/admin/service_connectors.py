@@ -11,27 +11,28 @@ from app.api.v1.admin.runtime import runtime as _m
 
 from app.api.models import AdminConnectorPayload
 
-_SECRET_KEY_NAMES = {"password", "token", "api_key", "apikey", "secret"}
+
+_FORBIDDEN_SECRET_KEYS = frozenset({"password", "token", "api_key", "apikey", "secret"})
 
 
-def _find_forbidden_secret_keys(
-    data: dict[str, object],
-    prefix: str = "",
-    _depth: int = 0,
-) -> set[str]:
-    """Recursively scan config for forbidden secret key names."""
-    if _depth > 5:
-        return set()
-    found: set[str] = set()
-    for key, value in data.items():
-        if not isinstance(key, str):
-            continue
-        full_key = f"{prefix}.{key}" if prefix else key
-        if key.strip().lower() in _SECRET_KEY_NAMES:
-            found.add(full_key)
-        if isinstance(value, dict) and _depth < 5:
-            found.update(_find_forbidden_secret_keys(value, prefix=full_key, _depth=_depth + 1))
-    return found
+def _collect_forbidden_secret_paths(value: object, *, prefix: str = "") -> set[str]:
+    """Recursively collect inline secret-like keys from nested config payloads."""
+    findings: set[str] = set()
+    if isinstance(value, dict):
+        for raw_key, child in value.items():
+            if not isinstance(raw_key, str):
+                continue
+            key = raw_key.strip()
+            normalized = key.lower()
+            dotted = f"{prefix}.{key}" if prefix else key
+            if normalized in _FORBIDDEN_SECRET_KEYS:
+                findings.add(dotted)
+            findings.update(_collect_forbidden_secret_paths(child, prefix=dotted))
+    elif isinstance(value, list):
+        for index, child in enumerate(value):
+            item_prefix = f"{prefix}[{index}]" if prefix else f"[{index}]"
+            findings.update(_collect_forbidden_secret_paths(child, prefix=item_prefix))
+    return findings
 
 
 def _normalize_connector_payload(
@@ -40,6 +41,16 @@ def _normalize_connector_payload(
     payload: AdminConnectorPayload,
     industry_template_id: str | None = None,
 ) -> tuple[dict[str, object] | None, JSONResponse | None]:
+    normalized_connector_id = _m._normalize_connector_id(connector_id) or ""
+    if not normalized_connector_id:
+        return None, JSONResponse(
+            status_code=400,
+            content={
+                "error": "Invalid connector id",
+                "code": "INVALID_CONNECTOR_ID",
+            },
+        )
+
     provider = payload.provider.strip().lower()
     provider_catalog = _m._effective_mcp_provider_catalog()
     provider_policy = provider_catalog.get(provider)
@@ -83,14 +94,13 @@ def _normalize_connector_payload(
         )
         if str(item).strip()
     }
-    normalized_connector_id = connector_id.strip().lower()
     if template_allowed_connector_ids and normalized_connector_id not in template_allowed_connector_ids:
         return None, JSONResponse(
             status_code=400,
             content={
                 "error": "Connector id not allowed for template",
                 "code": "CONNECTOR_ID_NOT_ALLOWED_FOR_TEMPLATE",
-                "connectorId": connector_id,
+                "connectorId": normalized_connector_id,
                 "industryTemplateId": industry_template_id,
             },
         )
@@ -108,7 +118,7 @@ def _normalize_connector_payload(
         )
 
     config = payload.config if isinstance(payload.config, dict) else {}
-    forbidden_secret_keys = _find_forbidden_secret_keys(config)
+    forbidden_secret_keys = _collect_forbidden_secret_paths(config)
     if forbidden_secret_keys:
         return None, JSONResponse(
             status_code=400,
@@ -171,7 +181,7 @@ def _normalize_connector_payload(
         return None, runtime_policy_error
 
     normalized_payload: dict[str, object] = {
-        "id": connector_id,
+        "id": normalized_connector_id,
         "provider": provider,
         "enabled": bool(payload.enabled),
         "capabilities": normalized_capabilities,

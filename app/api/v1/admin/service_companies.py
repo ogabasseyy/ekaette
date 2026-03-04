@@ -87,7 +87,15 @@ async def _load_registry_company_doc(
 
         company_doc = await load_tenant_company(db, tenant_id, company_id)
     except _m.RegistrySchemaVersionError as exc:
-        logger.warning("Unsupported registry schema version for %s/%s", tenant_id, company_id, exc_info=True)
+        logger.warning(
+            "Unsupported registry schema version %s",
+            _m.registry_log_context(
+                tenant_id=tenant_id,
+                company_id=company_id,
+                registry_mode=_m._registry_enabled(),
+                source="api_v1_admin_company_lookup",
+            ),
+        )
         return None, JSONResponse(
             status_code=503,
             content={

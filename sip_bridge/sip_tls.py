@@ -55,14 +55,7 @@ _MAX_HEADER_COUNT = 100
 
 @dataclass
 class SipMessage:
-    """Parsed SIP request or response.
-
-    NOTE: headers is a flat dict, so repeated headers (e.g. multiple Via
-    lines per RFC 3261 Section 8.1.1.7) will be collapsed to the last value.
-    TODO: migrate to list[tuple[str, str]] or defaultdict(list) to preserve
-    duplicate headers — requires updating all call sites that do dict-style
-    access (msg.headers["via"], msg.headers.get(...), etc.).
-    """
+    """Parsed SIP request or response."""
 
     first_line: str
     headers: dict[str, str] = field(default_factory=dict)
@@ -199,15 +192,18 @@ def serialize_message(msg: SipMessage) -> bytes:
     """Serialize a SipMessage to bytes for sending over TLS.
 
     Header names are title-cased for wire compatibility.
-    Always recalculates Content-Length to match the actual body size.
     """
-    # Recalculate Content-Length to ensure it matches the actual body
     body_bytes = msg.body.encode("utf-8")
-    msg.headers["content-length"] = str(len(body_bytes))
+    headers = {
+        normalize_header_name(name): value
+        for name, value in msg.headers.items()
+    }
+    # RFC 3261 framing over stream transports depends on exact body byte length.
+    headers["content-length"] = str(len(body_bytes))
 
     lines: list[str] = [msg.first_line]
 
-    for name, value in msg.headers.items():
+    for name, value in headers.items():
         # Title-case header name for wire format (e.g., call-id -> Call-Id)
         wire_name = "-".join(part.capitalize() for part in name.split("-"))
         lines.append(f"{wire_name}: {value}")
@@ -233,9 +229,7 @@ def create_tls_context(
     """
     if server_side:
         if not certfile or not keyfile:
-            raise ValueError(
-                "certfile and keyfile are required for server-side TLS"
-            )
+            raise ValueError("certfile and keyfile are required for server-side TLS")
         ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         ctx.load_cert_chain(certfile, keyfile)
     else:

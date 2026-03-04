@@ -46,7 +46,7 @@ class TestShippingOrderTrackingEndpoints:
         assert track_resp.status_code == 200
         body = track_resp.json()
         assert body["status"] == "ok"
-        assert body["order"]["order_id"] == order_id
+        assert body["order_id"] == order_id
         assert body["tracking"]["status"] == "pending"
 
     def test_tracking_missing_order_returns_404(self) -> None:

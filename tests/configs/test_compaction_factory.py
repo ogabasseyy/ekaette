@@ -6,7 +6,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 
-@pytest.mark.filterwarnings("ignore::UserWarning")
 class TestCreateCompactionConfig:
     """Test compaction config creation with env-driven switching."""
 
@@ -161,7 +160,6 @@ class TestCreateCompactionConfig:
         assert config.token_threshold is None
 
 
-@pytest.mark.filterwarnings("ignore::UserWarning")
 class TestCreateApp:
     """Test ADK App construction with compaction config."""
 
@@ -226,7 +224,6 @@ class TestCreateApp:
         assert app.name == "ekaette"
 
 
-@pytest.mark.filterwarnings("ignore::UserWarning")
 class TestCreateSummarizer:
     """Test LLM summarizer creation."""
 
@@ -244,14 +241,17 @@ class TestCreateSummarizer:
 
         assert isinstance(summarizer, LlmEventSummarizer)
 
-    def test_returns_none_on_import_error(self):
-        """If Gemini model class unavailable, return None gracefully."""
+    def test_returns_none_when_gemini_init_fails(self):
+        """If Gemini initialization fails, return None gracefully."""
         from app.configs.compaction_factory import _create_summarizer
+        from app.configs.model_resolver import resolve_live_model_id
+
+        live_model_id = resolve_live_model_id()
 
         with patch(
             "app.configs.compaction_factory.Gemini",
-            side_effect=ImportError("Import failed"),
+            side_effect=Exception("Gemini init failed"),
         ):
-            result = _create_summarizer("gemini-3-flash-preview")
+            result = _create_summarizer(live_model_id)
 
         assert result is None

@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import importlib
 import inspect
 import json
 import logging
@@ -582,13 +581,11 @@ def _build_onboarding_config_compat(tenant_id: str) -> dict[str, Any]:
         Legacy path — only used when REGISTRY_ENABLED=false.
     """
     logger.debug("registry_loader: using compat onboarding config for tenant='%s'", _sanitize_log(tenant_id))
-    industry_mod = importlib.import_module("app.configs.industry_loader")
-    company_mod = importlib.import_module("app.configs.company_loader")
-    local_industry_configs = getattr(industry_mod, "LOCAL_INDUSTRY_CONFIGS", {})
-    local_company_profiles = getattr(company_mod, "LOCAL_COMPANY_PROFILES", {})
+    from app.configs.industry_loader import LOCAL_INDUSTRY_CONFIGS
+    from app.configs.company_loader import LOCAL_COMPANY_PROFILES
 
     templates: list[dict[str, Any]] = []
-    for industry_id, config in local_industry_configs.items():
+    for industry_id, config in LOCAL_INDUSTRY_CONFIGS.items():
         theme = _LOCAL_INDUSTRY_THEMES.get(industry_id, {
             "accent": "oklch(70% 0.15 200)",
             "accentSoft": "oklch(70% 0.15 200 / 0.15)",
@@ -607,7 +604,7 @@ def _build_onboarding_config_compat(tenant_id: str) -> dict[str, Any]:
         })
 
     companies: list[dict[str, Any]] = []
-    for company_id, profile in local_company_profiles.items():
+    for company_id, profile in LOCAL_COMPANY_PROFILES.items():
         # Determine which industry this company belongs to
         template_id = ""
         for ind_id, mapped_co in _LOCAL_INDUSTRY_COMPANY_MAP.items():
@@ -616,7 +613,7 @@ def _build_onboarding_config_compat(tenant_id: str) -> dict[str, Any]:
                 break
         if not template_id:
             # Try to infer from company_id prefix
-            for ind_id in local_industry_configs:
+            for ind_id in LOCAL_INDUSTRY_CONFIGS:
                 if ind_id in company_id:
                     template_id = ind_id
                     break

@@ -6,9 +6,9 @@ Production deployments can replace this in-memory store with Firestore/Postgres.
 
 from __future__ import annotations
 
-from collections import OrderedDict
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+import heapq
 import re
 import threading
 import uuid
@@ -46,7 +46,7 @@ class CampaignState:
 _lock = threading.Lock()
 _campaigns: dict[str, CampaignState] = {}
 _events: list[dict[str, Any]] = []
-_seen_event_ids: OrderedDict[str, None] = OrderedDict()
+_seen_event_ids: dict[str, float] = {}
 _recipient_last_campaign: dict[tuple[str, str, str], str] = {}
 
 
@@ -75,14 +75,21 @@ def _build_campaign_id(channel: str) -> str:
 def _event_deduped(event_id: str | None) -> bool:
     if not event_id:
         return False
+    now_ts = datetime.now(timezone.utc).timestamp()
     with _lock:
         if event_id in _seen_event_ids:
             return True
-        _seen_event_ids[event_id] = None
+        _seen_event_ids[event_id] = now_ts
         if len(_seen_event_ids) > 10_000:
-            # Evict oldest entries (FIFO) via OrderedDict to keep dedup deterministic.
-            while len(_seen_event_ids) > 5_000:
-                _seen_event_ids.popitem(last=False)
+            # Deterministically evict the oldest entries first.
+            overflow = len(_seen_event_ids) - 5_000
+            oldest_ids = heapq.nsmallest(
+                overflow,
+                _seen_event_ids.items(),
+                key=lambda item: item[1],
+            )
+            for stale_event_id, _ in oldest_ids:
+                _seen_event_ids.pop(stale_event_id, None)
         return False
 
 
@@ -96,29 +103,31 @@ def _ensure_campaign(
     campaign_name: str | None = None,
 ) -> CampaignState:
     normalized_channel = _normalize_channel(channel)
+    normalized_tenant = (tenant_id or "public").strip() or "public"
+    normalized_company = (company_id or "ekaette-electronics").strip() or "ekaette-electronics"
     resolved_campaign_id = (campaign_id or "").strip() or _build_campaign_id(normalized_channel)
     now = _now_iso()
     with _lock:
         existing = _campaigns.get(resolved_campaign_id)
+        if existing is not None and (
+            existing.tenant_id != normalized_tenant or existing.company_id != normalized_company
+        ):
+            # Prevent campaign ID collisions from polluting another tenant/company scope.
+            resolved_campaign_id = _build_campaign_id(normalized_channel)
+            existing = None
         if existing is not None:
-            # Enforce tenant/company scope on reuse.
-            if existing.tenant_id != ((tenant_id or "public").strip() or "public"):
-                pass  # Mismatched tenant — fall through to create new.
-            elif existing.company_id != ((company_id or "ekaette-electronics").strip() or "ekaette-electronics"):
-                pass  # Mismatched company — fall through to create new.
-            else:
-                existing.updated_at = now
-                if message and not existing.message:
-                    existing.message = message
-                if campaign_name and campaign_name.strip():
-                    existing.campaign_name = campaign_name.strip()
-                return existing
+            existing.updated_at = now
+            if message and not existing.message:
+                existing.message = message
+            if campaign_name and campaign_name.strip():
+                existing.campaign_name = campaign_name.strip()
+            return existing
 
         state = CampaignState(
             campaign_id=resolved_campaign_id,
             channel=normalized_channel,
-            tenant_id=(tenant_id or "public").strip() or "public",
-            company_id=(company_id or "ekaette-electronics").strip() or "ekaette-electronics",
+            tenant_id=normalized_tenant,
+            company_id=normalized_company,
             campaign_name=(campaign_name or "").strip() or f"{normalized_channel.upper()} Campaign",
             message=message,
             created_at=now,
@@ -223,9 +232,8 @@ def campaign_snapshot(campaign_id: str) -> dict[str, Any] | None:
             "payments_initialized_total": state.payments_initialized_total,
             "payments_success_total": state.payments_success_total,
         }
-        # Compute KPIs while still holding the lock for consistent snapshot values.
         snapshot.update(_compute_kpis(state))
-    return snapshot
+        return snapshot
 
 
 def list_campaign_snapshots(
