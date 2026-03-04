@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 import re
-import threading
 import time
 
 from fastapi import Request
@@ -133,14 +132,10 @@ def _tenant_allowed(tenant_id: str) -> bool:
     return not settings.TOKEN_ALLOWED_TENANTS or tenant_id in settings.TOKEN_ALLOWED_TENANTS
 
 
-_rate_limit_lock = threading.Lock()
-
-
 def _check_rate_limit(client_ip: str, bucket: str, limit: int) -> bool:
     now = time.time()
     key = f"{bucket}:{client_ip}"
-
-    with _rate_limit_lock:
+    with settings._rate_limit_lock:
         if now - settings._rate_limit_last_global_prune >= settings.RATE_LIMIT_WINDOW:
             stale_keys = [
                 existing_key

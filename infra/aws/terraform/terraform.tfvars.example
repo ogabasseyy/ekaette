@@ -1,0 +1,18 @@
+aws_region      = "us-east-1"
+project_name    = "ekaette-nova"
+alb_certificate_arn = "arn:aws:acm:us-east-1:123456789012:certificate/00000000-0000-0000-0000-000000000000"
+container_image = "123456789012.dkr.ecr.<region>.amazonaws.com/ekaette-nova:latest"
+desired_count   = 1
+cpu             = 1024
+memory          = 2048
+
+# Plain env vars passed to ECS task definition
+app_env_vars = {
+  APP_ENV      = "staging"
+  LOG_LEVEL    = "INFO"
+  LLM_PROVIDER = "amazon_nova"
+}
+
+# secret_arns = {
+#   AT_API_KEY = "arn:aws:secretsmanager:us-east-1:123456789012:secret:at-api-key-xxxx"
+# }

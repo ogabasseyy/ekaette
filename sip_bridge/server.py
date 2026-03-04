@@ -148,7 +148,25 @@ class SIPProtocol(asyncio.DatagramProtocol):
             if first_line.startswith("INVITE"):
                 self._handle_invite(message, addr)
             elif first_line.startswith("BYE"):
-                self._handle_bye(message, addr)
+                parsed = parse_sip_request(message)
+                headers = self._coerce_dialog_headers(parsed["headers"])
+                call_id = headers.get("Call-ID") or self._extract_call_id(message)
+                transport = self.server._transport
+                if transport is not None:
+                    ok_response = build_sip_response(
+                        200,
+                        "OK",
+                        headers,
+                        sdp_body=None,
+                        contact_uri=self._contact_uri(),
+                    )
+                    transport.sendto(ok_response.encode("utf-8"), addr)
+                    logger.info("200 OK sent for BYE", extra={"call_id": call_id})
+                if call_id:
+                    try:
+                        self.server.handle_bye(call_id)
+                    except Exception:
+                        logger.exception("SIP BYE teardown failed", extra={"call_id": call_id})
             # ACK, OPTIONS, etc. are acknowledged but not processed
         except Exception:
             logger.exception("SIP message parse error")
@@ -156,7 +174,7 @@ class SIPProtocol(asyncio.DatagramProtocol):
     def _handle_invite(self, message: str, addr: tuple[str, int]) -> None:
         """Parse INVITE, send 100 Trying + 200 OK, create session."""
         parsed = parse_sip_request(message)
-        headers = parsed["headers"]
+        headers = self._coerce_dialog_headers(parsed["headers"])
         sdp_body = parsed["body"]
         call_id = headers.get("Call-ID", "")
         if not call_id:
@@ -171,9 +189,7 @@ class SIPProtocol(asyncio.DatagramProtocol):
         if not transport:
             return
 
-        # Extract user part for Contact URI
-        user_part = config.sip_username.split("@", 1)[0] if "@" in config.sip_username else config.sip_username
-        contact_uri = f"<sip:{user_part}@{config.sip_public_ip}:{config.sip_port}>"
+        contact_uri = self._contact_uri()
 
         # 1. Send 100 Trying immediately
         trying = build_sip_response(100, "Trying", headers, sdp_body=None, contact_uri=contact_uri)
@@ -211,30 +227,22 @@ class SIPProtocol(asyncio.DatagramProtocol):
         )
         asyncio.create_task(session.run())
 
-    def _handle_bye(self, message: str, addr: tuple[str, int]) -> None:
-        """Parse BYE, send 200 OK, then tear down session."""
-        parsed = parse_sip_request(message)
-        headers = parsed["headers"]
-        call_id = headers.get("Call-ID", "")
-        if not call_id:
-            return
+    def _contact_uri(self) -> str:
+        """Build local Contact URI for SIP responses."""
+        config = self.server.config
+        user_part = config.sip_username.split("@", 1)[0] if "@" in config.sip_username else config.sip_username
+        return f"<sip:{user_part}@{config.sip_public_ip}:{config.sip_port}>"
 
-        transport = self.server._transport
-        if transport:
-            config = self.server.config
-            user_part = (
-                config.sip_username.split("@", 1)[0]
-                if "@" in config.sip_username
-                else config.sip_username
-            )
-            contact_uri = f"<sip:{user_part}@{config.sip_public_ip}:{config.sip_port}>"
-            ok_response = build_sip_response(
-                200, "OK", headers, sdp_body=None, contact_uri=contact_uri,
-            )
-            transport.sendto(ok_response.encode("utf-8"), addr)
-            logger.info("200 OK for BYE sent", extra={"call_id": call_id})
-
-        self.server.handle_bye(call_id)
+    @staticmethod
+    def _coerce_dialog_headers(headers: dict[str, str]) -> dict[str, str]:
+        """Coerce transaction header names to canonical SIP casing."""
+        return {
+            "Via": headers.get("Via") or headers.get("via", ""),
+            "From": headers.get("From") or headers.get("from", ""),
+            "To": headers.get("To") or headers.get("to", ""),
+            "Call-ID": headers.get("Call-ID") or headers.get("call-id", ""),
+            "CSeq": headers.get("CSeq") or headers.get("cseq", ""),
+        }
 
     @staticmethod
     def _extract_call_id(message: str) -> str | None:

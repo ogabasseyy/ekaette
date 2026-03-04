@@ -4,11 +4,15 @@ from __future__ import annotations
 
 import importlib
 import logging
-from typing import Any
+from typing import Any, Callable
 
 from google.genai import types
 
 logger = logging.getLogger(__name__)
+
+# One-time patch state (kept module-level for deterministic test monkeypatching).
+_PATCH_INSTALLED = False
+_ORIGINAL_BUILD_RESPONSE_EVENT: Callable[..., Any] | None = None
 
 # S11 scheduling matrix:
 # - User-facing tool responses should speak when the model is idle.
@@ -30,11 +34,6 @@ TOOL_RESPONSE_SCHEDULING: dict[str, str] = {
     "send_order_review_followup": "WHEN_IDLE",
     "preload_memory": "SILENT",
 }
-
-# One-time patch state (kept module-level for deterministic test monkeypatching).
-_PATCH_INSTALLED = False
-_ORIGINAL_BUILD_RESPONSE_EVENT: Any | None = None
-
 
 def _to_scheduling_enum(value: str | None) -> types.FunctionResponseScheduling | None:
     if not value:
@@ -69,7 +68,6 @@ def _apply_response_scheduling(event: Any, tool_name: str) -> None:
 def install_tool_response_scheduling_patch() -> bool:
     """Install one-time patch to set FunctionResponse.scheduling by tool name."""
     global _PATCH_INSTALLED, _ORIGINAL_BUILD_RESPONSE_EVENT
-
     if _PATCH_INSTALLED:
         return True
 

@@ -13,20 +13,6 @@ from __future__ import annotations
 import asyncio
 import os
 
-import pytest
-
-try:
-    __import__("opuslib_next")
-    _has_opuslib = True
-except ImportError:
-    _has_opuslib = False
-
-try:
-    __import__("pylibsrtp")
-    _has_pylibsrtp = True
-except ImportError:
-    _has_pylibsrtp = False
-
 
 class TestWaSessionCreation:
     """WaSession dataclass fields and defaults."""
@@ -63,7 +49,6 @@ class TestWaSessionCreation:
         assert s.frames_received == 0
         assert s.frames_sent == 0
 
-    @pytest.mark.skipif(not _has_opuslib, reason="opuslib_next not installed")
     def test_session_accepts_codec_bridge(self):
         from sip_bridge.codec_bridge import OpusCodecBridge
         from sip_bridge.wa_session import WaSession
@@ -77,7 +62,6 @@ class TestWaSessionCreation:
         )
         assert s.codec_bridge is bridge
 
-    @pytest.mark.skipif(not _has_pylibsrtp, reason="pylibsrtp not installed")
     def test_session_accepts_srtp_contexts(self):
         from sip_bridge.srtp_context import SRTPContext
         from sip_bridge.wa_session import WaSession

@@ -64,8 +64,8 @@ class TestCreateMemoryService:
             agent_engine_id="12345",
         )
 
-    def test_raises_on_vertex_error_when_explicit(self):
-        """If MEMORY_BACKEND=vertex and VertexAi init fails, should raise RuntimeError."""
+    def test_falls_back_to_in_memory_on_vertex_error(self):
+        """If VertexAi init fails, should gracefully fall back to InMemory."""
         from app.memory.memory_factory import create_memory_service
 
         env = {
@@ -73,24 +73,6 @@ class TestCreateMemoryService:
             "GOOGLE_CLOUD_LOCATION": "us-central1",
             "AGENT_ENGINE_ID": "12345",
             "MEMORY_BACKEND": "vertex",
-        }
-        with patch.dict(os.environ, env, clear=True):
-            with patch(
-                "google.adk.memory.VertexAiMemoryBankService",
-                side_effect=Exception("Auth failed"),
-            ):
-                with pytest.raises(RuntimeError, match="VertexAiMemoryBankService init failed"):
-                    create_memory_service()
-
-    def test_falls_back_to_in_memory_on_auto_vertex_error(self):
-        """If MEMORY_BACKEND=auto and VertexAi init fails, should gracefully fall back to InMemory."""
-        from app.memory.memory_factory import create_memory_service
-
-        env = {
-            "GOOGLE_CLOUD_PROJECT": "test-project",
-            "GOOGLE_CLOUD_LOCATION": "us-central1",
-            "AGENT_ENGINE_ID": "12345",
-            "MEMORY_BACKEND": "auto",
         }
         with patch.dict(os.environ, env, clear=True):
             with patch(
@@ -115,8 +97,8 @@ class TestCreateMemoryService:
 
         assert isinstance(service, InMemoryMemoryService)
 
-    def test_raises_when_vertex_missing_agent_engine_id(self):
-        """Vertex backend without AGENT_ENGINE_ID should raise RuntimeError."""
+    def test_returns_in_memory_when_agent_engine_id_missing(self):
+        """Vertex backend without AGENT_ENGINE_ID should fall back to InMemory."""
         from app.memory.memory_factory import create_memory_service
 
         env = {
@@ -124,8 +106,11 @@ class TestCreateMemoryService:
             "MEMORY_BACKEND": "vertex",
         }
         with patch.dict(os.environ, env, clear=True):
-            with pytest.raises(RuntimeError, match="AGENT_ENGINE_ID"):
-                create_memory_service()
+            service = create_memory_service()
+
+        from google.adk.memory import InMemoryMemoryService
+
+        assert isinstance(service, InMemoryMemoryService)
 
 
 class TestMemoryServiceIntegration:

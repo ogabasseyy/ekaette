@@ -7,7 +7,13 @@ from pathlib import Path
 import sys
 
 
-ADMIN_ROOT = Path("app/api/v1/admin")
+REPO_ROOT = Path(__file__).resolve().parent.parent
+APP_ROOT = REPO_ROOT / "app"
+ADMIN_ROOT = APP_ROOT / "api" / "v1" / "admin"
+EXPECTED_ADMIN_ROUTE_COUNT = 25
+
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 
 def _check_no_main_imports(errors: list[str]) -> None:
@@ -21,7 +27,7 @@ def _check_no_main_imports(errors: list[str]) -> None:
 
 def _check_no_deleted_services_imports(errors: list[str]) -> None:
     pattern = "app.api.v1.admin.services"
-    for file_path in sorted(Path("app").rglob("*.py")):
+    for file_path in sorted(APP_ROOT.rglob("*.py")):
         content = file_path.read_text(encoding="utf-8")
         if pattern in content:
             errors.append(f"{file_path}: references deleted package '{pattern}'")
@@ -45,8 +51,10 @@ def _check_admin_route_parity(errors: list[str]) -> None:
                 continue
             found.append((method, path, getattr(route.endpoint, "__module__", "")))
 
-    if len(found) != 25:
-        errors.append(f"expected 25 admin routes, found {len(found)}")
+    if len(found) != EXPECTED_ADMIN_ROUTE_COUNT:
+        errors.append(
+            f"expected {EXPECTED_ADMIN_ROUTE_COUNT} admin routes, found {len(found)}"
+        )
 
     bad_modules = [item for item in found if not item[2].startswith("app.api.v1.admin.routes")]
     if bad_modules:

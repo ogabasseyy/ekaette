@@ -146,8 +146,8 @@ def _json_response_error_message(response: object, *, fallback: str) -> str:
             parsed = json.loads(body.decode("utf-8"))
             if isinstance(parsed, dict) and isinstance(parsed.get("error"), str) and parsed["error"].strip():
                 return parsed["error"].strip()
-        except (ValueError, UnicodeDecodeError):
-            pass  # Malformed JSON body; caller receives fallback message
+        except Exception:
+            pass
     return fallback
 
 

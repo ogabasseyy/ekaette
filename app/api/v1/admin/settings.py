@@ -64,7 +64,7 @@ class AdminSettings(BaseSettings):
 
     mcp_provider_allowlist: str = Field(default="mock", alias="MCP_PROVIDER_ALLOWLIST")
     mcp_providers_policy_path: str = Field(
-        default="policies/mcp_providers.v1.yaml",
+        default="policies/mcp_providers.v1.json",
         alias="MCP_PROVIDERS_POLICY_PATH",
     )
     capability_matrix_policy_path: str = Field(
@@ -225,62 +225,7 @@ RATE_LIMIT_WINDOW = int(_cfg.rate_limit_window)
 RATE_LIMIT_MAX_BUCKETS = int(_cfg.rate_limit_max_buckets)
 _rate_limit_buckets: dict[str, list[float]] = {}
 _rate_limit_last_global_prune = 0.0
-
-__all__ = [
-    "google_id_token",
-    "ADMIN_ALLOWED_ROLE_SET",
-    "ADMIN_ALLOWED_SCOPES",
-    "ADMIN_READ_SCOPE_SET",
-    "ADMIN_WRITE_SCOPE_SET",
-    "ADMIN_RATE_LIMIT",
-    "ADMIN_SHARED_SECRET",
-    "ADMIN_REQUIRE_SHARED_SECRET",
-    "ADMIN_AUTH_MODE",
-    "ADMIN_IAP_AUDIENCE",
-    "ADMIN_IAP_CERTS_URL",
-    "ADMIN_IAP_ALLOWED_ISSUERS",
-    "ADMIN_IAP_ALLOWLIST_EMAILS",
-    "ADMIN_IAP_DEFAULT_SCOPES",
-    "ADMIN_DEFAULT_TENANT_ID",
-    "_GOOGLE_AUTH_REQUEST",
-    "MCP_PROVIDER_ALLOWLIST",
-    "MCP_PROVIDER_CATALOG",
-    "MCP_PROVIDERS_POLICY_PATH",
-    "CAPABILITY_MATRIX_POLICY_PATH",
-    "_policy_cache",
-    "CONNECTOR_TEST_REQUIRE_POLICY",
-    "CONNECTOR_TEST_TIMEOUT_SECONDS",
-    "CONNECTOR_TEST_MAX_RETRIES",
-    "CONNECTOR_TEST_CIRCUIT_OPEN_AFTER_FAILURES",
-    "CONNECTOR_TEST_CIRCUIT_OPEN_SECONDS",
-    "CONNECTOR_CIRCUIT_BACKEND",
-    "CONNECTOR_LOCK_BACKEND",
-    "CONNECTOR_LOCK_TTL_SECONDS",
-    "_connector_test_circuit_state",
-    "_connector_lock_state",
-    "_connector_lock_state_guard",
-    "IDEMPOTENCY_TTL_SECONDS",
-    "IDEMPOTENCY_PENDING_TTL_SECONDS",
-    "IDEMPOTENCY_STORE_BACKEND",
-    "_idempotency_store",
-    "_idempotency_store_lock",
-    "KNOWLEDGE_IMPORT_MAX_BYTES",
-    "INVENTORY_IMPORT_MAX_BYTES",
-    "INVENTORY_SYNC_HTTP_TIMEOUT_SECONDS",
-    "INVENTORY_SYNC_INTERNAL_ENABLED",
-    "INVENTORY_SYNC_INTERNAL_AUTH_MODE",
-    "INVENTORY_SYNC_INTERNAL_SHARED_SECRET",
-    "INVENTORY_SYNC_INTERNAL_AUDIENCE",
-    "INVENTORY_SYNC_INTERNAL_ALLOWED_SERVICE_ACCOUNTS",
-    "INVENTORY_SYNC_INTERNAL_MAX_COMPANIES",
-    "TOKEN_ALLOWED_TENANTS",
-    "ALLOWED_ORIGINS",
-    "ALLOWED_ORIGIN_SET",
-    "RATE_LIMIT_WINDOW",
-    "RATE_LIMIT_MAX_BUCKETS",
-    "_rate_limit_buckets",
-    "_rate_limit_last_global_prune",
-]
+_rate_limit_lock = threading.Lock()
 
 
 def reset_runtime_state() -> None:

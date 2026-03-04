@@ -5,15 +5,12 @@ TDD Red phase — these tests should FAIL until codec_bridge.py is implemented.
 
 from __future__ import annotations
 
+import importlib.util
 import struct
 
 import pytest
 
-try:
-    __import__("opuslib_next")
-    _has_opuslib = True
-except ImportError:
-    _has_opuslib = False
+_HAS_OPUSLIB = importlib.util.find_spec("opuslib_next") is not None
 
 
 # --- ABC contract tests ---
@@ -41,7 +38,6 @@ class TestCodecBridgeABC:
     def test_abc_has_rtp_payload_type(self):
         from sip_bridge.codec_bridge import CodecBridge
 
-        # Annotation-only attributes are not visible via hasattr/dir on the ABC
         assert "rtp_payload_type" in CodecBridge.__annotations__
 
     def test_abc_has_rtp_clock_rate(self):
@@ -52,7 +48,7 @@ class TestCodecBridgeABC:
     def test_abc_has_frame_duration_ms(self):
         from sip_bridge.codec_bridge import CodecBridge
 
-        assert hasattr(CodecBridge, "frame_duration_ms") or "frame_duration_ms" in dir(CodecBridge)
+        assert "frame_duration_ms" in CodecBridge.__annotations__
 
 
 # --- G711CodecBridge tests ---
@@ -138,7 +134,8 @@ class TestG711CodecBridge:
 
 # --- OpusCodecBridge tests ---
 
-@pytest.mark.skipif(not _has_opuslib, reason="opuslib_next not installed")
+
+@pytest.mark.skipif(not _HAS_OPUSLIB, reason="opuslib_next is not installed")
 class TestOpusCodecBridge:
     """OpusCodecBridge uses opuslib_next for Opus encode/decode."""
 

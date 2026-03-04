@@ -63,11 +63,7 @@ class TestAfterAgentMemorySave:
         """Memory save failure should not crash the callback."""
         from app.agents.ekaette_router.agent import save_session_and_telemetry_callback
 
-        # Events list must be non-empty so the memory-save path is actually triggered
-        events = [
-            SimpleNamespace(text="Hello"),
-            SimpleNamespace(text="How can I help?"),
-        ]
+        events = [SimpleNamespace(text="Hello")]
         callback_context = SimpleNamespace(
             agent_name="ekaette_router",
             state={},
@@ -77,9 +73,10 @@ class TestAfterAgentMemorySave:
 
         result = await save_session_and_telemetry_callback(callback_context)
         assert result is None  # Should not raise
-        # Let the background task run so the error path is exercised
         await asyncio.sleep(0)
         callback_context.add_events_to_memory.assert_awaited_once()
+        assert callback_context.state["temp:memory_save_in_flight"] is False
+        assert callback_context.state.get("temp:memory_event_cursor", 0) == 0
 
     @pytest.mark.asyncio
     async def test_callback_uses_cursor_to_avoid_duplicate_memory_saves(self):
