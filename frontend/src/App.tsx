@@ -117,7 +117,14 @@ const DEFAULT_THEME: ThemeConfig = {
 }
 
 function createClientSessionId(): string {
-  return `session-${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`
+  const timestamp = Date.now()
+  const randomBytes = new Uint32Array(1)
+  if (typeof globalThis.crypto?.getRandomValues === 'function') {
+    globalThis.crypto.getRandomValues(randomBytes)
+    return `session-${timestamp}-${randomBytes[0].toString(36)}`
+  }
+  // Non-random fallback keeps IDs unique in environments without Web Crypto.
+  return `session-${timestamp}-${timestamp.toString(36)}`
 }
 
 function parseStoredIndustry(value: string | null): string | null {
