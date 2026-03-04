@@ -48,8 +48,8 @@ export function CampaignDetail({ campaign, onClose, className }: CampaignDetailP
     <div className={cn('campaign-detail-panel panel-glass p-5', className)}>
       <div className="mb-4 flex items-start justify-between gap-3">
         <div>
-          <h3 className="font-display text-foreground text-xl">{campaign.campaign_name}</h3>
-          <span className="font-semibold text-[0.62rem] text-muted-foreground uppercase tracking-[0.18em]">
+          <h3 className="font-display text-xl text-foreground">{campaign.campaign_name}</h3>
+          <span className="text-[0.62rem] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
             {campaign.channel} &middot; {campaign.campaign_id}
           </span>
         </div>
@@ -64,7 +64,7 @@ export function CampaignDetail({ campaign, onClose, className }: CampaignDetailP
       </div>
 
       {campaign.message && (
-        <div className="mb-4 rounded-xl border border-border/30 bg-card/30 px-4 py-3 text-foreground/80 text-sm">
+        <div className="mb-4 rounded-xl border border-border/30 bg-card/30 px-4 py-3 text-sm text-foreground/80">
           {campaign.message}
         </div>
       )}
@@ -72,10 +72,10 @@ export function CampaignDetail({ campaign, onClose, className }: CampaignDetailP
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         {metrics.map(metric => (
           <div key={metric.label} className="flex flex-col gap-1">
-            <span className="font-semibold text-[0.6rem] text-muted-foreground uppercase tracking-[0.18em]">
+            <span className="text-[0.6rem] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
               {metric.label}
             </span>
-            <span className="font-display text-foreground text-lg tabular-nums">
+            <span className="font-display text-lg tabular-nums text-foreground">
               {metric.value}
             </span>
             {metric.rate !== undefined && (
@@ -85,7 +85,7 @@ export function CampaignDetail({ campaign, onClose, className }: CampaignDetailP
         ))}
       </div>
 
-      <div className="mt-4 flex gap-4 text-muted-foreground text-xs">
+      <div className="mt-4 flex gap-4 text-xs text-muted-foreground">
         <span>Delivery: {formatPercent(campaign.delivery_rate)}</span>
         <span>Engagement: {formatPercent(campaign.engagement_rate)}</span>
         <span>Conversion: {formatPercent(campaign.conversion_rate)}</span>

@@ -148,38 +148,38 @@ export function IndustryOnboarding({
         behavior, and capabilities for customer calls.
       </p>
 
-      <div
-        className="mt-5 grid gap-3 sm:mt-6 sm:grid-cols-2"
-        role="radiogroup"
-        aria-label="Industry selection"
-      >
+      <fieldset className="mt-5 grid gap-3 sm:mt-6 sm:grid-cols-2">
+        <legend className="sr-only">Industry selection</legend>
         {options.map(option => {
           const active = selectedTemplateId === option.id
           const displayLabel = resolveTemplateDisplayLabel(option)
           return (
-            // biome-ignore lint/a11y/useSemanticElements: styled card radio group, native input would break layout
-            <button
+            <label
               key={option.id}
-              type="button"
-              role="radio"
-              aria-checked={active}
-              onClick={() => {
-                setTemplateTouched(true)
-                setSelectedTemplateId(option.id)
-              }}
               className={cn(
-                'rounded-2xl border px-4 py-4 text-left transition',
+                'relative cursor-pointer rounded-2xl border px-4 py-4 text-left transition',
                 active
                   ? 'border-primary/60 bg-primary/10'
                   : 'border-border/70 bg-card/40 hover:border-primary/40',
               )}
             >
+              <input
+                type="radio"
+                name="industry-template"
+                value={option.id}
+                checked={active}
+                onChange={() => {
+                  setTemplateTouched(true)
+                  setSelectedTemplateId(option.id)
+                }}
+                className="absolute inset-0 m-0 cursor-pointer opacity-0"
+              />
               <p className="font-semibold text-white">{displayLabel}</p>
               <p className="mt-1 text-muted-foreground text-sm">{option.description}</p>
-            </button>
+            </label>
           )
         })}
-      </div>
+      </fieldset>
 
       <div className="mt-4">
         <label
@@ -210,7 +210,6 @@ export function IndustryOnboarding({
       <div className="mt-6 flex justify-stretch sm:justify-end">
         <button
           type="button"
-          disabled={!options.some(o => o.id === selectedTemplateId)}
           onClick={() =>
             onComplete({
               templateId: selectedTemplateId,

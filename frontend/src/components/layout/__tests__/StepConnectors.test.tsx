@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -65,29 +65,25 @@ function mockError(status: number, error: string) {
 
 // Route fetch calls based on URL
 function routeFetch(
-  overrides: {
-    providers?: ReturnType<typeof mockProviders>
-    company?: ReturnType<typeof mockCompanyDetail>
-    connector?: ReturnType<typeof mockSuccess>
-  } = {},
+  overrides: { providers?: Response; company?: Response; connector?: Response } = {},
 ) {
-  fetchSpy.mockImplementation(
-    async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
-      if (url.includes('/mcp/providers'))
-        return (overrides.providers ?? mockProviders()) as unknown as Response
-      // Match specific connector ID path (e.g. /connectors/crm/test, /connectors/crm)
-      if (/\/connectors\/[^/]+/.test(url))
-        return (overrides.connector ?? mockSuccess()) as unknown as Response
-      // Match POST/DELETE to /connectors collection (create new connector)
-      if (url.includes('/connectors') && init?.method && init.method !== 'GET')
-        return mockSuccess() as unknown as Response
-      // GET /connectors falls through to company detail (list connectors via company)
-      if (url.includes('/companies/'))
-        return (overrides.company ?? mockCompanyDetail()) as unknown as Response
-      return (overrides.company ?? mockCompanyDetail()) as unknown as Response
-    },
-  )
+  fetchSpy.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
+    const method =
+      typeof input === 'string' || input instanceof URL
+        ? (init?.method ?? 'GET')
+        : input instanceof Request
+          ? input.method
+          : 'GET'
+    if (url.includes('/mcp/providers'))
+      return overrides.providers ?? (mockProviders() as unknown as Response)
+    if (url.includes('/connectors/'))
+      return overrides.connector ?? (mockSuccess() as unknown as Response)
+    if (url.includes('/companies/') && url.endsWith('/connectors') && method === 'POST')
+      return overrides.connector ?? (mockSuccess() as unknown as Response)
+    // Company detail
+    return overrides.company ?? (mockCompanyDetail() as unknown as Response)
+  })
 }
 
 // Lazy import after mocks
@@ -104,6 +100,10 @@ async function renderStep(props?: Partial<{ companyId: string; tenantId: string 
     />,
   )
   return { onNext, onBack }
+}
+
+function getProviderCardButton(providerLabel: string) {
+  return screen.getByRole('button', { name: new RegExp(providerLabel, 'i') })
 }
 
 describe('StepConnectors', () => {
@@ -133,7 +133,7 @@ describe('StepConnectors', () => {
     routeFetch({
       company: mockCompanyDetail({
         'mock-provider': { id: 'mock-provider', provider: 'mock', enabled: true },
-      }),
+      }) as unknown as Response,
     })
     await renderStep()
     await waitFor(() => {
@@ -147,9 +147,8 @@ describe('StepConnectors', () => {
     await renderStep()
     await waitFor(() => expect(screen.getByText('Mock Provider')).toBeInTheDocument())
 
-    const mockCard = screen.getByText('Mock Provider').closest('li')!
-    const mockConnect = within(mockCard as HTMLElement).getByRole('button', { name: /connect/i })
-    await user.click(mockConnect)
+    const mockProviderCard = getProviderCardButton('Mock Provider')
+    await user.click(mockProviderCard)
 
     // Should call POST to /connectors (not show a secret input)
     await waitFor(() => {
@@ -169,9 +168,8 @@ describe('StepConnectors', () => {
     await renderStep()
     await waitFor(() => expect(screen.getByText('Salesforce')).toBeInTheDocument())
 
-    const sfCard = screen.getByText('Salesforce').closest('li')!
-    const sfConnect = within(sfCard as HTMLElement).getByRole('button', { name: /connect/i })
-    await user.click(sfConnect)
+    const salesforceCard = getProviderCardButton('Salesforce')
+    await user.click(salesforceCard)
 
     // Should show the secret input
     await waitFor(() => {
@@ -185,8 +183,8 @@ describe('StepConnectors', () => {
     await renderStep()
     await waitFor(() => expect(screen.getByText('Salesforce')).toBeInTheDocument())
 
-    const sfCard = screen.getByText('Salesforce').closest('li')!
-    await user.click(within(sfCard as HTMLElement).getByRole('button', { name: /connect/i }))
+    const salesforceCard = getProviderCardButton('Salesforce')
+    await user.click(salesforceCard)
 
     const secretInput = await screen.findByLabelText(/api key|secret/i)
     await user.type(secretInput, 'sk-test-123')
@@ -212,10 +210,11 @@ describe('StepConnectors', () => {
     routeFetch({
       company: mockCompanyDetail({
         'crm-salesforce': { id: 'crm-salesforce', provider: 'salesforce', enabled: true },
-      }),
-      connector: mockSuccess({ ok: true, details: 'Connector probe passed.' }) as ReturnType<
-        typeof mockSuccess
-      >,
+      }) as unknown as Response,
+      connector: mockSuccess({
+        ok: true,
+        details: 'Connector probe passed.',
+      }) as unknown as Response,
     })
     const user = userEvent.setup()
     await renderStep()
@@ -238,7 +237,7 @@ describe('StepConnectors', () => {
     routeFetch({
       company: mockCompanyDetail({
         'crm-salesforce': { id: 'crm-salesforce', provider: 'salesforce', enabled: true },
-      }),
+      }) as unknown as Response,
     })
     const user = userEvent.setup()
     await renderStep()
@@ -300,8 +299,8 @@ describe('StepConnectors', () => {
     await renderStep()
     await waitFor(() => expect(screen.getByText('Mock Provider')).toBeInTheDocument())
 
-    const mockCard = screen.getByText('Mock Provider').closest('li')!
-    await user.click(within(mockCard as HTMLElement).getByRole('button', { name: /connect/i }))
+    const mockProviderCard = getProviderCardButton('Mock Provider')
+    await user.click(mockProviderCard)
 
     await waitFor(() => {
       expect(screen.getByRole('alert')).toBeInTheDocument()

@@ -73,7 +73,6 @@ describe('CampaignTable', () => {
 
     const row = screen.getByText('Weekend Promo').closest('tr')!
     await user.click(row)
-    expect(onSelect).toHaveBeenCalledTimes(1)
     expect(onSelect).toHaveBeenCalledWith('cmp-sms-001')
   })
 

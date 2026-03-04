@@ -62,26 +62,30 @@ export function StepLaunch({
         if (knowledgeRes.ok) {
           const data = (await knowledgeRes.json()) as Record<string, unknown>
           const entries = data.entries
-          if (Array.isArray(entries)) knowledgeCount = entries.length
+          knowledgeCount = Array.isArray(entries) ? entries.length : 0
         }
 
         if (companyRes.ok) {
           const data = (await companyRes.json()) as Record<string, unknown>
           const company = data.company as Record<string, unknown> | undefined
           const connectors = company?.connectors
-          if (connectors && typeof connectors === 'object') {
-            connectorCount = Object.keys(connectors).length
-          }
+          connectorCount =
+            connectors && typeof connectors === 'object' ? Object.keys(connectors).length : 0
         }
 
-        if (!disposed) {
-          setCounts({
-            knowledge: knowledgeCount,
-            connectors: connectorCount,
-            products: null,
-          })
-        }
+        if (disposed) return
+        setCounts({
+          knowledge: knowledgeCount,
+          connectors: connectorCount,
+          products: null,
+        })
       } catch {
+        if (disposed || controller.signal.aborted) return
+        setCounts({
+          knowledge: null,
+          connectors: null,
+          products: null,
+        })
         /* non-blocking — counts will show as "—" */
       }
     }
@@ -115,8 +119,8 @@ export function StepLaunch({
               key={item.label}
               className="flex items-center justify-between rounded-lg border border-border/40 bg-card/30 px-4 py-2.5"
             >
-              <span className="text-muted-foreground text-sm">{item.label}</span>
-              <span className="font-medium text-sm text-white">{item.value}</span>
+              <span className="text-sm text-muted-foreground">{item.label}</span>
+              <span className="text-sm font-medium text-white">{item.value}</span>
             </div>
           ))}
         </div>
@@ -126,7 +130,7 @@ export function StepLaunch({
         <button
           type="button"
           onClick={onBack}
-          className="rounded-full border border-border/50 bg-card/40 px-5 py-2 text-muted-foreground text-sm transition hover:text-white"
+          className="rounded-full border border-border/50 bg-card/40 px-5 py-2 text-sm text-muted-foreground transition hover:text-white"
         >
           Back
         </button>

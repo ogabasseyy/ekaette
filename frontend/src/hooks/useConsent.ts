@@ -14,7 +14,6 @@ function readConsent(): boolean {
     const raw = localStorage.getItem(STORAGE_KEY)
     if (!raw) return false
     const parsed: ConsentRecord = JSON.parse(raw)
-    if (parsed.version !== CONSENT_VERSION) return false
     return parsed.accepted === true
   } catch {
     return false
@@ -33,23 +32,16 @@ export function useConsent() {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(record))
     } catch {
-      // localStorage may throw in private browsing or when quota is exceeded.
+      // Storage unavailable (private browsing, quota exceeded).
     }
     setHasConsented(true)
   }, [])
 
   const declineConsent = useCallback(() => {
     try {
-      localStorage.setItem(
-        STORAGE_KEY,
-        JSON.stringify({
-          accepted: false,
-          timestamp: new Date().toISOString(),
-          version: CONSENT_VERSION,
-        }),
-      )
+      localStorage.removeItem(STORAGE_KEY)
     } catch {
-      // localStorage may throw in private browsing or when quota is exceeded.
+      // Ignore storage failures and still update in-memory consent state.
     }
     setHasConsented(false)
   }, [])

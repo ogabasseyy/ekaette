@@ -198,7 +198,6 @@ export function useAudioWorklet(
   }, [options.noiseCancellationLevel])
 
   const startRecording = useCallback(async () => {
-    if (recorderCtxRef.current) return
     try {
       setError(null)
       setMicCaptureDiagnostics(null)
@@ -324,25 +323,11 @@ export function useAudioWorklet(
       source.connect(recorder)
       // FIX: Do NOT connect recorder to ctx.destination — that creates echo feedback!
     } catch (e) {
-      // Clean up partially initialized resources to prevent leaks
-      if (streamRef.current) {
-        for (const t of streamRef.current.getTracks()) t.stop()
-        streamRef.current = null
-      }
-      if (recorderNodeRef.current) {
-        recorderNodeRef.current.disconnect()
-        recorderNodeRef.current = null
-      }
-      if (recorderCtxRef.current) {
-        void recorderCtxRef.current.close().catch(() => {})
-        recorderCtxRef.current = null
-      }
       setError(e instanceof Error ? e.message : 'Microphone access denied')
     }
   }, [onAudioChunk])
 
   const initPlayer = useCallback(async () => {
-    if (playerCtxRef.current) return
     try {
       setError(null)
       // 24kHz for playback (Gemini Live API sends 24kHz PCM)
@@ -369,15 +354,6 @@ export function useAudioWorklet(
       })
       player.connect(ctx.destination)
     } catch (e) {
-      // Clean up partially initialized player resources to prevent leaks
-      if (playerNodeRef.current) {
-        playerNodeRef.current.disconnect()
-        playerNodeRef.current = null
-      }
-      if (playerCtxRef.current) {
-        void playerCtxRef.current.close().catch(() => {})
-        playerCtxRef.current = null
-      }
       setError(e instanceof Error ? e.message : 'Audio playback failed')
     }
   }, [])

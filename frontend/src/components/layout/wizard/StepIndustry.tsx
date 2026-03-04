@@ -137,38 +137,38 @@ export function StepIndustry({
 
   return (
     <>
-      <div
-        className="mt-5 grid gap-3 sm:mt-6 sm:grid-cols-2"
-        role="radiogroup"
-        aria-label="Industry selection"
-      >
+      <fieldset className="mt-5 grid gap-3 sm:mt-6 sm:grid-cols-2">
+        <legend className="sr-only">Industry selection</legend>
         {options.map(option => {
           const active = selectedTemplateId === option.id
           const displayLabel = resolveTemplateDisplayLabel(option)
           return (
-            // biome-ignore lint/a11y/useSemanticElements: styled card radio group, native input would break layout
-            <button
+            <label
               key={option.id}
-              type="button"
-              role="radio"
-              aria-checked={active}
-              onClick={() => {
-                setTemplateTouched(true)
-                setSelectedTemplateId(option.id)
-              }}
               className={cn(
-                'rounded-2xl border px-4 py-4 text-left transition',
+                'relative cursor-pointer rounded-2xl border px-4 py-4 text-left transition',
                 active
                   ? 'border-primary/60 bg-primary/10'
                   : 'border-border/70 bg-card/40 hover:border-primary/40',
               )}
             >
+              <input
+                type="radio"
+                name="step-industry-template"
+                value={option.id}
+                checked={active}
+                onChange={() => {
+                  setTemplateTouched(true)
+                  setSelectedTemplateId(option.id)
+                }}
+                className="absolute inset-0 m-0 cursor-pointer opacity-0"
+              />
               <p className="font-semibold text-white">{displayLabel}</p>
               <p className="mt-1 text-muted-foreground text-sm">{option.description}</p>
-            </button>
+            </label>
           )
         })}
-      </div>
+      </fieldset>
 
       <div className="mt-4">
         <label
@@ -184,7 +184,7 @@ export function StepIndustry({
           value={selectedCompanyId}
           onChange={event => setSelectedCompanyId(event.target.value)}
           placeholder="e.g. Acme Electronics"
-          className="mt-2 w-full rounded-xl border border-border/70 bg-card/60 px-3 py-2 text-sm text-white outline-none placeholder:text-muted-foreground/50 focus:border-primary/60"
+          className="mt-2 w-full rounded-xl border border-border/70 bg-card/60 px-3 py-2 text-sm text-white placeholder:text-muted-foreground/50 outline-none focus:border-primary/60"
           list="vendor-company-suggestions"
         />
         {availableCompanies.length > 0 && (
@@ -201,14 +201,13 @@ export function StepIndustry({
       <div className="mt-6 flex justify-end">
         <button
           type="button"
-          disabled={!selectedTemplateId || !selectedCompanyId.trim()}
           onClick={() =>
             onNext({
               templateId: selectedTemplateId,
               companyId: selectedCompanyId.trim() || fallbackCompanyId,
             })
           }
-          className="rounded-full bg-[color:var(--industry-accent)] px-5 py-2.5 font-semibold text-black text-sm transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50 sm:py-2"
+          className="rounded-full bg-[color:var(--industry-accent)] px-5 py-2.5 font-semibold text-black text-sm transition hover:brightness-110 sm:py-2"
         >
           Next
         </button>

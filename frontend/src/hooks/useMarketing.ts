@@ -1,13 +1,8 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import type { CampaignChannel } from '../types/marketing'
 
-const IDEMPOTENCY_RANDOM_BYTES = 6
-
 function makeIdempotencyKey(prefix: string): string {
-  const bytes = new Uint8Array(IDEMPOTENCY_RANDOM_BYTES)
-  crypto.getRandomValues(bytes)
-  const hex = Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('')
-  return `${prefix}-${Date.now()}-${hex}`
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 }
 
 interface SendCampaignParams {
@@ -34,113 +29,118 @@ interface QuickCallParams {
 
 interface UseMarketingResult {
   sending: boolean
-  error: string | null
   sendCampaign: (params: SendCampaignParams) => Promise<unknown>
   quickSms: (params: QuickSmsParams) => Promise<unknown>
   quickCall: (params: QuickCallParams) => Promise<unknown>
 }
 
 export function useMarketing(): UseMarketingResult {
-  const [activeRequests, setActiveRequests] = useState(0)
-  const sending = activeRequests > 0
-  const [error, setError] = useState<string | null>(null)
+  const [sending, setSending] = useState(false)
+  const inFlightRef = useRef(0)
 
-  const sendCampaign = useCallback(async (params: SendCampaignParams) => {
-    setError(null)
-    setActiveRequests(n => n + 1)
+  const runTracked = useCallback(async <T>(task: () => Promise<T>): Promise<T> => {
+    inFlightRef.current += 1
+    setSending(true)
     try {
-      const isVoice = params.channel === 'voice'
-      const url = isVoice ? '/api/v1/at/voice/campaign' : '/api/v1/at/sms/campaign'
-
-      const headers: Record<string, string> = { 'Content-Type': 'application/json' }
-      if (isVoice) {
-        headers['Idempotency-Key'] = makeIdempotencyKey('mkt-voice-campaign')
-      }
-
-      const body = {
-        to: params.recipients,
-        message: params.message,
-        tenant_id: params.tenantId,
-        company_id: params.companyId,
-        campaign_name: params.campaignName,
-      }
-
-      const resp = await fetch(url, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(body),
-      })
-
-      if (!resp.ok) {
-        throw new Error(`${resp.status} ${resp.statusText}`)
-      }
-
-      return await resp.json()
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
-      throw err
+      return await task()
     } finally {
-      setActiveRequests(n => Math.max(0, n - 1))
+      inFlightRef.current = Math.max(0, inFlightRef.current - 1)
+      setSending(inFlightRef.current > 0)
     }
   }, [])
 
-  const quickSms = useCallback(async (params: QuickSmsParams) => {
-    setError(null)
-    setActiveRequests(n => n + 1)
-    try {
-      const resp = await fetch('/api/v1/at/sms/send', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          to: params.to,
-          message: params.message,
-          tenant_id: params.tenantId,
-          company_id: params.companyId,
-        }),
+  const sendCampaign = useCallback(
+    async (params: SendCampaignParams) => {
+      return runTracked(async () => {
+        const isVoice = params.channel === 'voice'
+        const url = isVoice ? '/api/v1/at/voice/campaign' : '/api/v1/at/sms/campaign'
+
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+        if (isVoice) {
+          headers['Idempotency-Key'] = makeIdempotencyKey('mkt-voice-campaign')
+        }
+
+        const body = isVoice
+          ? {
+              to: params.recipients,
+              message: params.message,
+              tenant_id: params.tenantId,
+              company_id: params.companyId,
+              campaign_name: params.campaignName,
+            }
+          : {
+              to: params.recipients,
+              message: params.message,
+              tenant_id: params.tenantId,
+              company_id: params.companyId,
+              campaign_name: params.campaignName,
+            }
+
+        const resp = await fetch(url, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(body),
+        })
+
+        if (!resp.ok) {
+          throw new Error(`${resp.status} ${resp.statusText}`)
+        }
+
+        return await resp.json()
       })
+    },
+    [runTracked],
+  )
 
-      if (!resp.ok) {
-        throw new Error(`${resp.status} ${resp.statusText}`)
-      }
+  const quickSms = useCallback(
+    async (params: QuickSmsParams) => {
+      return runTracked(async () => {
+        const resp = await fetch('/api/v1/at/sms/send', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            to: params.to,
+            message: params.message,
+            tenant_id: params.tenantId,
+            company_id: params.companyId,
+          }),
+        })
 
-      return await resp.json()
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
-      throw err
-    } finally {
-      setActiveRequests(n => Math.max(0, n - 1))
-    }
-  }, [])
+        if (!resp.ok) {
+          throw new Error(`${resp.status} ${resp.statusText}`)
+        }
 
-  const quickCall = useCallback(async (params: QuickCallParams) => {
-    setError(null)
-    setActiveRequests(n => n + 1)
-    try {
-      const resp = await fetch('/api/v1/at/voice/call', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Idempotency-Key': makeIdempotencyKey('mkt-quick-call'),
-        },
-        body: JSON.stringify({
-          to: params.to,
-          tenant_id: params.tenantId,
-          company_id: params.companyId,
-        }),
+        return await resp.json()
       })
+    },
+    [runTracked],
+  )
 
-      if (!resp.ok) {
-        throw new Error(`${resp.status} ${resp.statusText}`)
-      }
+  const quickCall = useCallback(
+    async (params: QuickCallParams) => {
+      return runTracked(async () => {
+        const resp = await fetch('/api/v1/at/voice/call', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Idempotency-Key': makeIdempotencyKey('mkt-quick-call'),
+          },
+          body: JSON.stringify({
+            to: params.to,
+            tenant_id: params.tenantId,
+            company_id: params.companyId,
+          }),
+        })
 
-      return await resp.json()
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
-      throw err
-    } finally {
-      setActiveRequests(n => Math.max(0, n - 1))
-    }
-  }, [])
+        if (!resp.ok) {
+          throw new Error(`${resp.status} ${resp.statusText}`)
+        }
 
-  return { sending, error, sendCampaign, quickSms, quickCall }
+        return await resp.json()
+      })
+    },
+    [runTracked],
+  )
+
+  return { sending, sendCampaign, quickSms, quickCall }
 }

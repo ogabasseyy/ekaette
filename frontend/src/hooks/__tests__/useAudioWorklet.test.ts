@@ -182,7 +182,7 @@ describe('useAudioWorklet', () => {
       async resume() {
         this.state = 'running'
       }
-      createMediaStreamSource(_stream?: MediaStream) {
+      createMediaStreamSource() {
         return { connect: () => {} }
       }
       get audioWorklet() {
@@ -217,7 +217,7 @@ describe('useAudioWorklet', () => {
       async resume() {
         this.state = 'running'
       }
-      createMediaStreamSource(_stream?: MediaStream) {
+      createMediaStreamSource() {
         return { connect: () => {} }
       }
       get audioWorklet() {
@@ -252,7 +252,7 @@ describe('useAudioWorklet', () => {
         this.sampleRate = options?.sampleRate ?? 44100
       }
       resume = resumeSpy
-      createMediaStreamSource(_stream?: MediaStream) {
+      createMediaStreamSource() {
         return { connect: () => {} }
       }
       get audioWorklet() {

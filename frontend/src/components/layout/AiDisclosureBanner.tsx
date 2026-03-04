@@ -6,7 +6,10 @@ interface AiDisclosureBannerProps {
 
 export function AiDisclosureBanner({ onDismiss }: AiDisclosureBannerProps) {
   return (
-    <aside className="flex items-center gap-2 rounded-xl border border-info/20 bg-info/5 px-3 py-2 text-info text-xs sm:text-sm">
+    <output
+      aria-live="polite"
+      className="flex items-center gap-2 rounded-xl border border-info/20 bg-info/5 px-3 py-2 text-info text-xs sm:text-sm"
+    >
       <p className="flex-1">
         You are interacting with an AI assistant. Ask to speak with a human at any time.
       </p>
@@ -18,6 +21,6 @@ export function AiDisclosureBanner({ onDismiss }: AiDisclosureBannerProps) {
       >
         <X className="h-3.5 w-3.5" />
       </button>
-    </aside>
+    </output>
   )
 }

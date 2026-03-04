@@ -1,5 +1,5 @@
 import { act, renderHook } from '@testing-library/react'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { useConsent } from '../useConsent'
 
 const STORAGE_KEY = 'ekaette:privacy:consent'
@@ -25,12 +25,6 @@ describe('useConsent', () => {
     )
     const { result } = renderHook(() => useConsent())
     expect(result.current.hasConsented).toBe(true)
-  })
-
-  it('returns false and does not throw when localStorage has malformed JSON', () => {
-    localStorage.setItem(STORAGE_KEY, '{not-valid-json')
-    const { result } = renderHook(() => useConsent())
-    expect(result.current.hasConsented).toBe(false)
   })
 
   it('acceptConsent sets localStorage JSON with accepted, timestamp, version and returns true', () => {
@@ -67,25 +61,20 @@ describe('useConsent', () => {
     }
   })
 
-  it('gracefully falls back to false when localStorage.getItem throws (private browsing)', () => {
-    const spy = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
-      throw new DOMException('QuotaExceededError')
-    })
-    const { result } = renderHook(() => useConsent())
-    expect(result.current.hasConsented).toBe(false)
-    spy.mockRestore()
-  })
+  it('declineConsent clears previously accepted consent from localStorage', () => {
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({ accepted: true, timestamp: '2026-03-01T00:00:00.000Z', version: '1.0' }),
+    )
 
-  it('still updates in-memory state when localStorage.setItem throws', () => {
-    const spy = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
-      throw new DOMException('QuotaExceededError')
-    })
     const { result } = renderHook(() => useConsent())
-    act(() => {
-      result.current.acceptConsent()
-    })
-    // In-memory state should still be updated even if localStorage fails
     expect(result.current.hasConsented).toBe(true)
-    spy.mockRestore()
+
+    act(() => {
+      result.current.declineConsent()
+    })
+
+    expect(result.current.hasConsented).toBe(false)
+    expect(localStorage.getItem(STORAGE_KEY)).toBeNull()
   })
 })

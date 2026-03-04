@@ -1,6 +1,6 @@
 import { cva } from 'class-variance-authority'
 import { MessageSquare, Phone } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useAnalytics } from '../../hooks/useAnalytics'
 import { useContacts } from '../../hooks/useContacts'
 import { useMarketing } from '../../hooks/useMarketing'
@@ -11,7 +11,7 @@ import { CampaignTable } from '../analytics/CampaignTable'
 import { NavBar } from '../layout/NavBar'
 
 const channelToggleVariants = cva(
-  'rounded-full border px-3 py-1 font-semibold text-[0.65rem] uppercase tracking-[0.15em] transition-colors',
+  'rounded-full border px-3 py-1 text-[0.65rem] font-semibold uppercase tracking-[0.15em] transition-colors',
   {
     variants: {
       active: {
@@ -36,25 +36,75 @@ const contactRowVariants = cva(
   },
 )
 
+const TENANT_STORAGE_KEY = 'ekaette:onboarding:tenantId'
+const COMPANY_STORAGE_KEY = 'ekaette:onboarding:companyId'
+
+function readStoredValue(key: string): string | null {
+  if (typeof window === 'undefined') return null
+  const value = window.localStorage.getItem(key)
+  if (!value || !value.trim()) return null
+  return value.trim()
+}
+
 export function MarketingDashboard() {
-  const [tenantId] = useState(() => {
-    try {
-      const v = localStorage.getItem('ekaette:onboarding:tenantId')
-      if (v?.trim()) return v.trim()
-    } catch {}
-    return 'public'
-  })
-  const [companyId] = useState(() => {
-    try {
-      const v = localStorage.getItem('ekaette:onboarding:companyId')
-      if (v?.trim()) return v.trim()
-    } catch {}
-    return 'ekaette-electronics'
-  })
+  const [tenantId, setTenantId] = useState(
+    () => readStoredValue(TENANT_STORAGE_KEY) ?? String(import.meta.env.VITE_TENANT_ID ?? 'public'),
+  )
+  const [companyId, setCompanyId] = useState(() => readStoredValue(COMPANY_STORAGE_KEY) ?? '')
   const [channel, setChannel] = useState<CampaignChannel>('sms')
   const [campaignName, setCampaignName] = useState('')
   const [message, setMessage] = useState('')
   const [feedback, setFeedback] = useState<{ type: 'ok' | 'error'; text: string } | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function hydrateIdentity() {
+      try {
+        const response = await fetch(
+          `/api/onboarding/config?tenantId=${encodeURIComponent(tenantId)}`,
+          {
+            headers: { Accept: 'application/json' },
+          },
+        )
+        if (!response.ok) return
+        const payload = (await response.json()) as {
+          tenantId?: string
+          defaults?: { companyId?: string }
+        }
+        if (cancelled) return
+
+        const nextTenant =
+          typeof payload.tenantId === 'string' && payload.tenantId.trim()
+            ? payload.tenantId.trim()
+            : tenantId
+        const nextCompany =
+          typeof payload.defaults?.companyId === 'string' && payload.defaults.companyId.trim()
+            ? payload.defaults.companyId.trim()
+            : companyId
+
+        if (nextTenant !== tenantId) {
+          setTenantId(nextTenant)
+          if (typeof window !== 'undefined') {
+            window.localStorage.setItem(TENANT_STORAGE_KEY, nextTenant)
+          }
+        }
+        if (nextCompany && nextCompany !== companyId) {
+          setCompanyId(nextCompany)
+          if (typeof window !== 'undefined') {
+            window.localStorage.setItem(COMPANY_STORAGE_KEY, nextCompany)
+          }
+        }
+      } catch {
+        // Keep stored/runtime fallback identity when config cannot be loaded.
+      }
+    }
+
+    void hydrateIdentity()
+    return () => {
+      cancelled = true
+    }
+  }, [companyId, tenantId])
 
   const {
     contacts,
@@ -70,13 +120,10 @@ export function MarketingDashboard() {
 
   const { sending, sendCampaign, quickSms, quickCall } = useMarketing()
 
-  const {
-    campaigns,
-    selectedCampaign,
-    error: analyticsError,
-    selectCampaign,
-    clearSelection,
-  } = useAnalytics({ tenantId, companyId })
+  const { campaigns, selectedCampaign, selectCampaign, clearSelection } = useAnalytics({
+    tenantId,
+    companyId,
+  })
 
   const canSend = selectedContacts.length > 0 && message.trim().length > 0 && !sending
 
@@ -130,7 +177,7 @@ export function MarketingDashboard() {
       <div className="mx-auto flex max-w-6xl flex-col gap-5 px-4 py-6">
         {/* Header */}
         <div>
-          <p className="text-[0.65rem] text-primary uppercase tracking-[0.25em]">Marketing</p>
+          <p className="text-[0.65rem] uppercase tracking-[0.25em] text-primary">Marketing</p>
           <h1 className="font-display text-2xl text-foreground sm:text-3xl">Marketing Campaigns</h1>
         </div>
 
@@ -154,7 +201,7 @@ export function MarketingDashboard() {
             {/* Known Contacts panel */}
             <div className="panel-glass flex flex-col gap-3 p-4">
               <div className="flex items-center justify-between">
-                <span className="font-semibold text-[0.65rem] text-muted-foreground uppercase tracking-[0.18em]">
+                <span className="text-[0.65rem] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
                   Known Contacts
                 </span>
                 <div className="flex gap-1.5">
@@ -162,7 +209,7 @@ export function MarketingDashboard() {
                     type="button"
                     aria-label="Select All"
                     onClick={selectAll}
-                    className="rounded border border-border/60 px-2 py-0.5 font-semibold text-[0.6rem] text-muted-foreground uppercase tracking-wider transition-colors hover:text-foreground"
+                    className="rounded border border-border/60 px-2 py-0.5 text-[0.6rem] font-semibold uppercase tracking-wider text-muted-foreground transition-colors hover:text-foreground"
                   >
                     Select All
                   </button>
@@ -170,7 +217,7 @@ export function MarketingDashboard() {
                     type="button"
                     aria-label="Clear"
                     onClick={deselectAll}
-                    className="rounded border border-border/60 px-2 py-0.5 font-semibold text-[0.6rem] text-muted-foreground uppercase tracking-wider transition-colors hover:text-foreground"
+                    className="rounded border border-border/60 px-2 py-0.5 text-[0.6rem] font-semibold uppercase tracking-wider text-muted-foreground transition-colors hover:text-foreground"
                   >
                     Clear
                   </button>
@@ -178,7 +225,7 @@ export function MarketingDashboard() {
               </div>
 
               {contacts.length === 0 ? (
-                <p className="py-8 text-center text-muted-foreground text-sm">
+                <p className="py-8 text-center text-sm text-muted-foreground">
                   No contacts yet. Send a campaign first.
                 </p>
               ) : (
@@ -193,18 +240,17 @@ export function MarketingDashboard() {
                         type="checkbox"
                         checked={selected.has(contact.phone)}
                         onChange={() => toggle(contact.phone)}
-                        aria-label={`Select contact ${contact.phone}`}
                         className="accent-primary"
                       />
-                      <span className="flex-1 font-mono text-foreground text-sm">
+                      <span className="flex-1 font-mono text-sm text-foreground">
                         {contact.phone}
                       </span>
-                      <span className="channel-badge rounded-full border border-border/60 px-2 py-0.5 font-bold text-[0.55rem] text-muted-foreground uppercase tracking-wider">
+                      <span className="channel-badge rounded-full border border-border/60 px-2 py-0.5 text-[0.55rem] font-bold uppercase tracking-wider text-muted-foreground">
                         {contact.channel}
                       </span>
                       <button
                         type="button"
-                        aria-label={`SMS ${contact.phone}`}
+                        aria-label={`Send SMS to ${contact.phone}`}
                         onClick={() => handleQuickSms(contact.phone)}
                         className="quick-action-btn rounded p-1 text-muted-foreground transition-colors hover:bg-primary/10 hover:text-primary"
                       >
@@ -226,7 +272,7 @@ export function MarketingDashboard() {
 
             {/* New Campaign composer */}
             <div className="panel-glass flex flex-col gap-3 p-4">
-              <span className="font-semibold text-[0.65rem] text-muted-foreground uppercase tracking-[0.18em]">
+              <span className="text-[0.65rem] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
                 New Campaign
               </span>
 
@@ -235,7 +281,7 @@ export function MarketingDashboard() {
                 placeholder="Campaign name"
                 value={campaignName}
                 onChange={e => setCampaignName(e.target.value)}
-                className="composer-input rounded-lg border border-border/60 bg-card/30 px-3 py-2 text-foreground text-sm placeholder:text-muted-foreground focus:border-primary/50 focus:outline-none"
+                className="composer-input rounded-lg border border-border/60 bg-card/30 px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary/50 focus:outline-none"
               />
 
               {/* Channel toggle */}
@@ -257,12 +303,11 @@ export function MarketingDashboard() {
               </div>
 
               <textarea
-                aria-label="Campaign message"
                 placeholder="Message"
                 rows={3}
                 value={message}
                 onChange={e => setMessage(e.target.value)}
-                className="composer-input rounded-lg border border-border/60 bg-card/30 px-3 py-2 text-foreground text-sm placeholder:text-muted-foreground focus:border-primary/50 focus:outline-none"
+                className="composer-input rounded-lg border border-border/60 bg-card/30 px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary/50 focus:outline-none"
               />
 
               <p className="text-[0.65rem] text-muted-foreground">
@@ -274,7 +319,7 @@ export function MarketingDashboard() {
                 type="button"
                 disabled={!canSend}
                 onClick={handleSendCampaign}
-                className="rounded-lg bg-primary px-4 py-2 font-semibold text-primary-foreground text-sm transition-opacity disabled:opacity-40"
+                className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground transition-opacity disabled:opacity-40"
               >
                 Send Campaign
               </button>
@@ -296,18 +341,11 @@ export function MarketingDashboard() {
           </div>
         )}
 
-        {/* Analytics error */}
-        {analyticsError && (
-          <div className="panel-glass border-destructive/30 py-8 text-center text-destructive">
-            {analyticsError}
-          </div>
-        )}
-
         {/* Active Campaigns (reused from analytics) */}
         {!loading && campaigns.length > 0 && (
           <>
             <div className="mt-2">
-              <span className="font-semibold text-[0.65rem] text-muted-foreground uppercase tracking-[0.18em]">
+              <span className="text-[0.65rem] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
                 Active Campaigns
               </span>
             </div>

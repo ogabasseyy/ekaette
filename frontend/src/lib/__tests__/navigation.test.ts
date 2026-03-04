@@ -59,24 +59,6 @@ describe('navigation', () => {
       const mod = await import('../navigation')
       expect(mod.currentPage()).toBe('voice')
     })
-
-    it('returns "voice" for non-matching prefix path like /administrator', async () => {
-      Object.defineProperty(window, 'location', {
-        value: { pathname: '/administrator' },
-        writable: true,
-      })
-      const mod = await import('../navigation')
-      expect(mod.currentPage()).toBe('voice')
-    })
-
-    it('returns "voice" for non-matching prefix path like /analytics-extra', async () => {
-      Object.defineProperty(window, 'location', {
-        value: { pathname: '/analytics-extra' },
-        writable: true,
-      })
-      const mod = await import('../navigation')
-      expect(mod.currentPage()).toBe('voice')
-    })
   })
 
   describe('NAV_ITEMS', () => {

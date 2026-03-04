@@ -68,14 +68,14 @@ interface ThemeConfig {
   hint: string
 }
 
-const FALLBACK_COMPANY_MAP = {
+const FALLBACK_COMPANY_MAP: Record<string, string> = {
   electronics: 'ekaette-electronics',
   hotel: 'ekaette-hotel',
   automotive: 'ekaette-automotive',
   fashion: 'ekaette-fashion',
-} satisfies Record<string, string>
+}
 
-const FALLBACK_THEMES = {
+const FALLBACK_THEMES: Record<string, ThemeConfig> = {
   electronics: {
     accent: 'oklch(74% 0.21 158)',
     accentSoft: 'oklch(62% 0.14 172)',
@@ -100,14 +100,14 @@ const FALLBACK_THEMES = {
     title: 'Fashion Client Studio',
     hint: 'Catalog recommendations and consultation workflows.',
   },
-} satisfies Record<string, ThemeConfig>
+}
 
-const FALLBACK_LABELS = {
+const FALLBACK_LABELS: Record<string, string> = {
   electronics: 'Hardware',
   hotel: 'Hotel',
   automotive: 'Automotive',
   fashion: 'Fashion',
-} satisfies Record<string, string>
+}
 
 const DEFAULT_THEME: ThemeConfig = {
   accent: 'oklch(74% 0.21 158)',
@@ -117,10 +117,14 @@ const DEFAULT_THEME: ThemeConfig = {
 }
 
 function createClientSessionId(): string {
-  // crypto.randomUUID() is cryptographically secure (Web Crypto API).
-  // Date.now() prefix aids log correlation / debugging; uniqueness is guaranteed by the UUID.
-  const uuid = crypto.randomUUID()
-  return `session-${Date.now()}-${uuid.slice(0, 12)}`
+  const timestamp = Date.now()
+  const randomBytes = new Uint32Array(1)
+  if (typeof globalThis.crypto?.getRandomValues === 'function') {
+    globalThis.crypto.getRandomValues(randomBytes)
+    return `session-${timestamp}-${randomBytes[0].toString(36)}`
+  }
+  // Non-random fallback keeps IDs unique in environments without Web Crypto.
+  return `session-${timestamp}-${timestamp.toString(36)}`
 }
 
 function parseStoredIndustry(value: string | null): string | null {
@@ -166,10 +170,12 @@ function resolveTheme(templateId: string, templates: IndustryTemplateMeta[] | nu
   // Server-provided templates take priority
   if (templates) {
     const match = templates.find(t => t.id === templateId)
-    if (match) return match.theme
+    if (match) {
+      return match.theme
+    }
   }
   // Fallback to hardcoded
-  return (FALLBACK_THEMES as Record<string, ThemeConfig>)[templateId] ?? DEFAULT_THEME
+  return FALLBACK_THEMES[templateId] ?? DEFAULT_THEME
 }
 
 function resolveCompanyFromConfig(
@@ -201,18 +207,19 @@ function resolveCompanyId(
     onboardingConfig?.defaults ?? null,
   )
   if (fromConfig) return fromConfig
-  return (FALLBACK_COMPANY_MAP as Record<string, string>)[templateId] ?? `ekaette-${templateId}`
+  return FALLBACK_COMPANY_MAP[templateId] ?? `ekaette-${templateId}`
 }
 
 function resolveTemplateLabel(
   templateId: string,
   templates: IndustryTemplateMeta[] | null,
 ): string {
+  if (templateId === 'electronics') return 'Hardware'
   if (templates) {
     const match = templates.find(t => t.id === templateId)
     if (match) return match.label
   }
-  return (FALLBACK_LABELS as Record<string, string>)[templateId] ?? templateId
+  return FALLBACK_LABELS[templateId] ?? templateId
 }
 
 const ERROR_TOAST_DURATION = 8000
@@ -541,6 +548,7 @@ function App() {
   )
 
   useEffect(() => {
+    void onboardingReloadNonce
     if (forceManualOnboarding) {
       setRuntimeBootstrapStatus('compat')
       setRuntimeBootstrapError(null)
@@ -585,7 +593,9 @@ function App() {
         const bootstrap = payload
         if (disposed) return
         const nextTemplate =
-          bootstrap.industryTemplateId?.trim() || bootstrap.industry?.trim() || 'electronics'
+          (bootstrap.industryTemplateId && bootstrap.industryTemplateId.trim()) ||
+          (bootstrap.industry && bootstrap.industry.trim()) ||
+          'electronics'
         const nextCompany = bootstrap.companyId?.trim() || ''
         const nextTenant = bootstrap.tenantId?.trim() || tenantId
 
@@ -617,10 +627,10 @@ function App() {
       disposed = true
       controller.abort()
     }
-  }, [allowOnboardingCompatFallback, forceManualOnboarding, tenantId])
+  }, [allowOnboardingCompatFallback, forceManualOnboarding, onboardingReloadNonce, tenantId])
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: onboardingReloadNonce triggers retry
   useEffect(() => {
+    void onboardingReloadNonce
     const shouldLoadOnboardingConfig = canRenderOnboardingSelection
     if (!shouldLoadOnboardingConfig) return
 
@@ -660,7 +670,7 @@ function App() {
       disposed = true
       controller.abort()
     }
-  }, [allowOnboardingCompatFallback, canRenderOnboardingSelection, tenantId, onboardingReloadNonce])
+  }, [allowOnboardingCompatFallback, canRenderOnboardingSelection, onboardingReloadNonce, tenantId])
 
   useEffect(() => {
     if (!onboardingConfig || !industry || companySelection) return
@@ -909,10 +919,9 @@ function App() {
 
   const handleImageSelected = useCallback(
     (base64: string, mimeType: string) => {
-      if (!isConnected) return
       socket.sendImage(base64, mimeType)
     },
-    [isConnected, socket],
+    [socket],
   )
 
   const handleSendText = useCallback(
@@ -1026,13 +1035,13 @@ function App() {
               ) : null}
 
               {onboardingConfigStatus === 'compat' ? (
-                <div className="panel-glass px-4 py-3 text-muted-foreground text-xs sm:px-5">
+                <div className="panel-glass px-4 py-3 text-xs text-muted-foreground sm:px-5">
                   Using local configuration because the backend setup service is unavailable.
                 </div>
               ) : null}
 
               {showOnboardingConfigLoading ? (
-                <section className="panel-glass w-full px-4 py-5 sm:px-7 sm:py-8" aria-busy="true">
+                <section className="panel-glass w-full px-4 py-5 sm:px-7 sm:py-8">
                   <p className="text-[0.58rem] text-muted-foreground uppercase tracking-[0.24em] sm:text-[0.64rem] sm:tracking-[0.3em]">
                     Vendor Setup
                   </p>
@@ -1042,7 +1051,6 @@ function App() {
                   <p className="mt-2 max-w-2xl text-muted-foreground text-xs leading-relaxed sm:text-sm">
                     Fetching available industries and companies for your tenant.
                   </p>
-                  <span className="sr-only">Loading industry options</span>
                 </section>
               ) : null}
 
@@ -1068,15 +1076,19 @@ function App() {
                     </button>
                   </div>
                 </section>
-              ) : canRenderOnboardingSelection && !showOnboardingConfigLoading ? (
-                <VendorSetupWizard
-                  templates={templates ?? undefined}
-                  companies={companies ?? undefined}
-                  defaultTemplateId={onboardingConfig?.defaults.templateId ?? industry}
-                  defaultCompanyId={onboardingConfig?.defaults.companyId ?? companySelection}
-                  onComplete={handleOnboardingComplete}
-                />
-              ) : null}
+              ) : (
+                <>
+                  {canRenderOnboardingSelection && !showOnboardingConfigLoading ? (
+                    <VendorSetupWizard
+                      templates={templates ?? undefined}
+                      companies={companies ?? undefined}
+                      defaultTemplateId={onboardingConfig?.defaults.templateId ?? industry}
+                      defaultCompanyId={onboardingConfig?.defaults.companyId ?? companySelection}
+                      onComplete={handleOnboardingComplete}
+                    />
+                  ) : null}
+                </>
+              )}
             </div>
           </main>
         ) : (

@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useReducer, useRef } from 'react'
+import { lazy, Suspense, useCallback, useReducer } from 'react'
 import type { IndustryTemplateMeta, OnboardingCompanyMeta, WizardStepId } from '../../types'
 import { WizardStepIndicator } from './wizard/WizardStepIndicator'
 
@@ -34,51 +34,6 @@ const FALLBACK_OPTIONS: IndustryTemplateMeta[] = [
     capabilities: [],
     status: 'active',
   },
-  {
-    id: 'hotel',
-    label: 'Hotel',
-    category: 'hospitality',
-    description: 'Reservations, room search, stay assistance workflows.',
-    defaultVoice: 'Puck',
-    theme: {
-      accent: 'oklch(78% 0.15 55)',
-      accentSoft: 'oklch(70% 0.12 75)',
-      title: 'Hospitality Concierge',
-      hint: 'Real-time booking and guest support voice assistant.',
-    },
-    capabilities: [],
-    status: 'active',
-  },
-  {
-    id: 'automotive',
-    label: 'Automotive',
-    category: 'automotive',
-    description: 'Service lane support, estimates, and booking.',
-    defaultVoice: 'Kore',
-    theme: {
-      accent: 'oklch(71% 0.18 240)',
-      accentSoft: 'oklch(63% 0.15 260)',
-      title: 'Automotive Service Lane',
-      hint: 'Trade-ins, inspections, parts and service scheduling.',
-    },
-    capabilities: [],
-    status: 'active',
-  },
-  {
-    id: 'fashion',
-    label: 'Fashion',
-    category: 'retail',
-    description: 'Catalog assistance and customer styling support.',
-    defaultVoice: 'Aoede',
-    theme: {
-      accent: 'oklch(74% 0.2 20)',
-      accentSoft: 'oklch(66% 0.16 345)',
-      title: 'Fashion Client Studio',
-      hint: 'Catalog recommendations and consultation workflows.',
-    },
-    capabilities: [],
-    status: 'active',
-  },
 ]
 
 // --- Step ordering ---
@@ -96,7 +51,6 @@ type WizardAction =
   | { type: 'ADVANCE'; templateId?: string; companyId?: string }
   | { type: 'GO_BACK' }
   | { type: 'GO_TO_STEP'; step: number }
-  | { type: 'SYNC'; templateId: string; companyId: string }
 
 function wizardReducer(state: WizardState, action: WizardAction): WizardState {
   switch (action.type) {
@@ -121,13 +75,6 @@ function wizardReducer(state: WizardState, action: WizardAction): WizardState {
         return { ...state, currentStep: action.step }
       }
       return state
-    }
-    case 'SYNC': {
-      return {
-        ...state,
-        templateId: action.templateId,
-        companyId: action.companyId,
-      }
     }
     default:
       return state
@@ -197,25 +144,6 @@ function NormalWizard({
     templateId: initialTemplateId,
     companyId: initialCompanyId,
   })
-
-  // Sync wizard state when async-fetched defaults arrive after mount.
-  // Only fire once (first async arrival) and only while on step 0.
-  const hasSyncedRef = useRef(false)
-  useEffect(() => {
-    if (hasSyncedRef.current || state.currentStep !== 0) return
-    if (
-      defaultTemplateId &&
-      (defaultTemplateId !== state.templateId ||
-        (defaultCompanyId && defaultCompanyId !== state.companyId))
-    ) {
-      hasSyncedRef.current = true
-      dispatch({
-        type: 'SYNC',
-        templateId: defaultTemplateId,
-        companyId: defaultCompanyId ?? `ekaette-${defaultTemplateId}`,
-      })
-    }
-  }, [defaultTemplateId, defaultCompanyId, state.templateId, state.companyId, state.currentStep])
 
   const tenantId = String(import.meta.env.VITE_TENANT_ID ?? 'public')
 

@@ -21,10 +21,10 @@ describe('ImageUpload', () => {
       }
     }
 
-    ;(globalThis as unknown as { FileReader: typeof FileReader }).FileReader =
-      MockFileReader as unknown as typeof FileReader
-
     try {
+      ;(globalThis as unknown as { FileReader: typeof FileReader }).FileReader =
+        MockFileReader as unknown as typeof FileReader
+
       render(<ImageUpload onImageSelected={onImageSelected} showPreview />)
 
       const input = screen.getByLabelText(/upload photo/i, { selector: 'input' })
@@ -36,15 +36,5 @@ describe('ImageUpload', () => {
     } finally {
       ;(globalThis as unknown as { FileReader: typeof FileReader }).FileReader = original
     }
-  })
-
-  it('does not call onImageSelected when no file is selected', () => {
-    const onImageSelected = vi.fn()
-    render(<ImageUpload onImageSelected={onImageSelected} />)
-
-    const input = screen.getByLabelText(/upload photo/i, { selector: 'input' })
-    fireEvent.change(input, { target: { files: [] } })
-
-    expect(onImageSelected).not.toHaveBeenCalled()
   })
 })

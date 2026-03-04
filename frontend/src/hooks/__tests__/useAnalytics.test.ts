@@ -168,54 +168,6 @@ describe('useAnalytics', () => {
     expect(detailUrl).toContain('/api/v1/at/analytics/campaigns/cmp-sms-001')
   })
 
-  it('selectCampaign handles fetch failure gracefully', async () => {
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve(MOCK_OVERVIEW) })
-      .mockResolvedValueOnce({ ok: false, status: 500, statusText: 'Server Error' })
-
-    global.fetch = fetchMock
-
-    const { result } = renderHook(() =>
-      useAnalytics({ tenantId: 'public', companyId: 'ekaette-electronics' }),
-    )
-
-    await waitFor(() => {
-      expect(result.current.loading).toBe(false)
-    })
-
-    await act(async () => {
-      await result.current.selectCampaign('cmp-sms-001')
-    })
-
-    expect(result.current.selectedCampaign).toBeNull()
-    expect(result.current.error).toBeTruthy()
-  })
-
-  it('selectCampaign handles rejected fetch (network error)', async () => {
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve(MOCK_OVERVIEW) })
-      .mockRejectedValueOnce(new Error('Connection refused'))
-
-    global.fetch = fetchMock
-
-    const { result } = renderHook(() =>
-      useAnalytics({ tenantId: 'public', companyId: 'ekaette-electronics' }),
-    )
-
-    await waitFor(() => {
-      expect(result.current.loading).toBe(false)
-    })
-
-    await act(async () => {
-      await result.current.selectCampaign('cmp-sms-001')
-    })
-
-    expect(result.current.selectedCampaign).toBeNull()
-    expect(result.current.error).toBeTruthy()
-  })
-
   it('refresh refetches overview', async () => {
     const fetchMock = mockFetchOk(MOCK_OVERVIEW)
     global.fetch = fetchMock

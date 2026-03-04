@@ -32,7 +32,6 @@ export function ImageUpload({
     const file = event.target.files?.[0]
     if (!file) return
 
-    event.target.value = ''
     setValidationError(null)
 
     if (!ALLOWED_MIME_TYPES.has(file.type)) {
@@ -53,10 +52,11 @@ export function ImageUpload({
     reader.onload = () => {
       const value = String(reader.result)
       const parts = value.split(',')
-      if (parts.length < 2) {
-        const msg = 'Failed to process image'
+      if (parts.length < 2 || !parts[1]) {
+        const msg = 'Failed to read image data. Please try a different image.'
         setValidationError(msg)
         onError?.(msg)
+        if (showPreview) setPreviewSrc(null)
         return
       }
       const base64 = parts[1]
@@ -66,13 +66,16 @@ export function ImageUpload({
       }
     }
     reader.onerror = () => {
-      const msg = 'Failed to read image file'
+      const msg = 'Failed to read image file.'
       setValidationError(msg)
       onError?.(msg)
-      setPreviewSrc(null)
+      if (showPreview) setPreviewSrc(null)
     }
     reader.onabort = () => {
-      setPreviewSrc(null)
+      const msg = 'Image upload was cancelled.'
+      setValidationError(msg)
+      onError?.(msg)
+      if (showPreview) setPreviewSrc(null)
     }
     reader.readAsDataURL(file)
   }

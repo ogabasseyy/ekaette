@@ -11,7 +11,7 @@ const ICON_MAP: Record<string, typeof Mic> = {
 }
 
 const navTabVariants = cva(
-  'nav-tab relative flex flex-col items-center gap-0.5 px-4 py-2 font-semibold text-[0.62rem] uppercase tracking-[0.18em] transition-colors',
+  'nav-tab relative flex flex-col items-center gap-0.5 px-4 py-2 text-[0.62rem] font-semibold uppercase tracking-[0.18em] transition-colors',
   {
     variants: {
       active: {
@@ -32,15 +32,15 @@ interface NavBarProps {
 
 export function NavBar({ activePage, className }: NavBarProps) {
   return (
-    <nav className={cn('nav-bar', className)}>
-      <div className="flex items-center justify-center gap-1">
+    <nav aria-label="Primary">
+      <div className={cn('nav-bar flex items-center justify-center gap-1', className)}>
         {NAV_ITEMS.map(item => {
           const isActive = item.page === activePage
           const Icon = ICON_MAP[item.iconName]
           return (
             <button
-              type="button"
               key={item.page}
+              type="button"
               aria-current={isActive ? 'page' : undefined}
               className={cn(navTabVariants({ active: isActive }))}
               onClick={() => {

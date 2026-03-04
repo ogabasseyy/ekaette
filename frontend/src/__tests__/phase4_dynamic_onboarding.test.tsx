@@ -176,26 +176,28 @@ describe('useDemoMode with industryTemplateId', () => {
     const { renderHook, act: hookAct } = await import('@testing-library/react')
     const { useDemoMode } = await import('../hooks/useDemoMode')
     const { DEMO_STEPS_BY_TEMPLATE } = await import('../utils/mockData')
+    const emitted: Array<Record<string, unknown>> = []
+    const firstDelay = DEMO_STEPS_BY_TEMPLATE.hotel[0]?.delayMs ?? 0
 
+    const { result } = renderHook(() =>
+      useDemoMode({
+        industryTemplateId: 'hotel',
+        onEmit: message => emitted.push(message as unknown as Record<string, unknown>),
+      }),
+    )
     vi.useFakeTimers()
-    try {
-      const { result } = renderHook(() => useDemoMode({ industryTemplateId: 'hotel' }))
 
+    try {
       hookAct(() => {
         result.current.play()
       })
+
       hookAct(() => {
-        vi.advanceTimersByTime(100)
+        vi.advanceTimersByTime(firstDelay)
       })
 
       expect(result.current.isPlaying).toBe(true)
-      const firstMsg = result.current.messages[0]
-      expect(firstMsg).toBeDefined()
-      expect(firstMsg.type).toBe('session_started')
-      const expectedFirst = DEMO_STEPS_BY_TEMPLATE.hotel[0].message
-      expect((firstMsg as unknown as Record<string, unknown>).industry).toBe(
-        (expectedFirst as unknown as Record<string, unknown>).industry,
-      )
+      expect(emitted[0]).toMatchObject({ type: 'session_started', industryTemplateId: 'hotel' })
     } finally {
       vi.useRealTimers()
     }
@@ -205,24 +207,31 @@ describe('useDemoMode with industryTemplateId', () => {
     const { renderHook, act: hookAct } = await import('@testing-library/react')
     const { useDemoMode } = await import('../hooks/useDemoMode')
     const { GENERIC_SUPPORT_DEMO_STEPS } = await import('../utils/mockData')
+    const emitted: Array<Record<string, unknown>> = []
+    const firstDelay = GENERIC_SUPPORT_DEMO_STEPS[0]?.delayMs ?? 0
 
+    const { result } = renderHook(() =>
+      useDemoMode({
+        industryTemplateId: 'unknown-industry-xyz',
+        onEmit: message => emitted.push(message as unknown as Record<string, unknown>),
+      }),
+    )
     vi.useFakeTimers()
-    try {
-      const { result } = renderHook(() =>
-        useDemoMode({ industryTemplateId: 'unknown-industry-xyz' }),
-      )
 
+    try {
       hookAct(() => {
         result.current.play()
       })
+
       hookAct(() => {
-        vi.advanceTimersByTime(100)
+        vi.advanceTimersByTime(firstDelay)
       })
 
       expect(result.current.isPlaying).toBe(true)
-      const firstMsg = result.current.messages[0]
-      expect(firstMsg).toBeDefined()
-      expect(firstMsg.type).toBe(GENERIC_SUPPORT_DEMO_STEPS[0].message.type)
+      expect(emitted[0]).toMatchObject({
+        type: 'session_started',
+        industryTemplateId: 'generic-support',
+      })
     } finally {
       vi.useRealTimers()
     }
@@ -252,7 +261,7 @@ describe('IndustryOnboarding dynamic templates', () => {
       />,
     )
 
-    // All 3 templates from props should render (label comes from template data, not hardcoded override)
+    // All 3 templates from props should render
     expect(screen.getByRole('radio', { name: /electronics/i })).toBeInTheDocument()
     expect(screen.getByRole('radio', { name: /hospitality/i })).toBeInTheDocument()
     expect(screen.getByRole('radio', { name: /telecom/i })).toBeInTheDocument()

@@ -60,15 +60,7 @@ class MockAudioWorkletNode {
     onmessage: null as ((ev: MessageEvent) => void) | null,
     postMessage: (_data: unknown) => {},
   }
-  parameters = new Map<string, { value: number }>()
-  processorOptions: Record<string, unknown> | undefined
-  constructor(
-    _context: AudioContext,
-    _name: string,
-    options?: { processorOptions?: Record<string, unknown> },
-  ) {
-    this.processorOptions = options?.processorOptions
-  }
+  constructor(_context: AudioContext, _name: string, _options?: AudioWorkletNodeOptions) {}
   connect() {}
   disconnect() {}
 }
@@ -85,7 +77,7 @@ class MockAudioContext {
     this.state = 'running'
   }
 
-  createMediaStreamSource(_stream?: MediaStream) {
+  createMediaStreamSource() {
     return { connect: () => {} }
   }
 

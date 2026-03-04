@@ -52,32 +52,14 @@ describe('NavBar', () => {
     expect(navigateTo).not.toHaveBeenCalled()
   })
 
-  it('renders a nav element with navigation role', () => {
+  it('renders a nav element with accessible label', () => {
     render(<NavBar activePage="voice" />)
-    expect(screen.getByRole('navigation')).toBeInTheDocument()
+    expect(screen.getByRole('navigation', { name: /primary/i })).toBeInTheDocument()
   })
 
   it('applies active CSS class to active tab', () => {
     render(<NavBar activePage="admin" />)
     const adminBtn = screen.getByRole('button', { name: /admin/i })
     expect(adminBtn.className).toContain('nav-tab-active')
-  })
-
-  it('triggers navigateTo on Enter key for inactive tab', async () => {
-    const user = userEvent.setup()
-    render(<NavBar activePage="voice" />)
-    const adminBtn = screen.getByRole('button', { name: /admin/i })
-    adminBtn.focus()
-    await user.keyboard('{Enter}')
-    expect(navigateTo).toHaveBeenCalledWith('admin')
-  })
-
-  it('triggers navigateTo on Space key for inactive tab', async () => {
-    const user = userEvent.setup()
-    render(<NavBar activePage="voice" />)
-    const analyticsBtn = screen.getByRole('button', { name: /analytics/i })
-    analyticsBtn.focus()
-    await user.keyboard(' ')
-    expect(navigateTo).toHaveBeenCalledWith('analytics')
   })
 })

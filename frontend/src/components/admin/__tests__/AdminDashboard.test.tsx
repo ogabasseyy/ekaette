@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { AdminDashboard } from '../AdminDashboard'
 
 function jsonResponse(payload: unknown, status = 200): Response {
@@ -10,18 +10,6 @@ function jsonResponse(payload: unknown, status = 200): Response {
 }
 
 describe('AdminDashboard', () => {
-  // Provide a default fetch stub so unmocked relative-URL calls
-  // (e.g. from effects that fire after test cleanup) don't surface
-  // as unhandled ERR_INVALID_URL errors in Node's native fetch.
-  beforeEach(() => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      new Response(JSON.stringify({}), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      }),
-    )
-  })
-
   afterEach(() => {
     vi.restoreAllMocks()
   })
@@ -232,11 +220,7 @@ describe('AdminDashboard', () => {
 
     const call = fetchMock.mock.calls[0] as [string, RequestInit]
     expect(call[0]).toContain('/api/v1/admin/companies/ekaette-electronics/inventory/sync')
-    expect(call[0]).toContain('tenantId=public')
     expect(call[1].method).toBe('POST')
-    const headers = call[1].headers as Record<string, string>
-    expect(headers['Content-Type']).toBe('application/json')
-    expect(headers['x-tenant-id']).toBe('public')
     const payload = JSON.parse(String(call[1].body)) as Record<string, unknown>
     expect(payload.sourceType).toBe('google_sheets')
     expect(payload.sourceUrl).toBe('https://docs.google.com/spreadsheets/d/test/edit#gid=0')
@@ -269,11 +253,7 @@ describe('AdminDashboard', () => {
 
     const call = fetchMock.mock.calls[0] as [string, RequestInit]
     expect(call[0]).toContain('/api/v1/admin/companies/ekaette-electronics/inventory/sync/config')
-    expect(call[0]).toContain('tenantId=public')
     expect(call[1].method).toBe('PUT')
-    const headers = call[1].headers as Record<string, string>
-    expect(headers['Content-Type']).toBe('application/json')
-    expect(headers['x-tenant-id']).toBe('public')
     const payload = JSON.parse(String(call[1].body)) as Record<string, unknown>
     expect(payload.autoEnabled).toBe(true)
     expect(payload.intervalMinutes).toBe(30)

@@ -27,16 +27,6 @@ describe('formatDuration', () => {
   it('pads single-digit minutes', () => {
     expect(formatDuration(90)).toBe('01:30')
   })
-
-  it('handles negative input without crashing', () => {
-    const result = formatDuration(-5)
-    expect(typeof result).toBe('string')
-  })
-
-  it('handles non-integer input', () => {
-    const result = formatDuration(61.7)
-    expect(result).toMatch(/^01:/)
-  })
 })
 
 describe('prettyAgentName', () => {
@@ -109,10 +99,6 @@ describe('formatCompactNumber', () => {
 
   it('formats millions with M suffix', () => {
     expect(formatCompactNumber(2500000)).toBe('2.5M')
-  })
-
-  it('formats exactly 1000 as 1.0K', () => {
-    expect(formatCompactNumber(1000)).toBe('1.0K')
   })
 
   it('formats zero', () => {

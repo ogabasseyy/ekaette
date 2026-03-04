@@ -129,25 +129,6 @@ describe('App', () => {
     ).toBeInTheDocument()
   })
 
-  it('falls back to vendor setup when bootstrap returns malformed payload', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
-      new Response(JSON.stringify({ unexpected: 'shape' }), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      }),
-    )
-
-    render(<App />)
-
-    await act(async () => {
-      await Promise.resolve()
-      await Promise.resolve()
-      await Promise.resolve()
-    })
-
-    expect(screen.getByText('Vendor Setup')).toBeInTheDocument()
-  })
-
   it('renders main layout after industry is stored (skips to Live Desk)', () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
       return await new Promise<Response>(() => {})

@@ -3,7 +3,18 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 // ── Shared helpers (extracted from AdminDashboard patterns) ──
 
 export function makeIdempotencyKey(prefix: string): string {
-  return `${prefix}-${Date.now()}-${crypto.randomUUID().slice(0, 12)}`
+  const timestamp = Date.now()
+  const cryptoApi = globalThis.crypto
+  if (typeof cryptoApi?.randomUUID === 'function') {
+    return `${prefix}-${timestamp}-${cryptoApi.randomUUID()}`
+  }
+  if (typeof cryptoApi?.getRandomValues === 'function') {
+    const bytes = new Uint8Array(16)
+    cryptoApi.getRandomValues(bytes)
+    const entropy = Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('')
+    return `${prefix}-${timestamp}-${entropy}`
+  }
+  return `${prefix}-${timestamp}-${Math.random().toString(36).slice(2, 14)}`
 }
 
 export function parseCsv(raw: string): string[] {
@@ -60,9 +71,9 @@ interface UseWizardApiOptions {
 
 export function useWizardApi({ tenantId, userId = 'admin-user' }: UseWizardApiOptions) {
   const [busy, setBusy] = useState(false)
-  const busyCountRef = useRef(0)
   const [error, setError] = useState<string | null>(null)
   const abortControllersRef = useRef<Set<AbortController>>(new Set())
+  const activeActionsRef = useRef(0)
 
   useEffect(() => {
     return () => {
@@ -160,7 +171,7 @@ export function useWizardApi({ tenantId, userId = 'admin-user' }: UseWizardApiOp
   )
 
   const runAction = useCallback(async (action: () => Promise<void>) => {
-    busyCountRef.current++
+    activeActionsRef.current += 1
     setBusy(true)
     setError(null)
     try {
@@ -168,8 +179,10 @@ export function useWizardApi({ tenantId, userId = 'admin-user' }: UseWizardApiOp
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Action failed')
     } finally {
-      busyCountRef.current--
-      setBusy(busyCountRef.current > 0)
+      activeActionsRef.current = Math.max(0, activeActionsRef.current - 1)
+      if (activeActionsRef.current === 0) {
+        setBusy(false)
+      }
     }
   }, [])
 

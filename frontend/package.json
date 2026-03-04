@@ -3,15 +3,10 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
-  "packageManager": "pnpm@10.28.1",
-  "engines": {
-    "node": ">=20",
-    "pnpm": ">=10"
-  },
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build",
-    "build:strict": "pnpm run build",
+    "build": "vite build",
+    "build:strict": "tsc && vite build",
     "preview": "vite preview",
     "lint": "biome check src/",
     "lint:fix": "biome check --write src/",
@@ -43,11 +38,11 @@
     "tailwindcss": "^4.2.1"
   },
   "pnpm": {
+    "overrides": {
+      "minimatch": "9.0.7"
+    },
     "onlyBuiltDependencies": [
       "esbuild"
-    ],
-    "overrides": {
-      "minimatch": "^10.0.1"
-    }
+    ]
   }
 }

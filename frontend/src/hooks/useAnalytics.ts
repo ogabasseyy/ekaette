@@ -63,9 +63,9 @@ export function useAnalytics({
       setSummary(data.summary)
       setCampaigns(data.campaigns ?? [])
       setError(null)
-    } catch (err: unknown) {
-      if (err instanceof DOMException && err.name === 'AbortError') return
-      setError(err instanceof Error ? err.message : 'Failed to fetch analytics')
+    } catch (err) {
+      if ((err as Error).name === 'AbortError') return
+      setError((err as Error).message || 'Failed to fetch analytics')
       setSummary(null)
       setCampaigns([])
     } finally {
@@ -76,9 +76,9 @@ export function useAnalytics({
   }, [tenantId, companyId, days])
 
   useEffect(() => {
-    void fetchOverview()
+    fetchOverview()
 
-    const interval = setInterval(() => void fetchOverview(), POLL_INTERVAL_MS)
+    const interval = setInterval(fetchOverview, POLL_INTERVAL_MS)
 
     return () => {
       clearInterval(interval)
@@ -87,17 +87,10 @@ export function useAnalytics({
     }
   }, [fetchOverview])
 
-  // Clear selected campaign when the analytics scope changes, not on every poll tick.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: scope args trigger reset intentionally
-  useEffect(() => {
-    setSelectedCampaign(null)
-  }, [tenantId, companyId, days])
-
   const selectCampaign = useCallback(async (campaignId: string) => {
     selectCampaignAbortRef.current?.abort()
     const controller = new AbortController()
     selectCampaignAbortRef.current = controller
-    setError(null)
     try {
       const response = await fetch(
         `/api/v1/at/analytics/campaigns/${encodeURIComponent(campaignId)}`,
@@ -107,11 +100,13 @@ export function useAnalytics({
         throw new Error(`${response.status} ${response.statusText}`)
       }
       const data: CampaignDetailResponse = await response.json()
+      if (controller.signal.aborted) return
       setSelectedCampaign(data.campaign ?? null)
-    } catch (err: unknown) {
+    } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') return
+      if (controller.signal.aborted) return
       setSelectedCampaign(null)
-      setError(err instanceof Error ? err.message : 'Failed to fetch campaign detail')
+      setError((err as Error).message || 'Failed to fetch campaign detail')
     }
   }, [])
 

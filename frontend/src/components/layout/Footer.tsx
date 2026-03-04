@@ -38,7 +38,7 @@ export function Footer({
           href="/privacy.html"
           target="_blank"
           rel="noopener noreferrer"
-          className="transition hover:text-foreground"
+          className="hover:text-foreground transition"
         >
           Privacy Policy
         </a>

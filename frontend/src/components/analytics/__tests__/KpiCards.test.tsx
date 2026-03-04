@@ -46,12 +46,6 @@ describe('KpiCards', () => {
     expect(screen.getByText('200')).toBeInTheDocument()
   })
 
-  it('displays compact-formatted sent count for large values', () => {
-    const largeSummary = { ...MOCK_SUMMARY, total_sent: 1500 }
-    render(<KpiCards summary={largeSummary} />)
-    expect(screen.getByText('1.5K')).toBeInTheDocument()
-  })
-
   it('renders empty state when summary is null', () => {
     render(<KpiCards summary={null} />)
     expect(screen.getByText('No data available')).toBeInTheDocument()

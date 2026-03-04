@@ -48,14 +48,14 @@ export function useContacts({ tenantId, companyId }: UseContactsOptions): UseCon
       setError(err instanceof Error ? err.message : 'Failed to fetch contacts')
       setContacts([])
     } finally {
-      if (!controller.signal.aborted) {
+      if (abortRef.current === controller && !controller.signal.aborted) {
         setLoading(false)
       }
     }
   }, [tenantId, companyId])
 
   useEffect(() => {
-    void fetchContacts()
+    fetchContacts()
     return () => {
       abortRef.current?.abort()
     }

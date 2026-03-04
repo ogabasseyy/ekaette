@@ -39,6 +39,7 @@ export default function ValuationCard({
   onCounterOffer,
 }: ValuationCardProps) {
   const [counterOffer, setCounterOffer] = useState(price)
+
   useEffect(() => {
     setCounterOffer(price)
   }, [price])
@@ -66,9 +67,11 @@ export default function ValuationCard({
         <input
           id="counter-offer"
           type="number"
-          min={0}
           value={counterOffer}
-          onChange={event => setCounterOffer(Math.max(0, Number(event.target.value || 0)))}
+          onChange={event => {
+            const next = event.currentTarget.valueAsNumber
+            setCounterOffer(Number.isFinite(next) ? next : 0)
+          }}
           className="w-full rounded-xl border border-border/80 bg-black/35 px-3 py-2 text-foreground text-sm outline-none focus:border-primary/60"
         />
       </div>

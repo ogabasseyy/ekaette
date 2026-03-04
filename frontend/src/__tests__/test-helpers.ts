@@ -2,7 +2,7 @@
  * Shared test helpers for frontend tests.
  * Phase 0 refactor: centralizes common patterns.
  */
-import type { Industry, ServerMessage, SessionStartedMessage } from '../types'
+import type { Industry, ServerMessage } from '../types'
 
 /** Mock WebSocket interface matching the global mock in setup.ts. */
 export interface MockSocket {
@@ -39,15 +39,17 @@ export function setStoredIndustry(industry: Industry): void {
   window.localStorage.setItem('ekaette:onboarding:industry', industry)
 }
 
+type SessionStartedPayload = Extract<ServerMessage, { type: 'session_started' }>
+
 /** Build a session_started ServerMessage for tests. */
 export function makeSessionStarted(
   industry: Industry = 'electronics',
-  overrides: Partial<Omit<SessionStartedMessage, 'type'>> = {},
-): ServerMessage {
+  overrides: Partial<Omit<SessionStartedPayload, 'type'>> = {},
+): SessionStartedPayload {
   return {
     type: 'session_started',
     sessionId: `test-session-${Date.now()}`,
     industry,
     ...overrides,
-  } as ServerMessage
+  }
 }

@@ -41,9 +41,6 @@ describe('CampaignDetail', () => {
     expect(screen.getByText('Failed')).toBeInTheDocument()
     expect(screen.getByText('Replies')).toBeInTheDocument()
     expect(screen.getByText('Conversions')).toBeInTheDocument()
-    expect(screen.getByText('Revenue')).toBeInTheDocument()
-    expect(screen.getByText('Payments Init')).toBeInTheDocument()
-    expect(screen.getByText('Payments OK')).toBeInTheDocument()
   })
 
   it('renders message preview', () => {

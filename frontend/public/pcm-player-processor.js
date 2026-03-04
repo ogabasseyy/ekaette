@@ -73,13 +73,34 @@ class PCMPlayerProcessor extends AudioWorkletProcessor {
       }
 
       // Incoming audio data: Int16 PCM.
-      if (!(event.data instanceof ArrayBuffer)) return;
-      // Guard against odd-length buffers: Int16Array requires even byteLength.
-      const buf = event.data.byteLength % 2 !== 0
-        ? event.data.slice(0, event.data.byteLength - 1)
-        : event.data;
-      if (buf.byteLength === 0) return;
-      const int16Samples = new Int16Array(buf);
+      const payload = event.data;
+      let int16Samples = null;
+      if (payload instanceof Int16Array) {
+        int16Samples = payload;
+      } else if (payload instanceof ArrayBuffer) {
+        if (payload.byteLength < 2 || payload.byteLength % 2 !== 0) {
+          return;
+        }
+        int16Samples = new Int16Array(payload);
+      } else if (ArrayBuffer.isView(payload)) {
+        if (
+          payload.byteLength < 2 ||
+          payload.byteLength % 2 !== 0 ||
+          payload.byteOffset % 2 !== 0
+        ) {
+          return;
+        }
+        int16Samples = new Int16Array(
+          payload.buffer,
+          payload.byteOffset,
+          payload.byteLength / 2
+        );
+      } else {
+        return;
+      }
+      if (int16Samples.length === 0) {
+        return;
+      }
       this._enqueue(int16Samples);
     };
   }

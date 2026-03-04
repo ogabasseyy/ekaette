@@ -292,10 +292,11 @@ export function useEkaetteSocket(
   }, [])
 
   const cleanup = useCallback(() => {
-    // Reject any pending connect promise so callers awaiting connect() don't hang on unmount.
-    rejectPendingConnect(
-      new SocketConnectError('CONNECT_CANCELLED', 'Connection cleaned up', { retryable: false }),
-    )
+    const pending = pendingConnectRef.current
+    if (pending?.timeoutTimer) {
+      clearTimeout(pending.timeoutTimer)
+      pending.timeoutTimer = null
+    }
     if (reconnectTimerRef.current) {
       clearTimeout(reconnectTimerRef.current)
       reconnectTimerRef.current = null
@@ -341,7 +342,7 @@ export function useEkaetteSocket(
       transport: 'backend-proxy',
     }
     setDebugMetrics(debugMetricsRef.current)
-  }, [rejectPendingConnect])
+  }, [])
 
   const createPendingConnect = useCallback(
     (timeoutMs: number) => {
@@ -356,9 +357,9 @@ export function useEkaetteSocket(
         resolvePromise = resolve
         rejectPromise = error => reject(error)
       })
-      // Prevent unhandled rejection warnings when cleanup rejects a promise
-      // that nobody is currently awaiting (e.g. component unmount).
-      promise.catch(() => {})
+      // If callers abandon connect() during teardown, keep cancellations from surfacing as
+      // unhandled rejections while still rejecting awaited callers.
+      void promise.catch(() => {})
 
       const pending: PendingConnectRequest = {
         promise,
@@ -379,11 +380,10 @@ export function useEkaetteSocket(
           }
           shouldReconnectRef.current = false
           setState('disconnected')
-          // Reject with CONNECT_TIMEOUT before cleanup so cleanup's reject is a no-op.
+          cleanup()
           rejectPendingConnect(
             new SocketConnectError('CONNECT_TIMEOUT', 'WebSocket connection timeout'),
           )
-          cleanup()
         }, timeoutMs)
       }
 
@@ -787,16 +787,9 @@ export function useEkaetteSocket(
       await requestEphemeralToken()
     } catch {
       // Token fetch is best-effort for backend-proxy; proceed without wsToken.
-      wsTokenRef.current = null
     }
     if (!shouldReconnectRef.current) {
       connectingRef.current = false
-      setState('disconnected')
-      rejectPendingConnect(
-        new SocketConnectError('CONNECT_CANCELLED', 'Connection cancelled before WebSocket open', {
-          retryable: false,
-        }),
-      )
       return
     }
 
@@ -1265,14 +1258,15 @@ export function useEkaetteSocket(
     appendMessage(setMessages, message)
   }, [])
 
-  // Cleanup on unmount only — use ref to avoid re-firing when deps change
-  const cleanupRef = useRef(cleanup)
-  cleanupRef.current = cleanup
+  // Cleanup on unmount
   useEffect(() => {
     return () => {
-      cleanupRef.current()
+      rejectPendingConnect(
+        new SocketConnectError('CONNECT_CANCELLED', 'Connection cancelled', { retryable: false }),
+      )
+      cleanup()
     }
-  }, [])
+  }, [cleanup, rejectPendingConnect])
 
   return {
     state,

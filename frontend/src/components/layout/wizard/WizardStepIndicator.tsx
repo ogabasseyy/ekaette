@@ -5,7 +5,7 @@ import type { WizardStepStatus } from '../../../types'
 const STEP_LABELS = ['Industry', 'Knowledge', 'Connectors', 'Catalog', 'Launch'] as const
 
 const stepDotVariants = cva(
-  'flex size-8 items-center justify-center rounded-full font-medium text-xs transition',
+  'flex size-8 items-center justify-center rounded-full text-xs font-medium transition',
   {
     variants: {
       status: {
