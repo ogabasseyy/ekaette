@@ -244,11 +244,14 @@ class TestCreateSummarizer:
     def test_returns_none_when_gemini_init_fails(self):
         """If Gemini initialization fails, return None gracefully."""
         from app.configs.compaction_factory import _create_summarizer
+        from app.configs.model_resolver import resolve_live_model_id
+
+        live_model_id = resolve_live_model_id()
 
         with patch(
             "app.configs.compaction_factory.Gemini",
             side_effect=Exception("Gemini init failed"),
         ):
-            result = _create_summarizer("gemini-3-flash-preview")
+            result = _create_summarizer(live_model_id)
 
         assert result is None

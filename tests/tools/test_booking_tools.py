@@ -58,7 +58,13 @@ class TestCheckAvailability:
         mock_query.stream.return_value = iter(mock_docs)
         mock_db.collection.return_value = mock_query
 
-        with patch("app.tools.booking_tools._get_firestore_db", return_value=mock_db):
+        with (
+            patch("app.tools.booking_tools._get_firestore_db", return_value=mock_db),
+            patch(
+                "app.tools.booking_tools.scoped_collection",
+                side_effect=lambda db, _ctx, name: mock_db.collection(name),
+            ),
+        ):
             result = await check_availability(date="2026-03-01")
 
         assert "slots" in result
@@ -77,7 +83,13 @@ class TestCheckAvailability:
         mock_query.stream.return_value = iter([])
         mock_db.collection.return_value = mock_query
 
-        with patch("app.tools.booking_tools._get_firestore_db", return_value=mock_db):
+        with (
+            patch("app.tools.booking_tools._get_firestore_db", return_value=mock_db),
+            patch(
+                "app.tools.booking_tools.scoped_collection",
+                side_effect=lambda db, _ctx, name: mock_db.collection(name),
+            ),
+        ):
             result = await check_availability(date="2026-12-25")
 
         assert result["slots"] == []
@@ -101,7 +113,13 @@ class TestCheckAvailability:
         mock_query.stream.return_value = iter(mock_docs)
         mock_db.collection.return_value = mock_query
 
-        with patch("app.tools.booking_tools._get_firestore_db", return_value=mock_db):
+        with (
+            patch("app.tools.booking_tools._get_firestore_db", return_value=mock_db),
+            patch(
+                "app.tools.booking_tools.scoped_collection",
+                side_effect=lambda db, _ctx, name: mock_db.collection(name),
+            ),
+        ):
             result = await check_availability(
                 date="2026-03-01", location="Lagos - Ikeja"
             )
@@ -143,7 +161,13 @@ class TestCheckAvailability:
         mock_query.stream.side_effect = [iter([]), iter([doc])]
         mock_db.collection.return_value = mock_query
 
-        with patch("app.tools.booking_tools._get_firestore_db", return_value=mock_db):
+        with (
+            patch("app.tools.booking_tools._get_firestore_db", return_value=mock_db),
+            patch(
+                "app.tools.booking_tools.scoped_collection",
+                side_effect=lambda db, _ctx, name: mock_db.collection(name),
+            ),
+        ):
             result = await check_availability(date="2026-03-01", location="Lagos, Yaba")
 
         assert result.get("location_fallback") is True
@@ -181,9 +205,9 @@ class TestCreateBooking:
             return MagicMock()
 
         mock_db.collection.side_effect = collection_side_effect
-        mock_batch = MagicMock()
-        mock_db.batch.return_value = mock_batch
-        return mock_db, slot_ref, booking_ref, mock_batch
+        mock_tx = MagicMock()
+        mock_db.transaction.return_value = mock_tx
+        return mock_db, slot_ref, booking_ref, mock_tx
 
     @pytest.mark.asyncio
     async def test_creates_booking_with_confirmation_id(self):
@@ -196,9 +220,16 @@ class TestCreateBooking:
             "location": "Lagos - Ikeja",
             "available": True,
         }
-        mock_db, slot_ref, booking_ref, mock_batch = self._build_db_for_slot(slot_data)
+        mock_db, slot_ref, booking_ref, mock_tx = self._build_db_for_slot(slot_data)
 
-        with patch("app.tools.booking_tools._get_firestore_db", return_value=mock_db):
+        with (
+            patch("app.tools.booking_tools._get_firestore_db", return_value=mock_db),
+            patch(
+                "app.tools.booking_tools.scoped_collection",
+                side_effect=lambda db, _ctx, name: mock_db.collection(name),
+            ),
+            patch("google.cloud.firestore.transactional", side_effect=lambda fn: fn),
+        ):
             result = await create_booking(
                 slot_id="slot-001",
                 user_id="test-user",
@@ -214,9 +245,8 @@ class TestCreateBooking:
         assert result["date"] == "2026-03-01"
         assert result["time"] == "10:00"
         assert result["location"] == "Lagos - Ikeja"
-        mock_batch.set.assert_called_once_with(booking_ref, result)
-        mock_batch.update.assert_called_once_with(slot_ref, {"available": False})
-        mock_batch.commit.assert_called_once()
+        mock_tx.set.assert_called_once_with(booking_ref, result)
+        mock_tx.update.assert_called_once_with(slot_ref, {"available": False})
 
     @pytest.mark.asyncio
     async def test_returns_booking_details(self):
@@ -231,7 +261,14 @@ class TestCreateBooking:
         }
         mock_db, _, _, _ = self._build_db_for_slot(slot_data)
 
-        with patch("app.tools.booking_tools._get_firestore_db", return_value=mock_db):
+        with (
+            patch("app.tools.booking_tools._get_firestore_db", return_value=mock_db),
+            patch(
+                "app.tools.booking_tools.scoped_collection",
+                side_effect=lambda db, _ctx, name: mock_db.collection(name),
+            ),
+            patch("google.cloud.firestore.transactional", side_effect=lambda fn: fn),
+        ):
             result = await create_booking(
                 slot_id="slot-002",
                 user_id="test-user",
@@ -256,9 +293,16 @@ class TestCreateBooking:
             "location": "Lagos - Ikeja",
             "available": False,
         }
-        mock_db, _, _, mock_batch = self._build_db_for_slot(slot_data)
+        mock_db, _, _, mock_tx = self._build_db_for_slot(slot_data)
 
-        with patch("app.tools.booking_tools._get_firestore_db", return_value=mock_db):
+        with (
+            patch("app.tools.booking_tools._get_firestore_db", return_value=mock_db),
+            patch(
+                "app.tools.booking_tools.scoped_collection",
+                side_effect=lambda db, _ctx, name: mock_db.collection(name),
+            ),
+            patch("google.cloud.firestore.transactional", side_effect=lambda fn: fn),
+        ):
             result = await create_booking(
                 slot_id="slot-001",
                 user_id="test-user",
@@ -268,7 +312,7 @@ class TestCreateBooking:
             )
 
         assert "error" in result
-        mock_batch.commit.assert_not_called()
+        mock_tx.set.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_returns_error_when_db_unavailable(self):
@@ -308,7 +352,13 @@ class TestCancelBooking:
         mock_doc_ref.get.return_value = mock_doc
         mock_db.collection.return_value.document.return_value = mock_doc_ref
 
-        with patch("app.tools.booking_tools._get_firestore_db", return_value=mock_db):
+        with (
+            patch("app.tools.booking_tools._get_firestore_db", return_value=mock_db),
+            patch(
+                "app.tools.booking_tools.scoped_collection",
+                side_effect=lambda db, _ctx, name: mock_db.collection(name),
+            ),
+        ):
             result = await cancel_booking(
                 confirmation_id="EKT-ABC123",
                 user_id="test-user",
@@ -329,7 +379,13 @@ class TestCancelBooking:
         mock_doc_ref.get.return_value = mock_doc
         mock_db.collection.return_value.document.return_value = mock_doc_ref
 
-        with patch("app.tools.booking_tools._get_firestore_db", return_value=mock_db):
+        with (
+            patch("app.tools.booking_tools._get_firestore_db", return_value=mock_db),
+            patch(
+                "app.tools.booking_tools.scoped_collection",
+                side_effect=lambda db, _ctx, name: mock_db.collection(name),
+            ),
+        ):
             result = await cancel_booking(
                 confirmation_id="INVALID-ID",
                 user_id="test-user",
@@ -355,7 +411,13 @@ class TestCancelBooking:
         mock_doc_ref.get.return_value = mock_doc
         mock_db.collection.return_value.document.return_value = mock_doc_ref
 
-        with patch("app.tools.booking_tools._get_firestore_db", return_value=mock_db):
+        with (
+            patch("app.tools.booking_tools._get_firestore_db", return_value=mock_db),
+            patch(
+                "app.tools.booking_tools.scoped_collection",
+                side_effect=lambda db, _ctx, name: mock_db.collection(name),
+            ),
+        ):
             result = await cancel_booking(
                 confirmation_id="EKT-ABC123",
                 user_id="different-user",

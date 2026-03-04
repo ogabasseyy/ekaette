@@ -10,7 +10,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 from pathlib import Path
+import tempfile
 from typing import Any
 
 from google.adk.events import Event
@@ -103,12 +105,25 @@ class PersistentInMemorySessionService(InMemorySessionService):
 
     def _write_snapshot_file(self, payload: dict[str, Any]) -> None:
         """Persist snapshot atomically using a temp file swap."""
-        temp_path = self._file_path.with_suffix(".tmp")
-        temp_path.write_text(
-            json.dumps(payload, separators=(",", ":"), ensure_ascii=True),
-            encoding="utf-8",
-        )
-        temp_path.replace(self._file_path)
+        temp_path: Path | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                dir=self._file_path.parent,
+                prefix=f"{self._file_path.name}.",
+                suffix=".tmp",
+                delete=False,
+            ) as temp_file:
+                json.dump(payload, temp_file, separators=(",", ":"), ensure_ascii=True)
+                temp_file.flush()
+                os.fsync(temp_file.fileno())
+                temp_path = Path(temp_file.name)
+            os.replace(temp_path, self._file_path)
+        except Exception:
+            if temp_path is not None and temp_path.exists():
+                temp_path.unlink(missing_ok=True)
+            raise
 
     async def create_session(
         self,

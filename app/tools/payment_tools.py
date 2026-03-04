@@ -6,6 +6,7 @@ import logging
 from typing import Any
 
 from app.api.v1.at import service_payments
+from app.configs import sanitize_log
 
 logger = logging.getLogger(__name__)
 
@@ -22,8 +23,10 @@ def _tenant_company_from_context(tool_context: Any) -> tuple[str, str]:
 
 
 def _record_matches_scope(record: dict[str, Any], *, tenant_id: str, company_id: str) -> bool:
-    record_tenant_id = str(record.get("tenant_id") or "").strip() or "public"
-    record_company_id = str(record.get("company_id") or "").strip() or "ekaette-electronics"
+    record_tenant_id = str(record.get("tenant_id") or "").strip()
+    record_company_id = str(record.get("company_id") or "").strip()
+    if not record_tenant_id or not record_company_id:
+        return False
     return record_tenant_id == tenant_id and record_company_id == company_id
 
 
@@ -63,8 +66,17 @@ async def create_virtual_account_payment(
             "code": "PAYMENT_VIRTUAL_ACCOUNT_CREATE_FAILED",
             "status_code": exc.status_code,
         }
-    except Exception:
-        logger.exception("Unexpected virtual account creation error")
+    except Exception as exc:
+        safe_context = {
+            "code": "PAYMENT_VIRTUAL_ACCOUNT_UNEXPECTED",
+            "tenant_id": sanitize_log(tenant_id),
+            "company_id": sanitize_log(company_id),
+            "error": sanitize_log(str(exc)),
+        }
+        logger.error(
+            "Unexpected virtual account creation error: %s",
+            sanitize_log(str(safe_context)),
+        )
         return {
             "error": "Unexpected payment error",
             "code": "PAYMENT_VIRTUAL_ACCOUNT_UNEXPECTED",
@@ -135,8 +147,18 @@ async def check_payment_status(reference: str, tool_context: Any = None) -> dict
             "status_code": exc.status_code,
             "reference": reference,
         }
-    except Exception:
-        logger.exception("Unexpected payment verification error")
+    except Exception as exc:
+        safe_context = {
+            "code": "PAYMENT_VERIFY_UNEXPECTED",
+            "tenant_id": sanitize_log(tenant_id),
+            "company_id": sanitize_log(company_id),
+            "reference": sanitize_log(reference),
+            "error": sanitize_log(str(exc)),
+        }
+        logger.error(
+            "Unexpected payment verification error: %s",
+            sanitize_log(str(safe_context)),
+        )
         return {
             "error": "Unexpected payment verification error",
             "code": "PAYMENT_VERIFY_UNEXPECTED",

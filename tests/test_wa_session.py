@@ -439,7 +439,6 @@ class TestWaSessionGeminiBidi:
                 while True:
                     await asyncio.sleep(1)
                     return
-                    yield  # pragma: no cover
 
             response = MagicMock()
             part = MagicMock()

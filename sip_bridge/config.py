@@ -88,8 +88,25 @@ class BridgeConfig:
             errors.append("SIP_USERNAME required for AT SIP registration")
         if not self.sip_password:
             errors.append("SIP_PASSWORD required for AT SIP registration")
+
+        port_fields: dict[str, object] = {
+            "SIP_BRIDGE_PORT": self.sip_port,
+            "SIP_HEALTH_PORT": self.health_port,
+        }
+        for field_name, value in port_fields.items():
+            if not isinstance(value, int) or value < 1 or value > 65535:
+                errors.append(f"{field_name} must be an integer between 1 and 65535")
+
+        if not isinstance(self.sip_register_interval, int) or self.sip_register_interval <= 0:
+            errors.append("SIP_REGISTER_INTERVAL must be an integer greater than 0")
+
         normalized_live_model = self.live_model_id.strip().lower()
-        if normalized_live_model in _DISALLOWED_LIVE_MODEL_IDS:
+        if normalized_live_model == "":
+            errors.append(
+                "LIVE_MODEL_ID is required; set it to a Live API-compatible model "
+                f"(default: {_DEFAULT_LIVE_MODEL_ID!r})"
+            )
+        elif normalized_live_model in _DISALLOWED_LIVE_MODEL_IDS:
             errors.append(
                 "LIVE_MODEL_ID does not support Gemini Live bidirectional audio; "
                 f"use {_DEFAULT_LIVE_MODEL_ID!r} or another native-audio model"

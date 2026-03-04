@@ -11,7 +11,7 @@ import json
 import logging
 import os
 import socket
-from typing import Any, Awaitable, Callable
+from typing import Awaitable, Callable
 
 from .sip_tls import SipMessage
 

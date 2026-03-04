@@ -11,7 +11,7 @@ import secrets
 from datetime import datetime, timezone
 from typing import Any
 
-from app.tools.scoped_queries import scoped_collection_or_global
+from app.tools.scoped_queries import scoped_collection
 
 logger = logging.getLogger(__name__)
 
@@ -70,7 +70,7 @@ async def check_availability(
         return {"error": "Booking service unavailable", "slots": []}
 
     try:
-        query = scoped_collection_or_global(db, tool_context, "booking_slots")
+        query = scoped_collection(db, tool_context, "booking_slots")
         if query is None:
             return {"error": "Booking service unavailable", "slots": []}
         query = query.where("date", "==", date)
@@ -92,7 +92,7 @@ async def check_availability(
 
         # Fallback for user-friendly voice inputs like "Lagos, Yaba" when
         # exact branch strings differ from stored values.
-        fallback_query = scoped_collection_or_global(db, tool_context, "booking_slots")
+        fallback_query = scoped_collection(db, tool_context, "booking_slots")
         if fallback_query is None:
             return {"date": date, "slots": []}
         fallback_query = fallback_query.where("date", "==", date)
@@ -151,18 +151,12 @@ async def create_booking(
         return {"error": "Booking service unavailable"}
 
     try:
-        slots_col = scoped_collection_or_global(db, tool_context, "booking_slots")
-        bookings_col = scoped_collection_or_global(db, tool_context, "bookings")
+        slots_col = scoped_collection(db, tool_context, "booking_slots")
+        bookings_col = scoped_collection(db, tool_context, "bookings")
         if slots_col is None or bookings_col is None:
             return {"error": "Booking service unavailable"}
 
         slot_ref = slots_col.document(slot_id)
-        slot_doc = await asyncio.to_thread(slot_ref.get)
-        if not slot_doc.exists:
-            return {"error": f"Slot '{slot_id}' not found"}
-        slot_data = slot_doc.to_dict() or {}
-        if not slot_data.get("available", False):
-            return {"error": f"Slot '{slot_id}' is no longer available"}
 
         # Extract tenant/company from context for data provenance.
         _state = getattr(tool_context, "state", {}) if tool_context else {}
@@ -172,7 +166,7 @@ async def create_booking(
         confirmation_id = _generate_confirmation_id()
         now = datetime.now(timezone.utc).isoformat()
 
-        booking_data: dict[str, Any] = {
+        booking_data_base: dict[str, Any] = {
             "confirmation_id": confirmation_id,
             "slot_id": slot_id,
             "user_id": user_id,
@@ -181,23 +175,50 @@ async def create_booking(
             "service_type": service_type,
             "status": "confirmed",
             "created_at": now,
-            "date": slot_data.get("date", ""),
-            "time": slot_data.get("time", ""),
-            "location": slot_data.get("location", ""),
         }
         if isinstance(_tenant, str) and _tenant:
-            booking_data["tenant_id"] = _tenant
+            booking_data_base["tenant_id"] = _tenant
         if isinstance(_company, str) and _company:
-            booking_data["company_id"] = _company
+            booking_data_base["company_id"] = _company
 
-        # Atomic commit after availability check to reduce overbooking risk.
         booking_ref = bookings_col.document(confirmation_id)
-        batch = db.batch()
-        batch.set(booking_ref, booking_data)
-        batch.update(slot_ref, {"available": False})
-        await asyncio.to_thread(batch.commit)
+        from google.cloud import firestore
 
-        return booking_data
+        class _SlotNotFoundError(Exception):
+            pass
+
+        class _SlotUnavailableError(Exception):
+            pass
+
+        def _commit_booking_transaction() -> dict[str, Any]:
+            transaction = db.transaction()
+
+            @firestore.transactional
+            def _tx(tx):
+                slot_doc = slot_ref.get(transaction=tx)
+                if not slot_doc.exists:
+                    raise _SlotNotFoundError
+                slot_data = slot_doc.to_dict() or {}
+                if not slot_data.get("available", False):
+                    raise _SlotUnavailableError
+
+                booking_data = dict(booking_data_base)
+                booking_data["date"] = slot_data.get("date", "")
+                booking_data["time"] = slot_data.get("time", "")
+                booking_data["location"] = slot_data.get("location", "")
+
+                tx.set(booking_ref, booking_data)
+                tx.update(slot_ref, {"available": False})
+                return booking_data
+
+            return _tx(transaction)
+
+        try:
+            return await asyncio.to_thread(_commit_booking_transaction)
+        except _SlotNotFoundError:
+            return {"error": f"Slot '{slot_id}' not found"}
+        except _SlotUnavailableError:
+            return {"error": f"Slot '{slot_id}' is no longer available"}
 
     except Exception:
         logger.exception("Booking creation failed")
@@ -224,8 +245,8 @@ async def cancel_booking(
         return {"error": "Booking service unavailable"}
 
     try:
-        bookings_col = scoped_collection_or_global(db, tool_context, "bookings")
-        slots_col = scoped_collection_or_global(db, tool_context, "booking_slots")
+        bookings_col = scoped_collection(db, tool_context, "bookings")
+        slots_col = scoped_collection(db, tool_context, "booking_slots")
         if bookings_col is None:
             return {"error": "Booking service unavailable"}
 

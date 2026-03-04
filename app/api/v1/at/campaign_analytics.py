@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+import heapq
 import re
 import threading
 import uuid
@@ -82,7 +83,11 @@ def _event_deduped(event_id: str | None) -> bool:
         if len(_seen_event_ids) > 10_000:
             # Deterministically evict the oldest entries first.
             overflow = len(_seen_event_ids) - 5_000
-            oldest_ids = sorted(_seen_event_ids.items(), key=lambda item: item[1])[:overflow]
+            oldest_ids = heapq.nsmallest(
+                overflow,
+                _seen_event_ids.items(),
+                key=lambda item: item[1],
+            )
             for stale_event_id, _ in oldest_ids:
                 _seen_event_ids.pop(stale_event_id, None)
         return False
@@ -227,8 +232,8 @@ def campaign_snapshot(campaign_id: str) -> dict[str, Any] | None:
             "payments_initialized_total": state.payments_initialized_total,
             "payments_success_total": state.payments_success_total,
         }
-    snapshot.update(_compute_kpis(state))
-    return snapshot
+        snapshot.update(_compute_kpis(state))
+        return snapshot
 
 
 def list_campaign_snapshots(

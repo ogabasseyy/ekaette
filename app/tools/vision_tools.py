@@ -13,12 +13,14 @@ import logging
 import os
 import re
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from google import genai
 from google.adk.tools.tool_context import ToolContext
 from google.genai import types
+
+from app.configs import sanitize_log
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +36,13 @@ try:
     _MAX_LATEST_IMAGES = max(1, int(os.getenv("VISION_LATEST_IMAGE_CACHE_SIZE", "500")))
 except (TypeError, ValueError):
     _MAX_LATEST_IMAGES = 500
+
+try:
+    _LATEST_IMAGE_TTL = timedelta(
+        seconds=max(1, int(os.getenv("VISION_LATEST_IMAGE_TTL_SECONDS", "900")))
+    )
+except (TypeError, ValueError):
+    _LATEST_IMAGE_TTL = timedelta(seconds=900)
 
 ANALYSIS_PROMPT = """Analyze this device image for a trade-in valuation.
 Return a JSON object with exactly this structure:
@@ -82,6 +91,30 @@ def _cache_key(user_id: str, session_id: str) -> str:
     return f"{user_id}:{session_id}"
 
 
+def _prune_latest_images(now: datetime) -> None:
+    cutoff = now - _LATEST_IMAGE_TTL
+    stale_keys: list[str] = []
+    for key, payload in list(_latest_images.items()):
+        if not isinstance(payload, dict):
+            stale_keys.append(key)
+            continue
+        cached_at_raw = payload.get("cached_at")
+        if not isinstance(cached_at_raw, str) or not cached_at_raw:
+            stale_keys.append(key)
+            continue
+        try:
+            cached_at = datetime.fromisoformat(cached_at_raw)
+        except ValueError:
+            stale_keys.append(key)
+            continue
+        if cached_at.tzinfo is None:
+            cached_at = cached_at.replace(tzinfo=timezone.utc)
+        if cached_at < cutoff:
+            stale_keys.append(key)
+    for key in stale_keys:
+        _latest_images.pop(key, None)
+
+
 def cache_latest_image(
     user_id: str,
     session_id: str,
@@ -89,10 +122,12 @@ def cache_latest_image(
     mime_type: str,
 ) -> None:
     """Cache the most recent client image for this live websocket session."""
+    now = datetime.now(timezone.utc)
+    _prune_latest_images(now)
     _latest_images[_cache_key(user_id, session_id)] = {
         "image_data": image_data,
         "mime_type": mime_type,
-        "cached_at": datetime.now(timezone.utc).isoformat(),
+        "cached_at": now.isoformat(),
     }
     while len(_latest_images) > _MAX_LATEST_IMAGES:
         oldest_key = next(iter(_latest_images))
@@ -101,6 +136,7 @@ def cache_latest_image(
 
 def get_latest_image(user_id: str, session_id: str) -> dict[str, Any] | None:
     """Read cached image payload for this session, if available."""
+    _prune_latest_images(datetime.now(timezone.utc))
     return _latest_images.get(_cache_key(user_id, session_id))
 
 
@@ -178,8 +214,8 @@ async def analyze_device_image(
                 "raw_analysis": raw_text,
             }
 
-    except Exception:
-        logger.exception("Vision analysis failed")
+    except Exception as exc:
+        logger.error("Vision analysis failed: %s", sanitize_log(str(exc)), exc_info=True)
         return {
             "device_name": "Unknown",
             "condition": "Unknown",
@@ -235,8 +271,8 @@ async def upload_to_cloud_storage(
         logger.info("Uploaded image: %s", gcs_uri)
         return {"gcs_uri": gcs_uri, "blob_path": blob_path}
 
-    except Exception:
-        logger.exception("Cloud Storage upload failed")
+    except Exception as exc:
+        logger.error("Cloud Storage upload failed: %s", sanitize_log(str(exc)), exc_info=True)
         return {"error": "Cloud Storage upload failed"}
 
 

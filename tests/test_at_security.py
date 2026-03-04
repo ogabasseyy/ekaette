@@ -80,11 +80,6 @@ class TestRateLimiting:
             patch("app.api.v1.at.security.AT_RATE_LIMIT", 5),
             patch("app.api.v1.at.security.AT_RATE_WINDOW", 60),
         ):
-            # Reset bucket state
-            import app.api.v1.at.security as sec_mod
-            sec_mod._at_rate_buckets.clear()
-            sec_mod._at_last_prune = 0.0
-
             app = _build_app()
             client = TestClient(app)
             for _ in range(5):
@@ -98,10 +93,6 @@ class TestRateLimiting:
             patch("app.api.v1.at.security.AT_RATE_LIMIT", 3),
             patch("app.api.v1.at.security.AT_RATE_WINDOW", 60),
         ):
-            import app.api.v1.at.security as sec_mod
-            sec_mod._at_rate_buckets.clear()
-            sec_mod._at_last_prune = 0.0
-
             app = _build_app()
             client = TestClient(app)
             # First 3 should pass
@@ -127,8 +118,6 @@ class TestCombinedSecurity:
             patch("app.api.v1.at.security.AT_RATE_LIMIT", 1),
         ):
             import app.api.v1.at.security as sec_mod
-            sec_mod._at_rate_buckets.clear()
-            sec_mod._at_last_prune = 0.0
 
             app = _build_app()
             client = TestClient(app)

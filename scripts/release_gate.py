@@ -50,116 +50,116 @@ def validate_policy_files(repo_root: Path) -> list[str]:
         providers_doc = _read_json_or_yaml_object(providers_path)
     except ValueError as exc:
         errors.append(str(exc))
-        return errors
-    providers = providers_doc.get("providers")
-    if not isinstance(providers, dict) or not providers:
-        errors.append("providers policy missing non-empty 'providers' map")
     else:
-        required_policy_keys = {
-            "timeoutSeconds",
-            "maxRetries",
-            "circuitOpenAfterFailures",
-            "circuitOpenSeconds",
-            "allowedHosts",
-        }
-        for provider_id, value in providers.items():
-            if not isinstance(value, dict):
-                errors.append(f"provider '{provider_id}' must be an object")
-                continue
-            test_policy = value.get("testPolicy")
-            if not isinstance(test_policy, dict):
-                errors.append(f"provider '{provider_id}' missing testPolicy")
-                continue
-            missing = sorted(required_policy_keys - set(test_policy.keys()))
-            if missing:
-                errors.append(f"provider '{provider_id}' testPolicy missing keys: {', '.join(missing)}")
+        providers = providers_doc.get("providers")
+        if not isinstance(providers, dict) or not providers:
+            errors.append("providers policy missing non-empty 'providers' map")
+        else:
+            required_policy_keys = {
+                "timeoutSeconds",
+                "maxRetries",
+                "circuitOpenAfterFailures",
+                "circuitOpenSeconds",
+                "allowedHosts",
+            }
+            for provider_id, value in providers.items():
+                if not isinstance(value, dict):
+                    errors.append(f"provider '{provider_id}' must be an object")
+                    continue
+                test_policy = value.get("testPolicy")
+                if not isinstance(test_policy, dict):
+                    errors.append(f"provider '{provider_id}' missing testPolicy")
+                    continue
+                missing = sorted(required_policy_keys - set(test_policy.keys()))
+                if missing:
+                    errors.append(f"provider '{provider_id}' testPolicy missing keys: {', '.join(missing)}")
 
     try:
         capability_doc = _read_json_or_yaml_object(capability_path)
     except ValueError as exc:
         errors.append(str(exc))
-        return errors
-    templates = capability_doc.get("templates")
-    if not isinstance(templates, dict) or not templates:
-        errors.append("capability matrix missing non-empty 'templates' map")
+    else:
+        templates = capability_doc.get("templates")
+        if not isinstance(templates, dict) or not templates:
+            errors.append("capability matrix missing non-empty 'templates' map")
 
     try:
         slos_doc = _read_json_or_yaml_object(slos_path)
     except ValueError as exc:
         errors.append(str(exc))
-        return errors
-    slos = slos_doc.get("slos")
-    if not isinstance(slos, dict) or not slos:
-        errors.append("observability SLO policy missing non-empty 'slos' map")
     else:
-        required_slos = {
-            "onboarding_config",
-            "runtime_bootstrap",
-            "token",
-            "websocket_startup",
-            "registry_resolution",
-        }
-        missing = sorted(required_slos - set(slos.keys()))
-        if missing:
-            errors.append(f"observability SLO policy missing entries: {', '.join(missing)}")
+        slos = slos_doc.get("slos")
+        if not isinstance(slos, dict) or not slos:
+            errors.append("observability SLO policy missing non-empty 'slos' map")
+        else:
+            required_slos = {
+                "onboarding_config",
+                "runtime_bootstrap",
+                "token",
+                "websocket_startup",
+                "registry_resolution",
+            }
+            missing = sorted(required_slos - set(slos.keys()))
+            if missing:
+                errors.append(f"observability SLO policy missing entries: {', '.join(missing)}")
 
-        for slo_id in sorted(required_slos.intersection(slos.keys())):
-            value = slos.get(slo_id)
-            if not isinstance(value, dict):
-                errors.append(f"observability SLO '{slo_id}' must be an object")
-                continue
-            latency_value = value.get("latencyP95Ms")
-            if not isinstance(latency_value, (int, float)) or latency_value <= 0:
-                errors.append(f"observability SLO '{slo_id}' has invalid latencyP95Ms")
-            if slo_id == "registry_resolution":
-                metric_value = value.get("metric")
-                if not isinstance(metric_value, str) or not metric_value.strip():
-                    errors.append("observability SLO 'registry_resolution' missing metric")
-                continue
-            path_value = value.get("path")
-            if not isinstance(path_value, str) or not path_value.strip():
-                errors.append(f"observability SLO '{slo_id}' missing path")
-            error_rate = value.get("errorRatePercent")
-            if not isinstance(error_rate, (int, float)) or error_rate < 0:
-                errors.append(f"observability SLO '{slo_id}' has invalid errorRatePercent")
-            if slo_id == "token":
-                miss_rate = value.get("registryMissRatePercent")
-                if not isinstance(miss_rate, (int, float)) or miss_rate < 0:
-                    errors.append("observability SLO 'token' has invalid registryMissRatePercent")
+            for slo_id in sorted(required_slos.intersection(slos.keys())):
+                value = slos.get(slo_id)
+                if not isinstance(value, dict):
+                    errors.append(f"observability SLO '{slo_id}' must be an object")
+                    continue
+                latency_value = value.get("latencyP95Ms")
+                if not isinstance(latency_value, (int, float)) or latency_value <= 0:
+                    errors.append(f"observability SLO '{slo_id}' has invalid latencyP95Ms")
+                if slo_id == "registry_resolution":
+                    metric_value = value.get("metric")
+                    if not isinstance(metric_value, str) or not metric_value.strip():
+                        errors.append("observability SLO 'registry_resolution' missing metric")
+                    continue
+                path_value = value.get("path")
+                if not isinstance(path_value, str) or not path_value.strip():
+                    errors.append(f"observability SLO '{slo_id}' missing path")
+                error_rate = value.get("errorRatePercent")
+                if not isinstance(error_rate, (int, float)) or error_rate < 0:
+                    errors.append(f"observability SLO '{slo_id}' has invalid errorRatePercent")
+                if slo_id == "token":
+                    miss_rate = value.get("registryMissRatePercent")
+                    if not isinstance(miss_rate, (int, float)) or miss_rate < 0:
+                        errors.append("observability SLO 'token' has invalid registryMissRatePercent")
 
     try:
         alerts_doc = _read_json_or_yaml_object(alerts_path)
     except ValueError as exc:
         errors.append(str(exc))
-        return errors
-    alert_entries = alerts_doc.get("alerts")
-    if not isinstance(alert_entries, list) or not alert_entries:
-        errors.append("alert policy missing non-empty 'alerts' list")
     else:
-        for index, value in enumerate(alert_entries):
-            if not isinstance(value, dict):
-                errors.append(f"alert policy entry at index {index} must be an object")
-                continue
-            required_keys = {"id", "severity", "metric", "window", "condition", "description"}
-            missing = sorted(required_keys - set(value.keys()))
-            if missing:
-                errors.append(f"alert policy entry {index} missing keys: {', '.join(missing)}")
-                continue
-            if not isinstance(value.get("id"), str) or not str(value.get("id")).strip():
-                errors.append(f"alert policy entry {index} has invalid id")
-            severity = value.get("severity")
-            if severity not in {"info", "warning", "critical"}:
-                errors.append(f"alert policy entry {index} has invalid severity")
-            condition = value.get("condition")
-            if not isinstance(condition, dict):
-                errors.append(f"alert policy entry {index} has invalid condition")
-                continue
-            operator = condition.get("operator")
-            if operator not in {"gt", "gte", "lt", "lte", "eq"}:
-                errors.append(f"alert policy entry {index} has invalid condition.operator")
-            threshold = condition.get("threshold")
-            if not isinstance(threshold, (int, float)):
-                errors.append(f"alert policy entry {index} has invalid condition.threshold")
+        alert_entries = alerts_doc.get("alerts")
+        if not isinstance(alert_entries, list) or not alert_entries:
+            errors.append("alert policy missing non-empty 'alerts' list")
+        else:
+            for index, value in enumerate(alert_entries):
+                if not isinstance(value, dict):
+                    errors.append(f"alert policy entry at index {index} must be an object")
+                    continue
+                required_keys = {"id", "severity", "metric", "window", "condition", "description"}
+                missing = sorted(required_keys - set(value.keys()))
+                if missing:
+                    errors.append(f"alert policy entry {index} missing keys: {', '.join(missing)}")
+                    continue
+                if not isinstance(value.get("id"), str) or not str(value.get("id")).strip():
+                    errors.append(f"alert policy entry {index} has invalid id")
+                severity = value.get("severity")
+                if severity not in {"info", "warning", "critical"}:
+                    errors.append(f"alert policy entry {index} has invalid severity")
+                condition = value.get("condition")
+                if not isinstance(condition, dict):
+                    errors.append(f"alert policy entry {index} has invalid condition")
+                    continue
+                operator = condition.get("operator")
+                if operator not in {"gt", "gte", "lt", "lte", "eq"}:
+                    errors.append(f"alert policy entry {index} has invalid condition.operator")
+                threshold = condition.get("threshold")
+                if not isinstance(threshold, (int, float)):
+                    errors.append(f"alert policy entry {index} has invalid condition.threshold")
 
     return errors
 

@@ -285,7 +285,7 @@ async def get_onboarding_config(request: Request):
     try:
         config = await build_onboarding_config(industry_config_client, normalized_tenant_id)
     except RegistryDataMissingError as exc:
-        logger.warning(
+        logger.exception(
             "Onboarding config unavailable %s code=%s details=%s",
             registry_log_context(
                 tenant_id=normalized_tenant_id,
@@ -301,7 +301,7 @@ async def get_onboarding_config(request: Request):
                 "error": "Registry onboarding config unavailable",
                 "code": getattr(exc, "code", "REGISTRY_ONBOARDING_CONFIG_NOT_FOUND"),
                 "tenantId": normalized_tenant_id,
-                "details": str(exc),
+                "details": "internal error",
             },
         )
     return config
@@ -337,7 +337,7 @@ async def get_runtime_bootstrap(request: Request):
     try:
         onboarding = await build_onboarding_config(industry_config_client, tenant_id)
     except RegistryDataMissingError as exc:
-        logger.warning(
+        logger.exception(
             "Runtime bootstrap unavailable %s code=%s details=%s",
             registry_log_context(
                 tenant_id=tenant_id,
@@ -353,7 +353,7 @@ async def get_runtime_bootstrap(request: Request):
                 "error": "Registry runtime bootstrap unavailable",
                 "code": getattr(exc, "code", "REGISTRY_ONBOARDING_CONFIG_NOT_FOUND"),
                 "tenantId": tenant_id,
-                "details": str(exc),
+                "details": "internal error",
             },
         )
 
@@ -416,6 +416,16 @@ async def get_runtime_bootstrap(request: Request):
             company_id=resolved_company_id,
         )
     except RegistrySchemaVersionError as exc:
+        logger.exception(
+            "Runtime bootstrap schema version error %s code=%s",
+            registry_log_context(
+                tenant_id=tenant_id,
+                company_id=resolved_company_id,
+                registry_mode=_registry_enabled(),
+                source="api_runtime_bootstrap",
+            ),
+            getattr(exc, "code", "REGISTRY_SCHEMA_VERSION_UNSUPPORTED"),
+        )
         return JSONResponse(
             status_code=503,
             content={
@@ -423,7 +433,7 @@ async def get_runtime_bootstrap(request: Request):
                 "code": getattr(exc, "code", "REGISTRY_SCHEMA_VERSION_UNSUPPORTED"),
                 "tenantId": tenant_id,
                 "companyId": resolved_company_id,
-                "details": str(exc),
+                "details": "internal error",
             },
         )
 

@@ -329,7 +329,11 @@ class WaSIPServer:
                     return
                 exc = done_task.exception()
                 if exc is not None:
-                    logger.exception("WA session task failed", extra={"call_id": call_id})
+                    logger.error(
+                        "WA session task failed",
+                        exc_info=exc,
+                        extra={"call_id": call_id},
+                    )
 
             task.add_done_callback(_on_done)
 

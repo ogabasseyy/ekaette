@@ -302,7 +302,7 @@ class TestBookingToolsScoped:
         ))
 
         with patch("app.tools.booking_tools._get_firestore_db", return_value=mock_db), \
-             patch("app.tools.booking_tools.scoped_collection_or_global", return_value=mock_query) as mock_scoped:
+             patch("app.tools.booking_tools.scoped_collection", return_value=mock_query) as mock_scoped:
             result = await check_availability(date="2026-03-01", tool_context=ctx)
 
         mock_scoped.assert_called_once_with(mock_db, ctx, "booking_slots")
@@ -330,15 +330,15 @@ class TestBookingToolsScoped:
         mock_scoped_bookings = MagicMock()
         mock_scoped_bookings.document.return_value = mock_booking_ref
 
-        mock_batch = MagicMock()
-        mock_db.batch.return_value = mock_batch
+        mock_tx = MagicMock()
+        mock_db.transaction.return_value = mock_tx
 
         ctx = _make_tool_context(_make_state(
             tenant_id="public",
             company_id="ekaette-hotel",
         ))
 
-        def _mock_scoped_or_global(db, tool_ctx, subcollection):
+        def _mock_scoped(db, tool_ctx, subcollection):
             if subcollection == "booking_slots":
                 return mock_scoped_slots
             if subcollection == "bookings":
@@ -346,7 +346,8 @@ class TestBookingToolsScoped:
             return MagicMock()
 
         with patch("app.tools.booking_tools._get_firestore_db", return_value=mock_db), \
-             patch("app.tools.booking_tools.scoped_collection_or_global", side_effect=_mock_scoped_or_global):
+             patch("app.tools.booking_tools.scoped_collection", side_effect=_mock_scoped), \
+             patch("google.cloud.firestore.transactional", side_effect=lambda fn: fn):
             result = await create_booking(
                 slot_id="slot-001",
                 user_id="user-1",
@@ -358,8 +359,8 @@ class TestBookingToolsScoped:
 
         assert "confirmation_id" in result
         # Booking data should include tenant_id and company_id
-        batch_set_call = mock_batch.set.call_args
-        booking_data = batch_set_call[0][1]
+        tx_set_call = mock_tx.set.call_args
+        booking_data = tx_set_call[0][1]
         assert booking_data["tenant_id"] == "public"
         assert booking_data["company_id"] == "ekaette-hotel"
 
@@ -391,7 +392,7 @@ class TestBookingToolsScoped:
         ))
 
         with patch("app.tools.booking_tools._get_firestore_db", return_value=mock_db), \
-             patch("app.tools.booking_tools.scoped_collection_or_global", return_value=mock_scoped):
+             patch("app.tools.booking_tools.scoped_collection", return_value=mock_scoped):
             result = await cancel_booking(
                 confirmation_id="EKT-ABC123",
                 user_id="user-1",
@@ -423,7 +424,7 @@ class TestCatalogToolsScoped:
         ))
 
         with patch("app.tools.catalog_tools._get_firestore_db", return_value=MagicMock()), \
-             patch("app.tools.catalog_tools.scoped_collection_or_global", return_value=mock_query) as mock_scoped:
+             patch("app.tools.catalog_tools.scoped_collection", return_value=mock_query) as mock_scoped:
             result = await search_catalog(query="iPhone", tool_context=ctx)
 
         mock_scoped.assert_called_once()
@@ -448,7 +449,7 @@ class TestCatalogToolsScoped:
         ))
 
         with patch("app.tools.catalog_tools._get_firestore_db", return_value=MagicMock()), \
-             patch("app.tools.catalog_tools.scoped_collection_or_global", return_value=mock_query):
+             patch("app.tools.catalog_tools.scoped_collection", return_value=mock_query):
             result = await search_catalog(query="iPhone", tool_context=ctx)
 
         assert result["products"] == []

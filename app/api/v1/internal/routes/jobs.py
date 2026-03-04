@@ -3,17 +3,20 @@
 from __future__ import annotations
 
 import hmac
+import logging
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
 from app.api.models import AdminInventorySyncRunPayload
 from app.api.v1.admin.runtime import runtime as _m
+from app.configs import sanitize_log
 
 router = APIRouter(
     prefix="/api/v1/internal",
     tags=["internal"],
 )
+logger = logging.getLogger(__name__)
 
 
 def _bearer_token_from_request(request: Request) -> str:
@@ -133,7 +136,12 @@ async def run_internal_inventory_sync_route(
             force=bool(payload.force),
             dry_run_override=payload.dry_run_override,
         )
-    except ValueError:
+    except ValueError as exc:
+        logger.error(
+            "Invalid inventory sync run request: %s",
+            sanitize_log(str(exc)),
+            exc_info=True,
+        )
         return JSONResponse(
             status_code=400,
             content={

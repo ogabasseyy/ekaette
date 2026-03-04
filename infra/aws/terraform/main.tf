@@ -73,37 +73,60 @@ resource "aws_route_table_association" "public_b" {
   route_table_id = aws_route_table.public.id
 }
 
-resource "aws_eip" "nat" {
+resource "aws_eip" "nat_a" {
   domain = "vpc"
-  tags   = merge(local.tags, { Name = "${local.name}-nat-eip" })
+  tags   = merge(local.tags, { Name = "${local.name}-nat-a-eip" })
 }
 
-resource "aws_nat_gateway" "main" {
-  allocation_id = aws_eip.nat.id
+resource "aws_eip" "nat_b" {
+  domain = "vpc"
+  tags   = merge(local.tags, { Name = "${local.name}-nat-b-eip" })
+}
+
+resource "aws_nat_gateway" "public_a" {
+  allocation_id = aws_eip.nat_a.id
   subnet_id     = aws_subnet.public_a.id
   depends_on    = [aws_internet_gateway.main]
-  tags          = merge(local.tags, { Name = "${local.name}-nat" })
+  tags          = merge(local.tags, { Name = "${local.name}-nat-a" })
 }
 
-resource "aws_route_table" "private" {
+resource "aws_nat_gateway" "public_b" {
+  allocation_id = aws_eip.nat_b.id
+  subnet_id     = aws_subnet.public_b.id
+  depends_on    = [aws_internet_gateway.main]
+  tags          = merge(local.tags, { Name = "${local.name}-nat-b" })
+}
+
+resource "aws_route_table" "private_a" {
   vpc_id = aws_vpc.main.id
 
   route {
     cidr_block     = "0.0.0.0/0"
-    nat_gateway_id = aws_nat_gateway.main.id
+    nat_gateway_id = aws_nat_gateway.public_a.id
   }
 
-  tags = merge(local.tags, { Name = "${local.name}-private-rt" })
+  tags = merge(local.tags, { Name = "${local.name}-private-a-rt" })
+}
+
+resource "aws_route_table" "private_b" {
+  vpc_id = aws_vpc.main.id
+
+  route {
+    cidr_block     = "0.0.0.0/0"
+    nat_gateway_id = aws_nat_gateway.public_b.id
+  }
+
+  tags = merge(local.tags, { Name = "${local.name}-private-b-rt" })
 }
 
 resource "aws_route_table_association" "private_a" {
   subnet_id      = aws_subnet.private_a.id
-  route_table_id = aws_route_table.private.id
+  route_table_id = aws_route_table.private_a.id
 }
 
 resource "aws_route_table_association" "private_b" {
   subnet_id      = aws_subnet.private_b.id
-  route_table_id = aws_route_table.private.id
+  route_table_id = aws_route_table.private_b.id
 }
 
 resource "aws_security_group" "alb" {
@@ -164,6 +187,7 @@ resource "aws_lb" "app" {
   security_groups    = [aws_security_group.alb.id]
   subnets            = [aws_subnet.public_a.id, aws_subnet.public_b.id]
   idle_timeout       = var.alb_idle_timeout_seconds
+  drop_invalid_header_fields = true
   tags               = local.tags
 }
 
@@ -207,7 +231,7 @@ resource "aws_lb_listener" "https" {
   load_balancer_arn = aws_lb.app.arn
   port              = 443
   protocol          = "HTTPS"
-  ssl_policy        = "ELBSecurityPolicy-2016-08"
+  ssl_policy        = "ELBSecurityPolicy-TLS13-1-2-2021-06"
   certificate_arn   = var.alb_certificate_arn
 
   default_action {

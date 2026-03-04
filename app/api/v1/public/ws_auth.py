@@ -106,7 +106,11 @@ def validate_ws_token(token: str, expected_user_id: str) -> WsTokenClaims | None
         return None
 
     # Check expiration
-    exp = payload.get("exp", 0)
+    exp_raw = payload.get("exp", 0)
+    try:
+        exp = float(exp_raw)
+    except (TypeError, ValueError):
+        return None
     if time.time() > exp:
         return None
 

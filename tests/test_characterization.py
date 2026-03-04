@@ -533,6 +533,10 @@ class TestSessionResumptionLockCharacterization:
 # ═══ Tool Behavior Characterization (Pre-Scoping Baseline) ═══
 
 
+@pytest.mark.xfail(
+    reason="Legacy baseline only: booking tools are now tenant/company scoped in Phase 3+.",
+    strict=True,
+)
 class TestBookingToolsNoCompanyScopingBaseline:
     """Document that booking tools currently do NOT filter by company.
 
@@ -630,6 +634,10 @@ class TestBookingToolsNoCompanyScopingBaseline:
         )
 
 
+@pytest.mark.xfail(
+    reason="Legacy baseline only: catalog tools are now tenant/company scoped in Phase 3+.",
+    strict=True,
+)
 class TestCatalogToolsNoCompanyScopingBaseline:
     """Document that catalog tools currently do NOT filter by company."""
 

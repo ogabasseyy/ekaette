@@ -15,7 +15,6 @@ from __future__ import annotations
 import asyncio
 import ssl
 from dataclasses import dataclass, field
-from typing import Any
 
 
 class SipTransportError(Exception):

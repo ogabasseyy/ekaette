@@ -4,10 +4,15 @@ from __future__ import annotations
 
 import asyncio
 from decimal import Decimal
+import logging
 import os
 from typing import Any
 
 import boto3
+from botocore.exceptions import ClientError
+
+
+logger = logging.getLogger(__name__)
 
 
 class DynamoCallStore:
@@ -45,17 +50,30 @@ class DynamoCallStore:
         ended_at: float,
         duration_seconds: float,
     ) -> None:
-        await asyncio.to_thread(
-            self._table.update_item,
-            Key={"pk": f"call#{call_id}", "sk": "state"},
-            UpdateExpression="SET #st=:st, ended_at=:ended_at, duration_seconds=:duration_seconds",
-            ExpressionAttributeNames={"#st": "status"},
-            ExpressionAttributeValues={
-                ":st": "terminated",
-                ":ended_at": Decimal(str(ended_at)),
-                ":duration_seconds": Decimal(str(duration_seconds)),
-            },
-        )
+        def _update() -> None:
+            try:
+                self._table.update_item(
+                    Key={"pk": f"call#{call_id}", "sk": "state"},
+                    UpdateExpression="SET #st=:st, ended_at=:ended_at, duration_seconds=:duration_seconds",
+                    ConditionExpression="attribute_exists(pk) AND attribute_exists(sk)",
+                    ExpressionAttributeNames={"#st": "status"},
+                    ExpressionAttributeValues={
+                        ":st": "terminated",
+                        ":ended_at": Decimal(str(ended_at)),
+                        ":duration_seconds": Decimal(str(duration_seconds)),
+                    },
+                )
+            except ClientError as exc:
+                error_code = str(exc.response.get("Error", {}).get("Code", ""))
+                if error_code == "ConditionalCheckFailedException":
+                    logger.info(
+                        "Skipping call termination update for missing call state",
+                        extra={"call_id": call_id},
+                    )
+                    return
+                raise
+
+        await asyncio.to_thread(_update)
 
     async def get(self, *, call_id: str) -> dict[str, Any] | None:
         response = await asyncio.to_thread(

@@ -151,8 +151,6 @@ class SIPProtocol(asyncio.DatagramProtocol):
                 parsed = parse_sip_request(message)
                 headers = self._coerce_dialog_headers(parsed["headers"])
                 call_id = headers.get("Call-ID") or self._extract_call_id(message)
-                if call_id:
-                    self.server.handle_bye(call_id)
                 transport = self.server._transport
                 if transport is not None:
                     ok_response = build_sip_response(
@@ -164,6 +162,11 @@ class SIPProtocol(asyncio.DatagramProtocol):
                     )
                     transport.sendto(ok_response.encode("utf-8"), addr)
                     logger.info("200 OK sent for BYE", extra={"call_id": call_id})
+                if call_id:
+                    try:
+                        self.server.handle_bye(call_id)
+                    except Exception:
+                        logger.exception("SIP BYE teardown failed", extra={"call_id": call_id})
             # ACK, OPTIONS, etc. are acknowledged but not processed
         except Exception:
             logger.exception("SIP message parse error")

@@ -57,7 +57,7 @@ class TestTopshipShippingEndpoint:
         assert resp.status_code == 200
         body = resp.json()
         assert body["status"] == "ok"
-        assert body["provider"] == "topship"
+        assert "provider" not in body
         assert body["recommended"]["total_kobo"] == 220000
         assert len(body["quotes"]) == 2
 

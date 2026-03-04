@@ -61,7 +61,10 @@ class TestSearchCatalog:
         mock_query.stream.return_value = iter(mock_docs)
         mock_db.collection.return_value = mock_query
 
-        with patch("app.tools.catalog_tools._get_firestore_db", return_value=mock_db):
+        with (
+            patch("app.tools.catalog_tools._get_firestore_db", return_value=mock_db),
+            patch("app.tools.catalog_tools.scoped_collection", return_value=mock_query),
+        ):
             result = await search_catalog(query="iPhone")
 
         assert "products" in result
@@ -86,7 +89,10 @@ class TestSearchCatalog:
         mock_query.stream.return_value = iter(docs)
         mock_db.collection.return_value = mock_query
 
-        with patch("app.tools.catalog_tools._get_firestore_db", return_value=mock_db):
+        with (
+            patch("app.tools.catalog_tools._get_firestore_db", return_value=mock_db),
+            patch("app.tools.catalog_tools.scoped_collection", return_value=mock_query),
+        ):
             result = await search_catalog(query="iPhone")
 
         names = [item["name"] for item in result["products"]]
@@ -105,7 +111,10 @@ class TestSearchCatalog:
         mock_query.stream.return_value = iter([])
         mock_db.collection.return_value = mock_query
 
-        with patch("app.tools.catalog_tools._get_firestore_db", return_value=mock_db):
+        with (
+            patch("app.tools.catalog_tools._get_firestore_db", return_value=mock_db),
+            patch("app.tools.catalog_tools.scoped_collection", return_value=mock_query),
+        ):
             result = await search_catalog(query="nonexistent-product-xyz")
 
         assert result["products"] == []
@@ -130,7 +139,10 @@ class TestSearchCatalog:
         mock_query.stream.return_value = iter(phone_docs)
         mock_db.collection.return_value = mock_query
 
-        with patch("app.tools.catalog_tools._get_firestore_db", return_value=mock_db):
+        with (
+            patch("app.tools.catalog_tools._get_firestore_db", return_value=mock_db),
+            patch("app.tools.catalog_tools.scoped_collection", return_value=mock_query),
+        ):
             result = await search_catalog(
                 query="phone", category="smartphones"
             )
@@ -268,7 +280,10 @@ class TestSearchCatalog:
         mock_query.stream.return_value = iter([cctv_doc, power_doc])
         mock_db.collection.return_value = mock_query
 
-        with patch("app.tools.catalog_tools._get_firestore_db", return_value=mock_db):
+        with (
+            patch("app.tools.catalog_tools._get_firestore_db", return_value=mock_db),
+            patch("app.tools.catalog_tools.scoped_collection", return_value=mock_query),
+        ):
             result = await search_catalog(
                 query="Which one do you have available?",
                 category="security cameras",
@@ -309,7 +324,10 @@ class TestSearchCatalog:
         mock_query.stream.return_value = iter([doc])
         mock_db.collection.return_value = mock_query
 
-        with patch("app.tools.catalog_tools._get_firestore_db", return_value=mock_db):
+        with (
+            patch("app.tools.catalog_tools._get_firestore_db", return_value=mock_db),
+            patch("app.tools.catalog_tools.scoped_collection", return_value=mock_query),
+        ):
             result = await search_catalog(query="iPhone 15")
 
         if result["products"]:

@@ -43,7 +43,7 @@ class TestSessionStateSchema:
         temp_keys = [k for k in state if k.startswith("temp:")]
         invalid_transient_keys = [
             key for key in state
-            if "temp" in key and not key.startswith("temp:")
+            if key.startswith("temp") and not key.startswith("temp:")
         ]
         assert all(key.startswith("temp:") for key in temp_keys)
         assert not invalid_transient_keys

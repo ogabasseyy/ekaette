@@ -18,6 +18,8 @@ logger = logging.getLogger(__name__)
 class NovaVoiceClient:
     """Bridge wrapper around NovaBedrockVoiceSession."""
 
+    _AUDIO_QUEUE_MAXSIZE = 256
+
     def __init__(
         self,
         *,
@@ -32,29 +34,32 @@ class NovaVoiceClient:
         self.voice_name = voice_name
         self._session: Any | None = None
         self._recv_task: asyncio.Task | None = None
-        self._audio_queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=256)
+        self._audio_queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=self._AUDIO_QUEUE_MAXSIZE)
+        self._lifecycle_lock = asyncio.Lock()
+        self._dropped_audio_count = 0
 
     async def connect(self) -> None:
-        if (
-            self._session is not None
-            and self._recv_task is not None
-            and not self._recv_task.done()
-        ):
-            logger.debug("Nova voice client connect() called while already connected")
-            return
+        async with self._lifecycle_lock:
+            if (
+                self._session is not None
+                and self._recv_task is not None
+                and not self._recv_task.done()
+            ):
+                logger.debug("Nova voice client connect() called while already connected")
+                return
 
-        # Defensive cleanup for partially-closed states from prior failures.
-        if self._session is not None or self._recv_task is not None:
-            await self.close()
+            # Defensive cleanup for partially-closed states from prior failures.
+            if self._session is not None or self._recv_task is not None:
+                await self._close_locked()
 
-        module = importlib.import_module("app.runtime.providers.nova_bedrock")
-        session_cls = getattr(module, "NovaBedrockVoiceSession")
-        self._session = session_cls(model_id=self.model_id, region=self.region)
-        self._recv_task = asyncio.create_task(self._recv_loop(), name="nova_voice_recv_loop")
-        logger.info(
-            "Nova voice client connected",
-            extra={"model_id": self.model_id, "region": self.region},
-        )
+            module = importlib.import_module("app.runtime.providers.nova_bedrock")
+            session_cls = getattr(module, "NovaBedrockVoiceSession")
+            self._session = session_cls(model_id=self.model_id, region=self.region)
+            self._recv_task = asyncio.create_task(self._recv_loop(), name="nova_voice_recv_loop")
+            logger.info(
+                "Nova voice client connected",
+                extra={"model_id": self.model_id, "region": self.region},
+            )
 
     async def _recv_loop(self) -> None:
         if self._session is None:
@@ -66,7 +71,15 @@ class NovaVoiceClient:
                     try:
                         self._audio_queue.put_nowait(audio)
                     except asyncio.QueueFull:
-                        pass
+                        self._dropped_audio_count += 1
+                        logger.warning(
+                            "Nova voice audio dropped due to full queue",
+                            extra={
+                                "connection_id": f"{self.region}:{self.model_id}",
+                                "dropped_audio_count": self._dropped_audio_count,
+                                "queue_size": self._audio_queue.qsize(),
+                            },
+                        )
             elif getattr(event, "event_type", "") == "error":
                 logger.warning(
                     "Nova voice event error",
@@ -90,6 +103,10 @@ class NovaVoiceClient:
             return None
 
     async def close(self) -> None:
+        async with self._lifecycle_lock:
+            await self._close_locked()
+
+    async def _close_locked(self) -> None:
         if self._recv_task is not None:
             self._recv_task.cancel()
             await asyncio.gather(self._recv_task, return_exceptions=True)
@@ -97,3 +114,9 @@ class NovaVoiceClient:
         if self._session is not None:
             await self._session.close()
             self._session = None
+        try:
+            while True:
+                self._audio_queue.get_nowait()
+        except asyncio.QueueEmpty:
+            pass
+        self._audio_queue = asyncio.Queue(maxsize=self._AUDIO_QUEUE_MAXSIZE)

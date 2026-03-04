@@ -39,10 +39,15 @@ class TestEkaetteRouterAgent:
     def test_sub_agents_use_live_model(self):
         """Sub-agents must use a Live API-compatible model for bidi-streaming."""
         from app.agents.ekaette_router.agent import ekaette_router
+        from app.configs.model_resolver import resolve_live_model_id
+
+        live_model_id = resolve_live_model_id()
         for sa in ekaette_router.sub_agents:
-            model = sa.model
-            assert "native-audio" in model or "live" in model.lower(), (
-                f"Sub-agent {sa.name} must use a Live API model for bidi, got: {model}"
+            assert sa.model == live_model_id, (
+                f"Sub-agent {sa.name} must use LIVE_MODEL_ID={live_model_id}, got: {sa.model}"
+            )
+            assert sa.model != "gemini-3-flash-preview", (
+                f"Sub-agent {sa.name} must not use unsupported preview model {sa.model}"
             )
 
     def test_sub_agents_have_model_and_tool_callbacks(self):
