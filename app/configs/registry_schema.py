@@ -121,8 +121,6 @@ def validate_capability_overrides(
 
 # ═══ Knowledge Entry Validation ═══
 
-_KNOWLEDGE_REQUIRED = ("id", "title", "tags")
-
 
 def validate_knowledge_entry(data: Any) -> list[str]:
     """Validate a knowledge entry. Returns list of error strings."""

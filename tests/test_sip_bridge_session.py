@@ -7,7 +7,6 @@ shutdown signal, TaskGroup structured concurrency.
 from __future__ import annotations
 
 import asyncio
-import pytest
 from sip_bridge.session import CallSession, INBOUND_QUEUE_SIZE, OUTBOUND_QUEUE_SIZE
 
 

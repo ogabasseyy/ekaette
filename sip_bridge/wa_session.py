@@ -209,12 +209,14 @@ class WaSession:
                 try:
                     await gemini_ctx.__aexit__(None, None, None)
                 except Exception:
+                    # Best-effort cleanup; connection may already be closed.
                     pass
             # Clean up UDP socket only if we created it
             if self._owns_transport and self.media_transport is not None:
                 try:
                     self.media_transport.close()
                 except Exception:
+                    # Best-effort cleanup; socket may already be closed.
                     pass
                 self.media_transport = None
 
@@ -342,6 +344,7 @@ class WaSession:
                     try:
                         self._gemini_in_queue.put_nowait(pcm16)
                     except asyncio.QueueFull:
+                        # Drop frame when backpressure queue is saturated.
                         pass
             except Exception:
                 logger.debug("Inbound frame processing error", exc_info=True)

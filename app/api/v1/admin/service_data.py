@@ -146,8 +146,9 @@ def _json_response_error_message(response: object, *, fallback: str) -> str:
             parsed = json.loads(body.decode("utf-8"))
             if isinstance(parsed, dict) and isinstance(parsed.get("error"), str) and parsed["error"].strip():
                 return parsed["error"].strip()
-        except Exception:
-            pass
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            # Response body may be non-JSON (for example, HTML proxy errors).
+            logger.debug("Could not parse response body as JSON error payload: %s", exc)
     return fallback
 
 

@@ -7,6 +7,13 @@ with no dependencies on main.py — they only use asyncio from stdlib.
 from __future__ import annotations
 
 import asyncio
+import inspect
+
+
+async def _await_if_needed(value: object) -> object:
+    if inspect.isawaitable(value):
+        return await value
+    return value
 
 
 async def _doc_get(doc_ref: object) -> object:
@@ -16,9 +23,7 @@ async def _doc_get(doc_ref: object) -> object:
     if asyncio.iscoroutinefunction(get_fn):
         return await get_fn()
     result = await asyncio.to_thread(get_fn)
-    if asyncio.iscoroutine(result):
-        return await result
-    return result
+    return await _await_if_needed(result)
 
 
 async def _doc_set(doc_ref: object, payload: dict[str, object], *, merge: bool = True) -> None:
@@ -28,9 +33,8 @@ async def _doc_set(doc_ref: object, payload: dict[str, object], *, merge: bool =
     if asyncio.iscoroutinefunction(set_fn):
         await set_fn(payload, merge=merge)
         return
-    result = await asyncio.to_thread(set_fn, payload, merge)
-    if asyncio.iscoroutine(result):
-        await result
+    result = await asyncio.to_thread(set_fn, payload, merge=merge)
+    await _await_if_needed(result)
 
 
 async def _doc_create(doc_ref: object, payload: dict[str, object]) -> None:
@@ -41,8 +45,7 @@ async def _doc_create(doc_ref: object, payload: dict[str, object]) -> None:
         await create_fn(payload)
         return
     result = await asyncio.to_thread(create_fn, payload)
-    if asyncio.iscoroutine(result):
-        await result
+    await _await_if_needed(result)
 
 
 async def _doc_update(doc_ref: object, payload: dict[str, object]) -> None:
@@ -53,8 +56,7 @@ async def _doc_update(doc_ref: object, payload: dict[str, object]) -> None:
         await update_fn(payload)
         return
     result = await asyncio.to_thread(update_fn, payload)
-    if asyncio.iscoroutine(result):
-        await result
+    await _await_if_needed(result)
 
 
 async def _doc_delete(doc_ref: object) -> None:
@@ -65,8 +67,7 @@ async def _doc_delete(doc_ref: object) -> None:
         await delete_fn()
         return
     result = await asyncio.to_thread(delete_fn)
-    if asyncio.iscoroutine(result):
-        await result
+    await _await_if_needed(result)
 
 
 async def _batch_set_documents(
@@ -92,8 +93,7 @@ async def _batch_set_documents(
         await commit_fn()
         return
     result = await asyncio.to_thread(commit_fn)
-    if asyncio.iscoroutine(result):
-        await result
+    await _await_if_needed(result)
 
 
 async def _batch_delete_documents(db: object, doc_refs: list[object]) -> None:
@@ -114,5 +114,4 @@ async def _batch_delete_documents(db: object, doc_refs: list[object]) -> None:
         await commit_fn()
         return
     result = await asyncio.to_thread(commit_fn)
-    if asyncio.iscoroutine(result):
-        await result
+    await _await_if_needed(result)

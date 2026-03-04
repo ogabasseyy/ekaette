@@ -5,7 +5,6 @@ V2 mandate: Never log API keys, SIP credentials, SMS full payloads with PII.
 
 from __future__ import annotations
 
-import ast
 import re
 from pathlib import Path
 
@@ -100,9 +99,9 @@ class TestRecordingDisclosureConfig:
 
     def test_dial_xml_no_recording_by_default(self) -> None:
         """With recording disabled, record attribute should be false."""
-        from app.api.v1.at.service_voice import build_dial_xml
+        import app.api.v1.at.service_voice as svc
 
-        xml = build_dial_xml("sip:test@example.com", "+234")
+        xml = svc.build_dial_xml("sip:test@example.com", "+234")
         assert 'record="false"' in xml
         assert "<Say>" not in xml  # No disclosure if not recording
 
