@@ -46,11 +46,7 @@ def validate_policy_files(repo_root: Path) -> list[str]:
         errors.append(f"missing policy file: {alerts_path}")
         return errors
 
-    try:
-        providers_doc = _read_json_or_yaml_object(providers_path)
-    except ValueError as exc:
-        errors.append(str(exc))
-        providers_doc = {}
+    providers_doc = _read_json_or_yaml_object(providers_path)
     providers = providers_doc.get("providers")
     if not isinstance(providers, dict) or not providers:
         errors.append("providers policy missing non-empty 'providers' map")
@@ -74,20 +70,12 @@ def validate_policy_files(repo_root: Path) -> list[str]:
             if missing:
                 errors.append(f"provider '{provider_id}' testPolicy missing keys: {', '.join(missing)}")
 
-    try:
-        capability_doc = _read_json_or_yaml_object(capability_path)
-    except ValueError as exc:
-        errors.append(str(exc))
-        capability_doc = {}
+    capability_doc = _read_json_or_yaml_object(capability_path)
     templates = capability_doc.get("templates")
     if not isinstance(templates, dict) or not templates:
         errors.append("capability matrix missing non-empty 'templates' map")
 
-    try:
-        slos_doc = _read_json_or_yaml_object(slos_path)
-    except ValueError as exc:
-        errors.append(str(exc))
-        slos_doc = {}
+    slos_doc = _read_json_or_yaml_object(slos_path)
     slos = slos_doc.get("slos")
     if not isinstance(slos, dict) or not slos:
         errors.append("observability SLO policy missing non-empty 'slos' map")
@@ -127,11 +115,7 @@ def validate_policy_files(repo_root: Path) -> list[str]:
                 if not isinstance(miss_rate, (int, float)) or miss_rate < 0:
                     errors.append("observability SLO 'token' has invalid registryMissRatePercent")
 
-    try:
-        alerts_doc = _read_json_or_yaml_object(alerts_path)
-    except ValueError as exc:
-        errors.append(str(exc))
-        alerts_doc = {}
+    alerts_doc = _read_json_or_yaml_object(alerts_path)
     alert_entries = alerts_doc.get("alerts")
     if not isinstance(alert_entries, list) or not alert_entries:
         errors.append("alert policy missing non-empty 'alerts' list")

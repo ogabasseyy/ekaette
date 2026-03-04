@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import secrets
-
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
@@ -36,7 +34,7 @@ def _verify_inventory_sync_internal_auth(
     shared_secret = str(getattr(_m, "INVENTORY_SYNC_INTERNAL_SHARED_SECRET", "")).strip()
     shared_header = (request.headers.get("x-inventory-sync-key") or "").strip()
     if mode in {"shared_secret", "hybrid"} and shared_secret:
-        if shared_header and secrets.compare_digest(shared_header, shared_secret):
+        if shared_header and shared_header == shared_secret:
             return ("shared_secret", "shared-secret"), None
         if mode == "shared_secret":
             return None, JSONResponse(
@@ -133,8 +131,8 @@ async def run_internal_inventory_sync_route(
             force=bool(payload.force),
             dry_run_override=payload.dry_run_override,
         )
-    except ValueError:
-        return JSONResponse(status_code=400, content={"error": "Invalid sync request parameters", "code": "INVENTORY_SYNC_RUN_INVALID"})
+    except ValueError as exc:
+        return JSONResponse(status_code=400, content={"error": str(exc), "code": "INVENTORY_SYNC_RUN_INVALID"})
     except Exception:
         return JSONResponse(
             status_code=503,

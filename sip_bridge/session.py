@@ -109,8 +109,7 @@ class CallSession:
         if self.media_transport is None and self.local_rtp_port:
             self.media_transport = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             self.media_transport.setblocking(False)
-            bind_addr = os.getenv("RTP_BIND_ADDRESS", "0.0.0.0")  # All interfaces for RTP media
-            self.media_transport.bind((bind_addr, self.local_rtp_port))
+            self.media_transport.bind(("0.0.0.0", self.local_rtp_port))
             self._owns_transport = True
             logger.info("RTP socket bound", extra={"port": self.local_rtp_port})
 
@@ -185,15 +184,14 @@ class CallSession:
                 try:
                     await gemini_ctx.__aexit__(None, None, None)
                 except Exception:
-                    pass  # Best-effort cleanup — session may already be closed
+                    pass
 
             # Clean up UDP socket
             if self._owns_transport and self.media_transport is not None:
                 try:
                     self.media_transport.close()
                 except Exception:
-                    pass  # Best-effort socket cleanup
-
+                    pass
                 self.media_transport = None
 
             duration = time.time() - self.started_at
@@ -323,7 +321,7 @@ class CallSession:
                     try:
                         self._gemini_in_queue.put_nowait(pcm16)
                     except asyncio.QueueFull:
-                        pass  # Drop frame — Gemini consumer is behind
+                        pass
             except Exception:
                 logger.debug("Inbound frame processing error", exc_info=True)
 

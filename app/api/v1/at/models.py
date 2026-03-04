@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field
 class OutboundCallRequest(BaseModel):
     """Initiate an outbound voice call."""
 
-    to: str = Field(min_length=1)
+    to: str
     tenant_id: str = "public"
     company_id: str = "ekaette-electronics"
     campaign_id: str | None = None
@@ -20,8 +20,8 @@ class OutboundCallRequest(BaseModel):
 class CampaignCallRequest(BaseModel):
     """Outbound voice campaign (Say/Play actions)."""
 
-    to: list[str] = Field(min_length=1)
-    message: str = Field(min_length=1)
+    to: list[str]
+    message: str
     tenant_id: str = "public"
     company_id: str = "ekaette-electronics"
     campaign_id: str | None = None
@@ -38,8 +38,8 @@ class TransferRequest(BaseModel):
 class SendSMSRequest(BaseModel):
     """Send a single outbound SMS."""
 
-    to: str = Field(min_length=1)
-    message: str = Field(min_length=1)
+    to: str
+    message: str
     tenant_id: str = "public"
     company_id: str = "ekaette-electronics"
     campaign_id: str | None = None
@@ -49,8 +49,8 @@ class SendSMSRequest(BaseModel):
 class CampaignSMSRequest(BaseModel):
     """Bulk SMS campaign to a recipient list."""
 
-    to: list[str] = Field(min_length=1)
-    message: str = Field(min_length=1)
+    to: list[str]
+    message: str
     tenant_id: str = "public"
     company_id: str = "ekaette-electronics"
     campaign_id: str | None = None
@@ -75,7 +75,7 @@ class CampaignAnalyticsEventRequest(BaseModel):
     campaign_id: str | None = None
     campaign_name: str | None = None
     recipient: str | None = None
-    amount_kobo: int | None = Field(default=None, ge=0)
+    amount_kobo: int | None = None
     reference: str | None = None
     event_id: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)

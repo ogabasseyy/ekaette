@@ -20,7 +20,7 @@ _PHONE_NG_LOCAL_RE = re.compile(
 
 # ── Email pattern ───────────────────────────────────────────────────────
 _EMAIL_RE = re.compile(
-    r"[a-zA-Z0-9._%+-]{1,64}(@[a-zA-Z0-9.-]{1,253}\.[a-zA-Z]{2,})"
+    r"[a-zA-Z0-9._%+\-]+(@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,})"
 )
 
 

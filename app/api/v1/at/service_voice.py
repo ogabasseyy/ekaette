@@ -14,6 +14,7 @@ from .settings import (
     AT_RECORDING_ENABLED,
     AT_RECORDING_DISCLOSURE,
 )
+from app.tools.pii_redaction import redact_pii
 
 logger = logging.getLogger(__name__)
 
@@ -72,11 +73,13 @@ def build_end_xml() -> str:
 
 def log_call_bridged(session_id: str, caller: str, direction: str) -> None:
     """Structured log for call bridge initiation."""
-    _ = session_id, caller, direction
     tenant_id, company_id = resolve_tenant_context(AT_VIRTUAL_NUMBER)
     logger.info(
         "AT call bridged",
         extra={
+            "at_session_id": session_id,
+            "caller": redact_pii(caller),
+            "direction": direction,
             "tenant_id": tenant_id,
             "company_id": company_id,
             "sip_endpoint": SIP_BRIDGE_ENDPOINT,
@@ -91,5 +94,12 @@ def log_call_ended(
     amount: str,
 ) -> None:
     """Structured log for call completion."""
-    _ = session_id, caller, duration_seconds, amount
-    logger.info("AT call ended")
+    logger.info(
+        "AT call ended",
+        extra={
+            "at_session_id": session_id,
+            "caller": redact_pii(caller),
+            "duration_seconds": duration_seconds,
+            "amount": amount,
+        },
+    )

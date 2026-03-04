@@ -89,6 +89,7 @@ async def create_ephemeral_token(
                 "code": getattr(exc, "code", "REGISTRY_SCHEMA_VERSION_UNSUPPORTED"),
                 "tenantId": normalized_tenant_id,
                 "companyId": normalized_company_id,
+                "details": str(exc),
             },
         )
     if _registry_enabled() and registry_config is None:
@@ -301,6 +302,7 @@ async def get_onboarding_config(request: Request):
                 "error": "Registry onboarding config unavailable",
                 "code": getattr(exc, "code", "REGISTRY_ONBOARDING_CONFIG_NOT_FOUND"),
                 "tenantId": normalized_tenant_id,
+                "details": str(exc),
             },
         )
     return config
@@ -352,6 +354,7 @@ async def get_runtime_bootstrap(request: Request):
                 "error": "Registry runtime bootstrap unavailable",
                 "code": getattr(exc, "code", "REGISTRY_ONBOARDING_CONFIG_NOT_FOUND"),
                 "tenantId": tenant_id,
+                "details": str(exc),
             },
         )
 
@@ -414,7 +417,6 @@ async def get_runtime_bootstrap(request: Request):
             company_id=resolved_company_id,
         )
     except RegistrySchemaVersionError as exc:
-        logger.warning("Unsupported registry schema version for %s/%s", tenant_id, resolved_company_id, exc_info=True)
         return JSONResponse(
             status_code=503,
             content={
@@ -422,6 +424,7 @@ async def get_runtime_bootstrap(request: Request):
                 "code": getattr(exc, "code", "REGISTRY_SCHEMA_VERSION_UNSUPPORTED"),
                 "tenantId": tenant_id,
                 "companyId": resolved_company_id,
+                "details": str(exc),
             },
         )
 

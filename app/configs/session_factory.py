@@ -16,7 +16,6 @@ IMPORTANT (Vertex backend):
 import logging
 import os
 import importlib.util
-import re
 from pathlib import Path
 
 from google.adk.sessions import InMemorySessionService
@@ -24,13 +23,6 @@ from google.adk.sessions import InMemorySessionService
 from app.configs.persistent_session_service import PersistentInMemorySessionService
 
 logger = logging.getLogger(__name__)
-
-_DB_URL_CREDENTIAL_RE = re.compile(r"://[^@/]+@")
-
-
-def _redact_db_url(url: str) -> str:
-    """Redact credentials from database URLs for safe logging."""
-    return _DB_URL_CREDENTIAL_RE.sub("://***@", url)
 
 
 def get_effective_app_name() -> str:
@@ -120,12 +112,12 @@ def create_session_service(force_in_memory: bool = False):
             db_path.parent.mkdir(parents=True, exist_ok=True)
 
         service = DatabaseSessionService(db_url=db_url)
-        logger.info("Using DatabaseSessionService (db_url=%s)", _redact_db_url(db_url))
+        logger.info("Using DatabaseSessionService (db_url=%s)", db_url)
         return service
     except Exception as exc:
         logger.warning(
             "Failed to init DatabaseSessionService, using PersistentInMemory fallback: %s",
-            type(exc).__name__,
+            exc,
         )
         return PersistentInMemorySessionService(
             file_path=os.getenv(

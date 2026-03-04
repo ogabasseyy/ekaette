@@ -66,12 +66,11 @@ def scoped_collection(
     if not company_id:
         return None
 
-    # Normalize IDs to prevent path inconsistencies from whitespace.
     return (
         db.collection("tenants")
-        .document(tenant_id.strip())
+        .document(tenant_id)
         .collection("companies")
-        .document(company_id.strip())
+        .document(company_id)
         .collection(subcollection)
     )
 

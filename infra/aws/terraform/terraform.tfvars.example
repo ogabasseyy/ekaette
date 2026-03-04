@@ -1,0 +1,19 @@
+aws_region      = "us-east-1"
+project_name    = "ekaette-nova"
+container_image = "123456789012.dkr.ecr.us-east-1.amazonaws.com/ekaette-nova:latest"
+desired_count   = 1
+cpu             = 1024
+memory          = 2048
+
+# Plain env vars passed to ECS task definition
+app_env_vars = {
+  APP_ENV      = "production"
+  LOG_LEVEL    = "INFO"
+  LLM_PROVIDER = "amazon_nova"
+  AWS_REGION   = "us-east-1"
+}
+
+# secret_arns = {
+#   AT_API_KEY = "arn:aws:secretsmanager:us-east-1:123456789012:secret:at-api-key-xxxx"
+# }
+

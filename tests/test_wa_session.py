@@ -12,20 +12,9 @@ from __future__ import annotations
 
 import asyncio
 import os
+import struct
 
 import pytest
-
-try:
-    __import__("opuslib_next")
-    _has_opuslib = True
-except ImportError:
-    _has_opuslib = False
-
-try:
-    __import__("pylibsrtp")
-    _has_pylibsrtp = True
-except ImportError:
-    _has_pylibsrtp = False
 
 
 class TestWaSessionCreation:
@@ -63,7 +52,6 @@ class TestWaSessionCreation:
         assert s.frames_received == 0
         assert s.frames_sent == 0
 
-    @pytest.mark.skipif(not _has_opuslib, reason="opuslib_next not installed")
     def test_session_accepts_codec_bridge(self):
         from sip_bridge.codec_bridge import OpusCodecBridge
         from sip_bridge.wa_session import WaSession
@@ -77,7 +65,6 @@ class TestWaSessionCreation:
         )
         assert s.codec_bridge is bridge
 
-    @pytest.mark.skipif(not _has_pylibsrtp, reason="pylibsrtp not installed")
     def test_session_accepts_srtp_contexts(self):
         from sip_bridge.srtp_context import SRTPContext
         from sip_bridge.wa_session import WaSession
@@ -191,9 +178,11 @@ class TestWaSessionMediaPipeline:
         await s.feed_inbound(b"\x00" * 200)
 
         async def stop_soon():
+            import asyncio
             await asyncio.sleep(0.15)
             s.shutdown()
 
+        import asyncio
         async with asyncio.TaskGroup() as tg:
             tg.create_task(s.run())
             tg.create_task(stop_soon())
@@ -221,9 +210,11 @@ class TestWaSessionMediaPipeline:
         await s.feed_inbound(b"\x00" * 200)
 
         async def stop_soon():
+            import asyncio
             await asyncio.sleep(0.15)
             s.shutdown()
 
+        import asyncio
         async with asyncio.TaskGroup() as tg:
             tg.create_task(s.run())
             tg.create_task(stop_soon())
@@ -253,9 +244,11 @@ class TestWaSessionMediaPipeline:
             await s.outbound_queue.put(b"\x00" * 960)
 
         async def stop_soon():
+            import asyncio
             await asyncio.sleep(0.15)
             s.shutdown()
 
+        import asyncio
         async with asyncio.TaskGroup() as tg:
             tg.create_task(s.run())
             tg.create_task(stop_soon())
@@ -283,9 +276,11 @@ class TestWaSessionMediaPipeline:
         await s.outbound_queue.put(b"\x00" * 960)
 
         async def stop_soon():
+            import asyncio
             await asyncio.sleep(0.15)
             s.shutdown()
 
+        import asyncio
         async with asyncio.TaskGroup() as tg:
             tg.create_task(s.run())
             tg.create_task(stop_soon())
@@ -315,9 +310,11 @@ class TestWaSessionFirestorePersistence:
         )
 
         async def stop_soon():
+            import asyncio
             await asyncio.sleep(0.05)
             s.shutdown()
 
+        import asyncio
         async with asyncio.TaskGroup() as tg:
             tg.create_task(s.run())
             tg.create_task(stop_soon())
@@ -349,9 +346,11 @@ class TestWaSessionFirestorePersistence:
         )
 
         async def stop_soon():
+            import asyncio
             await asyncio.sleep(0.05)
             s.shutdown()
 
+        import asyncio
         async with asyncio.TaskGroup() as tg:
             tg.create_task(s.run())
             tg.create_task(stop_soon())
@@ -383,9 +382,11 @@ class TestWaSessionFirestorePersistence:
         )
 
         async def stop_soon():
+            import asyncio
             await asyncio.sleep(0.05)
             s.shutdown()
 
+        import asyncio
         async with asyncio.TaskGroup() as tg:
             tg.create_task(s.run())
             tg.create_task(stop_soon())
@@ -455,6 +456,7 @@ class TestWaSessionGeminiBidi:
                 while True:
                     await asyncio.sleep(1)
                     return
+                    yield  # pragma: no cover
 
             response = MagicMock()
             part = MagicMock()
@@ -520,6 +522,7 @@ class TestWaSessionUDPTransport:
             await asyncio.sleep(0.15)
             s.shutdown()
 
+        import asyncio
         async with asyncio.TaskGroup() as tg:
             tg.create_task(s.run())
             tg.create_task(stop_soon())

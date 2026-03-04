@@ -18,6 +18,7 @@ from . import service_voice
 from . import providers
 from . import campaign_analytics
 from .models import OutboundCallRequest, CampaignCallRequest, TransferRequest
+from app.tools.pii_redaction import redact_pii
 from .idempotency import (
     require_idempotency_key,
     idempotency_preflight,
@@ -50,7 +51,7 @@ async def voice_callback(
     # Callback dedup (at-least-once delivery safety)
     event_key = f"voice:{isActive}"
     if is_duplicate_callback(sessionId, event_key):
-        logger.info("AT voice callback deduplicated")
+        logger.info("AT voice callback deduplicated", extra={"at_session_id": sessionId})
         return Response(content=service_voice.build_end_xml(), media_type="application/xml")
 
     if isActive == "0":
@@ -89,7 +90,7 @@ async def outbound_call(
     try:
         result = await providers.make_call(from_=AT_VIRTUAL_NUMBER, to=[req.to])
     except Exception as exc:
-        logger.warning("AT outbound call failed", exc_info=True)
+        logger.warning("AT outbound call failed", exc_info=True, extra={"to": redact_pii(req.to)})
         raise HTTPException(status_code=502, detail="Voice provider unavailable") from exc
 
     campaign_id = campaign_analytics.record_outbound_campaign(
@@ -187,7 +188,11 @@ async def voice_transfer(
             phone_number=req.transfer_to,
         )
     except Exception as exc:
-        logger.warning("AT voice transfer failed", exc_info=True)
+        logger.warning(
+            "AT voice transfer failed",
+            exc_info=True,
+            extra={"session_id": req.session_id, "transfer_to": redact_pii(req.transfer_to)},
+        )
         raise HTTPException(status_code=502, detail="Voice transfer unavailable") from exc
 
     body = {"status": "ok", "result": result}

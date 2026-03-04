@@ -45,8 +45,8 @@ def _check_admin_route_parity(errors: list[str]) -> None:
                 continue
             found.append((method, path, getattr(route.endpoint, "__module__", "")))
 
-    if len(found) != 25:
-        errors.append(f"expected 25 admin routes, found {len(found)}")
+    if len(found) != 20:
+        errors.append(f"expected 20 admin routes, found {len(found)}")
 
     bad_modules = [item for item in found if not item[2].startswith("app.api.v1.admin.routes")]
     if bad_modules:

@@ -207,7 +207,14 @@ async def paystack_webhook(request: Request) -> dict:
     except PaymentGatewayError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
 
-    logger.info("Paystack webhook accepted")
+    logger.info(
+        "Paystack webhook accepted",
+        extra={
+            "reference": processed.get("reference"),
+            "event": processed.get("event"),
+            "campaign_id": processed.get("campaign_id"),
+        },
+    )
     return {
         "status": "ok",
         "processed": processed,

@@ -201,10 +201,7 @@ async def search_company_knowledge(
             "company_id": company_id,
         }
 
-    try:
-        safe_max = max(1, min(int(max_results or 3), 10))
-    except (ValueError, TypeError):
-        safe_max = 3
+    safe_max = max(1, min(int(max_results or 3), 10))
     tokens = _tokenize(query)
     token_patterns = _compile_word_patterns(tokens)
 

@@ -1,6 +1,6 @@
 """Tests for booking tools — TDD for S10."""
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -181,9 +181,9 @@ class TestCreateBooking:
             return MagicMock()
 
         mock_db.collection.side_effect = collection_side_effect
-        mock_txn = MagicMock()
-        mock_db.transaction.return_value = mock_txn
-        return mock_db, slot_ref, booking_ref, mock_txn
+        mock_batch = MagicMock()
+        mock_db.batch.return_value = mock_batch
+        return mock_db, slot_ref, booking_ref, mock_batch
 
     @pytest.mark.asyncio
     async def test_creates_booking_with_confirmation_id(self):
@@ -196,17 +196,9 @@ class TestCreateBooking:
             "location": "Lagos - Ikeja",
             "available": True,
         }
-        mock_db, slot_ref, booking_ref, mock_txn = self._build_db_for_slot(slot_data)
+        mock_db, slot_ref, booking_ref, mock_batch = self._build_db_for_slot(slot_data)
 
-        def _pass_through(fn):
-            """Make @firestore.transactional a no-op decorator."""
-            return fn
-
-        with (
-            patch("app.tools.booking_tools._get_firestore_db", return_value=mock_db),
-            patch("app.tools.booking_tools.firestore.transactional", side_effect=_pass_through),
-            patch("asyncio.to_thread", side_effect=lambda fn, *a: fn(*a)),
-        ):
+        with patch("app.tools.booking_tools._get_firestore_db", return_value=mock_db):
             result = await create_booking(
                 slot_id="slot-001",
                 user_id="test-user",
@@ -222,8 +214,9 @@ class TestCreateBooking:
         assert result["date"] == "2026-03-01"
         assert result["time"] == "10:00"
         assert result["location"] == "Lagos - Ikeja"
-        mock_txn.set.assert_called_once()
-        mock_txn.update.assert_called_once_with(slot_ref, {"available": False})
+        mock_batch.set.assert_called_once_with(booking_ref, result)
+        mock_batch.update.assert_called_once_with(slot_ref, {"available": False})
+        mock_batch.commit.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_returns_booking_details(self):
@@ -238,14 +231,7 @@ class TestCreateBooking:
         }
         mock_db, _, _, _ = self._build_db_for_slot(slot_data)
 
-        def _pass_through(fn):
-            return fn
-
-        with (
-            patch("app.tools.booking_tools._get_firestore_db", return_value=mock_db),
-            patch("app.tools.booking_tools.firestore.transactional", side_effect=_pass_through),
-            patch("asyncio.to_thread", side_effect=lambda fn, *a: fn(*a)),
-        ):
+        with patch("app.tools.booking_tools._get_firestore_db", return_value=mock_db):
             result = await create_booking(
                 slot_id="slot-002",
                 user_id="test-user",
@@ -270,16 +256,9 @@ class TestCreateBooking:
             "location": "Lagos - Ikeja",
             "available": False,
         }
-        mock_db, _, _, mock_txn = self._build_db_for_slot(slot_data)
+        mock_db, _, _, mock_batch = self._build_db_for_slot(slot_data)
 
-        def _pass_through(fn):
-            return fn
-
-        with (
-            patch("app.tools.booking_tools._get_firestore_db", return_value=mock_db),
-            patch("app.tools.booking_tools.firestore.transactional", side_effect=_pass_through),
-            patch("asyncio.to_thread", side_effect=lambda fn, *a: fn(*a)),
-        ):
+        with patch("app.tools.booking_tools._get_firestore_db", return_value=mock_db):
             result = await create_booking(
                 slot_id="slot-001",
                 user_id="test-user",
@@ -289,7 +268,7 @@ class TestCreateBooking:
             )
 
         assert "error" in result
-        mock_txn.set.assert_not_called()
+        mock_batch.commit.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_returns_error_when_db_unavailable(self):

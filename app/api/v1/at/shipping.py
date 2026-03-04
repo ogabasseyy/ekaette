@@ -2,11 +2,7 @@
 
 from __future__ import annotations
 
-import logging
-
 from fastapi import APIRouter, HTTPException, Query
-
-logger = logging.getLogger(__name__)
 
 from app.tools.shipping_tools import (
     create_order_record,
@@ -33,8 +29,6 @@ _TOPSHIP_ERROR_STATUS_MAP: dict[str, int] = {
     "TOPSHIP_REQUEST_FAILED": 502,
     "TOPSHIP_NO_QUOTES": 404,
 }
-# Normalizer returns untainted literal values, breaking CodeQL taint tracking
-_TOPSHIP_CODE_SAFE: dict[str, str] = {k: k for k in _TOPSHIP_ERROR_STATUS_MAP}
 
 _SHIPPING_ORDER_ERROR_STATUS_MAP: dict[str, int] = {
     "ORDER_INVALID": 400,
@@ -49,7 +43,6 @@ _SHIPPING_ORDER_ERROR_STATUS_MAP: dict[str, int] = {
     "TOPSHIP_TRACKING_API_ERROR": 502,
     "TOPSHIP_TRACKING_REQUEST_FAILED": 502,
 }
-_ORDER_CODE_SAFE: dict[str, str] = {k: k for k in _SHIPPING_ORDER_ERROR_STATUS_MAP}
 
 
 async def _resolve_quote_or_raise(
@@ -71,23 +64,11 @@ async def _resolve_quote_or_raise(
     )
 
     if result.get("status") == "ok":
-        return {
-            "status": "ok",
-            "provider": str(result.get("provider") or "topship"),
-            "route": str(result.get("route") or ""),
-            "sender_city": str(result.get("sender_city") or ""),
-            "receiver_city": str(result.get("receiver_city") or ""),
-            "weight_kg": result.get("weight_kg"),
-            "recommended": result.get("recommended"),
-            "cheapest": result.get("cheapest"),
-            "fastest": result.get("fastest"),
-            "quotes": result.get("quotes"),
-        }
+        return result
 
-    code = _TOPSHIP_CODE_SAFE.get(str(result.get("code") or ""), "TOPSHIP_ERROR")
+    code = str(result.get("code") or "TOPSHIP_ERROR")
     status_code = _TOPSHIP_ERROR_STATUS_MAP.get(code, 500)
-    logger.warning("Topship quote error", extra={"code": code})
-    raise HTTPException(status_code=status_code, detail={"code": code, "error": "Shipping quote request failed"})
+    raise HTTPException(status_code=status_code, detail=result)
 
 
 @router.post("/shipping/topship/quote")
@@ -124,10 +105,9 @@ async def topship_quote_get(
 
 
 def _raise_order_tool_error(result: dict) -> None:
-    code = _ORDER_CODE_SAFE.get(str(result.get("code") or ""), "SHIPPING_ORDER_ERROR")
+    code = str(result.get("code") or "SHIPPING_ORDER_ERROR")
     status_code = _SHIPPING_ORDER_ERROR_STATUS_MAP.get(code, 500)
-    logger.warning("Shipping order error", extra={"code": code})
-    raise HTTPException(status_code=status_code, detail={"code": code, "error": "Shipping order operation failed"})
+    raise HTTPException(status_code=status_code, detail=result)
 
 
 @router.post("/shipping/orders")
@@ -151,12 +131,7 @@ async def shipping_order_create(req: ShippingOrderCreateRequest) -> dict:
     )
     if result.get("status") != "ok":
         _raise_order_tool_error(result)
-    return {
-        "status": "ok",
-        "order_id": result.get("order_id"),
-        "order": result.get("order"),
-        "storage": result.get("storage"),
-    }
+    return result
 
 
 @router.get("/shipping/orders/{order_id}/tracking")
@@ -175,20 +150,7 @@ async def shipping_order_track_get(
     )
     if result.get("status") != "ok":
         _raise_order_tool_error(result)
-    provider_tracking = result.get("provider_tracking")
-    if isinstance(provider_tracking, dict) and provider_tracking.get("status") != "ok":
-        provider_tracking = {
-            "status": "error",
-            "code": provider_tracking.get("code"),
-            "provider": provider_tracking.get("provider"),
-        }
-    return {
-        "status": "ok",
-        "order_id": result.get("order_id"),
-        "order": result.get("order"),
-        "tracking": result.get("tracking"),
-        "provider_tracking": provider_tracking,
-    }
+    return result
 
 
 @router.post("/shipping/orders/{order_id}/tracking/status")

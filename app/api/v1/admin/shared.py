@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 import re
-import threading
 import time
 
 from fastapi import Request
@@ -133,43 +132,39 @@ def _tenant_allowed(tenant_id: str) -> bool:
     return not settings.TOKEN_ALLOWED_TENANTS or tenant_id in settings.TOKEN_ALLOWED_TENANTS
 
 
-_rate_limit_lock = threading.Lock()
-
-
 def _check_rate_limit(client_ip: str, bucket: str, limit: int) -> bool:
     now = time.time()
     key = f"{bucket}:{client_ip}"
 
-    with _rate_limit_lock:
-        if now - settings._rate_limit_last_global_prune >= settings.RATE_LIMIT_WINDOW:
-            stale_keys = [
-                existing_key
-                for existing_key, values in settings._rate_limit_buckets.items()
-                if not values or (now - values[-1]) >= settings.RATE_LIMIT_WINDOW
-            ]
-            for stale_key in stale_keys:
-                settings._rate_limit_buckets.pop(stale_key, None)
-            settings._rate_limit_last_global_prune = now
+    if now - settings._rate_limit_last_global_prune >= settings.RATE_LIMIT_WINDOW:
+        stale_keys = [
+            existing_key
+            for existing_key, values in settings._rate_limit_buckets.items()
+            if not values or (now - values[-1]) >= settings.RATE_LIMIT_WINDOW
+        ]
+        for stale_key in stale_keys:
+            settings._rate_limit_buckets.pop(stale_key, None)
+        settings._rate_limit_last_global_prune = now
 
-        if key not in settings._rate_limit_buckets and len(settings._rate_limit_buckets) >= settings.RATE_LIMIT_MAX_BUCKETS:
-            oldest_key = min(
-                settings._rate_limit_buckets.keys(),
-                key=lambda existing_key: settings._rate_limit_buckets[existing_key][-1]
-                if settings._rate_limit_buckets[existing_key]
-                else 0.0,
-                default=None,
-            )
-            if oldest_key is not None:
-                settings._rate_limit_buckets.pop(oldest_key, None)
+    if key not in settings._rate_limit_buckets and len(settings._rate_limit_buckets) >= settings.RATE_LIMIT_MAX_BUCKETS:
+        oldest_key = min(
+            settings._rate_limit_buckets.keys(),
+            key=lambda existing_key: settings._rate_limit_buckets[existing_key][-1]
+            if settings._rate_limit_buckets[existing_key]
+            else 0.0,
+            default=None,
+        )
+        if oldest_key is not None:
+            settings._rate_limit_buckets.pop(oldest_key, None)
 
-        timestamps = settings._rate_limit_buckets.get(key, [])
-        timestamps = [t for t in timestamps if now - t < settings.RATE_LIMIT_WINDOW]
-        if len(timestamps) >= limit:
-            settings._rate_limit_buckets[key] = timestamps
-            return False
-        timestamps.append(now)
+    timestamps = settings._rate_limit_buckets.get(key, [])
+    timestamps = [t for t in timestamps if now - t < settings.RATE_LIMIT_WINDOW]
+    if len(timestamps) >= limit:
         settings._rate_limit_buckets[key] = timestamps
-        return True
+        return False
+    timestamps.append(now)
+    settings._rate_limit_buckets[key] = timestamps
+    return True
 
 
 def _client_ip_from_request(request: Request) -> str:

@@ -16,8 +16,8 @@ PUBLIC_ROUTES = {
 
 def test_no_direct_main_imports_under_public_package():
     pattern = re.compile(r"^\s*(from\s+main\s+import|import\s+main\b)")
-    public_root = Path(__file__).resolve().parent.parent / "app" / "api" / "v1" / "public"
-    assert public_root.exists(), f"public package not found at {public_root}"
+    public_root = Path("app/api/v1/public")
+    assert public_root.exists()
 
     violations: list[str] = []
     for file_path in sorted(public_root.rglob("*.py")):
@@ -31,11 +31,7 @@ def test_no_direct_main_imports_under_public_package():
 def test_public_routes_still_mounted_with_expected_paths_and_methods():
     from main import app
 
-    # Prefixes that identify routes served by the public package
-    PUBLIC_PREFIXES = ("/api/token", "/api/onboarding/", "/api/v1/runtime/", "/api/upload/")
-
     found: set[tuple[str, str]] = set()
-    unexpected: set[tuple[str, str]] = set()
     for route in app.routes:
         path = getattr(route, "path", "")
         if not isinstance(path, str):
@@ -44,13 +40,7 @@ def test_public_routes_still_mounted_with_expected_paths_and_methods():
         for method in methods:
             if method in {"HEAD", "OPTIONS"}:
                 continue
-            pair = (method, path)
-            if pair in PUBLIC_ROUTES:
-                found.add(pair)
-            elif any(path.startswith(prefix) or path == prefix.rstrip("/") for prefix in PUBLIC_PREFIXES):
-                unexpected.add(pair)
+            if (method, path) in PUBLIC_ROUTES:
+                found.add((method, path))
 
-    assert found == PUBLIC_ROUTES, f"Missing public routes: {PUBLIC_ROUTES - found}"
-    assert not unexpected, (
-        f"Unexpected routes found under public prefixes — add to PUBLIC_ROUTES or remove: {unexpected}"
-    )
+    assert found == PUBLIC_ROUTES

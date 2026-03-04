@@ -399,13 +399,6 @@ class TestAdminV1Contracts:
         monkeypatch.setattr(admin_runtime, "_save_registry_company_doc", _fake_save_company)
         monkeypatch.setattr(admin_runtime, "_registry_db_client", lambda: None)
 
-        # Mock provider catalog to allow all capabilities for this contract test
-        monkeypatch.setattr(
-            admin_runtime,
-            "_effective_mcp_provider_catalog",
-            lambda: {"mock": {"capabilities": ["read", "write"], "requiresSecretRef": False}},
-        )
-
         response = await client.put(
             "/api/v1/admin/companies/ekaette-telecom/connectors/crm?tenantId=public",
             headers={**_admin_headers(), "Idempotency-Key": "contract-connector-update-1"},

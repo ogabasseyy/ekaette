@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import importlib
 import logging
-from typing import Any
+from typing import Any, Callable
 
 from google.genai import types
 
 logger = logging.getLogger(__name__)
+
+_PATCH_INSTALLED = False
+_ORIGINAL_BUILD_RESPONSE_EVENT: Callable[..., Any] | None = None
 
 # S11 scheduling matrix:
 # - User-facing tool responses should speak when the model is idle.
@@ -64,7 +67,8 @@ def _apply_response_scheduling(event: Any, tool_name: str) -> None:
 
 def install_tool_response_scheduling_patch() -> bool:
     """Install one-time patch to set FunctionResponse.scheduling by tool name."""
-    if getattr(install_tool_response_scheduling_patch, "_installed", False):
+    global _PATCH_INSTALLED, _ORIGINAL_BUILD_RESPONSE_EVENT
+    if _PATCH_INSTALLED:
         return True
 
     try:
@@ -73,6 +77,8 @@ def install_tool_response_scheduling_patch() -> bool:
         if not callable(original):
             logger.warning("Tool scheduling patch skipped: build response hook unavailable")
             return False
+
+        _ORIGINAL_BUILD_RESPONSE_EVENT = original
 
         def _patched_build_response_event(
             tool: Any,
@@ -87,7 +93,7 @@ def install_tool_response_scheduling_patch() -> bool:
             return event
 
         setattr(functions_mod, "__build_response_event", _patched_build_response_event)
-        setattr(install_tool_response_scheduling_patch, "_installed", True)
+        _PATCH_INSTALLED = True
         logger.info("Installed live tool response scheduling patch")
         return True
     except Exception as exc:

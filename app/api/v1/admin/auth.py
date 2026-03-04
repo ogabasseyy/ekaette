@@ -342,8 +342,8 @@ async def require_admin_present(request: Request):
                 parsed = json.loads(raw_body.decode("utf-8"))
                 if isinstance(parsed, dict):
                     detail = parsed
-        except (ValueError, UnicodeDecodeError):
-            pass  # Malformed body; fall back to generic detail
+        except Exception:
+            pass
         raise _http_error(error_response.status_code, detail)
     if context is None:
         raise _http_error(401, {"error": "Unauthorized", "code": "UNAUTHORIZED"})

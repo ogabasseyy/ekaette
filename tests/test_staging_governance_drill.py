@@ -8,10 +8,7 @@ from pathlib import Path
 
 import pytest
 
-try:
-    from scripts.staging_governance_drill import run_staging_governance_drill
-except ImportError:
-    pytest.skip("scripts.staging_governance_drill not yet implemented", allow_module_level=True)
+from scripts.staging_governance_drill import run_staging_governance_drill
 
 
 class _CollectionRef:

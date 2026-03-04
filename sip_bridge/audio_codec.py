@@ -38,9 +38,6 @@ def ulaw_to_pcm16(ulaw_bytes: bytes) -> bytes:
 
 def pcm16_to_ulaw(pcm16_bytes: bytes) -> bytes:
     """Convert PCM16 linear bytes to G.711 μ-law."""
-    # Guard against truncated frames — PCM16 samples are 2 bytes each
-    if len(pcm16_bytes) % 2 != 0:
-        pcm16_bytes = pcm16_bytes[:-1]
     n_samples = len(pcm16_bytes) // 2
     samples = struct.unpack(f"<{n_samples}h", pcm16_bytes)
     result = bytearray(n_samples)
@@ -107,9 +104,6 @@ def alaw_to_pcm16(alaw_bytes: bytes) -> bytes:
 
 def resample_8k_to_16k(pcm16_8k: bytes) -> bytes:
     """Upsample PCM16 from 8kHz to 16kHz (linear interpolation)."""
-    # Guard against truncated frames — PCM16 samples are 2 bytes each
-    if len(pcm16_8k) % 2 != 0:
-        pcm16_8k = pcm16_8k[:-1]
     n = len(pcm16_8k) // 2
     if n == 0:
         return b""
@@ -125,9 +119,6 @@ def resample_8k_to_16k(pcm16_8k: bytes) -> bytes:
 
 def resample_24k_to_8k(pcm16_24k: bytes) -> bytes:
     """Downsample PCM16 from 24kHz to 8kHz (every 3rd sample)."""
-    # Guard against truncated frames — PCM16 samples are 2 bytes each
-    if len(pcm16_24k) % 2 != 0:
-        pcm16_24k = pcm16_24k[:-1]
     n = len(pcm16_24k) // 2
     if n == 0:
         return b""

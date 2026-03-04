@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Query
-from fastapi.responses import JSONResponse
 
 from . import campaign_analytics
 from .models import CampaignAnalyticsEventRequest
@@ -62,10 +61,10 @@ async def analytics_campaign(campaign_id: str) -> dict:
     """Get one campaign snapshot."""
     snapshot = campaign_analytics.campaign_snapshot(campaign_id)
     if snapshot is None:
-        return JSONResponse(
-            status_code=404,
-            content={"status": "not_found", "campaign_id": campaign_id},
-        )
+        return {
+            "status": "not_found",
+            "campaign_id": campaign_id,
+        }
     return {
         "status": "ok",
         "campaign": snapshot,

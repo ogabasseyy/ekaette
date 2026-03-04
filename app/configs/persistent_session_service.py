@@ -100,10 +100,11 @@ class PersistentInMemorySessionService(InMemorySessionService):
                 "sessions": sessions_payload,
             }
             temp_path = self._file_path.with_suffix(".tmp")
-            json_text = json.dumps(payload, separators=(",", ":"), ensure_ascii=True)
-            # Offload blocking I/O to a thread to avoid stalling the event loop.
-            await asyncio.to_thread(temp_path.write_text, json_text, "utf-8")
-            await asyncio.to_thread(temp_path.replace, self._file_path)
+            temp_path.write_text(
+                json.dumps(payload, separators=(",", ":"), ensure_ascii=True),
+                encoding="utf-8",
+            )
+            temp_path.replace(self._file_path)
 
     async def create_session(
         self,

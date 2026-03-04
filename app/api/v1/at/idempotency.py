@@ -89,16 +89,6 @@ def idempotency_preflight(
             }
             return None
 
-        # Enforce per-key expiry regardless of global prune cadence
-        if now > float(existing.get("expires_at", 0)):
-            _store.pop(store_key, None)
-            _store[store_key] = {
-                "fingerprint": fp,
-                "state": "pending",
-                "expires_at": now + PENDING_TTL_SECONDS,
-            }
-            return None
-
         # Key exists — check fingerprint match
         if existing.get("fingerprint") != fp:
             raise HTTPException(
@@ -171,8 +161,7 @@ def is_duplicate_callback(session_id: str, event_key: str) -> bool:
             for k in expired:
                 _callback_seen.pop(k, None)
 
-        previous = _callback_seen.get(dedup_key)
-        if previous is not None and (now - previous) <= CALLBACK_DEDUP_WINDOW:
+        if dedup_key in _callback_seen:
             return True
         _callback_seen[dedup_key] = now
         return False

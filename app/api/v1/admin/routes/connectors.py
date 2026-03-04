@@ -442,13 +442,11 @@ async def test_admin_company_connector_route(
             )
         except NotImplementedError as exc:
             failure_code = "CONNECTOR_TEST_NOT_IMPLEMENTED"
-            logger.warning("Connector probe not implemented for %s/%s", normalized_company_id, normalized_connector_id, exc_info=True)
-            failure_details = "Provider test flow not implemented yet."
+            failure_details = str(exc) or "Provider test flow not implemented yet."
             break
         except Exception as exc:  # pragma: no cover - defensive
             failure_code = "CONNECTOR_TEST_FAILED"
-            logger.warning("Connector probe failed for %s/%s", normalized_company_id, normalized_connector_id, exc_info=True)
-            failure_details = "Connector probe failed."
+            failure_details = str(exc) or "Connector probe failed."
 
     await _m._connector_circuit_record_failure(
         circuit_key,

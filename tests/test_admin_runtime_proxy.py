@@ -2,13 +2,8 @@
 
 from __future__ import annotations
 
-import pytest
-
-try:
-    from app.api.v1.admin import settings
-    from app.api.v1.admin.runtime import runtime
-except ImportError:
-    pytest.skip("app.api.v1.admin.runtime not yet implemented", allow_module_level=True)
+from app.api.v1.admin import settings
+from app.api.v1.admin.runtime import runtime
 
 
 def test_runtime_proxy_caches_symbol_module_resolution():

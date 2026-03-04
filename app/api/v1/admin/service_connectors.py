@@ -11,28 +11,6 @@ from app.api.v1.admin.runtime import runtime as _m
 
 from app.api.models import AdminConnectorPayload
 
-_SECRET_KEY_NAMES = {"password", "token", "api_key", "apikey", "secret"}
-
-
-def _find_forbidden_secret_keys(
-    data: dict[str, object],
-    prefix: str = "",
-    _depth: int = 0,
-) -> set[str]:
-    """Recursively scan config for forbidden secret key names."""
-    if _depth > 5:
-        return set()
-    found: set[str] = set()
-    for key, value in data.items():
-        if not isinstance(key, str):
-            continue
-        full_key = f"{prefix}.{key}" if prefix else key
-        if key.strip().lower() in _SECRET_KEY_NAMES:
-            found.add(full_key)
-        if isinstance(value, dict) and _depth < 5:
-            found.update(_find_forbidden_secret_keys(value, prefix=full_key, _depth=_depth + 1))
-    return found
-
 
 def _normalize_connector_payload(
     *,
@@ -83,8 +61,7 @@ def _normalize_connector_payload(
         )
         if str(item).strip()
     }
-    normalized_connector_id = connector_id.strip().lower()
-    if template_allowed_connector_ids and normalized_connector_id not in template_allowed_connector_ids:
+    if template_allowed_connector_ids and connector_id not in template_allowed_connector_ids:
         return None, JSONResponse(
             status_code=400,
             content={
@@ -108,7 +85,12 @@ def _normalize_connector_payload(
         )
 
     config = payload.config if isinstance(payload.config, dict) else {}
-    forbidden_secret_keys = _find_forbidden_secret_keys(config)
+    forbidden_secret_keys = {
+        key
+        for key in config.keys()
+        if isinstance(key, str)
+        and key.strip().lower() in {"password", "token", "api_key", "apikey", "secret"}
+    }
     if forbidden_secret_keys:
         return None, JSONResponse(
             status_code=400,

@@ -62,13 +62,7 @@ def create_compaction_config() -> Optional[EventsCompactionConfig]:
         return None
 
     interval = _env_int("COMPACTION_INTERVAL", _DEFAULT_INTERVAL)
-    if interval <= 0:
-        logger.warning("COMPACTION_INTERVAL=%d is non-positive, using default %d", interval, _DEFAULT_INTERVAL)
-        interval = _DEFAULT_INTERVAL
     overlap = _env_int("COMPACTION_OVERLAP_SIZE", _DEFAULT_OVERLAP)
-    if overlap <= 0:
-        logger.warning("COMPACTION_OVERLAP_SIZE=%d is non-positive, using default %d", overlap, _DEFAULT_OVERLAP)
-        overlap = _DEFAULT_OVERLAP
 
     model_id = os.getenv("COMPACTION_MODEL", "").strip() or None
     summarizer = _create_summarizer(model_id) if model_id else None
@@ -76,17 +70,9 @@ def create_compaction_config() -> Optional[EventsCompactionConfig]:
     token_threshold_raw = os.getenv("COMPACTION_TOKEN_THRESHOLD", "").strip()
     retention_raw = os.getenv("COMPACTION_EVENT_RETENTION_SIZE", "").strip()
     # ADK requires token_threshold and event_retention_size to be set together.
-    # Use explicit None checks (not truthiness) so that configured 0 is detected as invalid.
     token_threshold = int(token_threshold_raw) if token_threshold_raw.isdigit() else None
     event_retention_size = int(retention_raw) if retention_raw.isdigit() else None
-    if token_threshold is None or event_retention_size is None:
-        token_threshold = None
-        event_retention_size = None
-    elif token_threshold <= 0 or event_retention_size <= 0:
-        logger.warning(
-            "Compaction paired thresholds must be positive: token_threshold=%s event_retention_size=%s — ignoring both",
-            token_threshold, event_retention_size,
-        )
+    if not (token_threshold and event_retention_size):
         token_threshold = None
         event_retention_size = None
 

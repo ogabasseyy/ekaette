@@ -239,32 +239,28 @@ async def search_catalog(
     Returns:
         Dict with list of matching products.
     """
-    query_text = query.strip()
-    try:
-        safe_max = max(1, min(int(max_results or 10), 50))
-    except (ValueError, TypeError):
-        safe_max = 10
-
     db = _get_firestore_db()
     if db is None:
+        query_text = query.strip()
         return {
             "error": "Catalog service unavailable; using demo fallback data.",
             "source": "demo_fallback",
             "query": query_text,
-            "products": _fallback_products(query_text, category, safe_max),
+            "products": _fallback_products(query_text, category, max_results),
         }
 
     try:
+        query_text = query.strip()
         collection = scoped_collection_or_global(db, tool_context, "products")
         if collection is None:
             return {
                 "error": "Catalog scope unavailable; using demo fallback data.",
                 "source": "demo_fallback",
                 "query": query_text,
-                "products": _fallback_products(query_text, category, safe_max),
+                "products": _fallback_products(query_text, category, max_results),
             }
 
-        fetch_limit = min(max(safe_max * 5, safe_max), 100)
+        fetch_limit = min(max(max_results * 5, max_results), 100)
         collection = collection.limit(fetch_limit)
 
         docs = await asyncio.to_thread(lambda: list(collection.stream()))
@@ -277,11 +273,11 @@ async def search_catalog(
             if not _product_matches_query(product, query_text):
                 continue
             products.append(product)
-            if len(products) >= safe_max:
+            if len(products) >= max_results:
                 break
 
         if not products:
-            fallback = _fallback_products(query_text, category, safe_max)
+            fallback = _fallback_products(query_text, category, max_results)
             if fallback:
                 return {
                     "query": query_text,
@@ -293,9 +289,10 @@ async def search_catalog(
 
     except Exception as exc:
         logger.error("Catalog search failed: %s", exc)
+        query_text = query.strip()
         return {
-            "error": "Catalog search failed; using demo fallback data.",
+            "error": f"{exc}; using demo fallback data.",
             "source": "demo_fallback",
             "query": query_text,
-            "products": _fallback_products(query_text, category, safe_max),
+            "products": _fallback_products(query_text, category, max_results),
         }

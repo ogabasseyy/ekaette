@@ -19,6 +19,8 @@ from . import bridge_text
 from . import campaign_analytics
 from . import service_voice
 from .models import SendSMSRequest, CampaignSMSRequest
+from app.tools.pii_redaction import redact_pii
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(dependencies=[Depends(verify_at_webhook)])
@@ -48,8 +50,8 @@ async def sms_callback(
     # Send reply via AT SMS
     try:
         result = await providers.send_sms(message=truncated, recipients=[from_])
-    except Exception:
-        logger.warning("AT SMS callback reply failed", exc_info=True)
+    except Exception as exc:
+        logger.warning("AT SMS callback reply failed", exc_info=True, extra={"from": redact_pii(from_), "to": redact_pii(to)})
         return {
             "status": "error",
             "code": "AT_SMS_SEND_FAILED",
@@ -67,7 +69,7 @@ async def sms_callback(
     )
     logger.info(
         "AT SMS reply sent",
-        extra={"reply_length": len(truncated)},
+        extra={"from": redact_pii(from_), "to": redact_pii(to), "reply_length": len(truncated)},
     )
     return {
         "status": "ok",
@@ -86,7 +88,7 @@ async def send_sms(req: SendSMSRequest) -> dict:
     try:
         result = await providers.send_sms(message=truncated, recipients=[req.to])
     except Exception as exc:
-        logger.warning("AT SMS send failed", exc_info=True)
+        logger.warning("AT SMS send failed", exc_info=True, extra={"to": redact_pii(req.to)})
         raise HTTPException(status_code=502, detail="SMS provider unavailable") from exc
 
     campaign_id = campaign_analytics.record_outbound_campaign(

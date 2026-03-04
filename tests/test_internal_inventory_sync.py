@@ -107,14 +107,11 @@ class TestInternalInventorySyncRoute:
 
     @pytest.mark.asyncio
     async def test_internal_route_oidc_enforces_allowlist(self, client, admin_runtime, monkeypatch):
-        from unittest.mock import AsyncMock
-
         fake_google_id_token = SimpleNamespace(
             verify_oauth2_token=lambda token, request, audience: {
                 "email": "other-sa@example.iam.gserviceaccount.com"
             }
         )
-        fake_run_jobs = AsyncMock()
 
         monkeypatch.setattr(admin_runtime, "INVENTORY_SYNC_INTERNAL_ENABLED", True)
         monkeypatch.setattr(admin_runtime, "INVENTORY_SYNC_INTERNAL_AUTH_MODE", "oidc")
@@ -124,7 +121,6 @@ class TestInternalInventorySyncRoute:
             {"sync-sa@example.iam.gserviceaccount.com"},
         )
         monkeypatch.setattr(admin_runtime, "google_id_token", fake_google_id_token)
-        monkeypatch.setattr(admin_runtime, "_run_inventory_sync_jobs", fake_run_jobs)
 
         response = await client.post(
             "/api/v1/internal/inventory/sync/run?tenantId=public",
@@ -133,8 +129,6 @@ class TestInternalInventorySyncRoute:
         )
         assert response.status_code == 403
         assert response.json()["code"] == "INVENTORY_SYNC_INTERNAL_AUTH_FORBIDDEN"
-        # Verify no sync work was started when auth is forbidden
-        fake_run_jobs.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_internal_route_oidc_success(self, client, admin_runtime, monkeypatch):

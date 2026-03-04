@@ -310,7 +310,7 @@ class TestBookingToolsScoped:
 
     @pytest.mark.asyncio
     async def test_create_booking_stores_tenant_and_company(self):
-        """create_booking should write tenant_id + company_id on the booking doc via transaction."""
+        """create_booking should write tenant_id + company_id on the booking doc."""
         from app.tools.booking_tools import create_booking
 
         mock_db = MagicMock()
@@ -330,8 +330,8 @@ class TestBookingToolsScoped:
         mock_scoped_bookings = MagicMock()
         mock_scoped_bookings.document.return_value = mock_booking_ref
 
-        mock_txn = MagicMock()
-        mock_db.transaction.return_value = mock_txn
+        mock_batch = MagicMock()
+        mock_db.batch.return_value = mock_batch
 
         ctx = _make_tool_context(_make_state(
             tenant_id="public",
@@ -345,14 +345,8 @@ class TestBookingToolsScoped:
                 return mock_scoped_bookings
             return MagicMock()
 
-        # @firestore.transactional wraps a function; we bypass it to call directly.
-        def _mock_transactional(fn):
-            return fn
-
         with patch("app.tools.booking_tools._get_firestore_db", return_value=mock_db), \
-             patch("app.tools.booking_tools.scoped_collection_or_global", side_effect=_mock_scoped_or_global), \
-             patch("app.tools.booking_tools.firestore.transactional", side_effect=_mock_transactional), \
-             patch("asyncio.to_thread", side_effect=lambda fn, *args: fn(*args)):
+             patch("app.tools.booking_tools.scoped_collection_or_global", side_effect=_mock_scoped_or_global):
             result = await create_booking(
                 slot_id="slot-001",
                 user_id="user-1",
@@ -363,9 +357,9 @@ class TestBookingToolsScoped:
             )
 
         assert "confirmation_id" in result
-        # Booking data written via txn.set should include tenant_id and company_id
-        txn_set_call = mock_txn.set.call_args
-        booking_data = txn_set_call[0][1]
+        # Booking data should include tenant_id and company_id
+        batch_set_call = mock_batch.set.call_args
+        booking_data = batch_set_call[0][1]
         assert booking_data["tenant_id"] == "public"
         assert booking_data["company_id"] == "ekaette-hotel"
 
