@@ -109,10 +109,11 @@ class CallSession:
 
         # Create UDP socket for RTP if not injected
         if self.media_transport is None and self.local_rtp_port:
+            env_bind_host = os.getenv("SIP_RTP_BIND_HOST", "").strip()
             bind_host = (
                 self.rtp_bind_host.strip()
-                or os.getenv("SIP_RTP_BIND_HOST", "0.0.0.0").strip()
-                or "0.0.0.0"
+                or env_bind_host
+                or "127.0.0.1"
             )
             self.media_transport = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             self.media_transport.setblocking(False)
