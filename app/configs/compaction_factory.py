@@ -70,11 +70,33 @@ def create_compaction_config() -> Optional[EventsCompactionConfig]:
     token_threshold_raw = os.getenv("COMPACTION_TOKEN_THRESHOLD", "").strip()
     retention_raw = os.getenv("COMPACTION_EVENT_RETENTION_SIZE", "").strip()
     # ADK requires token_threshold and event_retention_size to be set together.
-    token_threshold = int(token_threshold_raw) if token_threshold_raw.isdigit() else None
-    event_retention_size = int(retention_raw) if retention_raw.isdigit() else None
-    if not (token_threshold and event_retention_size):
-        token_threshold = None
-        event_retention_size = None
+    token_threshold: int | None = None
+    event_retention_size: int | None = None
+    if token_threshold_raw or retention_raw:
+        try:
+            token_threshold = int(token_threshold_raw) if token_threshold_raw else None
+            event_retention_size = int(retention_raw) if retention_raw else None
+        except ValueError:
+            logger.warning(
+                "Invalid compaction threshold settings: token_threshold=%r retention=%r",
+                token_threshold_raw,
+                retention_raw,
+            )
+            token_threshold = None
+            event_retention_size = None
+        if (
+            token_threshold is None
+            or event_retention_size is None
+            or token_threshold <= 0
+            or event_retention_size < 0
+        ):
+            logger.warning(
+                "Ignoring invalid compaction threshold settings (token_threshold=%r event_retention_size=%r)",
+                token_threshold_raw,
+                retention_raw,
+            )
+            token_threshold = None
+            event_retention_size = None
 
     config = EventsCompactionConfig(
         compaction_interval=interval,

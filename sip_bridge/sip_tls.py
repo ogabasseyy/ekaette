@@ -194,15 +194,23 @@ def serialize_message(msg: SipMessage) -> bytes:
 
     Header names are title-cased for wire compatibility.
     """
+    body_bytes = msg.body.encode("utf-8")
+    headers = {
+        normalize_header_name(name): value
+        for name, value in msg.headers.items()
+    }
+    # RFC 3261 framing over stream transports depends on exact body byte length.
+    headers["content-length"] = str(len(body_bytes))
+
     lines: list[str] = [msg.first_line]
 
-    for name, value in msg.headers.items():
+    for name, value in headers.items():
         # Title-case header name for wire format (e.g., call-id -> Call-Id)
         wire_name = "-".join(part.capitalize() for part in name.split("-"))
         lines.append(f"{wire_name}: {value}")
 
     header_block = "\r\n".join(lines) + "\r\n\r\n"
-    return header_block.encode("utf-8") + msg.body.encode("utf-8")
+    return header_block.encode("utf-8") + body_bytes
 
 
 # ---------------------------------------------------------------------------
@@ -221,9 +229,10 @@ def create_tls_context(
     For server mode: requires certfile + keyfile.
     """
     if server_side:
+        if not certfile or not keyfile:
+            raise ValueError("certfile and keyfile are required for server-side TLS")
         ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        if certfile and keyfile:
-            ctx.load_cert_chain(certfile, keyfile)
+        ctx.load_cert_chain(certfile, keyfile)
     else:
         ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
 

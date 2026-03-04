@@ -36,6 +36,18 @@ class NovaVoiceClient:
         self._audio_queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=256)
 
     async def connect(self) -> None:
+        if (
+            self._session is not None
+            and self._recv_task is not None
+            and not self._recv_task.done()
+        ):
+            logger.debug("Nova voice client connect() called while already connected")
+            return
+
+        # Defensive cleanup for partially-closed states from prior failures.
+        if self._session is not None or self._recv_task is not None:
+            await self.close()
+
         self._session = NovaBedrockVoiceSession(model_id=self.model_id, region=self.region)
         self._recv_task = asyncio.create_task(self._recv_loop(), name="nova_voice_recv_loop")
         logger.info(
@@ -84,4 +96,3 @@ class NovaVoiceClient:
         if self._session is not None:
             await self._session.close()
             self._session = None
-

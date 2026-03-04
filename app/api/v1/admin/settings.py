@@ -225,6 +225,7 @@ RATE_LIMIT_WINDOW = int(_cfg.rate_limit_window)
 RATE_LIMIT_MAX_BUCKETS = int(_cfg.rate_limit_max_buckets)
 _rate_limit_buckets: dict[str, list[float]] = {}
 _rate_limit_last_global_prune = 0.0
+_rate_limit_lock = threading.Lock()
 
 
 def reset_runtime_state() -> None:

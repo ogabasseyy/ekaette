@@ -99,12 +99,16 @@ class PersistentInMemorySessionService(InMemorySessionService):
                 "user_state": self._redact_user_state(self.user_state),
                 "sessions": sessions_payload,
             }
-            temp_path = self._file_path.with_suffix(".tmp")
-            temp_path.write_text(
-                json.dumps(payload, separators=(",", ":"), ensure_ascii=True),
-                encoding="utf-8",
-            )
-            temp_path.replace(self._file_path)
+            await asyncio.to_thread(self._write_snapshot_file, payload)
+
+    def _write_snapshot_file(self, payload: dict[str, Any]) -> None:
+        """Persist snapshot atomically using a temp file swap."""
+        temp_path = self._file_path.with_suffix(".tmp")
+        temp_path.write_text(
+            json.dumps(payload, separators=(",", ":"), ensure_ascii=True),
+            encoding="utf-8",
+        )
+        temp_path.replace(self._file_path)
 
     async def create_session(
         self,

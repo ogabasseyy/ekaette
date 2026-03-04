@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+from decimal import Decimal
 import os
 from typing import Any
 
@@ -24,15 +26,16 @@ class DynamoCallStore:
         company_id: str,
         started_at: float,
     ) -> None:
-        self._table.put_item(
+        await asyncio.to_thread(
+            self._table.put_item,
             Item={
                 "pk": f"call#{call_id}",
                 "sk": "state",
                 "tenant_id": tenant_id,
                 "company_id": company_id,
                 "status": "active",
-                "started_at": started_at,
-            }
+                "started_at": Decimal(str(started_at)),
+            },
         )
 
     async def set_terminated(
@@ -42,19 +45,22 @@ class DynamoCallStore:
         ended_at: float,
         duration_seconds: float,
     ) -> None:
-        self._table.update_item(
+        await asyncio.to_thread(
+            self._table.update_item,
             Key={"pk": f"call#{call_id}", "sk": "state"},
             UpdateExpression="SET #st=:st, ended_at=:ended_at, duration_seconds=:duration_seconds",
             ExpressionAttributeNames={"#st": "status"},
             ExpressionAttributeValues={
                 ":st": "terminated",
-                ":ended_at": ended_at,
-                ":duration_seconds": duration_seconds,
+                ":ended_at": Decimal(str(ended_at)),
+                ":duration_seconds": Decimal(str(duration_seconds)),
             },
         )
 
     async def get(self, *, call_id: str) -> dict[str, Any] | None:
-        response = self._table.get_item(Key={"pk": f"call#{call_id}", "sk": "state"})
+        response = await asyncio.to_thread(
+            self._table.get_item,
+            Key={"pk": f"call#{call_id}", "sk": "state"},
+        )
         item = response.get("Item")
         return item if isinstance(item, dict) else None
-

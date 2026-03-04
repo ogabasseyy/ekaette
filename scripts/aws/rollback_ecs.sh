@@ -20,5 +20,29 @@ aws ecs wait services-stable \
   --cluster "$ECS_CLUSTER" \
   --services "$ECS_SERVICE"
 
-echo "Rollback complete."
+current_task_def="$(aws ecs describe-services \
+  --region "$AWS_REGION" \
+  --cluster "$ECS_CLUSTER" \
+  --services "$ECS_SERVICE" \
+  --query 'services[0].taskDefinition' \
+  --output text)"
+primary_rollout_state="$(aws ecs describe-services \
+  --region "$AWS_REGION" \
+  --cluster "$ECS_CLUSTER" \
+  --services "$ECS_SERVICE" \
+  --query 'services[0].deployments[?status==`PRIMARY`].rolloutState | [0]' \
+  --output text)"
 
+if [[ "$current_task_def" != "$TASK_DEF_ARN" ]]; then
+  echo "Rollback did not converge to expected task definition." >&2
+  echo "Expected: $TASK_DEF_ARN" >&2
+  echo "Current:  $current_task_def" >&2
+  exit 1
+fi
+if [[ "$primary_rollout_state" != "COMPLETED" ]]; then
+  echo "Rollback deployment is not fully completed." >&2
+  echo "Rollout: $primary_rollout_state" >&2
+  exit 1
+fi
+
+echo "Rollback complete."

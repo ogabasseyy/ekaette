@@ -45,7 +45,7 @@ class CampaignState:
 _lock = threading.Lock()
 _campaigns: dict[str, CampaignState] = {}
 _events: list[dict[str, Any]] = []
-_seen_event_ids: set[str] = set()
+_seen_event_ids: dict[str, float] = {}
 _recipient_last_campaign: dict[tuple[str, str, str], str] = {}
 
 
@@ -74,14 +74,17 @@ def _build_campaign_id(channel: str) -> str:
 def _event_deduped(event_id: str | None) -> bool:
     if not event_id:
         return False
+    now_ts = datetime.now(timezone.utc).timestamp()
     with _lock:
         if event_id in _seen_event_ids:
             return True
-        _seen_event_ids.add(event_id)
+        _seen_event_ids[event_id] = now_ts
         if len(_seen_event_ids) > 10_000:
-            # Keep bounded in-memory state.
-            while len(_seen_event_ids) > 5_000:
-                _seen_event_ids.pop()
+            # Deterministically evict the oldest entries first.
+            overflow = len(_seen_event_ids) - 5_000
+            oldest_ids = sorted(_seen_event_ids.items(), key=lambda item: item[1])[:overflow]
+            for stale_event_id, _ in oldest_ids:
+                _seen_event_ids.pop(stale_event_id, None)
         return False
 
 
@@ -95,10 +98,18 @@ def _ensure_campaign(
     campaign_name: str | None = None,
 ) -> CampaignState:
     normalized_channel = _normalize_channel(channel)
+    normalized_tenant = (tenant_id or "public").strip() or "public"
+    normalized_company = (company_id or "ekaette-electronics").strip() or "ekaette-electronics"
     resolved_campaign_id = (campaign_id or "").strip() or _build_campaign_id(normalized_channel)
     now = _now_iso()
     with _lock:
         existing = _campaigns.get(resolved_campaign_id)
+        if existing is not None and (
+            existing.tenant_id != normalized_tenant or existing.company_id != normalized_company
+        ):
+            # Prevent campaign ID collisions from polluting another tenant/company scope.
+            resolved_campaign_id = _build_campaign_id(normalized_channel)
+            existing = None
         if existing is not None:
             existing.updated_at = now
             if message and not existing.message:
@@ -110,8 +121,8 @@ def _ensure_campaign(
         state = CampaignState(
             campaign_id=resolved_campaign_id,
             channel=normalized_channel,
-            tenant_id=(tenant_id or "public").strip() or "public",
-            company_id=(company_id or "ekaette-electronics").strip() or "ekaette-electronics",
+            tenant_id=normalized_tenant,
+            company_id=normalized_company,
             campaign_name=(campaign_name or "").strip() or f"{normalized_channel.upper()} Campaign",
             message=message,
             created_at=now,

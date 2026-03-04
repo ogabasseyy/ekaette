@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from app.api.v1.at import service_payments
+
+logger = logging.getLogger(__name__)
 
 
 def _tenant_company_from_context(tool_context: Any) -> tuple[str, str]:
@@ -16,6 +19,12 @@ def _tenant_company_from_context(tool_context: Any) -> tuple[str, str]:
         else "ekaette-electronics"
     )
     return tenant_id, company_id
+
+
+def _record_matches_scope(record: dict[str, Any], *, tenant_id: str, company_id: str) -> bool:
+    record_tenant_id = str(record.get("tenant_id") or "").strip() or "public"
+    record_company_id = str(record.get("company_id") or "").strip() or "ekaette-electronics"
+    return record_tenant_id == tenant_id and record_company_id == company_id
 
 
 async def create_virtual_account_payment(
@@ -54,9 +63,10 @@ async def create_virtual_account_payment(
             "code": "PAYMENT_VIRTUAL_ACCOUNT_CREATE_FAILED",
             "status_code": exc.status_code,
         }
-    except Exception as exc:
+    except Exception:
+        logger.exception("Unexpected virtual account creation error")
         return {
-            "error": f"Unexpected payment error: {exc}",
+            "error": "Unexpected payment error",
             "code": "PAYMENT_VIRTUAL_ACCOUNT_UNEXPECTED",
             "status_code": 500,
         }
@@ -90,12 +100,24 @@ async def create_virtual_account_payment(
 
 async def check_payment_status(reference: str, tool_context: Any = None) -> dict[str, Any]:
     """Check payment status from local state, then fallback to Paystack verify."""
-    _ = tool_context  # Reserved for future scoped auth checks.
+    tenant_id, company_id = _tenant_company_from_context(tool_context)
 
     local_payment = service_payments.payment_snapshot(reference)
     local_virtual = service_payments.virtual_account_snapshot(reference)
 
     if local_payment is not None:
+        if not _record_matches_scope(local_payment, tenant_id=tenant_id, company_id=company_id):
+            return {
+                "error": "Payment record not found for tenant/company scope",
+                "code": "PAYMENT_REFERENCE_NOT_FOUND",
+                "reference": reference,
+            }
+        if isinstance(local_virtual, dict) and not _record_matches_scope(
+            local_virtual,
+            tenant_id=tenant_id,
+            company_id=company_id,
+        ):
+            local_virtual = None
         return {
             "status": "ok",
             "source": "local",
@@ -113,11 +135,24 @@ async def check_payment_status(reference: str, tool_context: Any = None) -> dict
             "status_code": exc.status_code,
             "reference": reference,
         }
-    except Exception as exc:
+    except Exception:
+        logger.exception("Unexpected payment verification error")
         return {
-            "error": f"Unexpected payment verification error: {exc}",
+            "error": "Unexpected payment verification error",
             "code": "PAYMENT_VERIFY_UNEXPECTED",
             "status_code": 500,
+            "reference": reference,
+        }
+
+    verified_payment = verified.get("payment")
+    if isinstance(verified_payment, dict) and not _record_matches_scope(
+        verified_payment,
+        tenant_id=tenant_id,
+        company_id=company_id,
+    ):
+        return {
+            "error": "Payment record not found for tenant/company scope",
+            "code": "PAYMENT_REFERENCE_NOT_FOUND",
             "reference": reference,
         }
 
@@ -132,9 +167,15 @@ async def check_payment_status(reference: str, tool_context: Any = None) -> dict
 
 async def get_virtual_account_record(reference: str, tool_context: Any = None) -> dict[str, Any]:
     """Fetch virtual account metadata by reference."""
-    _ = tool_context
+    tenant_id, company_id = _tenant_company_from_context(tool_context)
     record = service_payments.virtual_account_snapshot(reference)
     if record is None:
+        return {
+            "error": "Virtual account not found",
+            "code": "VIRTUAL_ACCOUNT_NOT_FOUND",
+            "reference": reference,
+        }
+    if not _record_matches_scope(record, tenant_id=tenant_id, company_id=company_id):
         return {
             "error": "Virtual account not found",
             "code": "VIRTUAL_ACCOUNT_NOT_FOUND",

@@ -38,6 +38,22 @@ resource "aws_subnet" "public_b" {
   tags                    = merge(local.tags, { Name = "${local.name}-public-b" })
 }
 
+resource "aws_subnet" "private_a" {
+  vpc_id                  = aws_vpc.main.id
+  cidr_block              = "10.80.11.0/24"
+  availability_zone       = data.aws_availability_zones.available.names[0]
+  map_public_ip_on_launch = false
+  tags                    = merge(local.tags, { Name = "${local.name}-private-a" })
+}
+
+resource "aws_subnet" "private_b" {
+  vpc_id                  = aws_vpc.main.id
+  cidr_block              = "10.80.12.0/24"
+  availability_zone       = data.aws_availability_zones.available.names[1]
+  map_public_ip_on_launch = false
+  tags                    = merge(local.tags, { Name = "${local.name}-private-b" })
+}
+
 resource "aws_route_table" "public" {
   vpc_id = aws_vpc.main.id
   route {
@@ -57,6 +73,39 @@ resource "aws_route_table_association" "public_b" {
   route_table_id = aws_route_table.public.id
 }
 
+resource "aws_eip" "nat" {
+  domain = "vpc"
+  tags   = merge(local.tags, { Name = "${local.name}-nat-eip" })
+}
+
+resource "aws_nat_gateway" "main" {
+  allocation_id = aws_eip.nat.id
+  subnet_id     = aws_subnet.public_a.id
+  depends_on    = [aws_internet_gateway.main]
+  tags          = merge(local.tags, { Name = "${local.name}-nat" })
+}
+
+resource "aws_route_table" "private" {
+  vpc_id = aws_vpc.main.id
+
+  route {
+    cidr_block     = "0.0.0.0/0"
+    nat_gateway_id = aws_nat_gateway.main.id
+  }
+
+  tags = merge(local.tags, { Name = "${local.name}-private-rt" })
+}
+
+resource "aws_route_table_association" "private_a" {
+  subnet_id      = aws_subnet.private_a.id
+  route_table_id = aws_route_table.private.id
+}
+
+resource "aws_route_table_association" "private_b" {
+  subnet_id      = aws_subnet.private_b.id
+  route_table_id = aws_route_table.private.id
+}
+
 resource "aws_security_group" "alb" {
   name        = "${local.name}-alb-sg"
   description = "ALB ingress"
@@ -65,6 +114,13 @@ resource "aws_security_group" "alb" {
   ingress {
     from_port   = 80
     to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    from_port   = 443
+    to_port     = 443
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
@@ -137,13 +193,37 @@ resource "aws_lb_listener" "http" {
   protocol          = "HTTP"
 
   default_action {
+    type = "redirect"
+
+    redirect {
+      port        = "443"
+      protocol    = "HTTPS"
+      status_code = "HTTP_301"
+    }
+  }
+}
+
+resource "aws_lb_listener" "https" {
+  load_balancer_arn = aws_lb.app.arn
+  port              = 443
+  protocol          = "HTTPS"
+  ssl_policy        = "ELBSecurityPolicy-2016-08"
+  certificate_arn   = var.alb_certificate_arn
+
+  default_action {
     type             = "forward"
     target_group_arn = aws_lb_target_group.app.arn
   }
 }
 
 resource "aws_ecr_repository" "app" {
-  name = local.name
+  name                 = local.name
+  image_tag_mutability = "IMMUTABLE"
+
+  image_scanning_configuration {
+    scan_on_push = true
+  }
+
   tags = local.tags
 }
 
@@ -192,65 +272,59 @@ resource "aws_iam_role_policy" "task_runtime" {
   role = aws_iam_role.task.id
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [
-      {
-        Sid    = "BedrockInvoke"
-        Effect = "Allow"
-        Action = [
-          "bedrock:InvokeModel",
-          "bedrock:InvokeModelWithResponseStream",
-          "bedrock:InvokeModelWithBidirectionalStream"
-        ]
-        Resource = "*"
-      },
-      {
-        Sid    = "DynamoAccess"
-        Effect = "Allow"
-        Action = [
-          "dynamodb:GetItem",
-          "dynamodb:PutItem",
-          "dynamodb:UpdateItem",
-          "dynamodb:DeleteItem",
-          "dynamodb:Query",
-          "dynamodb:Scan"
-        ]
-        Resource = [
-          aws_dynamodb_table.sessions.arn,
-          aws_dynamodb_table.registry.arn,
-          aws_dynamodb_table.calls.arn
-        ]
-      },
-      {
-        Sid    = "S3MediaAccess"
-        Effect = "Allow"
-        Action = [
-          "s3:PutObject",
-          "s3:GetObject",
-          "s3:ListBucket"
-        ]
-        Resource = [
-          aws_s3_bucket.media.arn,
-          "${aws_s3_bucket.media.arn}/*"
-        ]
-      },
-      {
-        Sid    = "CloudWatchMetrics"
-        Effect = "Allow"
-        Action = [
-          "cloudwatch:PutMetricData"
-        ]
-        Resource = "*"
-      },
-      {
-        Sid    = "ReadSecrets"
-        Effect = "Allow"
-        Action = [
-          "secretsmanager:GetSecretValue",
-          "kms:Decrypt"
-        ]
-        Resource = length(var.secret_arns) > 0 ? values(var.secret_arns) : ["*"]
-      }
-    ]
+    Statement = concat(
+      [
+        {
+          Sid    = "BedrockInvoke"
+          Effect = "Allow"
+          Action = [
+            "bedrock:InvokeModel",
+            "bedrock:InvokeModelWithResponseStream",
+            "bedrock:InvokeModelWithBidirectionalStream"
+          ]
+          Resource = "*"
+        },
+        {
+          Sid    = "DynamoAccess"
+          Effect = "Allow"
+          Action = [
+            "dynamodb:GetItem",
+            "dynamodb:PutItem",
+            "dynamodb:UpdateItem",
+            "dynamodb:DeleteItem",
+            "dynamodb:Query",
+            "dynamodb:Scan"
+          ]
+          Resource = [
+            aws_dynamodb_table.sessions.arn,
+            aws_dynamodb_table.registry.arn,
+            aws_dynamodb_table.calls.arn
+          ]
+        },
+        {
+          Sid    = "S3MediaAccess"
+          Effect = "Allow"
+          Action = [
+            "s3:PutObject",
+            "s3:GetObject",
+            "s3:ListBucket"
+          ]
+          Resource = [
+            aws_s3_bucket.media.arn,
+            "${aws_s3_bucket.media.arn}/*"
+          ]
+        },
+        {
+          Sid    = "CloudWatchMetrics"
+          Effect = "Allow"
+          Action = [
+            "cloudwatch:PutMetricData"
+          ]
+          Resource = "*"
+        }
+      ],
+      local.secret_access_statements
+    )
   })
 }
 
@@ -268,6 +342,11 @@ resource "aws_dynamodb_table" "sessions" {
     name = "sk"
     type = "S"
   }
+
+  point_in_time_recovery {
+    enabled = true
+  }
+
   tags = local.tags
 }
 
@@ -285,6 +364,11 @@ resource "aws_dynamodb_table" "registry" {
     name = "sk"
     type = "S"
   }
+
+  point_in_time_recovery {
+    enabled = true
+  }
+
   tags = local.tags
 }
 
@@ -302,6 +386,11 @@ resource "aws_dynamodb_table" "calls" {
     name = "sk"
     type = "S"
   }
+
+  point_in_time_recovery {
+    enabled = true
+  }
+
   tags = local.tags
 }
 
@@ -321,10 +410,38 @@ resource "aws_s3_bucket_public_access_block" "media" {
 data "aws_caller_identity" "current" {}
 
 locals {
+  secret_access_statements = length(var.secret_arns) == 0 ? [] : [
+    {
+      Sid    = "ReadSecrets"
+      Effect = "Allow"
+      Action = [
+        "secretsmanager:GetSecretValue"
+      ]
+      Resource = values(var.secret_arns)
+    },
+    {
+      Sid    = "DecryptSecrets"
+      Effect = "Allow"
+      Action = [
+        "kms:Decrypt"
+      ]
+      Resource = "*"
+      Condition = {
+        StringEquals = {
+          "kms:ViaService" = "secretsmanager.${var.aws_region}.amazonaws.com"
+        }
+        "ForAnyValue:StringEquals" = {
+          "kms:EncryptionContext:SecretARN" = values(var.secret_arns)
+        }
+      }
+    }
+  ]
+
   ecs_env = [
     for k, v in merge(
       var.app_env_vars,
       {
+        AWS_REGION              = var.aws_region
         PORT                    = tostring(var.container_port)
         DYNAMODB_SESSIONS_TABLE = aws_dynamodb_table.sessions.name
         DYNAMODB_REGISTRY_TABLE = aws_dynamodb_table.registry.name
@@ -382,9 +499,9 @@ resource "aws_ecs_service" "app" {
   launch_type     = "FARGATE"
 
   network_configuration {
-    subnets          = [aws_subnet.public_a.id, aws_subnet.public_b.id]
+    subnets          = [aws_subnet.private_a.id, aws_subnet.private_b.id]
     security_groups  = [aws_security_group.ecs.id]
-    assign_public_ip = true
+    assign_public_ip = false
   }
 
   load_balancer {
@@ -393,7 +510,7 @@ resource "aws_ecs_service" "app" {
     container_port   = var.container_port
   }
 
-  depends_on = [aws_lb_listener.http]
+  depends_on = [aws_lb_listener.https]
   tags       = local.tags
 }
 

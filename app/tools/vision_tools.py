@@ -11,6 +11,7 @@ import binascii
 import json
 import logging
 import os
+import re
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -27,6 +28,12 @@ MEDIA_BUCKET = os.getenv("MEDIA_BUCKET", "")
 _genai_client: genai.Client | None = None
 _storage_client: Any = None
 _latest_images: dict[str, dict[str, Any]] = {}
+_PATH_SEGMENT_RE = re.compile(r"[^A-Za-z0-9._-]+")
+
+try:
+    _MAX_LATEST_IMAGES = max(1, int(os.getenv("VISION_LATEST_IMAGE_CACHE_SIZE", "500")))
+except (TypeError, ValueError):
+    _MAX_LATEST_IMAGES = 500
 
 ANALYSIS_PROMPT = """Analyze this device image for a trade-in valuation.
 Return a JSON object with exactly this structure:
@@ -87,6 +94,9 @@ def cache_latest_image(
         "mime_type": mime_type,
         "cached_at": datetime.now(timezone.utc).isoformat(),
     }
+    while len(_latest_images) > _MAX_LATEST_IMAGES:
+        oldest_key = next(iter(_latest_images))
+        _latest_images.pop(oldest_key, None)
 
 
 def get_latest_image(user_id: str, session_id: str) -> dict[str, Any] | None:
@@ -104,6 +114,12 @@ def _artifact_filename(mime_type: str) -> str:
     }
     ext = ext_map.get(mime_type, "bin")
     return f"customer_image_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}.{ext}"
+
+
+def _sanitize_path_segment(value: str, *, fallback: str) -> str:
+    candidate = _PATH_SEGMENT_RE.sub("_", (value or "").strip())
+    candidate = candidate.strip("._")
+    return candidate or fallback
 
 
 async def analyze_device_image(
@@ -162,13 +178,13 @@ async def analyze_device_image(
                 "raw_analysis": raw_text,
             }
 
-    except Exception as exc:
-        logger.error("Vision analysis failed: %s", exc)
+    except Exception:
+        logger.exception("Vision analysis failed")
         return {
             "device_name": "Unknown",
             "condition": "Unknown",
             "details": {},
-            "error": str(exc),
+            "error": "Vision analysis failed",
         }
 
 
@@ -206,7 +222,9 @@ async def upload_to_cloud_storage(
     ext = ext_map.get(mime_type, "bin")
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     unique_id = uuid.uuid4().hex[:8]
-    blob_path = f"uploads/{user_id}/{session_id}/{timestamp}_{unique_id}.{ext}"
+    safe_user_id = _sanitize_path_segment(user_id, fallback="anonymous")
+    safe_session_id = _sanitize_path_segment(session_id, fallback="unknown-session")
+    blob_path = f"uploads/{safe_user_id}/{safe_session_id}/{timestamp}_{unique_id}.{ext}"
 
     try:
         bucket = storage_client.bucket(MEDIA_BUCKET)
@@ -217,9 +235,9 @@ async def upload_to_cloud_storage(
         logger.info("Uploaded image: %s", gcs_uri)
         return {"gcs_uri": gcs_uri, "blob_path": blob_path}
 
-    except Exception as exc:
-        logger.error("Cloud Storage upload failed: %s", exc)
-        return {"error": str(exc)}
+    except Exception:
+        logger.exception("Cloud Storage upload failed")
+        return {"error": "Cloud Storage upload failed"}
 
 
 async def analyze_device_image_tool(

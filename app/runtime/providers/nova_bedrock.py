@@ -7,7 +7,7 @@ import base64
 import json
 import logging
 import os
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, cast
 
 import boto3
 
@@ -118,7 +118,6 @@ class NovaBedrockVisionClient(VisionClient):
         prompt: str,
         max_tokens: int = 512,
     ) -> dict[str, Any]:
-        loop = asyncio.get_running_loop()
         image_format = _image_format_from_mime(mime_type)
 
         def _invoke() -> dict[str, Any]:
@@ -154,11 +153,14 @@ class NovaBedrockVisionClient(VisionClient):
                 return {}
             # Providers often return a JSON blob as text. Parse when possible.
             try:
-                return json.loads(text)
+                parsed = json.loads(text)
+                if isinstance(parsed, dict):
+                    return parsed
+                return {"raw_analysis": text}
             except json.JSONDecodeError:
                 return {"raw_analysis": text}
 
-        return await loop.run_in_executor(None, _invoke)
+        return await asyncio.to_thread(_invoke)
 
 
 class NovaBedrockVoiceSession(VoiceSession):
@@ -173,7 +175,8 @@ class NovaBedrockVoiceSession(VoiceSession):
     def __init__(self, *, model_id: str, region: str | None = None) -> None:
         self.model_id = model_id
         self.region = region or os.getenv("AWS_REGION", "us-east-1")
-        self._queue: asyncio.Queue[VoiceEvent] = asyncio.Queue()
+        self._close_sentinel = object()
+        self._queue: asyncio.Queue[VoiceEvent | object] = asyncio.Queue()
         self._closed = False
         self._warning_emitted = False
 
@@ -220,12 +223,17 @@ class NovaBedrockVoiceSession(VoiceSession):
         await self._emit_unavailable_once()
 
     async def events(self) -> AsyncIterator[VoiceEvent]:
-        while not self._closed:
+        while True:
             event = await self._queue.get()
-            yield event
+            if event is self._close_sentinel:
+                break
+            yield cast(VoiceEvent, event)
 
     async def close(self) -> None:
+        if self._closed:
+            return
         self._closed = True
+        self._queue.put_nowait(self._close_sentinel)
 
 
 def base64_audio_to_bytes(data: str) -> bytes:
@@ -235,4 +243,3 @@ def base64_audio_to_bytes(data: str) -> bytes:
     except Exception:
         logger.warning("Failed to decode provider audio payload")
         return b""
-

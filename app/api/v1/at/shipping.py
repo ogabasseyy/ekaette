@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Query
 
+from app.configs import sanitize_log
+
 from app.tools.shipping_tools import (
     create_order_record,
     get_topship_delivery_quote,
@@ -42,6 +44,20 @@ _SHIPPING_ORDER_ERROR_STATUS_MAP: dict[str, int] = {
     "TOPSHIP_TRACKING_INVALID_RESPONSE": 502,
     "TOPSHIP_TRACKING_API_ERROR": 502,
     "TOPSHIP_TRACKING_REQUEST_FAILED": 502,
+}
+
+_SHIPPING_ORDER_ERROR_MESSAGE_MAP: dict[str, str] = {
+    "ORDER_INVALID": "Invalid shipping order request",
+    "ORDER_NOT_FOUND": "Shipping order not found",
+    "ORDER_SCOPE_UNAVAILABLE": "Shipping order scope unavailable",
+    "ORDER_REVIEW_CONTACT_MISSING": "Customer contact is required for review follow-up",
+    "ORDER_REVIEW_NOTIFICATION_FAILED": "Order review follow-up notification failed",
+    "TOPSHIP_NOT_CONFIGURED": "Topship integration is not configured",
+    "TOPSHIP_TRACKING_ID_REQUIRED": "Tracking ID is required",
+    "TOPSHIP_TRACKING_NOT_FOUND": "Tracking record not found",
+    "TOPSHIP_TRACKING_INVALID_RESPONSE": "Topship tracking returned an invalid response",
+    "TOPSHIP_TRACKING_API_ERROR": "Topship tracking API error",
+    "TOPSHIP_TRACKING_REQUEST_FAILED": "Topship tracking request failed",
 }
 
 
@@ -107,7 +123,11 @@ async def topship_quote_get(
 def _raise_order_tool_error(result: dict) -> None:
     code = str(result.get("code") or "SHIPPING_ORDER_ERROR")
     status_code = _SHIPPING_ORDER_ERROR_STATUS_MAP.get(code, 500)
-    raise HTTPException(status_code=status_code, detail=result)
+    detail = {
+        "error": _SHIPPING_ORDER_ERROR_MESSAGE_MAP.get(code, "Shipping order request failed"),
+        "code": sanitize_log(code),
+    }
+    raise HTTPException(status_code=status_code, detail=detail)
 
 
 @router.post("/shipping/orders")

@@ -18,14 +18,15 @@ This stack provisions:
 cd infra/aws/terraform
 terraform init
 terraform apply \
-  -var="container_image=<aws_account>.dkr.ecr.us-east-1.amazonaws.com/ekaette-nova:<tag>"
+  -var="alb_certificate_arn=<acm_certificate_arn>" \
+  -var="container_image=<aws_account>.dkr.ecr.<region>.amazonaws.com/ekaette-nova:<tag>"
 ```
 
 Optional secrets:
 
 ```bash
 terraform apply \
+  -var="alb_certificate_arn=<acm_certificate_arn>" \
   -var="container_image=..." \
-  -var='secret_arns={"AT_API_KEY"="arn:aws:secretsmanager:...:secret:at_api_key"}'
+  -var='secret_arns={"AT_API_KEY"="arn:aws:secretsmanager:<region>:<account_id>:secret:at_api_key"}'
 ```
-

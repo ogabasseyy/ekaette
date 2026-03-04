@@ -41,7 +41,12 @@ class TestSessionStateSchema:
 
         # Temp keys are optional but when present must be prefixed
         temp_keys = [k for k in state if k.startswith("temp:")]
-        # No assertion on count — just verify structure is valid
+        invalid_transient_keys = [
+            key for key in state
+            if "temp" in key and not key.startswith("temp:")
+        ]
+        assert all(key.startswith("temp:") for key in temp_keys)
+        assert not invalid_transient_keys
 
 
 class TestDatabaseSessionServiceIntegration:

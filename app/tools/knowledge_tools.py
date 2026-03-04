@@ -176,6 +176,14 @@ def _knowledge_score(
     return score
 
 
+def _safe_max_results(value: Any, *, default: int = 3) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = default
+    return max(1, min(parsed, 10))
+
+
 async def search_company_knowledge(
     query: str,
     max_results: int = 3,
@@ -201,7 +209,7 @@ async def search_company_knowledge(
             "company_id": company_id,
         }
 
-    safe_max = max(1, min(int(max_results or 3), 10))
+    safe_max = _safe_max_results(max_results, default=3)
     tokens = _tokenize(query)
     token_patterns = _compile_word_patterns(tokens)
 

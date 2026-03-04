@@ -33,6 +33,18 @@ def _contains_model(summaries: Iterable[dict], model_id: str) -> bool:
     return False
 
 
+def _fallback_candidates(candidates: tuple[str, ...], active_model: str | None) -> tuple[str, ...]:
+    """Return retry candidates without repeating the currently active model."""
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for candidate in candidates:
+        if candidate == active_model or candidate in seen:
+            continue
+        seen.add(candidate)
+        ordered.append(candidate)
+    return tuple(ordered)
+
+
 def _list_bedrock_models(bedrock_client) -> list[dict]:
     """List Amazon foundation models with non-paginated API fallback."""
     summaries: list[dict] = []
@@ -106,8 +118,8 @@ def probe_provider_capabilities(
         voice_model_id=voice_model,
         reasoning_model_id=reasoning_model,
         vision_model_id=vision_model,
-        voice_model_fallbacks=tuple(voice_candidates[1:]) if voice_candidates else (),
-        reasoning_model_fallbacks=tuple(reasoning_candidates[1:]) if reasoning_candidates else (),
+        voice_model_fallbacks=_fallback_candidates(voice_candidates, voice_model),
+        reasoning_model_fallbacks=_fallback_candidates(reasoning_candidates, reasoning_model),
         supports_bidirectional_voice=voice_model is not None,
         supports_reasoning=reasoning_model is not None,
         supports_vision=vision_model is not None,

@@ -12,6 +12,8 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Response
 
+from app.configs import sanitize_log
+
 from .security import verify_at_webhook
 from .settings import AT_VOICE_ENABLED, SIP_BRIDGE_ENDPOINT, AT_VIRTUAL_NUMBER
 from . import service_voice
@@ -51,7 +53,10 @@ async def voice_callback(
     # Callback dedup (at-least-once delivery safety)
     event_key = f"voice:{isActive}"
     if is_duplicate_callback(sessionId, event_key):
-        logger.info("AT voice callback deduplicated", extra={"at_session_id": sessionId})
+        logger.info(
+            "AT voice callback deduplicated",
+            extra={"at_session_id": sanitize_log(sessionId)},
+        )
         return Response(content=service_voice.build_end_xml(), media_type="application/xml")
 
     if isActive == "0":
@@ -90,7 +95,11 @@ async def outbound_call(
     try:
         result = await providers.make_call(from_=AT_VIRTUAL_NUMBER, to=[req.to])
     except Exception as exc:
-        logger.warning("AT outbound call failed", exc_info=True, extra={"to": redact_pii(req.to)})
+        logger.warning(
+            "AT outbound call failed",
+            exc_info=True,
+            extra={"to": sanitize_log(redact_pii(req.to))},
+        )
         raise HTTPException(status_code=502, detail="Voice provider unavailable") from exc
 
     campaign_id = campaign_analytics.record_outbound_campaign(
@@ -191,7 +200,10 @@ async def voice_transfer(
         logger.warning(
             "AT voice transfer failed",
             exc_info=True,
-            extra={"session_id": req.session_id, "transfer_to": redact_pii(req.transfer_to)},
+            extra={
+                "session_id": sanitize_log(req.session_id),
+                "transfer_to": sanitize_log(redact_pii(req.transfer_to)),
+            },
         )
         raise HTTPException(status_code=502, detail="Voice transfer unavailable") from exc
 

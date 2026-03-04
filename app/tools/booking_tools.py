@@ -7,7 +7,7 @@ session state contains canonical keys.
 
 import asyncio
 import logging
-import uuid
+import secrets
 from datetime import datetime, timezone
 from typing import Any
 
@@ -34,7 +34,7 @@ def _get_firestore_db() -> Any | None:
 
 def _generate_confirmation_id() -> str:
     """Generate a human-friendly confirmation ID."""
-    return f"EKT-{uuid.uuid4().hex[:8].upper()}"
+    return f"EKT-{secrets.token_hex(10).upper()}"
 
 
 def _location_tokens(value: str) -> list[str]:
@@ -120,9 +120,9 @@ async def check_availability(
 
         return {"date": date, "slots": []}
 
-    except Exception as exc:
-        logger.error("Availability check failed: %s", exc)
-        return {"error": str(exc), "slots": []}
+    except Exception:
+        logger.exception("Availability check failed")
+        return {"error": "Booking availability lookup failed", "slots": []}
 
 
 async def create_booking(
@@ -199,9 +199,9 @@ async def create_booking(
 
         return booking_data
 
-    except Exception as exc:
-        logger.error("Booking creation failed: %s", exc)
-        return {"error": str(exc)}
+    except Exception:
+        logger.exception("Booking creation failed")
+        return {"error": "Booking creation failed"}
 
 
 async def cancel_booking(
@@ -266,6 +266,6 @@ async def cancel_booking(
             "status": "cancelled",
         }
 
-    except Exception as exc:
-        logger.error("Booking cancellation failed: %s", exc)
-        return {"error": str(exc)}
+    except Exception:
+        logger.exception("Booking cancellation failed")
+        return {"error": "Booking cancellation failed"}

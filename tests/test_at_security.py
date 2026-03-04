@@ -6,17 +6,21 @@ Red phase — write tests before implementation.
 from __future__ import annotations
 
 import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 from fastapi import FastAPI, Depends
 from fastapi.testclient import TestClient
 
 
-def _build_app(
-    *,
-    allowed_ips: set[str] | None = None,
-    rate_limit: int = 30,
-    rate_window: int = 60,
-) -> FastAPI:
+@pytest.fixture(autouse=True)
+def _reset_rate_limit_state() -> None:
+    """Reset module-level AT rate-limit state for test isolation."""
+    import app.api.v1.at.security as sec_mod
+
+    sec_mod._at_rate_buckets.clear()
+    sec_mod._at_last_prune = 0.0
+
+
+def _build_app() -> FastAPI:
     """Build a minimal FastAPI app with AT security dependency for testing."""
     from app.api.v1.at.security import verify_at_webhook
 

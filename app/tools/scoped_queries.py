@@ -30,7 +30,10 @@ def _tenant_id_from_context(tool_context: Any) -> str | None:
     if not _is_mapping_like(state):
         return None
     value = state.get("app:tenant_id")
-    return value if isinstance(value, str) and value.strip() else None
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip()
+    return normalized or None
 
 
 def _company_id_from_context(tool_context: Any) -> str | None:
@@ -41,7 +44,10 @@ def _company_id_from_context(tool_context: Any) -> str | None:
     if not _is_mapping_like(state):
         return None
     value = state.get("app:company_id")
-    return value if isinstance(value, str) and value.strip() else None
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip()
+    return normalized or None
 
 
 def scoped_collection(

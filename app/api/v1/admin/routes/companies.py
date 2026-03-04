@@ -125,13 +125,17 @@ async def upsert_admin_company_route(
     try:
         onboarding = await build_onboarding_config(_m.industry_config_client, tenant_id)
     except RegistryDataMissingError as exc:
+        logger.warning(
+            "Registry onboarding config missing for tenant_id=%s code=%s",
+            _m.sanitize_log(tenant_id),
+            _m.sanitize_log(getattr(exc, "code", "REGISTRY_ONBOARDING_CONFIG_NOT_FOUND")),
+        )
         return JSONResponse(
             status_code=503,
             content={
                 "error": "Registry onboarding config unavailable",
                 "code": getattr(exc, "code", "REGISTRY_ONBOARDING_CONFIG_NOT_FOUND"),
                 "tenantId": tenant_id,
-                "details": str(exc),
             },
         )
 

@@ -8,6 +8,18 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
+_DEFAULT_LIVE_MODEL_ID = "gemini-2.5-flash-native-audio-preview-12-2025"
+_DISALLOWED_LIVE_MODEL_IDS = frozenset({"gemini-3-flash-preview"})
+
+
+def _read_int_env(name: str, default: str) -> int:
+    """Read an integer env var and raise a contextual error on bad values."""
+    raw_value = os.getenv(name, default)
+    try:
+        return int(raw_value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{name} must be an integer, got {raw_value!r}") from exc
+
 
 @dataclass(slots=True, frozen=True)
 class BridgeConfig:
@@ -39,13 +51,13 @@ class BridgeConfig:
         )
         return cls(
             sip_host=os.getenv("SIP_BRIDGE_HOST", "0.0.0.0"),
-            sip_port=int(os.getenv("SIP_BRIDGE_PORT", "6060")),
+            sip_port=_read_int_env("SIP_BRIDGE_PORT", "6060"),
             sip_public_ip=os.getenv("SIP_PUBLIC_IP", "127.0.0.1"),
             sip_allowed_peers=allowed,
             gemini_api_key=os.getenv("GOOGLE_API_KEY", ""),
             live_model_id=os.getenv(
                 "LIVE_MODEL_ID",
-                "gemini-2.5-flash-native-audio-preview-12-2025",
+                _DEFAULT_LIVE_MODEL_ID,
             ),
             system_instruction=os.getenv(
                 "SIP_SYSTEM_INSTRUCTION",
@@ -58,11 +70,11 @@ class BridgeConfig:
             gemini_voice=os.getenv("SIP_GEMINI_VOICE", "Aoede"),
             company_id=os.getenv("SIP_COMPANY_ID", "ekaette-electronics"),
             tenant_id=os.getenv("SIP_TENANT_ID", "public"),
-            health_port=int(os.getenv("SIP_HEALTH_PORT", "8081")),
+            health_port=_read_int_env("SIP_HEALTH_PORT", "8081"),
             sip_registrar=os.getenv("SIP_REGISTRAR", "ng.sip.africastalking.com"),
             sip_username=os.getenv("SIP_USERNAME", ""),
             sip_password=os.getenv("SIP_PASSWORD", ""),
-            sip_register_interval=int(os.getenv("SIP_REGISTER_INTERVAL", "300")),
+            sip_register_interval=_read_int_env("SIP_REGISTER_INTERVAL", "300"),
         )
 
     def validate(self) -> list[str]:
@@ -76,4 +88,10 @@ class BridgeConfig:
             errors.append("SIP_USERNAME required for AT SIP registration")
         if not self.sip_password:
             errors.append("SIP_PASSWORD required for AT SIP registration")
+        normalized_live_model = self.live_model_id.strip().lower()
+        if normalized_live_model in _DISALLOWED_LIVE_MODEL_IDS:
+            errors.append(
+                "LIVE_MODEL_ID does not support Gemini Live bidirectional audio; "
+                f"use {_DEFAULT_LIVE_MODEL_ID!r} or another native-audio model"
+            )
         return errors

@@ -89,7 +89,6 @@ async def create_ephemeral_token(
                 "code": getattr(exc, "code", "REGISTRY_SCHEMA_VERSION_UNSUPPORTED"),
                 "tenantId": normalized_tenant_id,
                 "companyId": normalized_company_id,
-                "details": str(exc),
             },
         )
     if _registry_enabled() and registry_config is None:

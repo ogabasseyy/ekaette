@@ -440,13 +440,13 @@ async def test_admin_company_connector_route(
                 f"Connector probe timed out after {timeout_seconds:.2f}s "
                 f"(attempt {attempt}/{max_attempts})."
             )
-        except NotImplementedError as exc:
+        except NotImplementedError:
             failure_code = "CONNECTOR_TEST_NOT_IMPLEMENTED"
-            failure_details = str(exc) or "Provider test flow not implemented yet."
+            failure_details = "Provider test flow not implemented yet."
             break
-        except Exception as exc:  # pragma: no cover - defensive
+        except Exception:  # pragma: no cover - defensive
             failure_code = "CONNECTOR_TEST_FAILED"
-            failure_details = str(exc) or "Connector probe failed."
+            failure_details = "Connector probe failed."
 
     await _m._connector_circuit_record_failure(
         circuit_key,

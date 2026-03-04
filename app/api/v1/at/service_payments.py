@@ -12,6 +12,8 @@ import threading
 import uuid
 from typing import Any
 
+from app.configs import sanitize_log
+
 from . import campaign_analytics
 from . import providers
 from .settings import (
@@ -118,7 +120,7 @@ def _store_payment(reference: str, payload: dict[str, Any]) -> None:
         existing = _payment_records.get(reference, {})
         merged = {**existing, **payload}
         merged.setdefault("reference", reference)
-        merged.setdefault("updated_at", _now_iso())
+        merged["updated_at"] = _coerce_str(payload.get("updated_at")) or _now_iso()
         _payment_records[reference] = merged
 
 
@@ -127,7 +129,7 @@ def _store_virtual_account(reference: str, payload: dict[str, Any]) -> None:
         existing = _virtual_account_records.get(reference, {})
         merged = {**existing, **payload}
         merged.setdefault("reference", reference)
-        merged.setdefault("updated_at", _now_iso())
+        merged["updated_at"] = _coerce_str(payload.get("updated_at")) or _now_iso()
         _virtual_account_records[reference] = merged
         account_number = _normalize_account_number(_coerce_str(merged.get("account_number")))
         if account_number:
@@ -744,15 +746,17 @@ def process_gateway_event(payload: dict[str, Any]) -> dict[str, Any]:
     logger.info(
         "Paystack event processed",
         extra={
-            "event": event,
-            "reference": reference,
-            "tenant_id": tenant_id,
-            "company_id": company_id,
-            "campaign_id": campaign_id,
-            "status": status,
-            "payment_method": payment_method,
-            "payment_channel": payment_channel,
-            "virtual_account_reference": virtual_account_reference,
+            "event": sanitize_log(event),
+            "reference": sanitize_log(reference),
+            "tenant_id": sanitize_log(tenant_id),
+            "company_id": sanitize_log(company_id),
+            "campaign_id": sanitize_log(str(campaign_id) if campaign_id else None),
+            "status": sanitize_log(status),
+            "payment_method": sanitize_log(payment_method),
+            "payment_channel": sanitize_log(payment_channel),
+            "virtual_account_reference": sanitize_log(
+                str(virtual_account_reference) if virtual_account_reference else None
+            ),
         },
     )
 

@@ -4,9 +4,6 @@ import os
 from unittest.mock import MagicMock, patch
 
 import pytest
-import warnings
-
-warnings.filterwarnings("ignore", message=".*EXPERIMENTAL.*")
 
 
 class TestCreateCompactionConfig:
@@ -244,13 +241,13 @@ class TestCreateSummarizer:
 
         assert isinstance(summarizer, LlmEventSummarizer)
 
-    def test_returns_none_on_import_error(self):
-        """If Gemini model class unavailable, return None gracefully."""
+    def test_returns_none_when_gemini_init_fails(self):
+        """If Gemini initialization fails, return None gracefully."""
         from app.configs.compaction_factory import _create_summarizer
 
         with patch(
             "app.configs.compaction_factory.Gemini",
-            side_effect=Exception("Import failed"),
+            side_effect=Exception("Gemini init failed"),
         ):
             result = _create_summarizer("gemini-3-flash-preview")
 

@@ -11,6 +11,8 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Form, HTTPException
 
+from app.configs import sanitize_log
+
 from .security import verify_at_webhook
 from .settings import AT_SMS_ENABLED, AT_VIRTUAL_NUMBER
 from . import service_sms
@@ -51,7 +53,14 @@ async def sms_callback(
     try:
         result = await providers.send_sms(message=truncated, recipients=[from_])
     except Exception as exc:
-        logger.warning("AT SMS callback reply failed", exc_info=True, extra={"from": redact_pii(from_), "to": redact_pii(to)})
+        logger.warning(
+            "AT SMS callback reply failed",
+            exc_info=True,
+            extra={
+                "from": sanitize_log(redact_pii(from_)),
+                "to": sanitize_log(redact_pii(to)),
+            },
+        )
         return {
             "status": "error",
             "code": "AT_SMS_SEND_FAILED",
@@ -69,7 +78,11 @@ async def sms_callback(
     )
     logger.info(
         "AT SMS reply sent",
-        extra={"from": redact_pii(from_), "to": redact_pii(to), "reply_length": len(truncated)},
+        extra={
+            "from": sanitize_log(redact_pii(from_)),
+            "to": sanitize_log(redact_pii(to)),
+            "reply_length": len(truncated),
+        },
     )
     return {
         "status": "ok",
@@ -88,7 +101,11 @@ async def send_sms(req: SendSMSRequest) -> dict:
     try:
         result = await providers.send_sms(message=truncated, recipients=[req.to])
     except Exception as exc:
-        logger.warning("AT SMS send failed", exc_info=True, extra={"to": redact_pii(req.to)})
+        logger.warning(
+            "AT SMS send failed",
+            exc_info=True,
+            extra={"to": sanitize_log(redact_pii(req.to))},
+        )
         raise HTTPException(status_code=502, detail="SMS provider unavailable") from exc
 
     campaign_id = campaign_analytics.record_outbound_campaign(

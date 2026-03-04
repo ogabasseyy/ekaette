@@ -2,7 +2,8 @@
 
 ```mermaid
 graph TB
-    UI[React Frontend] --> WS[Backend WebSocket /ws]
+    UI[React Frontend] --> ALB[ALB]
+    ALB --> WS[Backend WebSocket /ws]
     WS --> RT[Realtime Stream Orchestrator]
     RT --> NOVA[Bedrock Nova Voice]
     RT --> TOOLS[Tool Calls]
@@ -10,7 +11,5 @@ graph TB
     TOOLS --> VIS[Nova Vision]
     RT --> DDB[(DynamoDB)]
     TOOLS --> S3[(S3 Media)]
-    WS --> ALB[ALB]
     ALB --> ECS[ECS Fargate Service]
 ```
-

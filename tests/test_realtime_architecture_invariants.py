@@ -8,7 +8,8 @@ import re
 
 def test_no_direct_main_imports_under_realtime_package():
     pattern = re.compile(r"^\s*(from\s+main\s+import|import\s+main\b)")
-    realtime_root = Path("app/api/v1/realtime")
+    repo_root = Path(__file__).resolve().parents[1]
+    realtime_root = repo_root / "app" / "api" / "v1" / "realtime"
     assert realtime_root.exists()
 
     violations: list[str] = []

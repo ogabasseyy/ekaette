@@ -32,15 +32,24 @@ def test_public_routes_still_mounted_with_expected_paths_and_methods():
     from main import app
 
     found: set[tuple[str, str]] = set()
+    unexpected_public_routes: set[tuple[str, str]] = set()
     for route in app.routes:
         path = getattr(route, "path", "")
         if not isinstance(path, str):
             continue
+        module = getattr(route.endpoint, "__module__", "")
         methods = getattr(route, "methods", None) or set()
         for method in methods:
             if method in {"HEAD", "OPTIONS"}:
                 continue
             if (method, path) in PUBLIC_ROUTES:
                 found.add((method, path))
+                continue
+            if isinstance(module, str) and module.startswith("app.api.v1.public"):
+                unexpected_public_routes.add((method, path))
 
+    assert not unexpected_public_routes, (
+        "unexpected public routes mounted: "
+        f"{sorted(unexpected_public_routes)}"
+    )
     assert found == PUBLIC_ROUTES

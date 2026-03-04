@@ -152,6 +152,12 @@ def is_duplicate_callback(session_id: str, event_key: str) -> bool:
     now = time.time()
 
     with _callback_lock:
+        seen_at = _callback_seen.get(dedup_key)
+        if seen_at is not None:
+            if now - seen_at <= CALLBACK_DEDUP_WINDOW:
+                return True
+            _callback_seen.pop(dedup_key, None)
+
         # Prune old entries
         if len(_callback_seen) > 1000:
             expired = [
@@ -161,7 +167,5 @@ def is_duplicate_callback(session_id: str, event_key: str) -> bool:
             for k in expired:
                 _callback_seen.pop(k, None)
 
-        if dedup_key in _callback_seen:
-            return True
         _callback_seen[dedup_key] = now
         return False

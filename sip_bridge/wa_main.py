@@ -7,6 +7,7 @@ Starts a TLS SIP server for WhatsApp Business Calling (Opus/SRTP).
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import ipaddress
 import json
 import logging
@@ -47,6 +48,7 @@ class WaSIPServer:
     config: Any
     max_concurrent_calls: int = _MAX_CONCURRENT_CALLS
     active_sessions: dict[str, Any] = field(default_factory=dict)
+    _session_tasks: dict[str, asyncio.Task[None]] = field(default_factory=dict)
     _pending_challenges: dict[str, dict[str, str]] = field(default_factory=dict)
     _tcp_server: asyncio.Server | None = None
     _health_server: asyncio.Server | None = None
@@ -94,6 +96,12 @@ class WaSIPServer:
         """Shut down all sessions and close server."""
         for session in list(self.active_sessions.values()):
             session.shutdown()
+        tasks = list(self._session_tasks.values())
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        self._session_tasks.clear()
         self.active_sessions.clear()
         if self._health_server:
             self._health_server.close()
@@ -145,9 +153,24 @@ class WaSIPServer:
             writer.write(response.encode("utf-8"))
             await writer.drain()
         except Exception:
-            pass
+            logger.exception("Health endpoint request handling failed")
+            if not writer.is_closing():
+                body = json.dumps({"status": "error"})
+                response = (
+                    "HTTP/1.1 500 Internal Server Error\r\n"
+                    "Content-Type: application/json\r\n"
+                    f"Content-Length: {len(body)}\r\n"
+                    "Connection: close\r\n"
+                    "\r\n"
+                    f"{body}"
+                )
+                with contextlib.suppress(Exception):
+                    writer.write(response.encode("utf-8"))
+                    await writer.drain()
         finally:
             writer.close()
+            with contextlib.suppress(Exception):
+                await writer.wait_closed()
 
     async def _handle_connection(
         self,
@@ -169,6 +192,8 @@ class WaSIPServer:
             logger.exception("Connection error from %s", peer)
         finally:
             writer.close()
+            with contextlib.suppress(Exception):
+                await writer.wait_closed()
 
     async def handle_sip_message(
         self,
@@ -179,13 +204,11 @@ class WaSIPServer:
         # IP allowlist check
         if not self._check_ip_allowed(peer[0]):
             logger.warning("Blocked IP %s", peer[0])
-            return SipMessage(
-                first_line="SIP/2.0 403 Forbidden",
-                headers={
-                    "call-id": msg.headers.get("call-id", ""),
-                    "content-length": "0",
-                },
-                body="",
+            return self._build_transaction_response(
+                msg,
+                status_code=403,
+                reason="Forbidden",
+                add_local_to_tag=(msg.method == "INVITE"),
             )
 
         method = msg.method
@@ -196,13 +219,10 @@ class WaSIPServer:
         elif method == "ACK":
             return None  # ACK has no response
         else:
-            return SipMessage(
-                first_line="SIP/2.0 405 Method Not Allowed",
-                headers={
-                    "call-id": msg.headers.get("call-id", ""),
-                    "content-length": "0",
-                },
-                body="",
+            return self._build_transaction_response(
+                msg,
+                status_code=405,
+                reason="Method Not Allowed",
             )
 
     def _check_ip_allowed(self, ip: str) -> bool:
@@ -221,19 +241,74 @@ class WaSIPServer:
         except ValueError:
             return False
 
+    @staticmethod
+    def _ensure_to_tag(to_header: str) -> str:
+        """Ensure To header contains a local tag for final INVITE responses."""
+        if not to_header or ";tag=" in to_header:
+            return to_header
+        return f"{to_header};tag={os.urandom(8).hex()}"
+
+    def _build_transaction_response(
+        self,
+        msg: SipMessage,
+        *,
+        status_code: int,
+        reason: str,
+        call_id: str | None = None,
+        add_local_to_tag: bool = False,
+    ) -> SipMessage:
+        """Build a SIP response preserving required transaction headers."""
+        to_header = msg.headers.get("to", "")
+        if add_local_to_tag:
+            to_header = self._ensure_to_tag(to_header)
+        headers = {
+            "via": msg.headers.get("via", ""),
+            "from": msg.headers.get("from", ""),
+            "to": to_header,
+            "call-id": call_id if call_id is not None else msg.headers.get("call-id", ""),
+            "cseq": msg.headers.get("cseq", ""),
+            "content-length": "0",
+        }
+        return SipMessage(
+            first_line=f"SIP/2.0 {status_code} {reason}",
+            headers=headers,
+            body="",
+        )
+
+    @staticmethod
+    def _resolve_advertised_ip(bind_host: str) -> str:
+        """Resolve a non-loopback IP to advertise in SDP when bound to wildcard."""
+        candidate = (bind_host or "").strip()
+        if candidate and candidate not in {"0.0.0.0", "::"} and not candidate.startswith("127."):
+            return candidate
+
+        configured_public_ip = os.getenv("WA_SIP_PUBLIC_IP", "").strip()
+        if configured_public_ip and not configured_public_ip.startswith("127."):
+            return configured_public_ip
+
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+                probe.connect(("8.8.8.8", 80))
+                discovered_ip = probe.getsockname()[0]
+                if discovered_ip and not discovered_ip.startswith("127."):
+                    return discovered_ip
+        except Exception:
+            logger.debug("Failed to auto-detect routable local IP for SDP", exc_info=True)
+
+        return "127.0.0.1"
+
     async def _handle_invite(self, invite: SipMessage) -> SipMessage:
         """Handle INVITE: challenge or authenticate then create session."""
         call_id = resolve_call_id(invite.headers) or invite.headers.get("call-id", "")
 
         # Concurrency limit
         if len(self.active_sessions) >= self.max_concurrent_calls:
-            return SipMessage(
-                first_line="SIP/2.0 503 Service Unavailable",
-                headers={
-                    "call-id": call_id,
-                    "content-length": "0",
-                },
-                body="",
+            return self._build_transaction_response(
+                invite,
+                status_code=503,
+                reason="Service Unavailable",
+                call_id=call_id,
+                add_local_to_tag=True,
             )
 
         # Check for Proxy-Authorization header
@@ -265,10 +340,12 @@ class WaSIPServer:
                 if auth_params.get("nonce") != pending.get("nonce"):
                     logger.warning("Nonce mismatch for call %s", call_id)
                     self._pending_challenges.pop(call_id, None)
-                    return SipMessage(
-                        first_line="SIP/2.0 403 Forbidden",
-                        headers={"call-id": call_id, "content-length": "0"},
-                        body="",
+                    return self._build_transaction_response(
+                        invite,
+                        status_code=403,
+                        reason="Forbidden",
+                        call_id=call_id,
+                        add_local_to_tag=True,
                     )
             except Exception:
                 pass  # parse failure handled by verify_digest below
@@ -281,37 +358,37 @@ class WaSIPServer:
             method="INVITE",
         ):
             self._pending_challenges.pop(call_id, None)
-            return SipMessage(
-                first_line="SIP/2.0 403 Forbidden",
-                headers={"call-id": call_id, "content-length": "0"},
-                body="",
+            return self._build_transaction_response(
+                invite,
+                status_code=403,
+                reason="Forbidden",
+                call_id=call_id,
+                add_local_to_tag=True,
             )
 
         # Auth passed — parse remote SDP and create session
         self._pending_challenges.pop(call_id, None)
         remote_sdp = parse_remote_sdp(invite.body) if invite.body else {}
 
-        local_ip = self.config.sip_host
-        if local_ip == "0.0.0.0":
-            local_ip = "127.0.0.1"
+        bind_ip = self.config.sip_host
+        local_ip = self._resolve_advertised_ip(bind_ip)
 
         # Validate remote media endpoint before allocating resources
         media_ip = remote_sdp.get("media_ip", "")
         media_port = remote_sdp.get("media_port", 0)
         if not media_ip or not media_port:
-            return SipMessage(
-                first_line="SIP/2.0 488 Not Acceptable Here",
-                headers={
-                    "call-id": call_id,
-                    "content-length": "0",
-                },
-                body="",
+            return self._build_transaction_response(
+                invite,
+                status_code=488,
+                reason="Not Acceptable Here",
+                call_id=call_id,
+                add_local_to_tag=True,
             )
 
         # Bind a local UDP socket for media — OS assigns a free port
         media_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         media_sock.setblocking(False)
-        media_sock.bind((local_ip, 0))
+        media_sock.bind((bind_ip, 0))
 
         try:
             local_media_port = media_sock.getsockname()[1]
@@ -349,7 +426,19 @@ class WaSIPServer:
                 _owns_transport=True,
             )
             self.active_sessions[call_id] = session
-            asyncio.create_task(session.run())
+            task = asyncio.create_task(session.run(), name=f"wa_session_{call_id}")
+            self._session_tasks[call_id] = task
+
+            def _on_done(done_task: asyncio.Task[None]) -> None:
+                self._session_tasks.pop(call_id, None)
+                self.active_sessions.pop(call_id, None)
+                if done_task.cancelled():
+                    return
+                exc = done_task.exception()
+                if exc is not None:
+                    logger.exception("WA session task failed", extra={"call_id": call_id})
+
+            task.add_done_callback(_on_done)
 
             logger.info("WA INVITE accepted", extra={"call_id": call_id})
             return resp
@@ -357,13 +446,12 @@ class WaSIPServer:
             # Close the socket to prevent leaks on SDP/SRTP errors
             media_sock.close()
             logger.exception("INVITE processing failed", extra={"call_id": call_id})
-            return SipMessage(
-                first_line="SIP/2.0 488 Not Acceptable Here",
-                headers={
-                    "call-id": call_id,
-                    "content-length": "0",
-                },
-                body="",
+            return self._build_transaction_response(
+                invite,
+                status_code=488,
+                reason="Not Acceptable Here",
+                call_id=call_id,
+                add_local_to_tag=True,
             )
 
     @staticmethod
@@ -398,6 +486,9 @@ class WaSIPServer:
         if session:
             session.shutdown()
             logger.info("WA BYE", extra={"call_id": call_id})
+        task = self._session_tasks.pop(call_id, None)
+        if task and not task.done():
+            task.cancel()
 
         return SipMessage(
             first_line="SIP/2.0 200 OK",

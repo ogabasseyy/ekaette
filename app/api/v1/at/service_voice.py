@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import logging
 
+from app.configs import sanitize_log
+
 from .settings import (
     SIP_BRIDGE_ENDPOINT,
     AT_VIRTUAL_NUMBER,
@@ -77,12 +79,12 @@ def log_call_bridged(session_id: str, caller: str, direction: str) -> None:
     logger.info(
         "AT call bridged",
         extra={
-            "at_session_id": session_id,
-            "caller": redact_pii(caller),
-            "direction": direction,
-            "tenant_id": tenant_id,
-            "company_id": company_id,
-            "sip_endpoint": SIP_BRIDGE_ENDPOINT,
+            "at_session_id": sanitize_log(session_id),
+            "caller": sanitize_log(redact_pii(caller)),
+            "direction": sanitize_log(direction),
+            "tenant_id": sanitize_log(tenant_id),
+            "company_id": sanitize_log(company_id),
+            "sip_endpoint": sanitize_log(SIP_BRIDGE_ENDPOINT),
         },
     )
 
@@ -97,9 +99,9 @@ def log_call_ended(
     logger.info(
         "AT call ended",
         extra={
-            "at_session_id": session_id,
-            "caller": redact_pii(caller),
-            "duration_seconds": duration_seconds,
-            "amount": amount,
+            "at_session_id": sanitize_log(session_id),
+            "caller": sanitize_log(redact_pii(caller)),
+            "duration_seconds": sanitize_log(duration_seconds),
+            "amount": sanitize_log(amount),
         },
     )

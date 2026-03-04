@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 from typing import Any
 
@@ -17,11 +18,12 @@ class DynamoSessionStore:
         self._table = boto3.resource("dynamodb", region_name=self.region).Table(self.table_name)
 
     async def get(self, *, user_id: str, session_id: str) -> dict[str, Any] | None:
-        response = self._table.get_item(
+        response = await asyncio.to_thread(
+            self._table.get_item,
             Key={
                 "pk": f"user#{user_id}",
                 "sk": f"session#{session_id}",
-            }
+            },
         )
         item = response.get("Item")
         if not isinstance(item, dict):
@@ -29,11 +31,11 @@ class DynamoSessionStore:
         return item.get("state") if isinstance(item.get("state"), dict) else None
 
     async def upsert(self, *, user_id: str, session_id: str, state: dict[str, Any]) -> None:
-        self._table.put_item(
+        await asyncio.to_thread(
+            self._table.put_item,
             Item={
                 "pk": f"user#{user_id}",
                 "sk": f"session#{session_id}",
                 "state": state,
-            }
+            },
         )
-

@@ -10,6 +10,7 @@ Pure stdlib implementation (hashlib only).
 from __future__ import annotations
 
 import hashlib
+import hmac
 import os
 import re
 import time
@@ -162,7 +163,11 @@ def verify_digest(
     except AuthParseError:
         return False
 
-    if params.get("username") != expected_username:
+    provided_username = params.get("username")
+    if (
+        not isinstance(provided_username, str)
+        or not hmac.compare_digest(provided_username, expected_username)
+    ):
         return False
 
     try:
@@ -180,7 +185,10 @@ def verify_digest(
         )
     except (ValueError, TypeError):
         return False
-    return expected_response == params.get("response")
+    provided_response = params.get("response")
+    if not isinstance(provided_response, str):
+        return False
+    return hmac.compare_digest(expected_response, provided_response)
 
 
 def build_auth_header(
@@ -275,4 +283,4 @@ def _generate_nonce() -> str:
     """Generate a unique nonce for digest auth challenges."""
     timestamp = str(time.time_ns())
     random_part = os.urandom(16).hex()
-    return hashlib.md5(f"{timestamp}:{random_part}".encode()).hexdigest()
+    return hashlib.sha256(f"{timestamp}:{random_part}".encode()).hexdigest()

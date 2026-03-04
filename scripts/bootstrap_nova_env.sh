@@ -12,7 +12,7 @@ source .venv-nova/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt -r requirements-dev.txt
 
-echo "\nNova environment ready."
-echo "1) cp .env.nova.example .env"
-echo "2) fill AWS + Nova model IDs"
-echo "3) run your backend entrypoint"
+printf "\nNova environment ready.\n"
+printf "1) cp .env.nova.example .env\n"
+printf "2) fill AWS + Nova model IDs\n"
+printf "3) run your backend entrypoint\n"

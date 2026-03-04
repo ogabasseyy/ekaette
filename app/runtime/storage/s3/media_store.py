@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 from typing import Any
 import uuid
@@ -29,7 +30,8 @@ class S3MediaStore:
         if not self.bucket:
             return {"error": "S3_MEDIA_BUCKET not configured"}
         object_key = f"{key_prefix}/{user_id}/{session_id}/{uuid.uuid4().hex}"
-        self._client.put_object(
+        await asyncio.to_thread(
+            self._client.put_object,
             Bucket=self.bucket,
             Key=object_key,
             Body=data,
@@ -40,4 +42,3 @@ class S3MediaStore:
             "bucket": self.bucket,
             "key": object_key,
         }
-
