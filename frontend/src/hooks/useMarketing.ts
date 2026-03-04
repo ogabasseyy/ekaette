@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useCallback, useState } from 'react'
 import type { CampaignChannel } from '../types/marketing'
 
 function makeIdempotencyKey(prefix: string): string {

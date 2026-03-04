@@ -38,6 +38,9 @@
     "tailwindcss": "^4.2.1"
   },
   "pnpm": {
+    "overrides": {
+      "minimatch": "9.0.7"
+    },
     "onlyBuiltDependencies": [
       "esbuild"
     ]

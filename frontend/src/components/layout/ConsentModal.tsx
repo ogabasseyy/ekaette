@@ -29,8 +29,8 @@ export function ConsentModal({ onAccept, onDecline }: ConsentModalProps) {
           <li className="flex gap-2">
             <span className="shrink-0 text-accent">&#x2022;</span>
             <span>
-              Your interactions are processed by AI models. Responses are generated automatically and
-              may not always be accurate.
+              Your interactions are processed by AI models. Responses are generated automatically
+              and may not always be accurate.
             </span>
           </li>
           <li className="flex gap-2">

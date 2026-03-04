@@ -1,7 +1,7 @@
-import { Mic, BarChart3, Megaphone, Settings } from 'lucide-react'
-import { cva, type VariantProps } from 'class-variance-authority'
+import { cva } from 'class-variance-authority'
+import { BarChart3, Megaphone, Mic, Settings } from 'lucide-react'
+import { type AppPage, NAV_ITEMS, navigateTo } from '../../lib/navigation'
 import { cn } from '../../lib/utils'
-import { NAV_ITEMS, navigateTo, type AppPage } from '../../lib/navigation'
 
 const ICON_MAP: Record<string, typeof Mic> = {
   Mic,
@@ -32,25 +32,31 @@ interface NavBarProps {
 
 export function NavBar({ activePage, className }: NavBarProps) {
   return (
-    <nav className={cn('nav-bar flex items-center justify-center gap-1', className)} role="tablist">
-      {NAV_ITEMS.map(item => {
-        const isActive = item.page === activePage
-        const Icon = ICON_MAP[item.iconName]
-        return (
-          <button
-            key={item.page}
-            role="tab"
-            aria-current={isActive ? 'page' : undefined}
-            className={cn(navTabVariants({ active: isActive }))}
-            onClick={() => {
-              if (!isActive) navigateTo(item.page)
-            }}
-          >
-            {Icon && <Icon className="size-4" />}
-            <span>{item.label}</span>
-          </button>
-        )
-      })}
+    <nav aria-label="Primary">
+      <div
+        className={cn('nav-bar flex items-center justify-center gap-1', className)}
+        role="tablist"
+      >
+        {NAV_ITEMS.map(item => {
+          const isActive = item.page === activePage
+          const Icon = ICON_MAP[item.iconName]
+          return (
+            <button
+              key={item.page}
+              type="button"
+              role="tab"
+              aria-current={isActive ? 'page' : undefined}
+              className={cn(navTabVariants({ active: isActive }))}
+              onClick={() => {
+                if (!isActive) navigateTo(item.page)
+              }}
+            >
+              {Icon && <Icon className="size-4" />}
+              <span>{item.label}</span>
+            </button>
+          )
+        })}
+      </div>
     </nav>
   )
 }

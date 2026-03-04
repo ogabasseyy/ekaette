@@ -1,10 +1,10 @@
 import { useState } from 'react'
-import { NavBar } from '../layout/NavBar'
-import { KpiCards } from './KpiCards'
-import { CampaignTable } from './CampaignTable'
-import { CampaignDetail } from './CampaignDetail'
 import { useAnalytics } from '../../hooks/useAnalytics'
 import { cn } from '../../lib/utils'
+import { NavBar } from '../layout/NavBar'
+import { CampaignDetail } from './CampaignDetail'
+import { CampaignTable } from './CampaignTable'
+import { KpiCards } from './KpiCards'
 
 const DAYS_OPTIONS = [7, 30, 90] as const
 
@@ -13,15 +13,8 @@ export function AnalyticsDashboard() {
   const [companyId] = useState('ekaette-electronics')
   const [days, setDays] = useState<number>(30)
 
-  const {
-    summary,
-    campaigns,
-    selectedCampaign,
-    loading,
-    error,
-    selectCampaign,
-    clearSelection,
-  } = useAnalytics({ tenantId, companyId, days })
+  const { summary, campaigns, selectedCampaign, loading, error, selectCampaign, clearSelection } =
+    useAnalytics({ tenantId, companyId, days })
 
   return (
     <main className="app-shell min-h-screen">
@@ -32,7 +25,9 @@ export function AnalyticsDashboard() {
         <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
           <div>
             <p className="text-[0.65rem] uppercase tracking-[0.25em] text-primary">Analytics</p>
-            <h1 className="font-display text-2xl text-foreground sm:text-3xl">Campaign Analytics</h1>
+            <h1 className="font-display text-2xl text-foreground sm:text-3xl">
+              Campaign Analytics
+            </h1>
           </div>
 
           {/* Days filter pills */}
@@ -40,6 +35,7 @@ export function AnalyticsDashboard() {
             {DAYS_OPTIONS.map(d => (
               <button
                 key={d}
+                type="button"
                 onClick={() => setDays(d)}
                 className={cn(
                   'rounded-full border px-3 py-1 text-[0.65rem] font-semibold uppercase tracking-[0.15em] transition-colors',
@@ -82,10 +78,7 @@ export function AnalyticsDashboard() {
 
         {/* Campaign detail slide-up */}
         {selectedCampaign && (
-          <CampaignDetail
-            campaign={selectedCampaign}
-            onClose={clearSelection}
-          />
+          <CampaignDetail campaign={selectedCampaign} onClose={clearSelection} />
         )}
       </div>
     </main>

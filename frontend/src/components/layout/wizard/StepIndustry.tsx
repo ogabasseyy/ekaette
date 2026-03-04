@@ -9,7 +9,12 @@ const FALLBACK_OPTIONS: IndustryTemplateMeta[] = [
     category: 'retail',
     description: 'Trade-ins, valuation, negotiation, pickup booking.',
     defaultVoice: 'Aoede',
-    theme: { accent: 'oklch(74% 0.21 158)', accentSoft: 'oklch(62% 0.14 172)', title: 'Hardware Trade Desk', hint: 'Inspect. Value. Negotiate. Book pickup.' },
+    theme: {
+      accent: 'oklch(74% 0.21 158)',
+      accentSoft: 'oklch(62% 0.14 172)',
+      title: 'Hardware Trade Desk',
+      hint: 'Inspect. Value. Negotiate. Book pickup.',
+    },
     capabilities: [],
     status: 'active',
   },
@@ -19,7 +24,12 @@ const FALLBACK_OPTIONS: IndustryTemplateMeta[] = [
     category: 'hospitality',
     description: 'Reservations, room search, stay assistance workflows.',
     defaultVoice: 'Puck',
-    theme: { accent: 'oklch(78% 0.15 55)', accentSoft: 'oklch(70% 0.12 75)', title: 'Hospitality Concierge', hint: 'Real-time booking and guest support voice assistant.' },
+    theme: {
+      accent: 'oklch(78% 0.15 55)',
+      accentSoft: 'oklch(70% 0.12 75)',
+      title: 'Hospitality Concierge',
+      hint: 'Real-time booking and guest support voice assistant.',
+    },
     capabilities: [],
     status: 'active',
   },
@@ -29,7 +39,12 @@ const FALLBACK_OPTIONS: IndustryTemplateMeta[] = [
     category: 'automotive',
     description: 'Service lane support, estimates, and booking.',
     defaultVoice: 'Kore',
-    theme: { accent: 'oklch(71% 0.18 240)', accentSoft: 'oklch(63% 0.15 260)', title: 'Automotive Service Lane', hint: 'Trade-ins, inspections, parts and service scheduling.' },
+    theme: {
+      accent: 'oklch(71% 0.18 240)',
+      accentSoft: 'oklch(63% 0.15 260)',
+      title: 'Automotive Service Lane',
+      hint: 'Trade-ins, inspections, parts and service scheduling.',
+    },
     capabilities: [],
     status: 'active',
   },
@@ -39,7 +54,12 @@ const FALLBACK_OPTIONS: IndustryTemplateMeta[] = [
     category: 'retail',
     description: 'Catalog assistance and customer styling support.',
     defaultVoice: 'Aoede',
-    theme: { accent: 'oklch(74% 0.2 20)', accentSoft: 'oklch(66% 0.16 345)', title: 'Fashion Client Studio', hint: 'Catalog recommendations and consultation workflows.' },
+    theme: {
+      accent: 'oklch(74% 0.2 20)',
+      accentSoft: 'oklch(66% 0.16 345)',
+      title: 'Fashion Client Studio',
+      hint: 'Catalog recommendations and consultation workflows.',
+    },
     capabilities: [],
     status: 'active',
   },
@@ -74,7 +94,10 @@ export function StepIndustry({
   const [templateTouched, setTemplateTouched] = useState(false)
 
   const availableCompanies = useMemo(
-    () => (companies && companies.length > 0 ? companies.filter(c => c.templateId === selectedTemplateId) : []),
+    () =>
+      companies && companies.length > 0
+        ? companies.filter(c => c.templateId === selectedTemplateId)
+        : [],
     [companies, selectedTemplateId],
   )
 
@@ -82,7 +105,7 @@ export function StepIndustry({
   const [selectedCompanyId, setSelectedCompanyId] = useState<string>(
     defaultCompanyId && availableCompanies.some(c => c.id === defaultCompanyId)
       ? defaultCompanyId
-      : availableCompanies[0]?.id ?? fallbackCompanyId,
+      : (availableCompanies[0]?.id ?? fallbackCompanyId),
   )
 
   useEffect(() => {
@@ -102,7 +125,9 @@ export function StepIndustry({
 
   useEffect(() => {
     const nextCompanyId =
-      (defaultCompanyId && availableCompanies.some(c => c.id === defaultCompanyId) && defaultCompanyId) ||
+      (defaultCompanyId &&
+        availableCompanies.some(c => c.id === defaultCompanyId) &&
+        defaultCompanyId) ||
       availableCompanies[0]?.id ||
       fallbackCompanyId
     if (!availableCompanies.some(c => c.id === selectedCompanyId)) {
@@ -112,33 +137,38 @@ export function StepIndustry({
 
   return (
     <>
-      <div className="mt-5 grid gap-3 sm:mt-6 sm:grid-cols-2" role="radiogroup" aria-label="Industry selection">
+      <fieldset className="mt-5 grid gap-3 sm:mt-6 sm:grid-cols-2">
+        <legend className="sr-only">Industry selection</legend>
         {options.map(option => {
           const active = selectedTemplateId === option.id
           const displayLabel = resolveTemplateDisplayLabel(option)
           return (
-            <button
+            <label
               key={option.id}
-              type="button"
-              role="radio"
-              aria-checked={active}
-              onClick={() => {
-                setTemplateTouched(true)
-                setSelectedTemplateId(option.id)
-              }}
               className={cn(
-                'rounded-2xl border px-4 py-4 text-left transition',
+                'relative cursor-pointer rounded-2xl border px-4 py-4 text-left transition',
                 active
                   ? 'border-primary/60 bg-primary/10'
                   : 'border-border/70 bg-card/40 hover:border-primary/40',
               )}
             >
+              <input
+                type="radio"
+                name="step-industry-template"
+                value={option.id}
+                checked={active}
+                onChange={() => {
+                  setTemplateTouched(true)
+                  setSelectedTemplateId(option.id)
+                }}
+                className="absolute inset-0 m-0 cursor-pointer opacity-0"
+              />
               <p className="font-semibold text-white">{displayLabel}</p>
               <p className="mt-1 text-muted-foreground text-sm">{option.description}</p>
-            </button>
+            </label>
           )
         })}
-      </div>
+      </fieldset>
 
       <div className="mt-4">
         <label

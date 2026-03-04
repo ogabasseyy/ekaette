@@ -1,7 +1,7 @@
-import { describe, it, expect, vi, afterEach } from 'vitest'
-import { renderHook, waitFor, act } from '@testing-library/react'
-import { useContacts } from '../useContacts'
+import { act, renderHook, waitFor } from '@testing-library/react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ContactsResponse, KnownContact } from '../../types/marketing'
+import { useContacts } from '../useContacts'
 
 const MOCK_CONTACT_A: KnownContact = {
   phone: '+2348011111111',
@@ -62,9 +62,7 @@ describe('useContacts', () => {
       json: () => Promise.resolve(MOCK_RESPONSE),
     })
 
-    renderHook(() =>
-      useContacts({ tenantId: 'public', companyId: 'ekaette-electronics' }),
-    )
+    renderHook(() => useContacts({ tenantId: 'public', companyId: 'ekaette-electronics' }))
 
     await waitFor(() => {
       expect(global.fetch).toHaveBeenCalled()

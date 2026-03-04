@@ -88,7 +88,9 @@ export function StepCatalog({ companyId, tenantId, onNext, onBack }: StepCatalog
         </div>
 
         <div className="space-y-2">
-          <p className="text-xs text-muted-foreground uppercase tracking-wider">Sync from Google Sheets</p>
+          <p className="text-xs text-muted-foreground uppercase tracking-wider">
+            Sync from Google Sheets
+          </p>
           <input
             type="url"
             aria-label="Google Sheets URL"
@@ -131,11 +133,11 @@ export function StepCatalog({ companyId, tenantId, onNext, onBack }: StepCatalog
         </div>
 
         {api.error ? (
-          <p className="text-xs text-destructive" role="alert">{api.error}</p>
+          <p className="text-xs text-destructive" role="alert">
+            {api.error}
+          </p>
         ) : null}
-        {status ? (
-          <p className="text-xs text-emerald-400">{status}</p>
-        ) : null}
+        {status ? <p className="text-xs text-emerald-400">{status}</p> : null}
       </div>
 
       <div className="mt-6 flex justify-between">

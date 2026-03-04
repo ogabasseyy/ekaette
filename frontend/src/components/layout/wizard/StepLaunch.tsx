@@ -97,7 +97,10 @@ export function StepLaunch({
     { label: 'Industry', value: title },
     { label: 'Company', value: companyId },
     { label: 'Voice', value: voice },
-    { label: 'Knowledge entries', value: counts.knowledge !== null ? String(counts.knowledge) : '—' },
+    {
+      label: 'Knowledge entries',
+      value: counts.knowledge !== null ? String(counts.knowledge) : '—',
+    },
     { label: 'Connectors', value: counts.connectors !== null ? String(counts.connectors) : '—' },
   ]
 

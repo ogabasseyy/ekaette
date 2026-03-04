@@ -1,8 +1,8 @@
 import { X } from 'lucide-react'
-import { cn } from '../../lib/utils'
 import { formatNaira, formatPercent } from '../../lib/format'
-import { RateBar } from './RateBar'
+import { cn } from '../../lib/utils'
 import type { CampaignSnapshot } from '../../types/analytics'
+import { RateBar } from './RateBar'
 
 interface CampaignDetailProps {
   campaign: CampaignSnapshot
@@ -20,10 +20,25 @@ interface MetricRow {
 export function CampaignDetail({ campaign, onClose, className }: CampaignDetailProps) {
   const metrics: MetricRow[] = [
     { label: 'Sent', value: campaign.sent_total },
-    { label: 'Delivered', value: campaign.delivered_total, rate: campaign.delivery_rate, colorClass: 'bg-primary' },
-    { label: 'Failed', value: campaign.failed_total, rate: campaign.sent_total > 0 ? campaign.failed_total / campaign.sent_total : 0, colorClass: 'bg-destructive' },
+    {
+      label: 'Delivered',
+      value: campaign.delivered_total,
+      rate: campaign.delivery_rate,
+      colorClass: 'bg-primary',
+    },
+    {
+      label: 'Failed',
+      value: campaign.failed_total,
+      rate: campaign.sent_total > 0 ? campaign.failed_total / campaign.sent_total : 0,
+      colorClass: 'bg-destructive',
+    },
     { label: 'Replies', value: campaign.replies_total },
-    { label: 'Conversions', value: campaign.conversions_total, rate: campaign.conversion_rate, colorClass: 'bg-warning' },
+    {
+      label: 'Conversions',
+      value: campaign.conversions_total,
+      rate: campaign.conversion_rate,
+      colorClass: 'bg-warning',
+    },
     { label: 'Revenue', value: formatNaira(campaign.revenue_kobo / 100) },
     { label: 'Payments Init', value: campaign.payments_initialized_total },
     { label: 'Payments OK', value: campaign.payments_success_total },
@@ -39,6 +54,7 @@ export function CampaignDetail({ campaign, onClose, className }: CampaignDetailP
           </span>
         </div>
         <button
+          type="button"
           onClick={onClose}
           aria-label="Close"
           className="rounded-full p-1.5 text-muted-foreground transition-colors hover:bg-card/60 hover:text-foreground"
@@ -59,7 +75,9 @@ export function CampaignDetail({ campaign, onClose, className }: CampaignDetailP
             <span className="text-[0.6rem] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
               {metric.label}
             </span>
-            <span className="font-display text-lg tabular-nums text-foreground">{metric.value}</span>
+            <span className="font-display text-lg tabular-nums text-foreground">
+              {metric.value}
+            </span>
             {metric.rate !== undefined && (
               <RateBar rate={metric.rate} colorClass={metric.colorClass} />
             )}

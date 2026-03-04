@@ -1,6 +1,7 @@
 import { lazy, Suspense, useCallback, useReducer } from 'react'
 import type { IndustryTemplateMeta, OnboardingCompanyMeta, WizardStepId } from '../../types'
 import { WizardStepIndicator } from './wizard/WizardStepIndicator'
+
 // --- Lazy-loaded step components (bundle-dynamic-imports) ---
 const StepIndustry = lazy(() =>
   import('./wizard/StepIndustry').then(m => ({ default: m.StepIndustry })),
@@ -14,9 +15,7 @@ const StepConnectors = lazy(() =>
 const StepCatalog = lazy(() =>
   import('./wizard/StepCatalog').then(m => ({ default: m.StepCatalog })),
 )
-const StepLaunch = lazy(() =>
-  import('./wizard/StepLaunch').then(m => ({ default: m.StepLaunch })),
-)
+const StepLaunch = lazy(() => import('./wizard/StepLaunch').then(m => ({ default: m.StepLaunch })))
 
 // --- Fallback templates (same as IndustryOnboarding, for title/hint resolution) ---
 const FALLBACK_OPTIONS: IndustryTemplateMeta[] = [
@@ -26,7 +25,12 @@ const FALLBACK_OPTIONS: IndustryTemplateMeta[] = [
     category: 'retail',
     description: 'Trade-ins, valuation, negotiation, pickup booking.',
     defaultVoice: 'Aoede',
-    theme: { accent: 'oklch(74% 0.21 158)', accentSoft: 'oklch(62% 0.14 172)', title: 'Hardware Trade Desk', hint: 'Inspect. Value. Negotiate. Book pickup.' },
+    theme: {
+      accent: 'oklch(74% 0.21 158)',
+      accentSoft: 'oklch(62% 0.14 172)',
+      title: 'Hardware Trade Desk',
+      hint: 'Inspect. Value. Negotiate. Book pickup.',
+    },
     capabilities: [],
     status: 'active',
   },

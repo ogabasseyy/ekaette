@@ -158,20 +158,17 @@ export function useWizardApi({ tenantId, userId = 'admin-user' }: UseWizardApiOp
     [tenantId, userId],
   )
 
-  const runAction = useCallback(
-    async (action: () => Promise<void>) => {
-      setBusy(true)
-      setError(null)
-      try {
-        await action()
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Action failed')
-      } finally {
-        setBusy(false)
-      }
-    },
-    [],
-  )
+  const runAction = useCallback(async (action: () => Promise<void>) => {
+    setBusy(true)
+    setError(null)
+    try {
+      await action()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Action failed')
+    } finally {
+      setBusy(false)
+    }
+  }, [])
 
   return { callJson, callFormData, runAction, busy, error, setError, setBusy }
 }

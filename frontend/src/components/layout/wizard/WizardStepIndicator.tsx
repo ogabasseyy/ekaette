@@ -41,7 +41,10 @@ export function WizardStepIndicator({
   onStepClick,
 }: WizardStepIndicatorProps) {
   return (
-    <nav aria-label="Vendor setup steps" className="flex items-center justify-center gap-2 sm:gap-3">
+    <nav
+      aria-label="Vendor setup steps"
+      className="flex items-center justify-center gap-2 sm:gap-3"
+    >
       {STEP_LABELS.map((label, index) => {
         const status = resolveStepStatus(index, currentStep, completedSteps)
         const canClick = completedSteps.has(index) && index !== currentStep

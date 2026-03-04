@@ -405,7 +405,8 @@ export function preferFinalTranscriptMessages(messages: TranscriptMessage[]): Tr
     if (latestPartial && latestPartialIndex > lastFinalIndex) {
       const duplicatesFinal = finals.some(
         final =>
-          final.role === latestPartial.role && isEquivalentTranscriptText(final.text, latestPartial.text),
+          final.role === latestPartial.role &&
+          isEquivalentTranscriptText(final.text, latestPartial.text),
       )
       if (!duplicatesFinal) {
         return [...finals, latestPartial]

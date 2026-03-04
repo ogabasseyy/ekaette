@@ -30,9 +30,7 @@ function getLastSocket(): MockSocket {
 }
 
 function sendServerMessage(ws: MockSocket, message: ServerMessage) {
-  ws.onmessage?.(
-    new MessageEvent('message', { data: JSON.stringify(message) }),
-  )
+  ws.onmessage?.(new MessageEvent('message', { data: JSON.stringify(message) }))
 }
 
 async function connectCall() {

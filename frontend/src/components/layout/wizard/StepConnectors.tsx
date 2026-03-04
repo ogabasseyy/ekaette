@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useState } from 'react'
 import { cva } from 'class-variance-authority'
-import type { AdminConnectorEntry, AdminCompanyDetail } from './useWizardApi'
-import { useWizardApi } from './useWizardApi'
+import { useCallback, useEffect, useState } from 'react'
 import { cn } from '../../../lib/utils'
+import type { AdminCompanyDetail, AdminConnectorEntry } from './useWizardApi'
+import { useWizardApi } from './useWizardApi'
 
 // ── Backend provider shape (from GET /api/v1/admin/mcp/providers) ──
 
@@ -83,7 +83,9 @@ export function StepConnectors({ companyId, tenantId, onNext, onBack }: StepConn
   const [customUrl, setCustomUrl] = useState('')
   const [customProviderId, setCustomProviderId] = useState('')
   const [customSecret, setCustomSecret] = useState('')
-  const [actionStates, setActionStates] = useState<Record<string, { status: CardStatus; message: string | null }>>({})
+  const [actionStates, setActionStates] = useState<
+    Record<string, { status: CardStatus; message: string | null }>
+  >({})
   const api = useWizardApi({ tenantId })
   const companyUrl = `/api/v1/admin/companies/${encodeURIComponent(companyId)}`
 
@@ -197,10 +199,10 @@ export function StepConnectors({ companyId, tenantId, onNext, onBack }: StepConn
   const removeConnector = useCallback(
     async (connectorId: string) => {
       await api.runAction(async () => {
-        await api.callJson(
-          `${companyUrl}/connectors/${encodeURIComponent(connectorId)}`,
-          { method: 'DELETE', idempotencyPrefix: 'wizard-connector-delete' },
-        )
+        await api.callJson(`${companyUrl}/connectors/${encodeURIComponent(connectorId)}`, {
+          method: 'DELETE',
+          idempotencyPrefix: 'wizard-connector-delete',
+        })
         setActionStates(prev => {
           const next = { ...prev }
           delete next[connectorId]
@@ -243,10 +245,12 @@ export function StepConnectors({ companyId, tenantId, onNext, onBack }: StepConn
         </div>
 
         {api.error ? (
-          <p className="text-xs text-destructive" role="alert">{api.error}</p>
+          <p className="text-xs text-destructive" role="alert">
+            {api.error}
+          </p>
         ) : null}
 
-        <div className="grid gap-3 sm:grid-cols-2" role="list" aria-label="Available integrations">
+        <ul className="grid gap-3 sm:grid-cols-2" aria-label="Available integrations">
           {providers.map(provider => {
             const cid = connectorIdForProvider(provider.id)
             const display = PROVIDER_DISPLAY[provider.id] ?? DEFAULT_DISPLAY
@@ -256,7 +260,7 @@ export function StepConnectors({ companyId, tenantId, onNext, onBack }: StepConn
             const CardEl = isConnected ? 'div' : 'button'
 
             return (
-              <div key={provider.id} className="contents" role="listitem">
+              <li key={provider.id} className="contents">
                 <CardEl
                   {...(!isConnected ? { type: 'button' as const } : {})}
                   aria-expanded={isExpanded}
@@ -268,10 +272,14 @@ export function StepConnectors({ companyId, tenantId, onNext, onBack }: StepConn
                 >
                   <div className="flex items-start justify-between">
                     <div className="flex items-center gap-2">
-                      <span className="text-lg" aria-hidden>{display.icon}</span>
+                      <span className="text-lg" aria-hidden>
+                        {display.icon}
+                      </span>
                       <div>
                         <p className="font-semibold text-white text-sm">{provider.label}</p>
-                        <p className="mt-0.5 text-xs text-muted-foreground">{display.description}</p>
+                        <p className="mt-0.5 text-xs text-muted-foreground">
+                          {display.description}
+                        </p>
                       </div>
                     </div>
                     <span className="shrink-0 rounded-full bg-card/60 px-2 py-0.5 text-[0.6rem] uppercase tracking-wider text-muted-foreground">
@@ -341,7 +349,10 @@ export function StepConnectors({ companyId, tenantId, onNext, onBack }: StepConn
                       </button>
                       <button
                         type="button"
-                        onClick={() => { setExpandedId(null); setSecretRef('') }}
+                        onClick={() => {
+                          setExpandedId(null)
+                          setSecretRef('')
+                        }}
                         className="rounded-full border border-border/50 bg-card/40 px-4 py-1.5 text-xs text-muted-foreground transition hover:text-white"
                       >
                         Cancel
@@ -349,12 +360,12 @@ export function StepConnectors({ companyId, tenantId, onNext, onBack }: StepConn
                     </div>
                   </div>
                 ) : null}
-              </div>
+              </li>
             )
           })}
 
           {/* Custom MCP Server card */}
-          <div className="contents" role="listitem">
+          <li className="contents">
             <button
               type="button"
               aria-expanded={expandedId === 'custom-mcp'}
@@ -365,15 +376,21 @@ export function StepConnectors({ companyId, tenantId, onNext, onBack }: StepConn
                 setCustomSecret('')
               }}
               className={cn(
-                connectorCardVariants({ status: expandedId === 'custom-mcp' ? 'connecting' : 'available' }),
+                connectorCardVariants({
+                  status: expandedId === 'custom-mcp' ? 'connecting' : 'available',
+                }),
               )}
             >
               <div className="flex items-start justify-between">
                 <div className="flex items-center gap-2">
-                  <span className="text-lg" aria-hidden>🔗</span>
+                  <span className="text-lg" aria-hidden>
+                    🔗
+                  </span>
                   <div>
                     <p className="font-semibold text-white text-sm">Custom MCP Server</p>
-                    <p className="mt-0.5 text-xs text-muted-foreground">Connect any MCP-compatible server</p>
+                    <p className="mt-0.5 text-xs text-muted-foreground">
+                      Connect any MCP-compatible server
+                    </p>
                   </div>
                 </div>
                 <span className="shrink-0 rounded-full bg-card/60 px-2 py-0.5 text-[0.6rem] uppercase tracking-wider text-muted-foreground">
@@ -433,20 +450,24 @@ export function StepConnectors({ companyId, tenantId, onNext, onBack }: StepConn
                 </div>
               </div>
             ) : null}
-          </div>
+          </li>
 
           {/* Show existing custom/unknown connectors */}
           {connectors
             .filter(c => !providers.some(p => connectorIdForProvider(p.id) === c.id))
             .map(entry => (
-              <div key={entry.id} className="contents" role="listitem">
+              <li key={entry.id} className="contents">
                 <div className={connectorCardVariants({ status: 'connected' })}>
                   <div className="flex items-start justify-between">
                     <div className="flex items-center gap-2">
-                      <span className="text-lg" aria-hidden>🔌</span>
+                      <span className="text-lg" aria-hidden>
+                        🔌
+                      </span>
                       <div>
                         <p className="font-semibold text-white text-sm">{entry.id}</p>
-                        <p className="mt-0.5 text-xs text-muted-foreground">{entry.provider ?? 'custom'}</p>
+                        <p className="mt-0.5 text-xs text-muted-foreground">
+                          {entry.provider ?? 'custom'}
+                        </p>
                       </div>
                     </div>
                     <span className="shrink-0 rounded-full bg-card/60 px-2 py-0.5 text-[0.6rem] uppercase tracking-wider text-muted-foreground">
@@ -454,7 +475,9 @@ export function StepConnectors({ companyId, tenantId, onNext, onBack }: StepConn
                     </span>
                   </div>
                   <div className="mt-3 flex items-center justify-between">
-                    <span className="flex items-center gap-1 text-xs text-emerald-400">✓ Connected</span>
+                    <span className="flex items-center gap-1 text-xs text-emerald-400">
+                      ✓ Connected
+                    </span>
                     <span className="flex gap-2">
                       <button
                         type="button"
@@ -473,9 +496,9 @@ export function StepConnectors({ companyId, tenantId, onNext, onBack }: StepConn
                     </span>
                   </div>
                 </div>
-              </div>
+              </li>
             ))}
-        </div>
+        </ul>
       </div>
 
       <div className="mt-6 flex justify-between">

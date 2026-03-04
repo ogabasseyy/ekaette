@@ -97,7 +97,9 @@ describe('AdminDashboard', () => {
     })
 
     const firstCall = fetchMock.mock.calls[0] as [string, RequestInit]
-    expect(firstCall[0]).toContain('/api/v1/admin/companies/ekaette-electronics/knowledge/import-file')
+    expect(firstCall[0]).toContain(
+      '/api/v1/admin/companies/ekaette-electronics/knowledge/import-file',
+    )
     expect(firstCall[0]).toContain('tenantId=public')
     expect(firstCall[1].method).toBe('POST')
     const headers = firstCall[1].headers as Record<string, string>

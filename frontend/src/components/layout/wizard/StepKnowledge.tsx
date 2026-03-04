@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { AdminKnowledgeEntry } from './useWizardApi'
-import { useWizardApi, parseCsv } from './useWizardApi'
+import { parseCsv, useWizardApi } from './useWizardApi'
 
 interface StepKnowledgeProps {
   companyId: string
@@ -12,7 +12,6 @@ interface StepKnowledgeProps {
 export function StepKnowledge({ companyId, tenantId, onNext, onBack }: StepKnowledgeProps) {
   const [title, setTitle] = useState('FAQ')
   const [text, setText] = useState('')
-  const [url, setUrl] = useState('')
   const [file, setFile] = useState<File | null>(null)
   const [entries, setEntries] = useState<AdminKnowledgeEntry[]>([])
   const [status, setStatus] = useState<string | null>(null)
@@ -39,13 +38,13 @@ export function StepKnowledge({ companyId, tenantId, onNext, onBack }: StepKnowl
       await api.callJson(`${companyUrl}/knowledge/import-text`, {
         method: 'POST',
         idempotencyPrefix: 'wizard-knowledge-text',
-        payload: { title, text, tags: parseCsv(title), source: 'wizard', url: url || undefined },
+        payload: { title, text, tags: parseCsv(title), source: 'wizard' },
       })
       setStatus('Knowledge text imported')
       setText('')
       await loadEntries()
     })
-  }, [api, companyUrl, loadEntries, text, title, url])
+  }, [api, companyUrl, loadEntries, text, title])
 
   const importFile = useCallback(async () => {
     if (!file) return
@@ -127,19 +126,25 @@ export function StepKnowledge({ companyId, tenantId, onNext, onBack }: StepKnowl
             </p>
             {showAllFormats ? (
               <div className="w-full rounded-lg border border-border/30 bg-card/20 px-3 py-2 text-[0.6rem] leading-relaxed text-muted-foreground/60">
-                <span className="font-medium text-muted-foreground/80">Documents:</span> PDF, DOCX, DOC, ODT, RTF, TXT, MD, EPUB
+                <span className="font-medium text-muted-foreground/80">Documents:</span> PDF, DOCX,
+                DOC, ODT, RTF, TXT, MD, EPUB
                 <br />
-                <span className="font-medium text-muted-foreground/80">Spreadsheets:</span> XLSX, XLS, XLSM, ODS, CSV, TSV
+                <span className="font-medium text-muted-foreground/80">Spreadsheets:</span> XLSX,
+                XLS, XLSM, ODS, CSV, TSV
                 <br />
-                <span className="font-medium text-muted-foreground/80">Presentations:</span> PPTX, PPT
+                <span className="font-medium text-muted-foreground/80">Presentations:</span> PPTX,
+                PPT
                 <br />
-                <span className="font-medium text-muted-foreground/80">Images (OCR):</span> JPEG, PNG, GIF, BMP, TIFF, WebP, SVG
+                <span className="font-medium text-muted-foreground/80">Images (OCR):</span> JPEG,
+                PNG, GIF, BMP, TIFF, WebP, SVG
                 <br />
-                <span className="font-medium text-muted-foreground/80">Web &amp; Data:</span> HTML, XML, JSON, YAML, TOML
+                <span className="font-medium text-muted-foreground/80">Web &amp; Data:</span> HTML,
+                XML, JSON, YAML, TOML
                 <br />
                 <span className="font-medium text-muted-foreground/80">Email:</span> EML, MSG
                 <br />
-                <span className="font-medium text-muted-foreground/80">Archives:</span> ZIP, TAR, GZ, 7Z
+                <span className="font-medium text-muted-foreground/80">Archives:</span> ZIP, TAR,
+                GZ, 7Z
               </div>
             ) : null}
             {file ? (
@@ -156,11 +161,11 @@ export function StepKnowledge({ companyId, tenantId, onNext, onBack }: StepKnowl
         </div>
 
         {api.error ? (
-          <p className="text-xs text-destructive" role="alert">{api.error}</p>
+          <p className="text-xs text-destructive" role="alert">
+            {api.error}
+          </p>
         ) : null}
-        {status ? (
-          <p className="text-xs text-emerald-400">{status}</p>
-        ) : null}
+        {status ? <p className="text-xs text-emerald-400">{status}</p> : null}
 
         {entries.length > 0 ? (
           <div className="space-y-1">

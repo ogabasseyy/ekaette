@@ -1,14 +1,14 @@
-import { useState } from 'react'
 import { cva } from 'class-variance-authority'
-import { Phone, MessageSquare } from 'lucide-react'
-import { NavBar } from '../layout/NavBar'
-import { CampaignTable } from '../analytics/CampaignTable'
-import { CampaignDetail } from '../analytics/CampaignDetail'
+import { MessageSquare, Phone } from 'lucide-react'
+import { useState } from 'react'
+import { useAnalytics } from '../../hooks/useAnalytics'
 import { useContacts } from '../../hooks/useContacts'
 import { useMarketing } from '../../hooks/useMarketing'
-import { useAnalytics } from '../../hooks/useAnalytics'
 import { cn } from '../../lib/utils'
 import type { CampaignChannel } from '../../types/marketing'
+import { CampaignDetail } from '../analytics/CampaignDetail'
+import { CampaignTable } from '../analytics/CampaignTable'
+import { NavBar } from '../layout/NavBar'
 
 const channelToggleVariants = cva(
   'rounded-full border px-3 py-1 text-[0.65rem] font-semibold uppercase tracking-[0.15em] transition-colors',
@@ -58,12 +58,10 @@ export function MarketingDashboard() {
 
   const { sending, sendCampaign, quickSms, quickCall } = useMarketing()
 
-  const {
-    campaigns,
-    selectedCampaign,
-    selectCampaign,
-    clearSelection,
-  } = useAnalytics({ tenantId, companyId })
+  const { campaigns, selectedCampaign, selectCampaign, clearSelection } = useAnalytics({
+    tenantId,
+    companyId,
+  })
 
   const canSend = selectedContacts.length > 0 && message.trim().length > 0 && !sending
 
@@ -182,7 +180,9 @@ export function MarketingDashboard() {
                         onChange={() => toggle(contact.phone)}
                         className="accent-primary"
                       />
-                      <span className="flex-1 font-mono text-sm text-foreground">{contact.phone}</span>
+                      <span className="flex-1 font-mono text-sm text-foreground">
+                        {contact.phone}
+                      </span>
                       <span className="channel-badge rounded-full border border-border/60 px-2 py-0.5 text-[0.55rem] font-bold uppercase tracking-wider text-muted-foreground">
                         {contact.channel}
                       </span>
@@ -249,7 +249,8 @@ export function MarketingDashboard() {
               />
 
               <p className="text-[0.65rem] text-muted-foreground">
-                {selectedContacts.length} recipient{selectedContacts.length !== 1 ? 's' : ''} selected
+                {selectedContacts.length} recipient{selectedContacts.length !== 1 ? 's' : ''}{' '}
+                selected
               </p>
 
               <button

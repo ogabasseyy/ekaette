@@ -1,7 +1,7 @@
+import { formatNaira, formatPercent } from '../../lib/format'
 import { cn } from '../../lib/utils'
-import { formatPercent, formatNaira } from '../../lib/format'
-import { RateBar } from './RateBar'
 import type { CampaignSnapshot } from '../../types/analytics'
+import { RateBar } from './RateBar'
 
 interface CampaignTableProps {
   campaigns: CampaignSnapshot[]
@@ -58,7 +58,12 @@ export function CampaignTable({ campaigns, selectedId, onSelect, className }: Ca
             >
               <td className="px-4 py-3 font-medium text-foreground">{campaign.campaign_name}</td>
               <td className="px-4 py-3">
-                <span className={cn('inline-block rounded-full border px-2 py-0.5 text-[0.6rem] font-semibold uppercase tracking-wider', channelColorClass(campaign.channel))}>
+                <span
+                  className={cn(
+                    'inline-block rounded-full border px-2 py-0.5 text-[0.6rem] font-semibold uppercase tracking-wider',
+                    channelColorClass(campaign.channel),
+                  )}
+                >
                   {channelLabel(campaign.channel)}
                 </span>
               </td>

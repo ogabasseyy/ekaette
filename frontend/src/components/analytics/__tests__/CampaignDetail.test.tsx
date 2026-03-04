@@ -1,8 +1,8 @@
-import { describe, it, expect, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { CampaignDetail } from '../CampaignDetail'
+import { describe, expect, it, vi } from 'vitest'
 import type { CampaignSnapshot } from '../../../types/analytics'
+import { CampaignDetail } from '../CampaignDetail'
 
 const MOCK_CAMPAIGN: CampaignSnapshot = {
   campaign_id: 'cmp-sms-001',

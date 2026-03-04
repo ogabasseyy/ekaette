@@ -88,7 +88,9 @@ export function IndustryOnboarding({
 }: IndustryOnboardingProps) {
   const options = templates && templates.length > 0 ? templates : FALLBACK_OPTIONS
   const initialTemplateId =
-    (defaultTemplateId && options.some(option => option.id === defaultTemplateId) && defaultTemplateId) ||
+    (defaultTemplateId &&
+      options.some(option => option.id === defaultTemplateId) &&
+      defaultTemplateId) ||
     options[0]?.id ||
     'electronics'
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>(initialTemplateId)
@@ -103,7 +105,7 @@ export function IndustryOnboarding({
   const [selectedCompanyId, setSelectedCompanyId] = useState<string>(
     defaultCompanyId && availableCompanies.some(company => company.id === defaultCompanyId)
       ? defaultCompanyId
-      : availableCompanies[0]?.id ?? fallbackCompanyId,
+      : (availableCompanies[0]?.id ?? fallbackCompanyId),
   )
 
   useEffect(() => {
@@ -147,36 +149,44 @@ export function IndustryOnboarding({
         behavior, and capabilities for customer calls.
       </p>
 
-      <div className="mt-5 grid gap-3 sm:mt-6 sm:grid-cols-2" role="radiogroup" aria-label="Industry selection">
+      <fieldset className="mt-5 grid gap-3 sm:mt-6 sm:grid-cols-2">
+        <legend className="sr-only">Industry selection</legend>
         {options.map(option => {
           const active = selectedTemplateId === option.id
           const displayLabel = resolveTemplateDisplayLabel(option)
           return (
-            <button
+            <label
               key={option.id}
-              type="button"
-              role="radio"
-              aria-checked={active}
-              onClick={() => {
-                setTemplateTouched(true)
-                setSelectedTemplateId(option.id)
-              }}
               className={cn(
-                'rounded-2xl border px-4 py-4 text-left transition',
+                'relative cursor-pointer rounded-2xl border px-4 py-4 text-left transition',
                 active
                   ? 'border-primary/60 bg-primary/10'
                   : 'border-border/70 bg-card/40 hover:border-primary/40',
               )}
             >
+              <input
+                type="radio"
+                name="industry-template"
+                value={option.id}
+                checked={active}
+                onChange={() => {
+                  setTemplateTouched(true)
+                  setSelectedTemplateId(option.id)
+                }}
+                className="absolute inset-0 m-0 cursor-pointer opacity-0"
+              />
               <p className="font-semibold text-white">{displayLabel}</p>
               <p className="mt-1 text-muted-foreground text-sm">{option.description}</p>
-            </button>
+            </label>
           )
         })}
-      </div>
+      </fieldset>
 
       <div className="mt-4">
-        <label htmlFor="vendor-company" className="block text-[0.68rem] text-muted-foreground uppercase tracking-[0.16em]">
+        <label
+          htmlFor="vendor-company"
+          className="block text-[0.68rem] text-muted-foreground uppercase tracking-[0.16em]"
+        >
           Company
         </label>
         <select

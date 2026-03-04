@@ -31,6 +31,10 @@ TOOL_RESPONSE_SCHEDULING: dict[str, str] = {
     "preload_memory": "SILENT",
 }
 
+# One-time patch state (kept module-level for deterministic test monkeypatching).
+_PATCH_INSTALLED = False
+_ORIGINAL_BUILD_RESPONSE_EVENT: Any | None = None
+
 
 def _to_scheduling_enum(value: str | None) -> types.FunctionResponseScheduling | None:
     if not value:
@@ -64,7 +68,9 @@ def _apply_response_scheduling(event: Any, tool_name: str) -> None:
 
 def install_tool_response_scheduling_patch() -> bool:
     """Install one-time patch to set FunctionResponse.scheduling by tool name."""
-    if getattr(install_tool_response_scheduling_patch, "_installed", False):
+    global _PATCH_INSTALLED, _ORIGINAL_BUILD_RESPONSE_EVENT
+
+    if _PATCH_INSTALLED:
         return True
 
     try:
@@ -73,6 +79,7 @@ def install_tool_response_scheduling_patch() -> bool:
         if not callable(original):
             logger.warning("Tool scheduling patch skipped: build response hook unavailable")
             return False
+        _ORIGINAL_BUILD_RESPONSE_EVENT = original
 
         def _patched_build_response_event(
             tool: Any,
@@ -80,14 +87,16 @@ def install_tool_response_scheduling_patch() -> bool:
             tool_context: Any,
             invocation_context: Any,
         ) -> Any:
-            event = original(tool, function_result, tool_context, invocation_context)
+            if _ORIGINAL_BUILD_RESPONSE_EVENT is None:
+                return None
+            event = _ORIGINAL_BUILD_RESPONSE_EVENT(tool, function_result, tool_context, invocation_context)
             tool_name = getattr(tool, "name", "")
             if isinstance(tool_name, str) and tool_name:
                 _apply_response_scheduling(event, tool_name)
             return event
 
         setattr(functions_mod, "__build_response_event", _patched_build_response_event)
-        setattr(install_tool_response_scheduling_patch, "_installed", True)
+        _PATCH_INSTALLED = True
         logger.info("Installed live tool response scheduling patch")
         return True
     except Exception as exc:

@@ -1,7 +1,7 @@
-import { describe, it, expect } from 'vitest'
 import { render, screen } from '@testing-library/react'
-import { KpiCards } from '../KpiCards'
+import { describe, expect, it } from 'vitest'
 import type { AnalyticsSummary } from '../../../types/analytics'
+import { KpiCards } from '../KpiCards'
 
 const MOCK_SUMMARY: AnalyticsSummary = {
   window_days: 30,

@@ -1,9 +1,9 @@
-import { describe, it, expect, vi, afterEach } from 'vitest'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { MarketingDashboard } from '../MarketingDashboard'
-import type { ContactsResponse } from '../../../types/marketing'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { AnalyticsOverviewResponse } from '../../../types/analytics'
+import type { ContactsResponse } from '../../../types/marketing'
+import { MarketingDashboard } from '../MarketingDashboard'
 
 vi.mock('../../../lib/navigation', () => ({
   NAV_ITEMS: [
@@ -21,8 +21,18 @@ const MOCK_CONTACTS: ContactsResponse = {
   tenant_id: 'public',
   company_id: 'ekaette-electronics',
   contacts: [
-    { phone: '+2348011111111', last_campaign_id: 'cmp-001', last_campaign_name: 'Promo A', channel: 'sms' },
-    { phone: '+2348022222222', last_campaign_id: 'cmp-002', last_campaign_name: 'Follow-up', channel: 'voice' },
+    {
+      phone: '+2348011111111',
+      last_campaign_id: 'cmp-001',
+      last_campaign_name: 'Promo A',
+      channel: 'sms',
+    },
+    {
+      phone: '+2348022222222',
+      last_campaign_id: 'cmp-002',
+      last_campaign_name: 'Follow-up',
+      channel: 'voice',
+    },
   ],
   count: 2,
 }
@@ -56,7 +66,10 @@ const MOCK_ANALYTICS: AnalyticsOverviewResponse = {
   campaigns: [],
 }
 
-function mockFetchResponses(contactsResp: ContactsResponse, analyticsResp: AnalyticsOverviewResponse = MOCK_ANALYTICS) {
+function mockFetchResponses(
+  contactsResp: ContactsResponse,
+  analyticsResp: AnalyticsOverviewResponse = MOCK_ANALYTICS,
+) {
   return vi.fn((url: string) => {
     if (url.includes('/analytics/contacts')) {
       return Promise.resolve({ ok: true, json: () => Promise.resolve(contactsResp) })
@@ -245,7 +258,9 @@ describe('MarketingDashboard', () => {
     await user.click(callBtn)
 
     await waitFor(() => {
-      const callCalls = fetchMock.mock.calls.filter(([url]: [string]) => url.includes('/voice/call'))
+      const callCalls = fetchMock.mock.calls.filter(([url]: [string]) =>
+        url.includes('/voice/call'),
+      )
       expect(callCalls.length).toBe(1)
     })
   })

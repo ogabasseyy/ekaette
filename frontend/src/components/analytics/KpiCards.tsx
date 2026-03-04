@@ -1,7 +1,7 @@
+import { formatCompactNumber, formatNaira, formatPercent } from '../../lib/format'
 import { cn } from '../../lib/utils'
-import { formatNaira, formatPercent, formatCompactNumber } from '../../lib/format'
-import { RateBar } from './RateBar'
 import type { AnalyticsSummary } from '../../types/analytics'
+import { RateBar } from './RateBar'
 
 interface KpiCardsProps {
   summary: AnalyticsSummary | null
@@ -63,9 +63,7 @@ export function KpiCards({ summary, className }: KpiCardsProps) {
             {card.label}
           </span>
           <span className="font-display text-2xl text-foreground">{card.value}</span>
-          {card.rate !== undefined && (
-            <RateBar rate={card.rate} colorClass={card.colorClass} />
-          )}
+          {card.rate !== undefined && <RateBar rate={card.rate} colorClass={card.colorClass} />}
         </div>
       ))}
     </div>

@@ -8,12 +8,8 @@ import { act, fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from '../App'
+import type { IndustryTemplateMeta, OnboardingConfigResponse } from '../types'
 import { getLastSocket, sendServerMessage } from './test-helpers'
-
-import type {
-  IndustryTemplateMeta,
-  OnboardingConfigResponse,
-} from '../types'
 
 // Pre-warm lazy-loaded wizard step components so React.lazy resolves under fake timers
 beforeAll(async () => {
@@ -180,9 +176,7 @@ describe('useDemoMode with industryTemplateId', () => {
     const { renderHook, act: hookAct } = await import('@testing-library/react')
     const { useDemoMode } = await import('../hooks/useDemoMode')
 
-    const { result } = renderHook(() =>
-      useDemoMode({ industryTemplateId: 'hotel' }),
-    )
+    const { result } = renderHook(() => useDemoMode({ industryTemplateId: 'hotel' }))
 
     hookAct(() => {
       result.current.play()
@@ -196,9 +190,7 @@ describe('useDemoMode with industryTemplateId', () => {
     const { renderHook, act: hookAct } = await import('@testing-library/react')
     const { useDemoMode } = await import('../hooks/useDemoMode')
 
-    const { result } = renderHook(() =>
-      useDemoMode({ industryTemplateId: 'unknown-industry-xyz' }),
-    )
+    const { result } = renderHook(() => useDemoMode({ industryTemplateId: 'unknown-industry-xyz' }))
 
     hookAct(() => {
       result.current.play()
@@ -223,9 +215,7 @@ describe('useDemoMode with industryTemplateId', () => {
 
 describe('IndustryOnboarding dynamic templates', () => {
   it('renders template options from props instead of hardcoded list', async () => {
-    const { IndustryOnboarding } = await import(
-      '../components/layout/IndustryOnboarding'
-    )
+    const { IndustryOnboarding } = await import('../components/layout/IndustryOnboarding')
     render(
       <IndustryOnboarding
         templates={MOCK_TEMPLATES}
@@ -241,9 +231,7 @@ describe('IndustryOnboarding dynamic templates', () => {
   })
 
   it('calls onComplete with template id (not legacy industry string)', async () => {
-    const { IndustryOnboarding } = await import(
-      '../components/layout/IndustryOnboarding'
-    )
+    const { IndustryOnboarding } = await import('../components/layout/IndustryOnboarding')
     const onComplete = vi.fn()
     const user = userEvent.setup()
 
@@ -265,9 +253,7 @@ describe('IndustryOnboarding dynamic templates', () => {
   })
 
   it('defaults to first template when none selected', async () => {
-    const { IndustryOnboarding } = await import(
-      '../components/layout/IndustryOnboarding'
-    )
+    const { IndustryOnboarding } = await import('../components/layout/IndustryOnboarding')
     const onComplete = vi.fn()
     const user = userEvent.setup()
 
@@ -293,11 +279,7 @@ describe('Header with template label', () => {
   it('displays templateLabel prop instead of hardcoded INDUSTRY_LABELS', async () => {
     const { Header } = await import('../components/layout/Header')
     render(
-      <Header
-        hint="Test hint"
-        templateLabel="Telecom & Mobile"
-        connectionState="disconnected"
-      />,
+      <Header hint="Test hint" templateLabel="Telecom & Mobile" connectionState="disconnected" />,
     )
 
     expect(screen.getByText(/Telecom & Mobile/i)).toBeInTheDocument()

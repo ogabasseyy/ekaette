@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type {
-  AnalyticsSummary,
-  CampaignSnapshot,
   AnalyticsOverviewResponse,
+  AnalyticsSummary,
   CampaignDetailResponse,
+  CampaignSnapshot,
 } from '../types/analytics'
 
 const POLL_INTERVAL_MS = 30_000
@@ -25,7 +25,11 @@ interface UseAnalyticsResult {
   clearSelection: () => void
 }
 
-export function useAnalytics({ tenantId, companyId, days = 30 }: UseAnalyticsOptions): UseAnalyticsResult {
+export function useAnalytics({
+  tenantId,
+  companyId,
+  days = 30,
+}: UseAnalyticsOptions): UseAnalyticsResult {
   const [summary, setSummary] = useState<AnalyticsSummary | null>(null)
   const [campaigns, setCampaigns] = useState<CampaignSnapshot[]>([])
   const [selectedCampaign, setSelectedCampaign] = useState<CampaignSnapshot | null>(null)
@@ -83,7 +87,9 @@ export function useAnalytics({ tenantId, companyId, days = 30 }: UseAnalyticsOpt
 
   const selectCampaign = useCallback(async (campaignId: string) => {
     try {
-      const response = await fetch(`/api/v1/at/analytics/campaigns/${encodeURIComponent(campaignId)}`)
+      const response = await fetch(
+        `/api/v1/at/analytics/campaigns/${encodeURIComponent(campaignId)}`,
+      )
       if (!response.ok) {
         throw new Error(`${response.status} ${response.statusText}`)
       }

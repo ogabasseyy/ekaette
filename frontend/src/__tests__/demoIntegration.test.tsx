@@ -34,7 +34,6 @@ describe('Demo mode integration', () => {
     window.history.replaceState({}, '', '/?demo=1')
     render(<App />)
 
-
     // Start the demo
     const startButton = screen.getByRole('button', { name: /start call/i })
     await act(async () => {
@@ -49,9 +48,7 @@ describe('Demo mode integration', () => {
     await act(async () => {
       vi.advanceTimersByTime(500)
     })
-    expect(
-      screen.getAllByText(/Hello, I am Ekaette/i).length,
-    ).toBeGreaterThan(0)
+    expect(screen.getAllByText(/Hello, I am Ekaette/i).length).toBeGreaterThan(0)
 
     // Advance to valuation result (1600ms total = 1100ms more)
     await act(async () => {
@@ -86,7 +83,6 @@ describe('Demo mode integration', () => {
     window.localStorage.setItem(INDUSTRY_STORAGE_KEY, 'electronics')
     window.history.replaceState({}, '', '/?demo=1')
     render(<App />)
-
 
     const startButton = screen.getByRole('button', { name: /start call/i })
     await act(async () => {

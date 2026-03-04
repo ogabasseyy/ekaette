@@ -1,6 +1,6 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('../../../lib/navigation', () => ({
   NAV_ITEMS: [
@@ -12,8 +12,8 @@ vi.mock('../../../lib/navigation', () => ({
   navigateTo: vi.fn(),
 }))
 
-import { NavBar } from '../NavBar'
 import { navigateTo } from '../../../lib/navigation'
+import { NavBar } from '../NavBar'
 
 describe('NavBar', () => {
   beforeEach(() => {

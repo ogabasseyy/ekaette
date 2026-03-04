@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
-import type { KnownContact, ContactsResponse } from '../types/marketing'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import type { ContactsResponse, KnownContact } from '../types/marketing'
 
 interface UseContactsOptions {
   tenantId: string

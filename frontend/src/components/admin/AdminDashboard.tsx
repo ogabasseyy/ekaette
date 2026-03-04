@@ -214,26 +214,25 @@ export function AdminDashboard() {
       setInventoryAutoEnabled(sync.auto_enabled)
     }
     if (typeof sync.interval_minutes === 'number' && Number.isFinite(sync.interval_minutes)) {
-      setInventoryIntervalMinutes(String(Math.max(1, Math.min(1440, Math.round(sync.interval_minutes)))))
+      setInventoryIntervalMinutes(
+        String(Math.max(1, Math.min(1440, Math.round(sync.interval_minutes)))),
+      )
     }
   }, [companyDetail?.inventorySync])
 
-  const adminHeaders = useMemo(
-    () => {
-      const headers: Record<string, string> = {
-        Accept: 'application/json',
-        'Content-Type': 'application/json',
-        'x-user-id': userId,
-        'x-tenant-id': tenantId,
-        'x-roles': 'tenant_admin',
-      }
-      if (adminKey.trim()) {
-        headers['x-admin-key'] = adminKey.trim()
-      }
-      return headers
-    },
-    [adminKey, tenantId, userId],
-  )
+  const adminHeaders = useMemo(() => {
+    const headers: Record<string, string> = {
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+      'x-user-id': userId,
+      'x-tenant-id': tenantId,
+      'x-roles': 'tenant_admin',
+    }
+    if (adminKey.trim()) {
+      headers['x-admin-key'] = adminKey.trim()
+    }
+    return headers
+  }, [adminKey, tenantId, userId])
 
   async function callAdminJson<TPayload extends Record<string, unknown> | undefined>(
     url: string,
@@ -713,9 +712,11 @@ export function AdminDashboard() {
       )
       setStatusMessage(
         `Inventory sync config saved. Auto=${String(
-          (payload.inventorySync as Record<string, unknown> | undefined)?.auto_enabled ?? inventoryAutoEnabled,
+          (payload.inventorySync as Record<string, unknown> | undefined)?.auto_enabled ??
+            inventoryAutoEnabled,
         )} interval=${String(
-          (payload.inventorySync as Record<string, unknown> | undefined)?.interval_minutes ?? intervalMinutes,
+          (payload.inventorySync as Record<string, unknown> | undefined)?.interval_minutes ??
+            intervalMinutes,
         )}m`,
       )
       setInventoryIntervalMinutes(String(intervalMinutes))
@@ -929,7 +930,10 @@ export function AdminDashboard() {
                   aria-label="Knowledge file"
                   className="sr-only"
                   onChange={event => {
-                    const selected = event.target.files && event.target.files.length > 0 ? event.target.files[0] : null
+                    const selected =
+                      event.target.files && event.target.files.length > 0
+                        ? event.target.files[0]
+                        : null
                     setKnowledgeFile(selected ?? null)
                   }}
                 />
@@ -944,7 +948,9 @@ export function AdminDashboard() {
               </button>
             </div>
             {knowledgeFile ? (
-              <p className="mt-2 text-xs text-muted-foreground">Selected file: {knowledgeFile.name}</p>
+              <p className="mt-2 text-xs text-muted-foreground">
+                Selected file: {knowledgeFile.name}
+              </p>
             ) : null}
           </article>
         </section>
@@ -1072,7 +1078,9 @@ export function AdminDashboard() {
                     <select
                       value={inventorySourceType}
                       onChange={event =>
-                        setInventorySourceType(event.target.value as 'google_sheets' | 'mcp_connector')
+                        setInventorySourceType(
+                          event.target.value as 'google_sheets' | 'mcp_connector',
+                        )
                       }
                       className="rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground"
                     >
@@ -1164,7 +1172,9 @@ export function AdminDashboard() {
                       className="sr-only"
                       onChange={event => {
                         const selected =
-                          event.target.files && event.target.files.length > 0 ? event.target.files[0] : null
+                          event.target.files && event.target.files.length > 0
+                            ? event.target.files[0]
+                            : null
                         setInventoryFile(selected ?? null)
                       }}
                     />
@@ -1195,12 +1205,13 @@ export function AdminDashboard() {
                   </button>
                 </div>
                 {inventoryFile ? (
-                  <p className="mt-2 text-xs text-muted-foreground">Selected inventory file: {inventoryFile.name}</p>
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    Selected inventory file: {inventoryFile.name}
+                  </p>
                 ) : null}
                 {companyDetail?.inventorySync ? (
                   <p className="mt-2 text-xs text-muted-foreground">
-                    Last sync status:{' '}
-                    {companyDetail.inventorySync.status ?? 'unknown'} · updated{' '}
+                    Last sync status: {companyDetail.inventorySync.status ?? 'unknown'} · updated{' '}
                     {companyDetail.inventorySync.updated_at ?? 'n/a'} · written{' '}
                     {String(companyDetail.inventorySync.last_result?.written ?? 0)} · next run{' '}
                     {companyDetail.inventorySync.next_run_at ?? 'n/a'} · auto{' '}
@@ -1236,7 +1247,9 @@ export function AdminDashboard() {
               {knowledgeEntries.map(entry => (
                 <li key={entry.id} className="rounded-xl border border-border/70 px-3 py-2">
                   <p className="font-medium text-foreground">{entry.title ?? entry.id}</p>
-                  <p className="text-xs text-muted-foreground">{entry.source ?? 'unknown source'}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {entry.source ?? 'unknown source'}
+                  </p>
                   <button
                     type="button"
                     onClick={() => {
@@ -1260,24 +1273,25 @@ export function AdminDashboard() {
                 <li key={entry.id} className="rounded-xl border border-border/70 px-3 py-2">
                   <p className="font-medium text-foreground">{entry.id}</p>
                   <p className="text-xs text-muted-foreground">
-                    {entry.provider ?? 'unknown'} · {(entry.capabilities ?? []).join(', ') || 'none'}
+                    {entry.provider ?? 'unknown'} ·{' '}
+                    {(entry.capabilities ?? []).join(', ') || 'none'}
                   </p>
                   <div className="mt-2 flex gap-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      hydrateConnectorForm(entry)
-                    }}
-                    className="rounded-full border border-border bg-background px-3 py-1 text-xs font-semibold text-foreground"
-                  >
-                    Edit
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      void testConnector(entry.id)
-                    }}
-                    className="rounded-full border border-border bg-background px-3 py-1 text-xs font-semibold text-foreground"
+                    <button
+                      type="button"
+                      onClick={() => {
+                        hydrateConnectorForm(entry)
+                      }}
+                      className="rounded-full border border-border bg-background px-3 py-1 text-xs font-semibold text-foreground"
+                    >
+                      Edit
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void testConnector(entry.id)
+                      }}
+                      className="rounded-full border border-border bg-background px-3 py-1 text-xs font-semibold text-foreground"
                     >
                       Test
                     </button>
