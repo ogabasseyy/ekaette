@@ -130,6 +130,17 @@ class TestUploadToCloudStorage:
         filename = _artifact_filename("image/heic")
         assert filename.endswith(".heic")
 
+    def test_artifact_filename_uses_media_category_prefix(self):
+        """Video artifacts should use customer_video_ prefix, images customer_image_."""
+        from app.tools.vision_tools import _artifact_filename
+
+        image_name = _artifact_filename("image/jpeg")
+        assert image_name.startswith("customer_image_")
+
+        video_name = _artifact_filename("video/mp4")
+        assert video_name.startswith("customer_video_")
+        assert video_name.endswith(".mp4")
+
     @pytest.mark.asyncio
     async def test_uploads_with_correct_bucket_and_path(self):
         """Should upload to configured bucket with structured path."""
@@ -566,6 +577,7 @@ class TestMediaAwareAnalysis:
         prompt = get_analysis_prompt("application/octet-stream")
         # Should fall back to the image prompt
         assert "device" in prompt.lower()
+        assert "video" not in prompt.lower()
 
     @pytest.mark.asyncio
     async def test_analyze_device_media_with_video_uses_video_prompt(self):

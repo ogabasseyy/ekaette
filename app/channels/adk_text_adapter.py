@@ -163,6 +163,14 @@ async def send_media_message(
     """
     session_id = derive_session_id(channel, user_id)
 
+    if not media_bytes:
+        logger.warning("Empty media bytes received from user %s", user_id)
+        return {
+            "text": "Sorry, the media file appears to be empty. Please try sending it again.",
+            "session_id": session_id,
+            "channel": channel,
+        }
+
     if len(media_bytes) > _MAX_MEDIA_BYTES:
         logger.warning("Media too large: %d bytes (limit %d)", len(media_bytes), _MAX_MEDIA_BYTES)
         return {

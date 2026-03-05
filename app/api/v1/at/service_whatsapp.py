@@ -60,9 +60,9 @@ def _get_adk_runner_and_service() -> tuple[Any, Any, Any]:
         import main as main_module
         runner = getattr(main_module, "text_runner", None)
         session_service = getattr(main_module, "session_service", None)
-        app_name = getattr(main_module, "SESSION_APP_NAME", None)
-        if runner is not None and session_service is not None and app_name:
-            return runner, session_service, app_name
+        base_name = getattr(main_module, "SESSION_APP_NAME", None)
+        if runner is not None and session_service is not None and base_name:
+            return runner, session_service, f"{base_name}_text"
     except Exception:
         logger.debug("ADK runner access failed", exc_info=True)
     return None, None, None
