@@ -390,16 +390,13 @@ class TestVerifyToken:
     """Webhook verification token check."""
 
     def test_valid_token(self) -> None:
-        from app.api.v1.at.wa_security import verify_wa_verify_token
         with patch("app.api.v1.at.wa_security.WHATSAPP_VERIFY_TOKEN", "my_token"):
-            assert verify_wa_verify_token("my_token") is True
+            assert wa_security.verify_wa_verify_token("my_token") is True
 
     def test_invalid_token(self) -> None:
-        from app.api.v1.at.wa_security import verify_wa_verify_token
         with patch("app.api.v1.at.wa_security.WHATSAPP_VERIFY_TOKEN", "my_token"):
-            assert verify_wa_verify_token("wrong") is False
+            assert wa_security.verify_wa_verify_token("wrong") is False
 
     def test_empty_config(self) -> None:
-        from app.api.v1.at.wa_security import verify_wa_verify_token
         with patch("app.api.v1.at.wa_security.WHATSAPP_VERIFY_TOKEN", ""):
-            assert verify_wa_verify_token("anything") is False
+            assert wa_security.verify_wa_verify_token("anything") is False
