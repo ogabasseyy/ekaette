@@ -49,6 +49,17 @@ class TestWaSessionCreation:
         assert s.frames_received == 0
         assert s.frames_sent == 0
 
+    def test_session_tool_context_defaults(self):
+        from sip_bridge.wa_session import WaSession
+
+        s = WaSession(
+            call_id="wa-call-1",
+            tenant_id="public",
+            company_id="acme",
+        )
+        assert s._caller_phone == ""
+        assert s._bridge_config is None
+
     def test_session_accepts_codec_bridge(self):
         from sip_bridge.codec_bridge import OpusCodecBridge
         from sip_bridge.wa_session import WaSession
@@ -441,6 +452,7 @@ class TestWaSessionGeminiBidi:
                     return
 
             response = MagicMock()
+            response.tool_call = None  # No tool call in this response
             part = MagicMock()
             part.inline_data = MagicMock()
             part.inline_data.data = b"\x00" * 960  # 24kHz PCM16 frame
@@ -471,6 +483,88 @@ class TestWaSessionGeminiBidi:
         await asyncio.wait_for(_run_with_stop(), timeout=5.0)
         # Outbound queue should have received the Gemini audio
         assert s.outbound_queue.qsize() > 0 or s.frames_sent > 0
+
+    async def test_tool_call_sends_function_response(self):
+        """Tool calls should send a typed FunctionResponse to Gemini."""
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock, patch
+
+        from sip_bridge.wa_session import WaSession
+
+        mock_gemini = AsyncMock()
+        mock_gemini.send_tool_response = AsyncMock()
+        expected_result = {"status": "sent", "message_id": "wamid.123"}
+
+        s = WaSession(
+            call_id="wa-call-gemini-tool",
+            tenant_id="public",
+            company_id="acme",
+            gemini_session=mock_gemini,
+            _caller_phone="+2348012345678",
+            _bridge_config=SimpleNamespace(
+                wa_service_api_base_url="https://api.example.com",
+                wa_service_secret="secret",
+                tenant_id="public",
+                company_id="acme",
+            ),
+        )
+        tool_call = SimpleNamespace(
+            function_calls=[
+                SimpleNamespace(
+                    name="send_whatsapp_message",
+                    id="fn-call-1",
+                    args={"text": "Please send details"},
+                )
+            ]
+        )
+
+        with patch("sip_bridge.wa_tools.handle_send_wa_message", new_callable=AsyncMock) as mock_tool:
+            mock_tool.return_value = expected_result
+            await s._handle_tool_call(tool_call)
+
+        mock_gemini.send_tool_response.assert_awaited_once()
+        kwargs = mock_gemini.send_tool_response.call_args.kwargs
+        function_responses = kwargs["function_responses"]
+        assert len(function_responses) == 1
+        function_response = function_responses[0]
+        assert function_response.name == "send_whatsapp_message"
+        assert function_response.id == "fn-call-1"
+        assert function_response.response == expected_result
+
+    async def test_tool_call_without_context_returns_safe_error(self):
+        """Tool call should fail safely when caller/config context is missing."""
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock, patch
+
+        from sip_bridge.wa_session import WaSession
+
+        mock_gemini = AsyncMock()
+        mock_gemini.send_tool_response = AsyncMock()
+        s = WaSession(
+            call_id="wa-call-missing-context",
+            tenant_id="public",
+            company_id="acme",
+            gemini_session=mock_gemini,
+            _caller_phone="",
+            _bridge_config=None,
+        )
+        tool_call = SimpleNamespace(
+            function_calls=[
+                SimpleNamespace(
+                    name="send_whatsapp_message",
+                    id="fn-call-2",
+                    args={"text": "Please send details"},
+                )
+            ]
+        )
+
+        with patch("sip_bridge.wa_tools.handle_send_wa_message", new_callable=AsyncMock) as mock_tool:
+            await s._handle_tool_call(tool_call)
+
+        mock_tool.assert_not_awaited()
+        kwargs = mock_gemini.send_tool_response.call_args.kwargs
+        function_response = kwargs["function_responses"][0]
+        assert function_response.response["status"] == "error"
 
 
 class TestWaSessionUDPTransport:

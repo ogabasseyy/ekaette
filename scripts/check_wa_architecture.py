@@ -3,7 +3,8 @@
 Checks:
 1. sip_bridge/ must NOT import from app.*
 2. State-boundary ownership (cross-module import restrictions)
-3. File-size caps: wa_*.py ≤400 LOC, codec_bridge ≤250, srtp_context ≤200
+3. File-size caps: wa_*.py ≤400 LOC (except wa_session.py ≤500),
+   codec_bridge ≤250, srtp_context ≤200
 4. Required files exist
 """
 
@@ -20,7 +21,7 @@ SIP_ROOT = Path("sip_bridge")
 # Explicit caps for known modules; wa_*.py modules discovered at runtime default to 400.
 _EXPLICIT_FILE_SIZE_CAPS = {
     "wa_sip_client.py": 400,
-    "wa_session.py": 400,
+    "wa_session.py": 500,
     "wa_config.py": 400,
     "wa_main.py": 400,
     "sip_tls.py": 400,

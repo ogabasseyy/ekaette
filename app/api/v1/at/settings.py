@@ -80,7 +80,48 @@ class ATSettings(BaseSettings):
     whatsapp_enabled: bool = Field(default=False, alias="WHATSAPP_ENABLED")
     whatsapp_access_token: str = Field(default="", alias="WHATSAPP_ACCESS_TOKEN")
     whatsapp_phone_number_id: str = Field(default="", alias="WHATSAPP_PHONE_NUMBER_ID")
-    whatsapp_api_version: str = Field(default="v22.0", alias="WHATSAPP_API_VERSION")
+    whatsapp_api_version: str = Field(default="v25.0", alias="WHATSAPP_API_VERSION")
+    whatsapp_app_secret: str = Field(default="", alias="WHATSAPP_APP_SECRET")
+    whatsapp_verify_token: str = Field(default="", alias="WHATSAPP_VERIFY_TOKEN")
+
+    # WhatsApp service-to-service auth
+    wa_service_secret: str = Field(default="", alias="WA_SERVICE_SECRET")
+    wa_service_secret_previous: str = Field(default="", alias="WA_SERVICE_SECRET_PREVIOUS")
+    wa_service_auth_max_skew_seconds: int = Field(default=300, alias="WA_SERVICE_AUTH_MAX_SKEW_SECONDS")
+
+    # WhatsApp Cloud Tasks
+    wa_cloud_tasks_max_attempts: int = Field(default=3, alias="WA_CLOUD_TASKS_MAX_ATTEMPTS")
+    wa_cloud_tasks_queue_name: str = Field(default="wa-webhook-processing", alias="WA_CLOUD_TASKS_QUEUE_NAME")
+    wa_cloud_tasks_audience: str = Field(default="", alias="WA_CLOUD_TASKS_AUDIENCE")
+    wa_tasks_invoker_email: str = Field(default="", alias="WA_TASKS_INVOKER_EMAIL")
+
+    # WhatsApp Graph API retry
+    wa_graph_retry_max_attempts: int = Field(
+        default=3,
+        ge=1,
+        alias="WA_GRAPH_RETRY_MAX_ATTEMPTS",
+    )
+    wa_graph_retry_max_backoff_seconds: int = Field(
+        default=8,
+        ge=1,
+        alias="WA_GRAPH_RETRY_MAX_BACKOFF_SECONDS",
+    )
+
+    # WhatsApp template fallback
+    wa_utility_template_name: str = Field(default="", alias="WA_UTILITY_TEMPLATE_NAME")
+    wa_utility_template_language: str = Field(default="en_US", alias="WA_UTILITY_TEMPLATE_LANGUAGE")
+
+    # WhatsApp send idempotency
+    wa_send_idempotency_ttl_hours: int = Field(default=24, alias="WA_SEND_IDEMPOTENCY_TTL_HOURS")
+
+    # WhatsApp webhook rate limiting
+    wa_webhook_rate_limit_mode: str = Field(default="edge_enforced", alias="WA_WEBHOOK_RATE_LIMIT_MODE")
+    wa_edge_ratelimit_header: str = Field(default="X-Edge-RateLimit-Checked", alias="WA_EDGE_RATELIMIT_HEADER")
+
+    # WhatsApp replay artifacts
+    wa_replay_bucket: str = Field(default="", alias="WA_REPLAY_BUCKET")
+    wa_replay_blob_prefix: str = Field(default="wa/replay/", alias="WA_REPLAY_BLOB_PREFIX")
+    wa_replay_blob_ttl_hours: int = Field(default=24, alias="WA_REPLAY_BLOB_TTL_HOURS")
 
 
 cfg = ATSettings()
@@ -131,3 +172,61 @@ WHATSAPP_ENABLED = cfg.whatsapp_enabled
 WHATSAPP_ACCESS_TOKEN = cfg.whatsapp_access_token
 WHATSAPP_PHONE_NUMBER_ID = cfg.whatsapp_phone_number_id
 WHATSAPP_API_VERSION = cfg.whatsapp_api_version
+WHATSAPP_APP_SECRET = cfg.whatsapp_app_secret
+WHATSAPP_VERIFY_TOKEN = cfg.whatsapp_verify_token
+
+# WhatsApp service-to-service auth
+WA_SERVICE_SECRET = cfg.wa_service_secret
+WA_SERVICE_SECRET_PREVIOUS = cfg.wa_service_secret_previous
+WA_SERVICE_AUTH_MAX_SKEW_SECONDS = cfg.wa_service_auth_max_skew_seconds
+
+# WhatsApp Cloud Tasks
+WA_CLOUD_TASKS_MAX_ATTEMPTS = cfg.wa_cloud_tasks_max_attempts
+WA_CLOUD_TASKS_QUEUE_NAME = cfg.wa_cloud_tasks_queue_name
+WA_CLOUD_TASKS_AUDIENCE = cfg.wa_cloud_tasks_audience
+WA_TASKS_INVOKER_EMAIL = cfg.wa_tasks_invoker_email
+
+# WhatsApp Graph API retry
+WA_GRAPH_RETRY_MAX_ATTEMPTS = cfg.wa_graph_retry_max_attempts
+WA_GRAPH_RETRY_MAX_BACKOFF_SECONDS = cfg.wa_graph_retry_max_backoff_seconds
+
+# WhatsApp template fallback
+WA_UTILITY_TEMPLATE_NAME = cfg.wa_utility_template_name
+WA_UTILITY_TEMPLATE_LANGUAGE = cfg.wa_utility_template_language
+
+# WhatsApp send idempotency
+WA_SEND_IDEMPOTENCY_TTL_HOURS = cfg.wa_send_idempotency_ttl_hours
+
+# WhatsApp webhook rate limiting
+WA_WEBHOOK_RATE_LIMIT_MODE = cfg.wa_webhook_rate_limit_mode
+WA_EDGE_RATELIMIT_HEADER = cfg.wa_edge_ratelimit_header
+
+# WhatsApp replay artifacts
+WA_REPLAY_BUCKET = cfg.wa_replay_bucket
+WA_REPLAY_BLOB_PREFIX = cfg.wa_replay_blob_prefix
+WA_REPLAY_BLOB_TTL_HOURS = cfg.wa_replay_blob_ttl_hours
+
+
+def _validate_whatsapp_config() -> None:
+    """Fail-closed validation: raise on missing required config when WhatsApp is enabled."""
+    if not WHATSAPP_ENABLED:
+        return
+    required = {
+        "WHATSAPP_ACCESS_TOKEN": WHATSAPP_ACCESS_TOKEN,
+        "WHATSAPP_PHONE_NUMBER_ID": WHATSAPP_PHONE_NUMBER_ID,
+        "WHATSAPP_APP_SECRET": WHATSAPP_APP_SECRET,
+        "WHATSAPP_VERIFY_TOKEN": WHATSAPP_VERIFY_TOKEN,
+        "WA_SERVICE_SECRET": WA_SERVICE_SECRET,
+        "WA_TASKS_INVOKER_EMAIL": WA_TASKS_INVOKER_EMAIL,
+        "WA_CLOUD_TASKS_AUDIENCE": WA_CLOUD_TASKS_AUDIENCE,
+        "WA_REPLAY_BUCKET": WA_REPLAY_BUCKET,
+    }
+    # Optional for demo: WA_UTILITY_TEMPLATE_NAME, WA_UTILITY_TEMPLATE_LANGUAGE.
+    missing = [k for k, v in required.items() if not v]
+    if missing:
+        raise RuntimeError(
+            f"WHATSAPP_ENABLED=true but required config is missing: {', '.join(missing)}"
+        )
+
+
+_validate_whatsapp_config()

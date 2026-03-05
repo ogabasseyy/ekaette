@@ -16,3 +16,15 @@ env_vars = {
   # WARNING: Use specific origins in production (e.g. "https://ekaette.vercel.app")
   ALLOWED_ORIGINS     = "*"
 }
+
+# ── WhatsApp Cloud API (HTTPS LB + Cloud Tasks) ──
+wa_webhook_domain     = "wa-webhook.ekaette.com"
+wa_service_api_domain = "wa-service.ekaette.com"
+app_public_domain     = "app.ekaette.com"
+wa_vm_egress_cidrs    = ["<VM_NAT_CIDR>/32"]
+
+wa_cloud_tasks_queue_name  = "wa-webhook-processing"
+wa_cloud_tasks_max_attempts = 3
+wa_replay_bucket_name      = "ekaette-wa-replay"
+wa_replay_blob_prefix      = "wa/replay/"
+wa_replay_blob_ttl_days    = 1

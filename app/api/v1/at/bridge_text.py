@@ -1,15 +1,18 @@
-"""Gemini Standard API text bridge for SMS channel.
+"""Gemini Standard API text bridge for SMS and WhatsApp channels.
 
 Reuses the _get_genai_client() pattern from app/tools/vision_tools.py:48-57.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 
 from google import genai
 from google.genai import types
+
+from app.configs.model_resolver import resolve_live_model_id
 
 logger = logging.getLogger(__name__)
 
@@ -28,26 +31,51 @@ def _get_genai_client() -> genai.Client:
     return _genai_client
 
 
+_CHANNEL_CONFIG = {
+    "sms": {
+        "max_chars": 160,
+        "max_tokens": 64,
+        "system_suffix": "Respond concisely in under 160 characters for SMS.",
+    },
+    "whatsapp": {
+        "max_chars": 4096,
+        "max_tokens": 1024,
+        "system_suffix": (
+            "You are chatting on WhatsApp. Be warm, polite, and professional. "
+            "Reply in 1-3 short sentences. When greeting or offering help, say "
+            "'How may I help you?' or 'How may I be of service?' — never "
+            "'let me know if you need help'. No bullet points or long lists "
+            "unless asked. Focus on concrete business tasks like trade-ins, "
+            "bookings, catalog, and support."
+        ),
+    },
+}
+
+
 async def query_text(
     *,
     user_message: str,
     company_id: str = "ekaette-electronics",
-    model: str = "gemini-3-flash-preview",
+    model: str | None = None,
+    channel: str = "sms",
 ) -> str:
-    """Text → Gemini Standard API → response text. For SMS only."""
+    """Text → Gemini Standard API → response text. Supports SMS and WhatsApp channels."""
+    cfg = _CHANNEL_CONFIG.get(channel, _CHANNEL_CONFIG["sms"])
     client = _get_genai_client()
-    response = client.models.generate_content(
-        model=model,
+    resolved_model = (model or "").strip() or resolve_live_model_id()
+    response = await asyncio.to_thread(
+        client.models.generate_content,
+        model=resolved_model,
         contents=[user_message],
         config=types.GenerateContentConfig(
             system_instruction=(
                 f"You are Ekaette, AI assistant for {company_id}. "
-                "Respond concisely in under 160 characters for SMS."
+                f"{cfg['system_suffix']}"
             ),
-            max_output_tokens=64,
+            max_output_tokens=cfg["max_tokens"],
         ),
     )
     text = (response.text or "").strip()
     if not text:
         text = "Thanks for your message. How can I help you today?"
-    return text[:160]
+    return text[: cfg["max_chars"]]
