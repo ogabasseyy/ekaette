@@ -17,25 +17,20 @@ import app.api.v1.at.wa_security as wa_security
 
 def _build_wa_security_app() -> FastAPI:
     """Build minimal app with a test endpoint using each security dependency."""
-    from fastapi import Depends, Request
-    from app.api.v1.at.wa_security import (
-        verify_wa_webhook,
-        verify_service_auth,
-        verify_cloud_tasks_oidc,
-    )
+    from fastapi import Depends
 
     app = FastAPI()
 
     @app.post("/test/webhook")
-    async def test_webhook(raw_body: bytes = Depends(verify_wa_webhook)):
+    async def test_webhook(raw_body: bytes = Depends(wa_security.verify_wa_webhook)):
         return {"status": "ok", "length": len(raw_body)}
 
     @app.post("/test/service")
-    async def test_service(_: None = Depends(verify_service_auth)):
+    async def test_service(_: None = Depends(wa_security.verify_service_auth)):
         return {"status": "ok"}
 
     @app.post("/test/oidc")
-    async def test_oidc(_: None = Depends(verify_cloud_tasks_oidc)):
+    async def test_oidc(_: None = Depends(wa_security.verify_cloud_tasks_oidc)):
         return {"status": "ok"}
 
     return app

@@ -277,7 +277,7 @@ async def _process_message(
             message_type=msg_type,
         )
     else:
-        logger.info("Unknown WA message type: %s", sanitize_log(msg_type))
+        logger.info("Unknown WA message type received")
         return
 
     # Send reply

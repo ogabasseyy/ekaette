@@ -299,13 +299,12 @@ async def write_failure_artifacts(
     tenant_id: str = "public",
 ) -> None:
     """Write redacted triage record. Production writes to Firestore + GCS."""
+    error_kind = type(error).__name__ if not isinstance(error, str) else "str"
     logger.error(
         "WA webhook final failure",
         extra={
-            "wamid": sanitize_log(wamid),
-            "tenant_id": sanitize_log(tenant_id),
-            "error_type": sanitize_log(
-                type(error).__name__ if not isinstance(error, str) else "str"
-            ),
+            "has_wamid": bool(sanitize_log(wamid)),
+            "has_tenant_id": bool(sanitize_log(tenant_id)),
+            "error_type": sanitize_log(error_kind),
         },
     )
