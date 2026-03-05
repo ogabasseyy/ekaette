@@ -183,19 +183,21 @@ def get_latest_image(user_id: str, session_id: str) -> dict[str, Any] | None:
     return _latest_images.get(_cache_key(user_id, session_id))
 
 
+EXTENSION_MAP: dict[str, str] = {
+    "image/jpeg": "jpg",
+    "image/png": "png",
+    "image/webp": "webp",
+    "image/heic": "heic",
+    "image/heif": "heif",
+    "video/mp4": "mp4",
+    "video/quicktime": "mov",
+    "video/webm": "webm",
+    "video/3gpp": "3gp",
+}
+
+
 def _artifact_filename(mime_type: str) -> str:
-    ext_map = {
-        "image/jpeg": "jpg",
-        "image/png": "png",
-        "image/webp": "webp",
-        "image/heic": "heic",
-        "image/heif": "heif",
-        "video/mp4": "mp4",
-        "video/quicktime": "mov",
-        "video/webm": "webm",
-        "video/3gpp": "3gp",
-    }
-    ext = ext_map.get(mime_type, "bin")
+    ext = EXTENSION_MAP.get(mime_type, "bin")
     raw_category = mime_type.split("/")[0] if mime_type else ""
     media_category = raw_category if raw_category in ("image", "video") else "media"
     return f"customer_{media_category}_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}.{ext}"
@@ -380,18 +382,7 @@ async def upload_to_cloud_storage(
     if not MEDIA_BUCKET:
         return {"error": "MEDIA_BUCKET not configured"}
 
-    ext_map = {
-        "image/jpeg": "jpg",
-        "image/png": "png",
-        "image/webp": "webp",
-        "image/heic": "heic",
-        "image/heif": "heif",
-        "video/mp4": "mp4",
-        "video/quicktime": "mov",
-        "video/webm": "webm",
-        "video/3gpp": "3gp",
-    }
-    ext = ext_map.get(mime_type, "bin")
+    ext = EXTENSION_MAP.get(mime_type, "bin")
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     unique_id = uuid.uuid4().hex[:8]
     safe_user_id = _sanitize_path_segment(user_id, fallback="anonymous")

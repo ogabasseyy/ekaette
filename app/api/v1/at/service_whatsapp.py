@@ -177,6 +177,9 @@ async def _handle_media_message(
         media_type=media_type,
     )
 
+    if not media_bytes:
+        return "Sorry, the media file appears to be empty. Please try sending it again."
+
     resolved_mime = mime_type or content_type or default_mime
     runner, session_service, app_name = _get_adk_runner_and_service()
 
@@ -261,7 +264,7 @@ async def handle_unsupported_message_type(
     """Return a polite reply for unsupported content types. No AI processing."""
     return (
         f"Sorry, I can't process {message_type} messages yet. "
-        "Please send a text message or image instead."
+        "Please send a text message, image, or video instead."
     )
 
 
