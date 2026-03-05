@@ -207,10 +207,10 @@ def _validate_whatsapp_config() -> None:
         "WHATSAPP_APP_SECRET": WHATSAPP_APP_SECRET,
         "WHATSAPP_VERIFY_TOKEN": WHATSAPP_VERIFY_TOKEN,
         "WA_SERVICE_SECRET": WA_SERVICE_SECRET,
+        "WA_REPLAY_BUCKET": WA_REPLAY_BUCKET,
     }
-    # Optional for demo; required for production hardening
-    # "WA_CLOUD_TASKS_AUDIENCE", "WA_UTILITY_TEMPLATE_NAME",
-    # "WA_UTILITY_TEMPLATE_LANGUAGE", "WA_REPLAY_BUCKET"
+    # Optional for demo: WA_CLOUD_TASKS_AUDIENCE, WA_UTILITY_TEMPLATE_NAME,
+    # WA_UTILITY_TEMPLATE_LANGUAGE.
     missing = [k for k, v in required.items() if not v]
     if missing:
         raise RuntimeError(

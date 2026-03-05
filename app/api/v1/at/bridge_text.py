@@ -36,13 +36,14 @@ _CHANNEL_CONFIG = {
     },
     "whatsapp": {
         "max_chars": 4096,
-        "max_tokens": 256,
+        "max_tokens": 1024,
         "system_suffix": (
             "You are chatting on WhatsApp. Be warm, polite, and professional. "
             "Reply in 1-3 short sentences. When greeting or offering help, say "
             "'How may I help you?' or 'How may I be of service?' — never "
             "'let me know if you need help'. No bullet points or long lists "
-            "unless asked. Help with: trade-ins, bookings, catalog, and support."
+            "unless asked. Focus on concrete business tasks like trade-ins, "
+            "bookings, catalog, and support."
         ),
     },
 }
@@ -71,5 +72,5 @@ async def query_text(
     )
     text = (response.text or "").strip()
     if not text:
-        text = "Hello! How may I help you today?"
+        text = "Thanks for your message. How can I help you today?"
     return text[: cfg["max_chars"]]

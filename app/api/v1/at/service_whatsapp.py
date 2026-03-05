@@ -11,6 +11,8 @@ import hashlib
 import logging
 import time
 
+from app.configs import sanitize_log
+
 from . import bridge_text
 from . import providers
 from .settings import (
@@ -300,8 +302,10 @@ async def write_failure_artifacts(
     logger.error(
         "WA webhook final failure",
         extra={
-            "wamid": wamid,
-            "tenant_id": tenant_id,
-            "error_type": type(error).__name__ if not isinstance(error, str) else "str",
+            "wamid": sanitize_log(wamid),
+            "tenant_id": sanitize_log(tenant_id),
+            "error_type": sanitize_log(
+                type(error).__name__ if not isinstance(error, str) else "str"
+            ),
         },
     )

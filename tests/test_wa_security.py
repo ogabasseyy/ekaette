@@ -8,11 +8,11 @@ import json
 import time
 
 import pytest
-from unittest.mock import patch, AsyncMock, MagicMock
+from unittest.mock import patch, AsyncMock
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app.api.v1.at.wa_security import reset_nonce_store
+import app.api.v1.at.wa_security as wa_security
 
 
 def _build_wa_security_app() -> FastAPI:
@@ -77,7 +77,7 @@ def wa_security_client():
         patch("app.api.v1.at.wa_security.WA_CLOUD_TASKS_QUEUE_NAME", "wa-webhook-processing"),
         patch("app.api.v1.at.wa_security.WA_CLOUD_TASKS_AUDIENCE", "https://test.example.com/process"),
     ):
-        reset_nonce_store()
+        wa_security.reset_nonce_store()
         app = _build_wa_security_app()
         yield TestClient(app)
 
@@ -130,9 +130,8 @@ class TestWebhookHMAC:
 
     def test_constant_time_comparison(self, wa_security_client: TestClient) -> None:
         """Ensure hmac.compare_digest is used (not ==)."""
-        import app.api.v1.at.wa_security as mod
         import inspect
-        source = inspect.getsource(mod.verify_wa_webhook)
+        source = inspect.getsource(wa_security.verify_wa_webhook)
         assert "compare_digest" in source
 
 
@@ -146,7 +145,7 @@ class TestWebhookRateLimitMode:
             patch("app.api.v1.at.wa_security.WA_WEBHOOK_RATE_LIMIT_MODE", "edge_enforced"),
             patch("app.api.v1.at.wa_security.WA_EDGE_RATELIMIT_HEADER", "X-Edge-RateLimit-Checked"),
         ):
-            reset_nonce_store()
+            wa_security.reset_nonce_store()
             app = _build_wa_security_app()
             client = TestClient(app)
             payload = b'{"test": true}'
@@ -165,7 +164,7 @@ class TestWebhookRateLimitMode:
             patch("app.api.v1.at.wa_security.WA_WEBHOOK_RATE_LIMIT_MODE", "edge_enforced"),
             patch("app.api.v1.at.wa_security.WA_EDGE_RATELIMIT_HEADER", "X-Edge-RateLimit-Checked"),
         ):
-            reset_nonce_store()
+            wa_security.reset_nonce_store()
             app = _build_wa_security_app()
             client = TestClient(app)
             payload = b'{"test": true}'
@@ -267,7 +266,7 @@ class TestServiceAuth:
             patch("app.api.v1.at.wa_security.WA_CLOUD_TASKS_QUEUE_NAME", "wa-webhook-processing"),
             patch("app.api.v1.at.wa_security.WA_CLOUD_TASKS_AUDIENCE", "https://test.example.com"),
         ):
-            reset_nonce_store()
+            wa_security.reset_nonce_store()
             app = _build_wa_security_app()
             client = TestClient(app)
 

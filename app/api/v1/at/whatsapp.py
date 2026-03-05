@@ -17,6 +17,8 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import PlainTextResponse
 
+from app.configs import sanitize_log
+
 from . import providers
 from . import service_whatsapp
 from .settings import (
@@ -210,7 +212,8 @@ async def wa_process(
     try:
         retry_count = int(retry_header)
     except (ValueError, TypeError):
-        pass
+        logger.debug("Invalid Cloud Tasks retry header: %s", sanitize_log(retry_header))
+        retry_count = 0
 
     wamid = message.get("id", "")
     if not wamid:
@@ -238,7 +241,6 @@ async def _process_message(
     retry_count: int = 0,
 ) -> None:
     """Process a single inbound WhatsApp message."""
-    wamid = message.get("id", "")
     from_ = message.get("from", "")
     msg_type = message.get("type", "")
 
@@ -275,7 +277,7 @@ async def _process_message(
             message_type=msg_type,
         )
     else:
-        logger.info("Unknown WA message type: %s", msg_type)
+        logger.info("Unknown WA message type: %s", sanitize_log(msg_type))
         return
 
     # Send reply

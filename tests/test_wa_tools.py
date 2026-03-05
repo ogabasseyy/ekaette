@@ -2,11 +2,8 @@
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from unittest.mock import patch, AsyncMock, MagicMock
-
-import pytest
 
 from sip_bridge.wa_tools import (
     SEND_WA_MESSAGE_TOOL,
