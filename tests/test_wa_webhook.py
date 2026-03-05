@@ -380,7 +380,8 @@ class TestProcessHandler:
 
     @patch("app.api.v1.at.providers.whatsapp_send_text", new_callable=AsyncMock)
     @patch("app.api.v1.at.bridge_text.query_text", new_callable=AsyncMock)
-    def test_process_text_message(self, mock_query, mock_send) -> None:
+    @patch("app.api.v1.at.service_whatsapp._get_adk_runner_and_service", return_value=(None, None, None))
+    def test_process_text_message(self, _mock_adk, mock_query, mock_send) -> None:
         mock_query.return_value = "AI reply here"
         mock_send.return_value = (200, {"messages": [{"id": "wamid.out1"}]})
         app = _build_wa_app_with_oidc_bypass()

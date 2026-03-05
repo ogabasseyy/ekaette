@@ -192,7 +192,81 @@ sequenceDiagram
 
 ---
 
+## WhatsApp Text/Image → ADK Agent Graph
+
+WhatsApp text and image messages now route through the full ADK agent hierarchy
+via `app/channels/adk_text_adapter.py`. This gives WhatsApp users access to all
+5 sub-agents (vision, valuation, booking, catalog, support), session state,
+tools, and memory — the same capabilities as the voice WebSocket channel.
+
+```mermaid
+sequenceDiagram
+    participant USER as WhatsApp User
+    participant META as Meta Cloud API
+    participant CR as Cloud Run<br/>(FastAPI)
+    participant CT as Cloud Tasks
+    participant ADAPTER as adk_text_adapter<br/>(app/channels/)
+    participant RUNNER as ADK Runner<br/>(run_async)
+    participant ROOT as ekaette_router<br/>(Root Agent)
+    participant SUB as Sub-Agents<br/>(vision, valuation,<br/>booking, catalog, support)
+    participant FS as Firestore<br/>(Sessions + State)
+
+    Note over USER,FS: Inbound Text Message
+    USER->>META: "I want to swap my iPhone 14"
+    META->>CR: POST /whatsapp/webhook<br/>(HMAC verified)
+    CR->>CT: Enqueue Cloud Task<br/>(deterministic task ID)
+    CT->>CR: POST /whatsapp/process
+
+    CR->>ADAPTER: send_text_message(user_id, text)
+    ADAPTER->>FS: Get or create session<br/>(phone number → session ID)
+    ADAPTER->>RUNNER: runner.run_async(new_message)
+    RUNNER->>ROOT: Route to appropriate agent
+    ROOT->>SUB: Transfer to valuation_agent
+    SUB-->>ROOT: Trade-in assessment result
+    ROOT-->>RUNNER: Text response
+    RUNNER-->>ADAPTER: Collect text events
+    ADAPTER-->>CR: {text, session_id, channel}
+    CR->>META: WhatsApp reply message
+    META->>USER: "I can help with that! Your iPhone 14..."
+
+    Note over USER,FS: Inbound Image Message
+    USER->>META: 📷 Photo of device + "Check this"
+    META->>CR: POST /whatsapp/webhook
+    CR->>CT: Enqueue Cloud Task
+    CT->>CR: POST /whatsapp/process
+
+    CR->>CR: Download image via Media API
+    CR->>ADAPTER: send_image_message(image_bytes, caption)
+    ADAPTER->>RUNNER: runner.run_async(image + text content)
+    RUNNER->>ROOT: Route to vision_agent
+    ROOT->>SUB: vision_agent → analyze_device_image_tool
+    SUB->>SUB: Gemini 3 Flash (Standard API)<br/>Structured analysis
+    SUB-->>ROOT: DeviceAnalysis result
+    ROOT->>SUB: valuation_agent → grade_and_value_tool
+    SUB-->>ROOT: Trade-in offer
+    ROOT-->>RUNNER: Text response with valuation
+    RUNNER-->>ADAPTER: Collect text events
+    ADAPTER-->>CR: {text, session_id}
+    CR->>META: WhatsApp reply
+    META->>USER: "I can see an iPhone 14 Pro in Good condition..."
+```
+
+### Key Design Decisions
+
+- **Session continuity**: Phone number → deterministic session ID via SHA-256 hash.
+  Same user maintains multi-turn conversation state across messages.
+- **Graceful fallback**: If ADK Runner is not initialized (early startup, tests),
+  falls back to `bridge_text.py` (standalone Gemini, no agents).
+- **Channel limits**: WhatsApp 4096 chars, SMS 160 chars — enforced by adapter.
+- **No audio overhead**: Uses `Runner.run_async()` (text mode, `StreamingMode.NONE`)
+  instead of `Runner.run_live()` (bidi streaming). Faster, cheaper.
+
+---
+
 ## SMS Text Bridge Flow
+
+SMS currently uses `bridge_text.py` (standalone Gemini). Future: route through
+`adk_text_adapter` for full agent capabilities (same pattern as WhatsApp).
 
 ```mermaid
 sequenceDiagram
@@ -252,6 +326,11 @@ graph TB
             A_SVC["campaign_analytics.py<br/>In-memory campaign state,<br/>KPI computation,<br/>event deduplication"]
         end
 
+        subgraph "WhatsApp"
+            WA_ROUTES["whatsapp.py<br/>GET/POST /whatsapp/webhook<br/>POST /whatsapp/process<br/>POST /whatsapp/send"]
+            WA_SVC["service_whatsapp.py<br/>ADK adapter routing,<br/>bridge_text fallback,<br/>service window, idempotency"]
+        end
+
         subgraph "Infrastructure"
             SETTINGS["settings.py<br/>ATSettings (pydantic-settings)<br/>Feature flags, AT creds,<br/>Paystack keys, retention"]
             MODELS["models.py<br/>Request/response DTOs"]
@@ -260,8 +339,13 @@ graph TB
         end
     end
 
+    subgraph "app/channels/ — Channel Adapters"
+        ADAPTER["adk_text_adapter.py<br/>Runner.run_async() bridge,<br/>session bootstrap,<br/>text/image routing"]
+    end
+
     INIT --> V_ROUTES
     INIT --> S_ROUTES
+    INIT --> WA_ROUTES
     INIT --> P_ROUTES
     INIT --> SH_ROUTES
     INIT --> A_ROUTES
@@ -272,6 +356,9 @@ graph TB
     V_ROUTES --> A_SVC
     S_ROUTES --> PROVIDERS
     S_ROUTES --> A_SVC
+    WA_ROUTES --> WA_SVC
+    WA_SVC -->|"ADK path"| ADAPTER
+    WA_SVC -->|"Fallback"| PROVIDERS
     P_ROUTES --> P_SVC
     P_SVC --> PROVIDERS
     P_SVC --> A_SVC
@@ -279,8 +366,10 @@ graph TB
     classDef router fill:#E3F2FD,stroke:#1565C0,stroke-width:2px
     classDef service fill:#E8F5E9,stroke:#2E7D32,stroke-width:2px
     classDef infra fill:#FFF8E1,stroke:#F57F17,stroke-width:2px
+    classDef adapter fill:#E1F5FE,stroke:#0277BD,stroke-width:2px
 
-    class V_ROUTES,S_ROUTES,P_ROUTES,SH_ROUTES,A_ROUTES,HEALTH router
-    class V_SVC,P_SVC,A_SVC service
+    class V_ROUTES,S_ROUTES,WA_ROUTES,P_ROUTES,SH_ROUTES,A_ROUTES,HEALTH router
+    class V_SVC,WA_SVC,P_SVC,A_SVC service
     class SETTINGS,MODELS,PROVIDERS,INIT infra
+    class ADAPTER adapter
 ```
