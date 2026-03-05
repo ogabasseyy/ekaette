@@ -430,6 +430,18 @@ class TestSessionIdDerivation:
         with pytest.raises((ValueError, TypeError)):
             derive_session_id("whatsapp", None)
 
+    def test_whitespace_only_channel_raises(self):
+        from app.channels.adk_text_adapter import derive_session_id
+
+        with pytest.raises(ValueError, match="channel"):
+            derive_session_id("   ", "2348001234567")
+
+    def test_whitespace_only_user_id_raises(self):
+        from app.channels.adk_text_adapter import derive_session_id
+
+        with pytest.raises(ValueError, match="user_id"):
+            derive_session_id("whatsapp", "  ")
+
 
 # ─── Test: Image size validation ─────────────────────────────
 

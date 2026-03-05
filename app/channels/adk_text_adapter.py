@@ -50,9 +50,9 @@ def derive_session_id(channel: str, user_id: str) -> str:
 
     Raises ValueError if channel or user_id is empty/None.
     """
-    if not channel:
+    if not channel or not channel.strip():
         raise ValueError("channel must be a non-empty string")
-    if not user_id:
+    if not user_id or not user_id.strip():
         raise ValueError("user_id must be a non-empty string")
     raw = f"{channel}:{user_id}"
     digest = hashlib.sha256(raw.encode()).hexdigest()[:24]
@@ -157,15 +157,15 @@ async def send_image_message(
     Returns:
         Dict with text, session_id, channel keys.
     """
+    session_id = derive_session_id(channel, user_id)
+
     if len(image_bytes) > _MAX_IMAGE_BYTES:
         logger.warning("Image too large: %d bytes (limit %d)", len(image_bytes), _MAX_IMAGE_BYTES)
         return {
             "text": "Sorry, that image is too large to process. Please send a smaller image.",
-            "session_id": derive_session_id(channel, user_id),
+            "session_id": session_id,
             "channel": channel,
         }
-
-    session_id = derive_session_id(channel, user_id)
 
     session_id = await _ensure_session(
         session_service=session_service,
