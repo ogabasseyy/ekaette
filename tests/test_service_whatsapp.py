@@ -16,6 +16,7 @@ from app.api.v1.at.service_whatsapp import (
     record_inbound_timestamp,
     reset_idempotency_store,
     reset_service_windows,
+    send_interactive_buttons,
     send_with_idempotency,
     send_with_template_fallback,
 )
@@ -117,18 +118,20 @@ class TestTemplateFallback:
     @patch("app.api.v1.at.providers.whatsapp_send_text", new_callable=AsyncMock)
     async def test_sends_text_when_window_open(self, mock_send) -> None:
         mock_send.return_value = (200, {"messages": [{"id": "wamid.out"}]})
-        record_inbound_timestamp("234", "")
-        status, _ = await send_with_template_fallback(to="234", text="Hello")
+        record_inbound_timestamp("234", "phone123")
+        status, _ = await send_with_template_fallback(to="234", text="Hello", phone_number_id="phone123")
         assert status == 200
         mock_send.assert_awaited_once()
+        assert mock_send.await_args.kwargs["phone_number_id"] == "phone123"
 
     @patch("app.api.v1.at.providers.whatsapp_send_template", new_callable=AsyncMock)
     async def test_sends_template_when_no_window(self, mock_template) -> None:
         mock_template.return_value = (200, {"messages": [{"id": "wamid.tmpl"}]})
         with patch("app.api.v1.at.service_whatsapp.WA_UTILITY_TEMPLATE_NAME", "test_template"):
-            status, _ = await send_with_template_fallback(to="234", text="Hello")
+            status, _ = await send_with_template_fallback(to="234", text="Hello", phone_number_id="phone123")
         assert status == 200
         mock_template.assert_awaited_once()
+        assert mock_template.await_args.kwargs["phone_number_id"] == "phone123"
 
     async def test_fails_closed_when_no_template_config(self) -> None:
         with (
@@ -226,3 +229,31 @@ class TestSendIdempotency:
 
         assert status == 409
         assert body["error"] == "Idempotency key conflict"
+
+
+class TestInteractiveButtons:
+    @patch("app.api.v1.at.providers.whatsapp_send_interactive", new_callable=AsyncMock)
+    async def test_missing_button_title_raises(self, _mock_send) -> None:
+        with pytest.raises(ValueError, match="button title at index 0"):
+            await send_interactive_buttons(
+                to="234",
+                body_text="Choose one",
+                buttons=[{"id": "x"}],
+            )
+
+    @patch("app.api.v1.at.providers.whatsapp_send_interactive", new_callable=AsyncMock)
+    async def test_valid_buttons_are_sent(self, mock_send) -> None:
+        mock_send.return_value = (200, {"messages": [{"id": "wamid.button"}]})
+        status, _ = await send_interactive_buttons(
+            to="234",
+            body_text="Choose one",
+            buttons=[
+                {"id": "a", "title": "First Option"},
+                {"title": "Second Option"},
+            ],
+        )
+        assert status == 200
+        payload = mock_send.await_args.kwargs["interactive"]
+        buttons = payload["action"]["buttons"]
+        assert buttons[0]["reply"]["id"] == "a"
+        assert buttons[1]["reply"]["id"] == "btn_1"

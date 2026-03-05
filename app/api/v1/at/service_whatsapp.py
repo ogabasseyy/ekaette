@@ -143,6 +143,16 @@ async def send_interactive_buttons(
     buttons: list[dict[str, str]],
 ) -> tuple[int, dict]:
     """Send reply buttons (max 3)."""
+    validated_buttons: list[dict[str, str]] = []
+    for i, btn in enumerate(buttons[:3]):
+        title = btn.get("title")
+        if not isinstance(title, str) or not title.strip():
+            raise ValueError(f"Missing or invalid button title at index {i}")
+        validated_buttons.append({
+            "id": btn.get("id", f"btn_{i}"),
+            "title": title.strip()[:20],
+        })
+
     interactive = {
         "type": "button",
         "body": {"text": body_text[:1024]},
@@ -150,9 +160,9 @@ async def send_interactive_buttons(
             "buttons": [
                 {
                     "type": "reply",
-                    "reply": {"id": btn.get("id", f"btn_{i}"), "title": btn["title"][:20]},
+                    "reply": {"id": btn["id"], "title": btn["title"]},
                 }
-                for i, btn in enumerate(buttons[:3])
+                for btn in validated_buttons
             ]
         },
     }
@@ -244,6 +254,7 @@ async def send_with_template_fallback(
         # Within 24h window — send as text
         return await providers.whatsapp_send_text(
             access_token=WHATSAPP_ACCESS_TOKEN,
+            phone_number_id=resolved_phone_id,
             to=to,
             body=text[:WA_MAX_CHARS],
         )
@@ -256,6 +267,7 @@ async def send_with_template_fallback(
 
     return await providers.whatsapp_send_template(
         access_token=WHATSAPP_ACCESS_TOKEN,
+        phone_number_id=resolved_phone_id,
         to=to,
         template_name=WA_UTILITY_TEMPLATE_NAME,
         language_code=WA_UTILITY_TEMPLATE_LANGUAGE,

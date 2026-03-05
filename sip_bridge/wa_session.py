@@ -457,11 +457,18 @@ class WaSession:
             logger.info("Tool call: %s(%s)", fn_name, list(fn_args.keys()))
 
             if fn_name == "send_whatsapp_message":
-                result = await handle_send_wa_message(
-                    args=fn_args,
-                    caller_phone=self._caller_phone,
-                    config=self._bridge_config,
-                )
+                if not self._caller_phone or self._bridge_config is None:
+                    logger.warning(
+                        "Skipping send_whatsapp_message: missing caller/config context",
+                        extra={"call_id": self.call_id},
+                    )
+                    result = {"status": "error", "detail": "WhatsApp tool context unavailable"}
+                else:
+                    result = await handle_send_wa_message(
+                        args=fn_args,
+                        caller_phone=self._caller_phone,
+                        config=self._bridge_config,
+                    )
             else:
                 result = {"status": "error", "detail": f"Unknown tool: {fn_name}"}
 

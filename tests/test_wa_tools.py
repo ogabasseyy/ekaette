@@ -173,3 +173,31 @@ class TestHandleSendWaMessage:
         second_headers = mock_client.post.call_args.kwargs["headers"]
 
         assert first_headers["X-Idempotency-Key"] == second_headers["X-Idempotency-Key"]
+
+    @patch("sip_bridge.wa_tools.httpx.AsyncClient")
+    async def test_idempotency_key_scopes_by_namespace_and_invocation(self, mock_client_cls) -> None:
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"status": "ok", "result": {"messages": [{"id": "x"}]}}
+
+        mock_client = AsyncMock()
+        mock_client.post.return_value = mock_response
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client_cls.return_value = mock_client
+
+        await handle_send_wa_message(
+            args={"text": "same text", "call_id": "call-1"},
+            caller_phone="+234",
+            config=MockConfig(tenant_id="tenant-a", company_id="company-a"),
+        )
+        first_headers = mock_client.post.call_args.kwargs["headers"]
+
+        await handle_send_wa_message(
+            args={"text": "same text", "call_id": "call-2"},
+            caller_phone="+234",
+            config=MockConfig(tenant_id="tenant-b", company_id="company-b"),
+        )
+        second_headers = mock_client.post.call_args.kwargs["headers"]
+
+        assert first_headers["X-Idempotency-Key"] != second_headers["X-Idempotency-Key"]

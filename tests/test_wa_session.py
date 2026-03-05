@@ -531,6 +531,41 @@ class TestWaSessionGeminiBidi:
         assert function_response.id == "fn-call-1"
         assert function_response.response == expected_result
 
+    async def test_tool_call_without_context_returns_safe_error(self):
+        """Tool call should fail safely when caller/config context is missing."""
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock, patch
+
+        from sip_bridge.wa_session import WaSession
+
+        mock_gemini = AsyncMock()
+        mock_gemini.send_tool_response = AsyncMock()
+        s = WaSession(
+            call_id="wa-call-missing-context",
+            tenant_id="public",
+            company_id="acme",
+            gemini_session=mock_gemini,
+            _caller_phone="",
+            _bridge_config=None,
+        )
+        tool_call = SimpleNamespace(
+            function_calls=[
+                SimpleNamespace(
+                    name="send_whatsapp_message",
+                    id="fn-call-2",
+                    args={"text": "Please send details"},
+                )
+            ]
+        )
+
+        with patch("sip_bridge.wa_tools.handle_send_wa_message", new_callable=AsyncMock) as mock_tool:
+            await s._handle_tool_call(tool_call)
+
+        mock_tool.assert_not_awaited()
+        kwargs = mock_gemini.send_tool_response.call_args.kwargs
+        function_response = kwargs["function_responses"][0]
+        assert function_response.response["status"] == "error"
+
 
 class TestWaSessionUDPTransport:
     """Outbound media transport via UDP."""

@@ -88,9 +88,15 @@ async def handle_send_wa_message(
         "company_id": config.company_id,
     })
 
-    # Deterministic idempotency key for retries of the same action.
+    tenant_id = str(getattr(config, "tenant_id", "") or "public")
+    company_id = str(getattr(config, "company_id", "") or "ekaette-electronics")
+    invocation_scope = str(
+        args.get("invocation_id") or args.get("call_id") or args.get("session_id") or caller_phone
+    )
+
+    # Deterministic idempotency key scoped by tenant/company/tool/invocation.
     idempotency_key = hashlib.sha256(
-        f"{caller_phone}:{text}".encode()
+        f"{tenant_id}:{company_id}:send_whatsapp_message:{invocation_scope}:{text}".encode()
     ).hexdigest()
 
     auth_headers = _build_service_auth_headers(payload, config.wa_service_secret)

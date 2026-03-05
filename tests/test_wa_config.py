@@ -246,6 +246,7 @@ class TestWhatsAppServiceApiUrl:
         cfg = WhatsAppBridgeConfig.from_env()
         errors = cfg.validate()
         assert not any("WA_SERVICE_API_BASE_URL" in e for e in errors)
+        assert not any("WA_SERVICE_SECRET" in e for e in errors)
 
 
 class TestWhatsAppBridgeConfigImmutability:

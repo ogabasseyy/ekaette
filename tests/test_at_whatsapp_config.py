@@ -19,6 +19,7 @@ class TestWhatsAppConfigValidation:
             patch("app.api.v1.at.settings.WHATSAPP_VERIFY_TOKEN", "vt"),
             patch("app.api.v1.at.settings.WA_SERVICE_SECRET", "ss"),
             patch("app.api.v1.at.settings.WA_CLOUD_TASKS_AUDIENCE", "aud"),
+            patch("app.api.v1.at.settings.WA_TASKS_INVOKER_EMAIL", "invoker@example.com"),
             patch("app.api.v1.at.settings.WA_UTILITY_TEMPLATE_NAME", "tmpl"),
             patch("app.api.v1.at.settings.WA_UTILITY_TEMPLATE_LANGUAGE", "en_US"),
             patch("app.api.v1.at.settings.WA_REPLAY_BUCKET", "bucket"),
@@ -36,6 +37,7 @@ class TestWhatsAppConfigValidation:
             patch("app.api.v1.at.settings.WHATSAPP_VERIFY_TOKEN", "vt"),
             patch("app.api.v1.at.settings.WA_SERVICE_SECRET", ""),
             patch("app.api.v1.at.settings.WA_CLOUD_TASKS_AUDIENCE", "aud"),
+            patch("app.api.v1.at.settings.WA_TASKS_INVOKER_EMAIL", "invoker@example.com"),
             patch("app.api.v1.at.settings.WA_UTILITY_TEMPLATE_NAME", "tmpl"),
             patch("app.api.v1.at.settings.WA_UTILITY_TEMPLATE_LANGUAGE", "en_US"),
             patch("app.api.v1.at.settings.WA_REPLAY_BUCKET", "bucket"),
@@ -53,10 +55,27 @@ class TestWhatsAppConfigValidation:
             patch("app.api.v1.at.settings.WHATSAPP_VERIFY_TOKEN", "vt"),
             patch("app.api.v1.at.settings.WA_SERVICE_SECRET", "ss"),
             patch("app.api.v1.at.settings.WA_CLOUD_TASKS_AUDIENCE", "aud"),
+            patch("app.api.v1.at.settings.WA_TASKS_INVOKER_EMAIL", "invoker@example.com"),
             patch("app.api.v1.at.settings.WA_UTILITY_TEMPLATE_NAME", "tmpl"),
             patch("app.api.v1.at.settings.WA_UTILITY_TEMPLATE_LANGUAGE", "en_US"),
             patch("app.api.v1.at.settings.WA_REPLAY_BUCKET", ""),
             pytest.raises(RuntimeError, match="WA_REPLAY_BUCKET"),
+        ):
+            _validate_whatsapp_config()
+
+    def test_missing_tasks_invoker_email_raises(self) -> None:
+        from app.api.v1.at.settings import _validate_whatsapp_config
+        with (
+            patch("app.api.v1.at.settings.WHATSAPP_ENABLED", True),
+            patch("app.api.v1.at.settings.WHATSAPP_ACCESS_TOKEN", "token"),
+            patch("app.api.v1.at.settings.WHATSAPP_PHONE_NUMBER_ID", "123"),
+            patch("app.api.v1.at.settings.WHATSAPP_APP_SECRET", "secret"),
+            patch("app.api.v1.at.settings.WHATSAPP_VERIFY_TOKEN", "vt"),
+            patch("app.api.v1.at.settings.WA_SERVICE_SECRET", "ss"),
+            patch("app.api.v1.at.settings.WA_CLOUD_TASKS_AUDIENCE", "aud"),
+            patch("app.api.v1.at.settings.WA_TASKS_INVOKER_EMAIL", ""),
+            patch("app.api.v1.at.settings.WA_REPLAY_BUCKET", "bucket"),
+            pytest.raises(RuntimeError, match="WA_TASKS_INVOKER_EMAIL"),
         ):
             _validate_whatsapp_config()
 
@@ -70,6 +89,7 @@ class TestWhatsAppConfigValidation:
             patch("app.api.v1.at.settings.WHATSAPP_VERIFY_TOKEN", "vt"),
             patch("app.api.v1.at.settings.WA_SERVICE_SECRET", "ss"),
             patch("app.api.v1.at.settings.WA_CLOUD_TASKS_AUDIENCE", "aud"),
+            patch("app.api.v1.at.settings.WA_TASKS_INVOKER_EMAIL", "invoker@example.com"),
             patch("app.api.v1.at.settings.WA_UTILITY_TEMPLATE_NAME", "tmpl"),
             patch("app.api.v1.at.settings.WA_UTILITY_TEMPLATE_LANGUAGE", "en_US"),
             patch("app.api.v1.at.settings.WA_REPLAY_BUCKET", "bucket"),

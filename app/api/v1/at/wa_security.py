@@ -88,6 +88,12 @@ async def verify_wa_webhook(request: Request) -> bytes:
         )
         if not allowed:
             raise HTTPException(status_code=429, detail="Rate limit exceeded")
+    else:
+        logger.error(
+            "Unknown WA webhook rate-limit mode",
+            extra={"mode": WA_WEBHOOK_RATE_LIMIT_MODE},
+        )
+        raise HTTPException(status_code=403, detail="Webhook rate-limit mode misconfigured")
 
     return raw_body
 

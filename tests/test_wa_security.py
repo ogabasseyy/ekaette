@@ -175,6 +175,24 @@ class TestWebhookRateLimitMode:
             )
             assert resp.status_code == 200
 
+    def test_unknown_rate_limit_mode_fails_closed(self) -> None:
+        """Unexpected mode should reject requests (fail closed)."""
+        with (
+            patch("app.api.v1.at.wa_security.WHATSAPP_APP_SECRET", APP_SECRET),
+            patch("app.api.v1.at.wa_security.WA_WEBHOOK_RATE_LIMIT_MODE", "unexpected_mode"),
+        ):
+            wa_security.reset_nonce_store()
+            app = _build_wa_security_app()
+            client = TestClient(app)
+            payload = b'{"test": true}'
+            sig = _sign_payload(payload)
+            resp = client.post(
+                "/test/webhook",
+                content=payload,
+                headers={"X-Hub-Signature-256": sig},
+            )
+            assert resp.status_code == 403
+
 
 # ── Service Auth Tests ──
 

@@ -9,6 +9,7 @@ Endpoints:
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import json
@@ -159,32 +160,32 @@ async def _enqueue_process_task(
         project = os.environ.get("GOOGLE_CLOUD_PROJECT", "")
         location = os.environ.get("CLOUD_TASKS_LOCATION", "us-central1")
 
-        client = tasks_v2.CloudTasksClient()
-        parent = client.queue_path(project, location, WA_CLOUD_TASKS_QUEUE_NAME)
-
-        task_body = json.dumps({
-            "message": message,
-            "phone_number_id": phone_number_id,
-        })
-
-        task = tasks_v2.Task(
-            name=f"{parent}/tasks/{task_id}",
-            http_request=tasks_v2.HttpRequest(
-                http_method=tasks_v2.HttpMethod.POST,
-                url=WA_CLOUD_TASKS_AUDIENCE,
-                headers={"Content-Type": "application/json"},
-                body=task_body.encode(),
-                oidc_token=tasks_v2.OidcToken(
-                    service_account_email=WA_TASKS_INVOKER_EMAIL,
-                    audience=WA_CLOUD_TASKS_AUDIENCE,
+        def _create_cloud_task_sync() -> None:
+            client = tasks_v2.CloudTasksClient()
+            parent = client.queue_path(project, location, WA_CLOUD_TASKS_QUEUE_NAME)
+            task_body = json.dumps({
+                "message": message,
+                "phone_number_id": phone_number_id,
+            })
+            task = tasks_v2.Task(
+                name=f"{parent}/tasks/{task_id}",
+                http_request=tasks_v2.HttpRequest(
+                    http_method=tasks_v2.HttpMethod.POST,
+                    url=WA_CLOUD_TASKS_AUDIENCE,
+                    headers={"Content-Type": "application/json"},
+                    body=task_body.encode(),
+                    oidc_token=tasks_v2.OidcToken(
+                        service_account_email=WA_TASKS_INVOKER_EMAIL,
+                        audience=WA_CLOUD_TASKS_AUDIENCE,
+                    ),
                 ),
-            ),
-        )
+            )
+            try:
+                client.create_task(parent=parent, task=task)
+            except AlreadyExists as exc:
+                raise _AlreadyExists(f"Task {task_id} already exists") from exc
 
-        try:
-            client.create_task(parent=parent, task=task)
-        except AlreadyExists:
-            raise _AlreadyExists(f"Task {task_id} already exists")
+        await asyncio.to_thread(_create_cloud_task_sync)
 
     except ImportError:
         # Dev/test: process inline (no Cloud Tasks SDK)

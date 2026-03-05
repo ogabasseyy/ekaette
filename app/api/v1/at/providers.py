@@ -65,7 +65,7 @@ def _graph_api_url(*path_segments: str) -> str:
 
 def _is_allowed_download_url(download_url: str) -> bool:
     parsed = urlparse(download_url.strip())
-    if parsed.scheme not in {"http", "https"}:
+    if parsed.scheme != "https":
         return False
 
     host = (parsed.hostname or "").lower()
