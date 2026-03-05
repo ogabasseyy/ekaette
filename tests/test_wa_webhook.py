@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import builtins
 import hashlib
 import hmac
 import json
@@ -316,6 +317,44 @@ class TestSafeTaskId:
         tid = _safe_task_id("wamid.HBgNMjM0ODEyNDk3NTcy")
         assert tid == tid.lower()
         assert all(c.isalnum() or c == "-" for c in tid)
+
+
+class TestCloudTasksImportBehavior:
+    async def test_enqueue_import_error_falls_back_inline_in_dev(self, monkeypatch):
+        from app.api.v1.at import whatsapp as wa_mod
+
+        mock_process = AsyncMock()
+        monkeypatch.setattr(wa_mod, "_process_message", mock_process)
+        monkeypatch.delenv("K_SERVICE", raising=False)
+
+        real_import = builtins.__import__
+
+        def fake_import(name, globals=None, locals=None, fromlist=(), level=0):
+            if name.startswith("google.cloud") or name.startswith("google.api_core.exceptions"):
+                raise ImportError("missing google-cloud-tasks")
+            return real_import(name, globals, locals, fromlist, level)
+
+        with patch("builtins.__import__", side_effect=fake_import):
+            await wa_mod._enqueue_process_task("task-dev", {"id": "wamid.dev"}, "phone-id")
+
+        mock_process.assert_awaited_once()
+
+    async def test_enqueue_import_error_raises_in_production(self, monkeypatch):
+        from app.api.v1.at import whatsapp as wa_mod
+
+        monkeypatch.setenv("K_SERVICE", "wa-service")
+        real_import = builtins.__import__
+
+        def fake_import(name, globals=None, locals=None, fromlist=(), level=0):
+            if name.startswith("google.cloud") or name.startswith("google.api_core.exceptions"):
+                raise ImportError("missing google-cloud-tasks")
+            return real_import(name, globals, locals, fromlist, level)
+
+        with (
+            patch("builtins.__import__", side_effect=fake_import),
+            pytest.raises(RuntimeError, match="google-cloud-tasks"),
+        ):
+            await wa_mod._enqueue_process_task("task-prod", {"id": "wamid.prod"}, "phone-id")
 
 
 # ── POST /whatsapp/process — Process Handler ──

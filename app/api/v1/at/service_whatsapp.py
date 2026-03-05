@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import os
 import threading
 import time
 from collections.abc import Awaitable, Callable
@@ -179,6 +180,8 @@ async def send_interactive_buttons(
 _service_windows: dict[str, float] = {}
 _SERVICE_WINDOW_SECONDS = 24 * 60 * 60  # 24 hours
 _SERVICE_WINDOW_MAX_ENTRIES = 50_000
+_firestore_state_client = None
+_firestore_state_client_lock = threading.Lock()
 
 
 def _window_key(
@@ -198,14 +201,17 @@ def check_service_window(
     company_id: str = "ekaette-electronics",
 ) -> bool:
     """Check if 24h service window is open for this user."""
-    now = time.time()
-    _evict_service_windows(now)
     key = _window_key(
         user_phone,
         phone_number_id or WHATSAPP_PHONE_NUMBER_ID,
         tenant_id,
         company_id,
     )
+    now = time.time()
+    if _state_store_uses_firestore():
+        return _check_service_window_firestore(key, now)
+
+    _evict_service_windows(now)
     last_ts = _service_windows.get(key)
     if last_ts is None:
         return False
@@ -219,14 +225,18 @@ def record_inbound_timestamp(
     company_id: str = "ekaette-electronics",
 ) -> None:
     """Record inbound message timestamp to open/refresh service window."""
-    now = time.time()
-    _evict_service_windows(now)
     key = _window_key(
         user_phone,
         phone_number_id or WHATSAPP_PHONE_NUMBER_ID,
         tenant_id,
         company_id,
     )
+    now = time.time()
+    if _state_store_uses_firestore():
+        _record_inbound_timestamp_firestore(key, now)
+        return
+
+    _evict_service_windows(now)
     _service_windows[key] = now
     _evict_service_windows(now)
 
@@ -297,6 +307,13 @@ async def send_with_idempotency(
 ) -> tuple[int, dict]:
     """Firestore-backed idempotency: same key+payload returns cached result; key reuse with different payload returns 409."""
     key_hash = hashlib.sha256(idempotency_key.encode()).hexdigest()
+    if _state_store_uses_firestore():
+        return await _send_with_idempotency_firestore(
+            key_hash=key_hash,
+            payload_hash=payload_hash,
+            send_fn=send_fn,
+        )
+
     now = time.time()
     _evict_idempotency_store(now)
     cached = _get_cached_idempotency_result(key_hash, payload_hash, now)
@@ -375,6 +392,172 @@ async def write_failure_artifacts(
             "error_type": sanitize_log(error_kind),
         },
     )
+
+
+def _state_store_uses_firestore() -> bool:
+    mode = os.getenv("WA_STATE_STORE_MODE", "auto").strip().lower()
+    if mode == "local":
+        return False
+    if mode == "firestore":
+        return True
+    if os.getenv("FIRESTORE_EMULATOR_HOST", "").strip():
+        return True
+    return bool(os.getenv("K_SERVICE", "").strip())
+
+
+def _get_firestore_state_client():
+    global _firestore_state_client
+    with _firestore_state_client_lock:
+        if _firestore_state_client is None:
+            from google.cloud import firestore
+
+            project = os.getenv("GOOGLE_CLOUD_PROJECT", "").strip() or None
+            _firestore_state_client = firestore.Client(project=project)
+        return _firestore_state_client
+
+
+def _service_window_doc_ref(key: str):
+    client = _get_firestore_state_client()
+    collection_name = os.getenv("WA_SERVICE_WINDOW_COLLECTION", "wa_service_windows")
+    key_hash = hashlib.sha256(key.encode()).hexdigest()
+    return client.collection(collection_name).document(key_hash)
+
+
+def _idempotency_doc_ref(key_hash: str):
+    client = _get_firestore_state_client()
+    collection_name = os.getenv("WA_IDEMPOTENCY_COLLECTION", "wa_send_idempotency")
+    return client.collection(collection_name).document(key_hash)
+
+
+def _check_service_window_firestore(key: str, now: float) -> bool:
+    try:
+        doc_ref = _service_window_doc_ref(key)
+        snapshot = doc_ref.get()
+    except Exception:
+        logger.error("Service window store read failed", exc_info=True)
+        return False
+
+    if not snapshot.exists:
+        return False
+
+    data = snapshot.to_dict() or {}
+    expires_at = float(data.get("expires_at", 0.0) or 0.0)
+    if expires_at <= now:
+        try:
+            doc_ref.delete()
+        except Exception:
+            logger.debug("Service window stale delete failed", exc_info=True)
+        return False
+    return True
+
+
+def _record_inbound_timestamp_firestore(key: str, now: float) -> None:
+    doc_ref = _service_window_doc_ref(key)
+    payload = {
+        "key": key,
+        "updated_at": now,
+        "expires_at": now + _SERVICE_WINDOW_SECONDS,
+    }
+    try:
+        doc_ref.set(payload, merge=True)
+        _prune_firestore_collection(doc_ref.parent, _SERVICE_WINDOW_MAX_ENTRIES)
+    except Exception:
+        logger.error("Service window store write failed", exc_info=True)
+        # Fall back to local cache to keep message processing available.
+        _service_windows[key] = now
+        _evict_service_windows(now)
+
+
+async def _send_with_idempotency_firestore(
+    *,
+    key_hash: str,
+    payload_hash: str,
+    send_fn: Callable[[], Awaitable[tuple[int, dict]]],
+) -> tuple[int, dict]:
+    from google.api_core.exceptions import AlreadyExists
+
+    doc_ref = _idempotency_doc_ref(key_hash)
+    ttl_seconds = _idempotency_ttl_seconds()
+    wait_deadline = time.time() + max(ttl_seconds, 5.0)
+
+    while True:
+        now = time.time()
+        snapshot = await asyncio.to_thread(doc_ref.get)
+        if snapshot.exists:
+            data = snapshot.to_dict() or {}
+            expires_at = float(data.get("expires_at", 0.0) or 0.0)
+
+            if expires_at > now:
+                stored_payload_hash = str(data.get("payload_hash", ""))
+                if stored_payload_hash != payload_hash:
+                    return 409, {"error": "Idempotency key conflict"}
+
+                if data.get("state") == "done":
+                    status = int(data.get("status", 500))
+                    body = data.get("body", {})
+                    return status, body if isinstance(body, dict) else {}
+
+                if now >= wait_deadline:
+                    raise RuntimeError("Idempotency in-flight result missing")
+
+                await asyncio.sleep(0.1)
+                continue
+
+            await asyncio.to_thread(doc_ref.delete)
+
+        claim = {
+            "payload_hash": payload_hash,
+            "state": "inflight",
+            "created_at": now,
+            "updated_at": now,
+            "expires_at": now + ttl_seconds,
+        }
+        try:
+            await asyncio.to_thread(doc_ref.create, claim)
+        except AlreadyExists:
+            if now >= wait_deadline:
+                raise RuntimeError("Idempotency in-flight result missing")
+            await asyncio.sleep(0.05)
+            continue
+
+        try:
+            status, body = await send_fn()
+            safe_body = body if isinstance(body, dict) else {}
+            await asyncio.to_thread(
+                doc_ref.set,
+                {
+                    "payload_hash": payload_hash,
+                    "state": "done",
+                    "status": status,
+                    "body": safe_body,
+                    "updated_at": time.time(),
+                    "expires_at": time.time() + ttl_seconds,
+                },
+                merge=True,
+            )
+            await asyncio.to_thread(
+                _prune_firestore_collection,
+                doc_ref.parent,
+                _IDEMPOTENCY_MAX_ENTRIES,
+            )
+            return status, safe_body
+        except Exception:
+            try:
+                await asyncio.to_thread(doc_ref.delete)
+            except Exception:
+                logger.debug("Failed to clear idempotency claim", exc_info=True)
+            raise
+
+
+def _prune_firestore_collection(collection_ref, max_entries: int) -> None:
+    if max_entries <= 0:
+        return
+    docs = list(collection_ref.order_by("updated_at").limit(max_entries + 1).stream())
+    overflow = len(docs) - max_entries
+    if overflow <= 0:
+        return
+    for doc in docs[:overflow]:
+        doc.reference.delete()
 
 
 def _evict_service_windows(now: float) -> None:

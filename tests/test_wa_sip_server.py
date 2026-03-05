@@ -319,6 +319,12 @@ class TestSessionMediaWiring:
         assert session.gemini_api_key == "test-key"
         assert session.gemini_model_id == "gemini-test"
 
+    async def test_session_has_whatsapp_tool_context(self):
+        """Accepted INVITE must wire caller phone and bridge config for WA tools."""
+        server, session = await _create_authenticated_session()
+        assert session._caller_phone == "+1234"
+        assert session._bridge_config is server.config
+
     async def test_session_owns_server_created_transport(self):
         """Session must own the media_transport created by _handle_invite,
         so that run() closes it on shutdown (no socket leak)."""

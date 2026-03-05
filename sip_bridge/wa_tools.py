@@ -12,6 +12,7 @@ import json
 import logging
 import time
 import uuid
+from urllib.parse import urlparse
 
 import httpx
 
@@ -72,13 +73,18 @@ async def handle_send_wa_message(
     if not text:
         return {"status": "error", "detail": "No text provided"}
 
-    if not config.wa_service_api_base_url:
+    base_url = str(config.wa_service_api_base_url or "").strip()
+    if not base_url:
         return {"status": "error", "detail": "WA_SERVICE_API_BASE_URL not configured"}
+
+    parsed_base_url = urlparse(base_url)
+    if parsed_base_url.scheme != "https" or not parsed_base_url.netloc:
+        return {"status": "error", "detail": "WA_SERVICE_API_BASE_URL must be https"}
 
     if not config.wa_service_secret:
         return {"status": "error", "detail": "WA_SERVICE_SECRET not configured"}
 
-    url = f"{config.wa_service_api_base_url}/api/v1/at/whatsapp/send"
+    url = f"{base_url.rstrip('/')}/api/v1/at/whatsapp/send"
 
     payload = json.dumps({
         "to": caller_phone,

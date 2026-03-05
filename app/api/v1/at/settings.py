@@ -96,8 +96,16 @@ class ATSettings(BaseSettings):
     wa_tasks_invoker_email: str = Field(default="", alias="WA_TASKS_INVOKER_EMAIL")
 
     # WhatsApp Graph API retry
-    wa_graph_retry_max_attempts: int = Field(default=3, alias="WA_GRAPH_RETRY_MAX_ATTEMPTS")
-    wa_graph_retry_max_backoff_seconds: int = Field(default=8, alias="WA_GRAPH_RETRY_MAX_BACKOFF_SECONDS")
+    wa_graph_retry_max_attempts: int = Field(
+        default=3,
+        ge=1,
+        alias="WA_GRAPH_RETRY_MAX_ATTEMPTS",
+    )
+    wa_graph_retry_max_backoff_seconds: int = Field(
+        default=8,
+        ge=1,
+        alias="WA_GRAPH_RETRY_MAX_BACKOFF_SECONDS",
+    )
 
     # WhatsApp template fallback
     wa_utility_template_name: str = Field(default="", alias="WA_UTILITY_TEMPLATE_NAME")

@@ -13,6 +13,7 @@ greenlet==3.3.2
 # Google Cloud services
 google-cloud-firestore==2.23.0
 google-cloud-storage==3.9.0
+google-cloud-tasks==2.19.3
 
 # Africa's Talking
 africastalking==2.0.2

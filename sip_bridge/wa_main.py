@@ -38,6 +38,12 @@ from .wa_sip_client import (
 logger = logging.getLogger(__name__)
 
 
+def _extract_caller_phone(from_header: str) -> str:
+    """Extract caller address from SIP From header."""
+    match = re.search(r"sip:([^@;>]+)", from_header or "", re.IGNORECASE)
+    return match.group(1).strip() if match else ""
+
+
 # ---------------------------------------------------------------------------
 # WaSIPServer — TLS SIP server for WhatsApp Business Calling
 # ---------------------------------------------------------------------------
@@ -299,6 +305,7 @@ class WaSIPServer:
             resp = build_200_ok(invite, sdp_body=sdp_body, local_contact=local_contact)
 
             remote_addr = (media_ip, media_port)
+            caller_phone = _extract_caller_phone(invite.headers.get("from", ""))
 
             # Create WaSession with full media pipeline (import here to avoid circular)
             from .wa_session import WaSession
@@ -316,6 +323,8 @@ class WaSIPServer:
                 gemini_model_id=self.config.live_model_id,
                 gemini_system_instruction=self.config.system_instruction,
                 gemini_voice=self.config.gemini_voice,
+                _caller_phone=caller_phone,
+                _bridge_config=self.config,
                 _owns_transport=True,
             )
             self.active_sessions[call_id] = session

@@ -14,6 +14,7 @@ import base64
 import hashlib
 import json
 import logging
+import os
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import PlainTextResponse
@@ -155,7 +156,6 @@ async def _enqueue_process_task(
             WA_CLOUD_TASKS_AUDIENCE,
             WA_CLOUD_TASKS_QUEUE_NAME,
         )
-        import os
 
         project = os.environ.get("GOOGLE_CLOUD_PROJECT", "")
         location = os.environ.get("CLOUD_TASKS_LOCATION", "us-central1")
@@ -187,7 +187,13 @@ async def _enqueue_process_task(
 
         await asyncio.to_thread(_create_cloud_task_sync)
 
-    except ImportError:
+    except ImportError as exc:
+        if os.getenv("K_SERVICE", "").strip():
+            raise RuntimeError(
+                "google-cloud-tasks package is required in production. "
+                "Install google-cloud-tasks>=2.13.0."
+            ) from exc
+
         # Dev/test: process inline (no Cloud Tasks SDK)
         logger.info("Cloud Tasks not available, processing inline: %s", task_id)
         await _process_message(message, phone_number_id, retry_count=0)

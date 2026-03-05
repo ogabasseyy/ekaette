@@ -95,6 +95,16 @@ class TestHandleSendWaMessage:
         assert result["status"] == "error"
         assert "BASE_URL" in result["detail"]
 
+    async def test_non_https_base_url_returns_error(self) -> None:
+        config = MockConfig(wa_service_api_base_url="http://test.example.com")
+        result = await handle_send_wa_message(
+            args={"text": "hello"},
+            caller_phone="+234",
+            config=config,
+        )
+        assert result["status"] == "error"
+        assert "must be https" in result["detail"]
+
     async def test_missing_secret_returns_error(self) -> None:
         config = MockConfig(wa_service_secret="")
         result = await handle_send_wa_message(
