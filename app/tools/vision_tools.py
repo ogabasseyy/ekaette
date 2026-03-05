@@ -19,6 +19,7 @@ from typing import Any
 from google import genai
 from google.adk.tools.tool_context import ToolContext
 from google.genai import types
+from pydantic import BaseModel, Field
 
 from app.configs import sanitize_log
 
@@ -44,21 +45,45 @@ try:
 except (TypeError, ValueError):
     _LATEST_IMAGE_TTL = timedelta(seconds=900)
 
-ANALYSIS_PROMPT = """Analyze this device image for a trade-in valuation.
-Return a JSON object with exactly this structure:
-{
-  "device_name": "<identified device model, e.g. 'iPhone 14 Pro'>",
-  "condition": "<one of: Excellent, Good, Fair, Poor>",
-  "details": {
-    "screen": "<description of screen condition>",
-    "body": "<description of body/chassis condition>",
-    "battery": "<estimated battery health if visible, else 'Not visible'>",
-    "functionality": "<any visible damage affecting function>"
-  }
-}
-Be specific about scratches, dents, cracks, discoloration, and wear.
-If you cannot identify the device, set device_name to "Unknown".
-Return ONLY the JSON object, no markdown or extra text."""
+# ─── Pydantic schemas for structured output ──────────────────
+
+
+class ScreenCondition(BaseModel):
+    description: str = Field(default="Not assessed")
+    scratches: str = Field(default="unknown", description="none|light|moderate|heavy")
+    cracks: str = Field(default="none", description="none|hairline|visible|shattered")
+    defect_locations: list[str] = Field(default_factory=list)
+
+
+class BodyCondition(BaseModel):
+    description: str = Field(default="Not assessed")
+    dents: str = Field(default="unknown", description="none|minor|moderate|severe")
+    scratches: str = Field(default="unknown", description="none|light|moderate|heavy")
+    defect_locations: list[str] = Field(default_factory=list)
+
+
+class DeviceDetails(BaseModel):
+    screen: ScreenCondition = Field(default_factory=ScreenCondition)
+    body: BodyCondition = Field(default_factory=BodyCondition)
+    battery: str = Field(default="Not visible")
+    functionality: str = Field(default="No visible damage")
+
+
+class DeviceAnalysis(BaseModel):
+    device_name: str = Field(default="Unknown", description="Identified device model")
+    brand: str = Field(default="Unknown")
+    category: str = Field(default="phone")
+    condition: str = Field(default="Unknown", description="Excellent|Good|Fair|Poor")
+    condition_justification: str = Field(default="")
+    details: DeviceDetails = Field(default_factory=DeviceDetails)
+    accessories_detected: list[str] = Field(default_factory=list)
+    confidence: float = Field(default=0.5, ge=0.0, le=1.0, description="Overall assessment confidence")
+
+
+ANALYSIS_PROMPT = """Analyze this device image for trade-in valuation.
+Identify the device model and brand. Assess condition as Excellent, Good, Fair, or Poor.
+Be specific about scratches, dents, cracks, and defect locations (top-left, center, bottom-right, etc.).
+Note any visible accessories (case, charger, box)."""
 
 
 def _get_genai_client() -> genai.Client:
@@ -158,70 +183,143 @@ def _sanitize_path_segment(value: str, *, fallback: str) -> str:
     return candidate or fallback
 
 
+def normalize_analysis_result(raw: dict[str, Any]) -> dict[str, Any]:
+    """Ensure consistent shape regardless of old flat-string or new nested-dict format.
+
+    - If details.screen/body is a string → wrap as {"description": value}
+    - Fill missing optional fields with schema defaults
+    """
+    result = dict(raw)
+    result.setdefault("device_name", "Unknown")
+    result.setdefault("brand", "Unknown")
+    result.setdefault("category", "phone")
+    result.setdefault("condition", "Unknown")
+    result.setdefault("condition_justification", "")
+    result.setdefault("accessories_detected", [])
+    result.setdefault("confidence", 0.5)
+
+    details = result.get("details")
+    if not isinstance(details, dict):
+        details = {}
+    result["details"] = details
+
+    # Normalize screen
+    screen = details.get("screen")
+    if isinstance(screen, str):
+        details["screen"] = {
+            "description": screen,
+            "scratches": "unknown",
+            "cracks": "none",
+            "defect_locations": [],
+        }
+    elif not isinstance(screen, dict):
+        details["screen"] = {
+            "description": "Not assessed",
+            "scratches": "unknown",
+            "cracks": "none",
+            "defect_locations": [],
+        }
+
+    # Normalize body
+    body = details.get("body")
+    if isinstance(body, str):
+        details["body"] = {
+            "description": body,
+            "dents": "unknown",
+            "scratches": "unknown",
+            "defect_locations": [],
+        }
+    elif not isinstance(body, dict):
+        details["body"] = {
+            "description": "Not assessed",
+            "dents": "unknown",
+            "scratches": "unknown",
+            "defect_locations": [],
+        }
+
+    details.setdefault("battery", "Not visible")
+    details.setdefault("functionality", "No visible damage")
+
+    return result
+
+
 async def analyze_device_image(
     image_data: bytes,
     mime_type: str = "image/jpeg",
 ) -> dict[str, Any]:
-    """Analyze a device image using Gemini Standard API.
+    """Analyze a device image using Gemini Standard API with structured output.
 
     Args:
         image_data: Raw image bytes.
         mime_type: MIME type of the image.
 
     Returns:
-        Structured analysis dict with device_name, condition, details.
+        Normalized analysis dict with device_name, brand, condition, nested details.
         On failure, returns a dict with device_name="Unknown" and an error key.
     """
     client = _get_genai_client()
+    contents = [
+        types.Content(
+            parts=[
+                types.Part(
+                    inline_data=types.Blob(
+                        mime_type=mime_type,
+                        data=image_data,
+                    )
+                ),
+                types.Part(text=ANALYSIS_PROMPT),
+            ]
+        )
+    ]
 
+    # Try structured output first
     try:
         response = await client.aio.models.generate_content(
             model=VISION_MODEL,
-            contents=[
-                types.Content(
-                    parts=[
-                        types.Part(
-                            inline_data=types.Blob(
-                                mime_type=mime_type,
-                                data=image_data,
-                            )
-                        ),
-                        types.Part(text=ANALYSIS_PROMPT),
-                    ]
-                )
-            ],
+            contents=contents,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                response_schema=DeviceAnalysis.model_json_schema(),
+                media_resolution="MEDIA_RESOLUTION_HIGH",
+            ),
+        )
+        result = json.loads(response.text)
+        return normalize_analysis_result(result)
+
+    except Exception as structured_exc:
+        logger.warning("Structured output failed, falling back: %s", structured_exc)
+
+    # Fallback: manual JSON parse without structured output
+    try:
+        response = await client.aio.models.generate_content(
+            model=VISION_MODEL,
+            contents=contents,
         )
 
         raw_text = response.text.strip()
 
-        # Try to parse as JSON
         try:
-            # Strip markdown code fences if present
             if raw_text.startswith("```"):
                 lines = raw_text.split("\n")
                 raw_text = "\n".join(lines[1:-1]) if len(lines) > 2 else raw_text
             result = json.loads(raw_text)
-            # Ensure required keys
-            result.setdefault("device_name", "Unknown")
-            result.setdefault("condition", "Unknown")
-            result.setdefault("details", {})
-            return result
+            return normalize_analysis_result(result)
         except json.JSONDecodeError:
-            return {
+            return normalize_analysis_result({
                 "device_name": "Unknown",
                 "condition": "Unknown",
                 "details": {},
                 "raw_analysis": raw_text,
-            }
+            })
 
     except Exception as exc:
         logger.error("Vision analysis failed: %s", sanitize_log(str(exc)), exc_info=True)
-        return {
+        return normalize_analysis_result({
             "device_name": "Unknown",
             "condition": "Unknown",
             "details": {},
             "error": "Vision analysis failed",
-        }
+        })
 
 
 async def upload_to_cloud_storage(

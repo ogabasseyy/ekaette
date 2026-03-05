@@ -276,6 +276,57 @@ class TestAfterToolEmitMessages:
         assert message["allowedAgents"] == ["booking_agent", "support_agent"]
 
 
+class TestQuestionnaireWiring:
+    """Phase 5: Wiring tests for questionnaire tool + callback integration."""
+
+    def test_capability_map_contains_questionnaire_tool(self):
+        """TOOL_CAPABILITY_MAP should include get_device_questionnaire_tool."""
+        from app.agents.callbacks import TOOL_CAPABILITY_MAP
+
+        assert "get_device_questionnaire_tool" in TOOL_CAPABILITY_MAP
+        assert TOOL_CAPABILITY_MAP["get_device_questionnaire_tool"] == "valuation_tradein"
+
+    @pytest.mark.asyncio
+    async def test_emits_questionnaire_started_message(self):
+        """after_tool_emit_messages should emit questionnaire_started for questionnaire tool."""
+        tool = SimpleNamespace(name="get_device_questionnaire_tool")
+        ctx = SimpleNamespace(state={}, agent_name="valuation_agent")
+        result = {
+            "questions": [
+                {"id": "water_damage", "question": "Water damage?", "type": "boolean", "invert": False},
+            ],
+        }
+
+        await after_tool_emit_messages(tool, {}, ctx, result)
+
+        message = ctx.state["temp:last_server_message"]
+        assert message["type"] == "questionnaire_started"
+        assert message["questionCount"] == 1
+
+    @pytest.mark.asyncio
+    async def test_valuation_result_includes_adjustments_when_present(self):
+        """valuation_result ServerMessage should include adjustments and originalGrade."""
+        tool = SimpleNamespace(name="grade_and_value_tool")
+        ctx = SimpleNamespace(state={}, agent_name="valuation_agent")
+        result = {
+            "device_name": "iPhone 14 Pro",
+            "grade": "Fair",
+            "original_vision_grade": "Good",
+            "adjustments": ["Battery at 75% → -1 step"],
+            "adjustment_count": 1,
+            "offer_amount": 175000,
+            "currency": "NGN",
+            "summary": "Minor wear",
+        }
+
+        await after_tool_emit_messages(tool, {}, ctx, result)
+
+        message = ctx.state["temp:last_server_message"]
+        assert message["type"] == "valuation_result"
+        assert message["originalGrade"] == "Good"
+        assert message["adjustments"] == ["Battery at 75% → -1 step"]
+
+
 class TestAgentIsolationGuards:
     @pytest.mark.asyncio
     async def test_before_agent_isolation_guard_blocks_disallowed_sub_agent(self):

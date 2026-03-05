@@ -9,6 +9,11 @@
     "in_stock": true,
     "features": ["A17 Pro chip", "48MP camera", "Titanium design", "USB-C"],
     "description": "Flagship Apple smartphone with titanium frame and advanced camera system.",
+    "storage_variants": [
+      {"storage": "256GB", "price": 950000},
+      {"storage": "512GB", "price": 1100000},
+      {"storage": "1TB", "price": 1300000}
+    ],
     "data_tier": "demo"
   },
   {
@@ -21,6 +26,12 @@
     "in_stock": true,
     "features": ["A17 Pro chip", "48MP camera", "Titanium design"],
     "description": "Pro-level iPhone with titanium build and ProMotion display.",
+    "storage_variants": [
+      {"storage": "128GB", "price": 850000},
+      {"storage": "256GB", "price": 950000},
+      {"storage": "512GB", "price": 1100000},
+      {"storage": "1TB", "price": 1250000}
+    ],
     "data_tier": "demo"
   },
   {
@@ -33,6 +44,11 @@
     "in_stock": true,
     "features": ["A15 Bionic", "Dual camera", "Crash Detection"],
     "description": "Reliable mid-range iPhone with excellent battery life.",
+    "storage_variants": [
+      {"storage": "128GB", "price": 520000},
+      {"storage": "256GB", "price": 600000},
+      {"storage": "512GB", "price": 720000}
+    ],
     "data_tier": "demo"
   },
   {
@@ -45,6 +61,11 @@
     "in_stock": true,
     "features": ["Snapdragon 8 Gen 3", "200MP camera", "S Pen", "AI tools"],
     "description": "Samsung's most powerful Galaxy with built-in S Pen and Galaxy AI.",
+    "storage_variants": [
+      {"storage": "256GB", "price": 780000},
+      {"storage": "512GB", "price": 900000},
+      {"storage": "1TB", "price": 1050000}
+    ],
     "data_tier": "demo"
   },
   {
@@ -57,6 +78,10 @@
     "in_stock": true,
     "features": ["Snapdragon 8 Gen 3", "120Hz AMOLED", "AI camera tools"],
     "description": "Compact flagship with Galaxy AI features and vibrant display.",
+    "storage_variants": [
+      {"storage": "128GB", "price": 620000},
+      {"storage": "256GB", "price": 700000}
+    ],
     "data_tier": "demo"
   },
   {
@@ -69,6 +94,10 @@
     "in_stock": false,
     "features": ["Tensor G3", "Best-in-class camera AI", "7 years updates"],
     "description": "Google's AI-first phone with industry-leading software support.",
+    "storage_variants": [
+      {"storage": "128GB", "price": 450000},
+      {"storage": "256GB", "price": 520000}
+    ],
     "data_tier": "demo"
   },
   {
@@ -81,6 +110,12 @@
     "in_stock": true,
     "features": ["M2 chip", "10.9-inch Liquid Retina", "Apple Pencil support"],
     "description": "Powerful tablet for creatives and professionals.",
+    "storage_variants": [
+      {"storage": "128GB", "price": 680000},
+      {"storage": "256GB", "price": 780000},
+      {"storage": "512GB", "price": 950000},
+      {"storage": "1TB", "price": 1150000}
+    ],
     "data_tier": "demo"
   },
   {
@@ -93,6 +128,10 @@
     "in_stock": true,
     "features": ["Snapdragon 8 Gen 2", "120Hz AMOLED", "S Pen included"],
     "description": "Premium Android tablet with stunning display and S Pen.",
+    "storage_variants": [
+      {"storage": "128GB", "price": 520000},
+      {"storage": "256GB", "price": 600000}
+    ],
     "data_tier": "demo"
   },
   {
@@ -105,6 +144,11 @@
     "in_stock": true,
     "features": ["M3 chip", "18hr battery", "Fanless design", "13.6-inch Retina"],
     "description": "Ultra-portable laptop with all-day battery and silent operation.",
+    "storage_variants": [
+      {"storage": "256GB", "price": 1250000},
+      {"storage": "512GB", "price": 1450000},
+      {"storage": "1TB", "price": 1700000}
+    ],
     "data_tier": "demo"
   },
   {

@@ -6,6 +6,7 @@ math for trade-in valuations. The valuation agent calls them as ADK tools.
 
 import json
 import logging
+import re
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -30,6 +31,15 @@ DEFAULT_PRICING: dict[str, dict[str, int]] = {
     "Samsung S23": {"Excellent": 230_000, "Good": 190_000, "Fair": 150_000, "Poor": 95_000},
     "Google Pixel 8 Pro": {"Excellent": 280_000, "Good": 230_000, "Fair": 180_000, "Poor": 115_000},
     "Google Pixel 8": {"Excellent": 200_000, "Good": 165_000, "Fair": 130_000, "Poor": 85_000},
+}
+
+# ─── Trade-in multipliers (percentage of retail price) ────────
+
+TRADE_IN_MULTIPLIERS: dict[str, float] = {
+    "Excellent": 0.68,
+    "Good": 0.58,
+    "Fair": 0.45,
+    "Poor": 0.29,
 }
 
 # ─── Negotiation thresholds ─────────────────────────────────────
@@ -57,11 +67,18 @@ def grade_device(analysis: dict[str, Any]) -> dict[str, Any]:
     else:
         grade = "Fair"  # Default for unknown conditions
 
-    # Build summary from details
+    # Build summary from details — handle both string and dict formats
     detail_parts = []
     for key in ("screen", "body", "battery", "functionality"):
-        if key in details and details[key]:
-            detail_parts.append(f"{key}: {details[key]}")
+        val = details.get(key)
+        if not val:
+            continue
+        if isinstance(val, dict):
+            desc = val.get("description", "")
+            if desc:
+                detail_parts.append(f"{key}: {desc}")
+        else:
+            detail_parts.append(f"{key}: {val}")
 
     summary = "; ".join(detail_parts) if detail_parts else f"Graded as {grade}"
 
@@ -76,6 +93,7 @@ def calculate_trade_in_value(
     device_name: str,
     grade: str,
     pricing_table: dict[str, dict[str, int]] | None = None,
+    retail_price: int | None = None,
 ) -> dict[str, Any]:
     """Calculate trade-in value for a graded device.
 
@@ -83,32 +101,46 @@ def calculate_trade_in_value(
         device_name: Identified device model name.
         grade: Condition grade (Excellent/Good/Fair/Poor).
         pricing_table: Optional pricing table override. Uses DEFAULT_PRICING if None.
+        retail_price: Optional retail price for percentage-based fallback.
 
     Returns:
         Dict with offer_amount, currency, formatted price, device_name, grade.
     """
     table = pricing_table if pricing_table is not None else DEFAULT_PRICING
 
-    # Check for unknown or missing device
-    if device_name == "Unknown" or device_name not in table:
+    # Check hardcoded/custom pricing table first
+    if device_name != "Unknown" and device_name in table:
+        device_prices = table[device_name]
+        offer = device_prices.get(grade, 0)
         return {
             "device_name": device_name,
             "grade": grade,
-            "offer_amount": 0,
+            "offer_amount": offer,
             "currency": "NGN",
-            "formatted": "₦0",
-            "error": f"Device '{device_name}' not found in pricing table",
+            "formatted": f"₦{offer:,}",
         }
 
-    device_prices = table[device_name]
-    offer = device_prices.get(grade, 0)
+    # Percentage-based fallback from retail price
+    if isinstance(retail_price, int) and retail_price > 0:
+        multiplier = TRADE_IN_MULTIPLIERS.get(grade, TRADE_IN_MULTIPLIERS["Fair"])
+        offer = int(retail_price * multiplier)
+        return {
+            "device_name": device_name,
+            "grade": grade,
+            "offer_amount": offer,
+            "currency": "NGN",
+            "formatted": f"₦{offer:,}",
+            "pricing_method": "percentage",
+            "retail_price": retail_price,
+        }
 
     return {
         "device_name": device_name,
         "grade": grade,
-        "offer_amount": offer,
+        "offer_amount": 0,
         "currency": "NGN",
-        "formatted": f"₦{offer:,}",
+        "formatted": "₦0",
+        "error": f"Device '{device_name}' not found in pricing table",
     }
 
 
@@ -176,12 +208,199 @@ def process_negotiation(
     }
 
 
+# ─── Grade adjustment from questionnaire ──────────────────────
+
+GRADE_ORDER = ["Excellent", "Good", "Fair", "Poor"]
+
+_INTEGER_RE = re.compile(r"^\s*-?\d+\s*$")
+
+
+def _downgrade(grade: str, steps: int) -> str:
+    """Downgrade a grade by N steps, clamped at Poor."""
+    try:
+        idx = GRADE_ORDER.index(grade)
+    except ValueError:
+        idx = 2  # Default to Fair
+    return GRADE_ORDER[min(idx + steps, len(GRADE_ORDER) - 1)]
+
+
+def _parse_battery(value: Any) -> int | None:
+    """Parse battery_health_pct. Returns int 0-100 or None if invalid."""
+    # Reject bool first (isinstance(True, int) is True in Python)
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        if 0 <= value <= 100:
+            return value
+        return None
+    # Reject float
+    if isinstance(value, float):
+        return None
+    # Accept integer strings only (no decimals)
+    if isinstance(value, str):
+        if not _INTEGER_RE.match(value):
+            return None
+        try:
+            parsed = int(value.strip())
+        except ValueError:
+            return None
+        if 0 <= parsed <= 100:
+            return parsed
+    return None
+
+
+def adjust_grade_from_questionnaire(
+    vision_grade: str,
+    questionnaire_answers: dict[str, Any],
+) -> dict[str, Any]:
+    """Adjust vision grade based on questionnaire answers.
+
+    Precedence (short-circuits on force-Poor):
+    1. Force-Poor: does_not_power_on, water_damage, account_locked
+    2. Battery: <60 → -2 steps, 60-79 → -1 step
+    3. Other downgrades: previous_repair, biometric_not_working, screen_burn_in, buttons_not_functional
+    """
+    adjustments: list[str] = []
+
+    # Force-Poor rules (checked first, short-circuit)
+    for key, label in [
+        ("does_not_power_on", "Device does not power on"),
+        ("water_damage", "Water damage detected"),
+        ("account_locked", "Account locked"),
+    ]:
+        if questionnaire_answers.get(key) is True:
+            return {
+                "final_grade": "Poor",
+                "original_vision_grade": vision_grade,
+                "adjustments": [f"{label} → forced Poor"],
+                "adjustment_count": 1,
+            }
+
+    grade = vision_grade if vision_grade in GRADE_ORDER else "Fair"
+
+    # Battery
+    battery_val = questionnaire_answers.get("battery_health_pct")
+    battery_pct = _parse_battery(battery_val)
+    if battery_pct is not None:
+        if battery_pct < 60:
+            grade = _downgrade(grade, 2)
+            adjustments.append(f"Battery at {battery_pct}% → -2 steps")
+        elif battery_pct < 80:
+            grade = _downgrade(grade, 1)
+            adjustments.append(f"Battery at {battery_pct}% → -1 step")
+
+    # Other downgrades (compound)
+    for key, label in [
+        ("previous_repair", "Previous repair"),
+        ("biometric_not_working", "Biometric not working"),
+        ("screen_burn_in", "Screen burn-in"),
+        ("buttons_not_functional", "Buttons not functional"),
+    ]:
+        if questionnaire_answers.get(key) is True:
+            grade = _downgrade(grade, 1)
+            adjustments.append(f"{label} → -1 step")
+
+    return {
+        "final_grade": grade,
+        "original_vision_grade": vision_grade,
+        "adjustments": adjustments,
+        "adjustment_count": len(adjustments),
+    }
+
+
+# ─── Device questionnaire ─────────────────────────────────────
+
+UNIVERSAL_QUESTIONS: list[dict[str, Any]] = [
+    {"id": "does_not_power_on", "question": "Does the device power on and hold a charge?", "type": "boolean", "invert": True},
+    {"id": "water_damage", "question": "Has the device ever been exposed to water damage?", "type": "boolean", "invert": False},
+    {"id": "buttons_not_functional", "question": "Are all physical buttons working?", "type": "boolean", "invert": True},
+    {"id": "previous_repair", "question": "Has the device been repaired before?", "type": "boolean", "invert": False},
+]
+
+BRAND_QUESTIONS: dict[str, list[dict[str, Any]]] = {
+    "apple": [
+        {"id": "battery_health_pct", "question": "What's the battery health %? (Settings → Battery → Battery Health)", "type": "number", "invert": False},
+        {"id": "account_locked", "question": "Have you signed out of iCloud and disabled Find My?", "type": "boolean", "invert": True},
+        {"id": "biometric_not_working", "question": "Does Face ID / Touch ID work?", "type": "boolean", "invert": True},
+    ],
+    "samsung": [
+        {"id": "screen_burn_in", "question": "Do you notice any ghost images or burn-in on the display?", "type": "boolean", "invert": False},
+        {"id": "account_locked", "question": "Have you removed your Samsung account?", "type": "boolean", "invert": True},
+    ],
+}
+
+
+def get_device_questionnaire(
+    device_brand: str,
+    device_category: str = "phone",
+) -> list[dict[str, Any]]:
+    """Get brand-specific questionnaire questions.
+
+    Args:
+        device_brand: Device brand (e.g. "Apple", "Samsung").
+        device_category: Device category (default "phone").
+
+    Returns:
+        List of question dicts with id, question, type, invert fields.
+    """
+    questions = list(UNIVERSAL_QUESTIONS)
+    brand_key = (device_brand or "").strip().lower()
+    brand_specific = BRAND_QUESTIONS.get(brand_key, [])
+    questions.extend(brand_specific)
+    return questions
+
+
+# ─── Questionnaire answer normalization ───────────────────────
+
+_YES_VALUES = {"yes", "true", "1", "y"}
+_NO_VALUES = {"no", "false", "0", "n"}
+
+
+def _coerce_bool(value: Any) -> bool | None:
+    """Coerce string/bool to bool. Returns None if unparseable."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str) and value.strip().lower() in _YES_VALUES:
+        return True
+    if isinstance(value, str) and value.strip().lower() in _NO_VALUES:
+        return False
+    return None
+
+
+def normalize_questionnaire_answers(
+    raw_answers: dict[str, Any],
+    questions: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Apply invert flags and type coercion deterministically.
+
+    Expects RAW customer answers ("yes"/"no"/True/False).
+    The agent instruction tells the model to pass raw answers without
+    pre-interpreting. Inversion is applied HERE, not by the agent.
+    """
+    invert_map = {q["id"]: q.get("invert", False) for q in questions}
+    type_map = {q["id"]: q.get("type", "boolean") for q in questions}
+    result: dict[str, Any] = {}
+    for key, value in raw_answers.items():
+        if type_map.get(key) == "number":
+            result[key] = value
+        else:
+            coerced = _coerce_bool(value)
+            if coerced is None:
+                continue
+            if invert_map.get(key, False):
+                coerced = not coerced
+            result[key] = coerced
+    return result
+
+
 # ─── ADK Tool Wrappers ─────────────────────────────────────────
 
 
 def grade_and_value_tool(
     analysis: str,
     pricing_table: str | None = None,
+    questionnaire_answers: str | None = None,
+    retail_price: int | None = None,
 ) -> dict[str, Any]:
     """ADK tool: Grade a device and calculate its trade-in value.
 
@@ -191,9 +410,12 @@ def grade_and_value_tool(
             so the public schema is string-based. Direct Python callers may still pass a dict.
         pricing_table: Optional JSON string pricing override. Direct dicts are also accepted
             for backward compatibility in tests/non-ADK calls.
+        questionnaire_answers: Optional JSON string of raw customer answers keyed by question ID.
+        retail_price: Optional retail price (NGN) for percentage-based pricing when device
+            is not in the hardcoded pricing table.
 
     Returns:
-        Combined grade + valuation result.
+        Combined grade + valuation result, with optional adjustments.
     """
     safe_analysis: dict[str, Any]
     if isinstance(analysis, dict):  # Backward compatibility for direct callers/tests.
@@ -249,10 +471,32 @@ def grade_and_value_tool(
             safe_pricing_table = parsed_table  # Runtime validation happens downstream.
 
     grade_result = grade_device(safe_analysis)
+
+    # Apply questionnaire adjustments if provided
+    parsed_answers: dict[str, Any] | None = None
+    if isinstance(questionnaire_answers, str) and questionnaire_answers.strip():
+        try:
+            parsed = json.loads(questionnaire_answers)
+            if isinstance(parsed, dict):
+                parsed_answers = parsed
+        except json.JSONDecodeError:
+            pass  # Fall back to vision-only grade
+
+    if parsed_answers is not None:
+        brand = safe_analysis.get("brand", "Unknown")
+        questions = get_device_questionnaire(brand)
+        normalized = normalize_questionnaire_answers(parsed_answers, questions)
+        adjustment = adjust_grade_from_questionnaire(grade_result["grade"], normalized)
+        grade_result["grade"] = adjustment["final_grade"]
+        grade_result["original_vision_grade"] = adjustment["original_vision_grade"]
+        grade_result["adjustments"] = adjustment["adjustments"]
+        grade_result["adjustment_count"] = adjustment["adjustment_count"]
+
     value_result = calculate_trade_in_value(
         device_name=grade_result["device_name"],
         grade=grade_result["grade"],
         pricing_table=safe_pricing_table,
+        retail_price=retail_price,
     )
     # Merge both results
     return {**grade_result, **value_result}
@@ -274,3 +518,20 @@ def negotiate_tool(
         Negotiation decision dict.
     """
     return process_negotiation(offer_amount, customer_ask, max_amount)
+
+
+def get_device_questionnaire_tool(
+    device_brand: str = "",
+    device_category: str = "phone",
+) -> dict[str, Any]:
+    """ADK tool: Get brand-specific diagnostic questions for trade-in evaluation.
+
+    Args:
+        device_brand: Device brand (e.g. "Apple", "Samsung").
+        device_category: Device category (default "phone").
+
+    Returns:
+        Dict with 'questions' key containing list of question objects.
+    """
+    questions = get_device_questionnaire(device_brand or "", device_category)
+    return {"questions": questions}

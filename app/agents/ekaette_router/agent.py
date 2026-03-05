@@ -115,7 +115,9 @@ ekaette_router = Agent(
 
     You have specialist sub-agents for different tasks:
     - vision_agent: When the customer sends photos or needs visual analysis
-    - valuation_agent: When assessing condition and calculating trade-in/market value
+    - valuation_agent: When assessing condition, calculating trade-in/market value,
+      or when the customer wants to swap/upgrade their device (e.g. "swap my 14 Pro
+      for a 15 Pro Max", "trade in and upgrade", "what would I pay to switch to...")
     - booking_agent: When scheduling appointments, reservations, or pickups
     - catalog_agent: When searching for products, rooms, vehicles, or items,
       especially for store-specific availability, pricing, and recommendations
