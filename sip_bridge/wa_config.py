@@ -91,4 +91,9 @@ class WhatsAppBridgeConfig:
                 "WA_SERVICE_API_BASE_URL is required in production "
                 "(non-sandbox) mode — needed for during-call messaging"
             )
+        if not self.sandbox_mode and not self.wa_service_secret:
+            errors.append(
+                "WA_SERVICE_SECRET is required in production "
+                "(non-sandbox) mode — needed for during-call messaging auth"
+            )
         return errors

@@ -66,6 +66,8 @@ class WaSession:
     gemini_session: Any = None
     media_transport: Any = None
     remote_media_addr: tuple[str, int] | None = None
+    _caller_phone: str = ""
+    _bridge_config: Any | None = None
     inbound_queue: asyncio.Queue[bytes] = field(
         default_factory=lambda: asyncio.Queue(maxsize=INBOUND_QUEUE_SIZE)
     )
@@ -457,8 +459,8 @@ class WaSession:
             if fn_name == "send_whatsapp_message":
                 result = await handle_send_wa_message(
                     args=fn_args,
-                    caller_phone=getattr(self, "_caller_phone", ""),
-                    config=getattr(self, "_bridge_config", None),
+                    caller_phone=self._caller_phone,
+                    config=self._bridge_config,
                 )
             else:
                 result = {"status": "error", "detail": f"Unknown tool: {fn_name}"}

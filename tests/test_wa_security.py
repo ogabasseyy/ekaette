@@ -71,6 +71,7 @@ def wa_security_client():
         patch("app.api.v1.at.wa_security.WA_WEBHOOK_RATE_LIMIT_MODE", "best_effort_local"),
         patch("app.api.v1.at.wa_security.WA_CLOUD_TASKS_QUEUE_NAME", "wa-webhook-processing"),
         patch("app.api.v1.at.wa_security.WA_CLOUD_TASKS_AUDIENCE", "https://test.example.com/process"),
+        patch("app.api.v1.at.wa_security.WA_TASKS_INVOKER_EMAIL", "wa-tasks-invoker@test.iam.gserviceaccount.com"),
     ):
         wa_security.reset_nonce_store()
         app = _build_wa_security_app()
@@ -260,6 +261,7 @@ class TestServiceAuth:
             patch("app.api.v1.at.wa_security.WA_WEBHOOK_RATE_LIMIT_MODE", "best_effort_local"),
             patch("app.api.v1.at.wa_security.WA_CLOUD_TASKS_QUEUE_NAME", "wa-webhook-processing"),
             patch("app.api.v1.at.wa_security.WA_CLOUD_TASKS_AUDIENCE", "https://test.example.com"),
+            patch("app.api.v1.at.wa_security.WA_TASKS_INVOKER_EMAIL", "wa-tasks-invoker@test.iam.gserviceaccount.com"),
         ):
             wa_security.reset_nonce_store()
             app = _build_wa_security_app()
@@ -381,6 +383,21 @@ class TestCloudTasksOIDC:
             },
         )
         assert resp.status_code == 403
+
+    @patch("app.api.v1.at.wa_security._verify_oidc_token", new_callable=AsyncMock)
+    def test_oidc_operational_error_returns_500(self, mock_verify, wa_security_client: TestClient) -> None:
+        mock_verify.side_effect = RuntimeError("token verifier unavailable")
+        resp = wa_security_client.post(
+            "/test/oidc",
+            content=b"{}",
+            headers={
+                "X-CloudTasks-QueueName": "wa-webhook-processing",
+                "X-CloudTasks-TaskName": "wa-test123",
+                "Authorization": "Bearer valid-token",
+                "Content-Type": "application/json",
+            },
+        )
+        assert resp.status_code == 500
 
 
 # ── Verify Token Tests ──

@@ -26,6 +26,7 @@ from .settings import (
     WHATSAPP_ENABLED,
     WHATSAPP_PHONE_NUMBER_ID,
     WA_CLOUD_TASKS_MAX_ATTEMPTS,
+    WA_TASKS_INVOKER_EMAIL,
 )
 from .wa_security import (
     verify_cloud_tasks_oidc,
@@ -174,9 +175,7 @@ async def _enqueue_process_task(
                 headers={"Content-Type": "application/json"},
                 body=task_body.encode(),
                 oidc_token=tasks_v2.OidcToken(
-                    service_account_email=os.environ.get(
-                        "WA_TASKS_INVOKER_EMAIL", ""
-                    ),
+                    service_account_email=WA_TASKS_INVOKER_EMAIL,
                     audience=WA_CLOUD_TASKS_AUDIENCE,
                 ),
             ),
@@ -280,12 +279,22 @@ async def _process_message(
         logger.info("Unknown WA message type received")
         return
 
-    # Send reply
-    await providers.whatsapp_send_text(
+    # Send reply and surface provider failures so Cloud Tasks can retry.
+    status, send_body = await providers.whatsapp_send_text(
         access_token=WHATSAPP_ACCESS_TOKEN,
         to=from_,
         body=reply,
     )
+    if status < 200 or status >= 300:
+        logger.warning(
+            "WA outbound send failed",
+            extra={
+                "to": sanitize_log(from_),
+                "status": status,
+                "has_response_body": bool(send_body),
+            },
+        )
+        raise RuntimeError(f"WhatsApp send failed with status={status}")
 
 
 # ── POST /whatsapp/send — Internal API (service-auth) ──

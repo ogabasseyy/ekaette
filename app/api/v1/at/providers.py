@@ -10,6 +10,7 @@ import asyncio
 import logging
 import random
 import re
+from urllib.parse import urlparse
 
 import httpx
 
@@ -31,6 +32,7 @@ _GRAPH_API_BASE_URL = "https://graph.facebook.com"
 _GRAPH_API_VERSION_RE = re.compile(r"^v\d+\.\d+$")
 _GRAPH_PHONE_NUMBER_ID_RE = re.compile(r"^\d+$")
 _GRAPH_MEDIA_ID_RE = re.compile(r"^[A-Za-z0-9._:-]+$")
+_MEDIA_DOWNLOAD_ALLOWED_HOSTS = ("fbcdn.net", "whatsapp.net", "fbsbx.com")
 
 
 def _normalize_graph_api_version(api_version: str) -> str:
@@ -59,6 +61,21 @@ def _graph_api_url(*path_segments: str) -> str:
     if not safe_segments:
         raise ValueError("Graph API path is required")
     return f"{_GRAPH_API_BASE_URL}/{'/'.join(safe_segments)}"
+
+
+def _is_allowed_download_url(download_url: str) -> bool:
+    parsed = urlparse(download_url.strip())
+    if parsed.scheme not in {"http", "https"}:
+        return False
+
+    host = (parsed.hostname or "").lower()
+    if not host:
+        return False
+
+    return any(
+        host == allowed_host or host.endswith(f".{allowed_host}")
+        for allowed_host in _MEDIA_DOWNLOAD_ALLOWED_HOSTS
+    )
 
 
 def _paystack_json_headers(secret_key: str) -> dict[str, str]:
@@ -312,6 +329,8 @@ async def whatsapp_download_media(
     download_url = meta_body.get("url", "")
     if not download_url:
         raise RuntimeError("No download URL in media metadata")
+    if not _is_allowed_download_url(download_url):
+        raise RuntimeError("Untrusted media download URL")
 
     # Step 2: Stream download with byte cap
     content_type = "application/octet-stream"

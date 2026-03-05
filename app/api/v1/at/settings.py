@@ -93,6 +93,7 @@ class ATSettings(BaseSettings):
     wa_cloud_tasks_max_attempts: int = Field(default=3, alias="WA_CLOUD_TASKS_MAX_ATTEMPTS")
     wa_cloud_tasks_queue_name: str = Field(default="wa-webhook-processing", alias="WA_CLOUD_TASKS_QUEUE_NAME")
     wa_cloud_tasks_audience: str = Field(default="", alias="WA_CLOUD_TASKS_AUDIENCE")
+    wa_tasks_invoker_email: str = Field(default="", alias="WA_TASKS_INVOKER_EMAIL")
 
     # WhatsApp Graph API retry
     wa_graph_retry_max_attempts: int = Field(default=3, alias="WA_GRAPH_RETRY_MAX_ATTEMPTS")
@@ -175,6 +176,7 @@ WA_SERVICE_AUTH_MAX_SKEW_SECONDS = cfg.wa_service_auth_max_skew_seconds
 WA_CLOUD_TASKS_MAX_ATTEMPTS = cfg.wa_cloud_tasks_max_attempts
 WA_CLOUD_TASKS_QUEUE_NAME = cfg.wa_cloud_tasks_queue_name
 WA_CLOUD_TASKS_AUDIENCE = cfg.wa_cloud_tasks_audience
+WA_TASKS_INVOKER_EMAIL = cfg.wa_tasks_invoker_email
 
 # WhatsApp Graph API retry
 WA_GRAPH_RETRY_MAX_ATTEMPTS = cfg.wa_graph_retry_max_attempts
@@ -207,12 +209,15 @@ def _validate_whatsapp_config() -> None:
         "WHATSAPP_APP_SECRET": WHATSAPP_APP_SECRET,
         "WHATSAPP_VERIFY_TOKEN": WHATSAPP_VERIFY_TOKEN,
         "WA_SERVICE_SECRET": WA_SERVICE_SECRET,
+        "WA_CLOUD_TASKS_AUDIENCE": WA_CLOUD_TASKS_AUDIENCE,
         "WA_REPLAY_BUCKET": WA_REPLAY_BUCKET,
     }
-    # Optional for demo: WA_CLOUD_TASKS_AUDIENCE, WA_UTILITY_TEMPLATE_NAME,
-    # WA_UTILITY_TEMPLATE_LANGUAGE.
+    # Optional for demo: WA_UTILITY_TEMPLATE_NAME, WA_UTILITY_TEMPLATE_LANGUAGE.
     missing = [k for k, v in required.items() if not v]
     if missing:
         raise RuntimeError(
             f"WHATSAPP_ENABLED=true but required config is missing: {', '.join(missing)}"
         )
+
+
+_validate_whatsapp_config()

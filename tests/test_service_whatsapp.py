@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 
 import pytest
@@ -87,6 +88,7 @@ class TestServiceWindow:
         key = service_whatsapp._window_key("234", "phone1", "public", "ekaette-electronics")
         service_whatsapp._service_windows[key] = time.time() - 90000  # > 24h
         assert check_service_window("234", "phone1") is False
+        assert key not in service_whatsapp._service_windows
 
     def test_scope_isolation(self) -> None:
         """Different tenant/company/phone_number_id scopes should be independent."""
@@ -94,6 +96,18 @@ class TestServiceWindow:
         assert check_service_window("234", "phone1", tenant_id="t1", company_id="c1") is True
         assert check_service_window("234", "phone1", tenant_id="t2", company_id="c1") is False
         assert check_service_window("234", "phone2", tenant_id="t1", company_id="c1") is False
+
+    def test_size_cap_evicts_oldest(self, monkeypatch) -> None:
+        from app.api.v1.at import service_whatsapp
+
+        monkeypatch.setattr(service_whatsapp, "_SERVICE_WINDOW_MAX_ENTRIES", 2)
+        now = time.time()
+        service_whatsapp._service_windows["k1"] = now - 10.0
+        service_whatsapp._service_windows["k2"] = now - 5.0
+
+        record_inbound_timestamp("234", "phone1")
+        assert len(service_whatsapp._service_windows) == 2
+        assert "k1" not in service_whatsapp._service_windows
 
 
 # ── Template Fallback ──
@@ -159,3 +173,56 @@ class TestSendIdempotency:
         )
         assert status == 409
         mock_fn.assert_not_awaited()
+
+    async def test_concurrent_same_key_executes_once(self) -> None:
+        call_count = 0
+
+        async def slow_send():
+            nonlocal call_count
+            call_count += 1
+            await asyncio.sleep(0.05)
+            return 200, {"id": "msg1"}
+
+        results = await asyncio.gather(
+            send_with_idempotency(
+                idempotency_key="key4",
+                payload_hash="hashZ",
+                send_fn=slow_send,
+            ),
+            send_with_idempotency(
+                idempotency_key="key4",
+                payload_hash="hashZ",
+                send_fn=slow_send,
+            ),
+        )
+        assert call_count == 1
+        assert results[0][0] == 200
+        assert results[1][0] == 200
+
+    async def test_inflight_conflict_returns_409(self) -> None:
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def blocking_send():
+            started.set()
+            await release.wait()
+            return 200, {"id": "msg2"}
+
+        first = asyncio.create_task(
+            send_with_idempotency(
+                idempotency_key="key5",
+                payload_hash="hashA",
+                send_fn=blocking_send,
+            )
+        )
+        await started.wait()
+        status, body = await send_with_idempotency(
+            idempotency_key="key5",
+            payload_hash="hashB",
+            send_fn=AsyncMock(return_value=(200, {"id": "should-not-run"})),
+        )
+        release.set()
+        await first
+
+        assert status == 409
+        assert body["error"] == "Idempotency key conflict"

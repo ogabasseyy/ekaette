@@ -5,11 +5,14 @@ Reuses the _get_genai_client() pattern from app/tools/vision_tools.py:48-57.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 
 from google import genai
 from google.genai import types
+
+from app.configs.model_resolver import resolve_live_model_id
 
 logger = logging.getLogger(__name__)
 
@@ -53,14 +56,16 @@ async def query_text(
     *,
     user_message: str,
     company_id: str = "ekaette-electronics",
-    model: str = "gemini-3-flash-preview",
+    model: str | None = None,
     channel: str = "sms",
 ) -> str:
     """Text → Gemini Standard API → response text. Supports SMS and WhatsApp channels."""
     cfg = _CHANNEL_CONFIG.get(channel, _CHANNEL_CONFIG["sms"])
     client = _get_genai_client()
-    response = client.models.generate_content(
-        model=model,
+    resolved_model = (model or "").strip() or resolve_live_model_id()
+    response = await asyncio.to_thread(
+        client.models.generate_content,
+        model=resolved_model,
         contents=[user_message],
         config=types.GenerateContentConfig(
             system_instruction=(

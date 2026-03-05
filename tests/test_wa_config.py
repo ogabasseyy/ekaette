@@ -218,6 +218,22 @@ class TestWhatsAppServiceApiUrl:
         errors = cfg.validate()
         assert any("WA_SERVICE_API_BASE_URL" in e for e in errors)
 
+    def test_production_validation_fails_when_secret_missing(self, monkeypatch):
+        monkeypatch.setenv("WA_SANDBOX_MODE", "false")
+        monkeypatch.setenv("GOOGLE_API_KEY", "key")
+        monkeypatch.setenv("WA_SIP_USERNAME", "user")
+        monkeypatch.setenv("WA_SIP_PASSWORD", "pass")
+        monkeypatch.setenv("WA_SIP_ALLOWED_CIDRS", "10.0.0.0/8")
+        monkeypatch.setenv("WA_TLS_CERTFILE", "/cert.pem")
+        monkeypatch.setenv("WA_TLS_KEYFILE", "/key.pem")
+        monkeypatch.setenv("WA_SERVICE_API_BASE_URL", "https://wa-service.example.com")
+        monkeypatch.setenv("WA_SERVICE_SECRET", "")
+        from sip_bridge.wa_config import WhatsAppBridgeConfig
+
+        cfg = WhatsAppBridgeConfig.from_env()
+        errors = cfg.validate()
+        assert any("WA_SERVICE_SECRET" in e for e in errors)
+
     def test_sandbox_allows_missing(self, monkeypatch):
         monkeypatch.setenv("WA_SANDBOX_MODE", "true")
         monkeypatch.setenv("GOOGLE_API_KEY", "key")

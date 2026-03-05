@@ -47,7 +47,7 @@ class TestQueryText:
         await query_text(user_message="Hi")
         call_kwargs = _mock_genai.models.generate_content.call_args[1]
         config = call_kwargs["config"]
-        assert "160" in config.system_instruction or "SMS" in config.system_instruction
+        assert config.system_instruction.endswith(_CHANNEL_CONFIG["sms"]["system_suffix"])
 
     async def test_whatsapp_channel(self, _mock_genai) -> None:
         await query_text(user_message="Hi", channel="whatsapp")
@@ -59,6 +59,12 @@ class TestQueryText:
         await query_text(user_message="Hi", channel="sms")
         call_kwargs = _mock_genai.models.generate_content.call_args[1]
         assert call_kwargs["config"].max_output_tokens == 64
+
+    @patch("app.api.v1.at.bridge_text.resolve_live_model_id", return_value="resolved-model")
+    async def test_uses_resolved_live_model_by_default(self, _mock_resolve, _mock_genai) -> None:
+        await query_text(user_message="Hi")
+        call_kwargs = _mock_genai.models.generate_content.call_args[1]
+        assert call_kwargs["model"] == "resolved-model"
 
     async def test_empty_response_fallback(self, _mock_genai) -> None:
         _mock_genai.models.generate_content.return_value.text = ""

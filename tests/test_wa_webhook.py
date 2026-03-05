@@ -395,6 +395,27 @@ class TestProcessHandler:
         assert resp.status_code == 200
         mock_unsupported.assert_awaited_once()
 
+    @patch("app.api.v1.at.providers.whatsapp_send_text", new_callable=AsyncMock)
+    @patch("app.api.v1.at.bridge_text.query_text", new_callable=AsyncMock)
+    def test_process_retries_when_send_fails(self, mock_query, mock_send) -> None:
+        mock_query.return_value = "AI reply here"
+        mock_send.return_value = (500, {"error": {"message": "provider error"}})
+        app = _build_wa_app_with_oidc_bypass()
+        client = TestClient(app, raise_server_exceptions=False)
+        resp = client.post(
+            "/api/v1/at/whatsapp/process",
+            json={
+                "message": {
+                    "id": "wamid.proc-fail",
+                    "from": "2348012345678",
+                    "type": "text",
+                    "text": {"body": "Where is my order?"},
+                },
+                "phone_number_id": "test_phone_id",
+            },
+        )
+        assert resp.status_code == 500
+
 
 # ── POST /whatsapp/send — Internal API ──
 

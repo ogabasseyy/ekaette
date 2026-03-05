@@ -7,9 +7,12 @@ Routes delegate here — no business logic in whatsapp.py.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
+import threading
 import time
+from collections.abc import Awaitable, Callable
 
 from app.configs import sanitize_log
 
@@ -76,13 +79,16 @@ async def handle_image_message(
 
     # Use Gemini vision for image analysis
     try:
+        from app.configs.model_resolver import resolve_live_model_id
         from app.tools.vision_tools import _get_genai_client
         from google.genai import types
 
         client = _get_genai_client()
+        resolved_model = resolve_live_model_id()
         resolved_mime = mime_type or content_type or "image/jpeg"
-        response = client.models.generate_content(
-            model="gemini-3-flash-preview",
+        response = await asyncio.to_thread(
+            client.models.generate_content,
+            model=resolved_model,
             contents=[
                 types.Part(
                     inline_data=types.Blob(
@@ -162,6 +168,7 @@ async def send_interactive_buttons(
 # In-process store for dev; Firestore in production
 _service_windows: dict[str, float] = {}
 _SERVICE_WINDOW_SECONDS = 24 * 60 * 60  # 24 hours
+_SERVICE_WINDOW_MAX_ENTRIES = 50_000
 
 
 def _window_key(
@@ -181,14 +188,18 @@ def check_service_window(
     company_id: str = "ekaette-electronics",
 ) -> bool:
     """Check if 24h service window is open for this user."""
+    now = time.time()
+    _evict_service_windows(now)
     key = _window_key(
         user_phone,
         phone_number_id or WHATSAPP_PHONE_NUMBER_ID,
         tenant_id,
         company_id,
     )
-    last_ts = _service_windows.get(key, 0)
-    return (time.time() - last_ts) < _SERVICE_WINDOW_SECONDS
+    last_ts = _service_windows.get(key)
+    if last_ts is None:
+        return False
+    return (now - last_ts) < _SERVICE_WINDOW_SECONDS
 
 
 def record_inbound_timestamp(
@@ -198,13 +209,16 @@ def record_inbound_timestamp(
     company_id: str = "ekaette-electronics",
 ) -> None:
     """Record inbound message timestamp to open/refresh service window."""
+    now = time.time()
+    _evict_service_windows(now)
     key = _window_key(
         user_phone,
         phone_number_id or WHATSAPP_PHONE_NUMBER_ID,
         tenant_id,
         company_id,
     )
-    _service_windows[key] = time.time()
+    _service_windows[key] = now
+    _evict_service_windows(now)
 
 
 def reset_service_windows() -> None:
@@ -258,35 +272,76 @@ async def send_with_template_fallback(
 
 # In-process store for dev; Firestore in production
 _idempotency_store: dict[str, tuple[str, int, dict, float]] = {}
+_IDEMPOTENCY_MAX_ENTRIES = 50_000
+_idempotency_inflight: dict[str, tuple[str, asyncio.Future[tuple[int, dict]]]] = {}
+_idempotency_inflight_guard = threading.Lock()
 
 
 async def send_with_idempotency(
     *,
     idempotency_key: str,
     payload_hash: str,
-    send_fn,
+    send_fn: Callable[[], Awaitable[tuple[int, dict]]],
 ) -> tuple[int, dict]:
     """Firestore-backed idempotency: same key+payload returns cached result; key reuse with different payload returns 409."""
     key_hash = hashlib.sha256(idempotency_key.encode()).hexdigest()
+    now = time.time()
+    _evict_idempotency_store(now)
+    cached = _get_cached_idempotency_result(key_hash, payload_hash, now)
+    if cached is not None:
+        return cached
 
-    if key_hash in _idempotency_store:
-        stored_payload_hash, status, body, ts = _idempotency_store[key_hash]
-        ttl_seconds = WA_SEND_IDEMPOTENCY_TTL_HOURS * 3600
-        if (time.time() - ts) < ttl_seconds:
-            if stored_payload_hash == payload_hash:
-                return status, body
-            # Key reuse with different payload
-            return 409, {"error": "Idempotency key conflict"}
+    loop = asyncio.get_running_loop()
+    is_owner = False
+    with _idempotency_inflight_guard:
+        inflight = _idempotency_inflight.get(key_hash)
+        if inflight is None:
+            future: asyncio.Future[tuple[int, dict]] = loop.create_future()
+            _idempotency_inflight[key_hash] = (payload_hash, future)
+            is_owner = True
+        else:
+            inflight_payload_hash, future = inflight
+            if inflight_payload_hash != payload_hash:
+                return 409, {"error": "Idempotency key conflict"}
 
-    # First-seen key — execute send
-    status, body = await send_fn()
-    _idempotency_store[key_hash] = (payload_hash, status, body, time.time())
-    return status, body
+    if not is_owner:
+        await asyncio.shield(future)
+        now = time.time()
+        _evict_idempotency_store(now)
+        cached = _get_cached_idempotency_result(key_hash, payload_hash, now)
+        if cached is not None:
+            return cached
+        raise RuntimeError("Idempotency in-flight result missing")
+
+    try:
+        status, body = await send_fn()
+        stored_at = time.time()
+        _idempotency_store[key_hash] = (payload_hash, status, body, stored_at)
+        _evict_idempotency_store(stored_at)
+        if not future.done():
+            future.set_result((status, body))
+        return status, body
+    except Exception as exc:
+        if not future.done():
+            future.set_exception(exc)
+            future.exception()
+        raise
+    finally:
+        with _idempotency_inflight_guard:
+            current = _idempotency_inflight.get(key_hash)
+            if current is not None and current[1] is future:
+                _idempotency_inflight.pop(key_hash, None)
 
 
 def reset_idempotency_store() -> None:
     """Reset idempotency store (for testing)."""
     _idempotency_store.clear()
+    with _idempotency_inflight_guard:
+        inflight = list(_idempotency_inflight.values())
+        _idempotency_inflight.clear()
+    for _, future in inflight:
+        if not future.done():
+            future.cancel()
 
 
 # ── Failure Artifacts ──
@@ -308,3 +363,59 @@ async def write_failure_artifacts(
             "error_type": sanitize_log(error_kind),
         },
     )
+
+
+def _evict_service_windows(now: float) -> None:
+    stale_before = now - _SERVICE_WINDOW_SECONDS
+    stale_keys = [key for key, ts in _service_windows.items() if ts < stale_before]
+    for key in stale_keys:
+        _service_windows.pop(key, None)
+
+    overflow = len(_service_windows) - _SERVICE_WINDOW_MAX_ENTRIES
+    if overflow > 0:
+        oldest_keys = sorted(_service_windows, key=_service_windows.__getitem__)[:overflow]
+        for key in oldest_keys:
+            _service_windows.pop(key, None)
+
+
+def _idempotency_ttl_seconds() -> float:
+    return max(float(WA_SEND_IDEMPOTENCY_TTL_HOURS) * 3600.0, 0.0)
+
+
+def _evict_idempotency_store(now: float) -> None:
+    ttl_seconds = _idempotency_ttl_seconds()
+    stale_before = now - ttl_seconds
+    stale_keys = [
+        key for key, (_, _, _, ts) in _idempotency_store.items()
+        if ts < stale_before
+    ]
+    for key in stale_keys:
+        _idempotency_store.pop(key, None)
+
+    overflow = len(_idempotency_store) - _IDEMPOTENCY_MAX_ENTRIES
+    if overflow > 0:
+        oldest_keys = sorted(
+            _idempotency_store,
+            key=lambda key: _idempotency_store[key][3],
+        )[:overflow]
+        for key in oldest_keys:
+            _idempotency_store.pop(key, None)
+
+
+def _get_cached_idempotency_result(
+    key_hash: str,
+    payload_hash: str,
+    now: float,
+) -> tuple[int, dict] | None:
+    record = _idempotency_store.get(key_hash)
+    if record is None:
+        return None
+
+    stored_payload_hash, status, body, stored_at = record
+    if now - stored_at >= _idempotency_ttl_seconds():
+        _idempotency_store.pop(key_hash, None)
+        return None
+
+    if stored_payload_hash != payload_hash:
+        return 409, {"error": "Idempotency key conflict"}
+    return status, body

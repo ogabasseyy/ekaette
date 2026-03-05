@@ -88,9 +88,9 @@ async def handle_send_wa_message(
         "company_id": config.company_id,
     })
 
-    # Deterministic idempotency key (session + text hash)
+    # Deterministic idempotency key for retries of the same action.
     idempotency_key = hashlib.sha256(
-        f"{caller_phone}:{text}:{time.time():.0f}".encode()
+        f"{caller_phone}:{text}".encode()
     ).hexdigest()
 
     auth_headers = _build_service_auth_headers(payload, config.wa_service_secret)
@@ -108,7 +108,12 @@ async def handle_send_wa_message(
             body = response.json()
             return {"status": "sent", "message_id": body.get("result", {}).get("messages", [{}])[0].get("id", "")}
         else:
-            logger.warning("WA send failed: %d %s", response.status_code, response.text[:200])
+            content_length = response.headers.get("content-length", "unknown")
+            logger.warning(
+                "WA send failed: status=%d content_length=%s",
+                response.status_code,
+                content_length,
+            )
             return {"status": "error", "detail": f"HTTP {response.status_code}"}
 
     except Exception:
