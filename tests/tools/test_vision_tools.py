@@ -1,8 +1,10 @@
 """Tests for vision tools — TDD for S8."""
 
+import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from google.genai import types as genai_types
 import pytest
 
 
@@ -315,3 +317,225 @@ class TestAnalyzeDeviceImageTool:
             tool_context=fake_context,
         )
         assert "error" in result
+
+
+class TestEnhancedAnalysisOutput:
+    """Test structured output with brand, sub-scored details, defect_locations."""
+
+    @pytest.mark.asyncio
+    async def test_structured_output_returns_brand_and_nested_details(self):
+        """Structured output should include brand and nested screen/body details."""
+        from app.tools.vision_tools import analyze_device_image
+
+        structured_json = json.dumps({
+            "device_name": "iPhone 15 Pro",
+            "brand": "Apple",
+            "category": "phone",
+            "condition": "Good",
+            "condition_justification": "Minor scratches on screen",
+            "details": {
+                "screen": {
+                    "description": "Light scratches near edges",
+                    "scratches": "light",
+                    "cracks": "none",
+                    "defect_locations": ["top-left"],
+                },
+                "body": {
+                    "description": "Small dent on corner",
+                    "dents": "minor",
+                    "scratches": "none",
+                    "defect_locations": ["bottom-right"],
+                },
+                "battery": "Not visible",
+                "functionality": "No visible damage",
+            },
+            "accessories_detected": ["case"],
+            "confidence": 0.85,
+        })
+
+        mock_response = MagicMock()
+        mock_response.text = structured_json
+        mock_client = MagicMock()
+        mock_client.aio.models.generate_content = AsyncMock(return_value=mock_response)
+
+        with patch("app.tools.vision_tools._get_genai_client", return_value=mock_client):
+            result = await analyze_device_image(b"fake-image", "image/jpeg")
+
+        assert result["brand"] == "Apple"
+        assert result["device_name"] == "iPhone 15 Pro"
+        assert result["condition"] == "Good"
+        assert isinstance(result["details"]["screen"], dict)
+        assert result["details"]["screen"]["scratches"] == "light"
+        assert result["details"]["screen"]["defect_locations"] == ["top-left"]
+        assert result["confidence"] == 0.85
+        assert result["accessories_detected"] == ["case"]
+
+    @pytest.mark.asyncio
+    async def test_structured_output_backward_compat_has_device_name_and_condition(self):
+        """Enhanced output still includes legacy device_name + condition fields."""
+        from app.tools.vision_tools import analyze_device_image
+
+        mock_response = MagicMock()
+        mock_response.text = json.dumps({
+            "device_name": "Samsung S24",
+            "brand": "Samsung",
+            "condition": "Fair",
+            "details": {
+                "screen": {"description": "Visible scratches", "scratches": "moderate", "cracks": "none", "defect_locations": []},
+                "body": {"description": "Dent on back", "dents": "moderate", "scratches": "none", "defect_locations": []},
+                "battery": "Not visible",
+                "functionality": "No visible damage",
+            },
+            "confidence": 0.7,
+        })
+        mock_client = MagicMock()
+        mock_client.aio.models.generate_content = AsyncMock(return_value=mock_response)
+
+        with patch("app.tools.vision_tools._get_genai_client", return_value=mock_client):
+            result = await analyze_device_image(b"fake-image", "image/jpeg")
+
+        assert "device_name" in result
+        assert "condition" in result
+        assert result["device_name"] == "Samsung S24"
+        assert result["condition"] == "Fair"
+
+    @pytest.mark.asyncio
+    async def test_structured_output_uses_response_schema(self):
+        """Should pass response_schema and response_mime_type to the API call."""
+        from app.tools.vision_tools import analyze_device_image
+
+        mock_response = MagicMock()
+        mock_response.text = json.dumps({
+            "device_name": "Test",
+            "brand": "Unknown",
+            "condition": "Good",
+            "details": {},
+            "confidence": 0.5,
+        })
+        mock_client = MagicMock()
+        mock_client.aio.models.generate_content = AsyncMock(return_value=mock_response)
+
+        with patch("app.tools.vision_tools._get_genai_client", return_value=mock_client):
+            await analyze_device_image(b"fake-image", "image/jpeg")
+
+        call_kwargs = mock_client.aio.models.generate_content.call_args
+        config = call_kwargs.kwargs.get("config") or call_kwargs[1].get("config")
+        assert config is not None
+        assert config.response_mime_type == "application/json"
+        assert config.response_schema is not None
+
+    @pytest.mark.asyncio
+    async def test_structured_output_uses_high_media_resolution(self):
+        """Should use MEDIA_RESOLUTION_HIGH for better device grading."""
+        from app.tools.vision_tools import analyze_device_image
+
+        mock_response = MagicMock()
+        mock_response.text = json.dumps({
+            "device_name": "Test",
+            "brand": "Unknown",
+            "condition": "Good",
+            "details": {},
+            "confidence": 0.5,
+        })
+        mock_client = MagicMock()
+        mock_client.aio.models.generate_content = AsyncMock(return_value=mock_response)
+
+        with patch("app.tools.vision_tools._get_genai_client", return_value=mock_client):
+            await analyze_device_image(b"fake-image", "image/jpeg")
+
+        call_kwargs = mock_client.aio.models.generate_content.call_args
+        config = call_kwargs.kwargs.get("config") or call_kwargs[1].get("config")
+        assert config is not None
+        assert config.media_resolution == genai_types.MediaResolution.MEDIA_RESOLUTION_HIGH
+
+    @pytest.mark.asyncio
+    async def test_fallback_on_structured_output_failure(self):
+        """If structured output raises, fallback to manual JSON parse."""
+        from app.tools.vision_tools import analyze_device_image
+
+        mock_response = MagicMock()
+        mock_response.text = '{"device_name": "iPhone 14", "condition": "Good", "details": {}}'
+
+        mock_client = MagicMock()
+        # First call (structured output) fails, second call (fallback) succeeds
+        mock_client.aio.models.generate_content = AsyncMock(
+            side_effect=[Exception("Structured output not supported"), mock_response]
+        )
+
+        with patch("app.tools.vision_tools._get_genai_client", return_value=mock_client):
+            result = await analyze_device_image(b"fake-image", "image/jpeg")
+
+        assert mock_client.aio.models.generate_content.call_count == 2
+        assert result["device_name"] == "iPhone 14"
+        assert result["condition"] == "Good"
+
+
+class TestNormalizeAnalysisResult:
+    """Test normalize_analysis_result() for consistent output shape."""
+
+    def test_normalizes_old_flat_string_details(self):
+        """Old-style flat string details should be wrapped as {description: value}."""
+        from app.tools.vision_tools import normalize_analysis_result
+
+        raw = {
+            "device_name": "iPhone 14",
+            "condition": "Good",
+            "details": {
+                "screen": "Minor scratches",
+                "body": "Small dent on corner",
+                "battery": "85% health",
+                "functionality": "All features working",
+            },
+        }
+        result = normalize_analysis_result(raw)
+        assert isinstance(result["details"]["screen"], dict)
+        assert result["details"]["screen"]["description"] == "Minor scratches"
+        assert isinstance(result["details"]["body"], dict)
+        assert result["details"]["body"]["description"] == "Small dent on corner"
+
+    def test_normalizes_new_nested_dict_passthrough(self):
+        """New-style nested dict details should pass through unchanged."""
+        from app.tools.vision_tools import normalize_analysis_result
+
+        raw = {
+            "device_name": "iPhone 15",
+            "brand": "Apple",
+            "condition": "Excellent",
+            "details": {
+                "screen": {
+                    "description": "Pristine",
+                    "scratches": "none",
+                    "cracks": "none",
+                    "defect_locations": [],
+                },
+                "body": {
+                    "description": "No damage",
+                    "dents": "none",
+                    "scratches": "none",
+                    "defect_locations": [],
+                },
+                "battery": "Not visible",
+                "functionality": "No visible damage",
+            },
+            "confidence": 0.9,
+        }
+        result = normalize_analysis_result(raw)
+        assert result["details"]["screen"]["scratches"] == "none"
+        assert result["confidence"] == 0.9
+
+    def test_fills_defaults_for_missing_optional_fields(self):
+        """Missing optional fields should be filled with schema defaults."""
+        from app.tools.vision_tools import normalize_analysis_result
+
+        raw = {
+            "device_name": "Unknown Device",
+            "condition": "Fair",
+        }
+        result = normalize_analysis_result(raw)
+        assert "brand" in result
+        assert "details" in result
+        assert isinstance(result["details"], dict)
+        assert "screen" in result["details"]
+        assert isinstance(result["details"]["screen"], dict)
+        assert "confidence" in result
+        assert isinstance(result["confidence"], (int, float))

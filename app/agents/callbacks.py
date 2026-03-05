@@ -39,6 +39,7 @@ TOOL_CAPABILITY_MAP: dict[str, str] = {
     "search_company_knowledge": "policy_qa",
     "get_company_profile_fact": "policy_qa",
     "query_company_system": "connector_dispatch",
+    "get_device_questionnaire_tool": "valuation_tradein",
 }
 
 AGENT_NOT_ENABLED_ERROR_CODE = "AGENT_NOT_ENABLED"
@@ -636,22 +637,37 @@ async def after_tool_emit_messages(
         queue_server_message(tool_context.state, message)
         return None
 
-    if tool.name == "grade_and_value_tool":
-        offer_amount = int(effective_result.get("offer_amount", 0))
-        tool_context.state["temp:last_offer_amount"] = offer_amount
-
+    if tool.name == "get_device_questionnaire_tool":
+        questions = effective_result.get("questions", [])
         queue_server_message(
             tool_context.state,
             {
-                "type": "valuation_result",
-                "deviceName": effective_result.get("device_name", "Unknown"),
-                "condition": effective_result.get("grade", "Fair"),
-                "price": offer_amount,
-                "currency": effective_result.get("currency", "NGN"),
-                "details": effective_result.get("summary", ""),
-                "negotiable": offer_amount > 0,
+                "type": "questionnaire_started",
+                "questionCount": len(questions) if isinstance(questions, list) else 0,
             },
         )
+        return None
+
+    if tool.name == "grade_and_value_tool":
+        offer_amount = int(effective_result.get("offer_amount") or 0)
+        tool_context.state["temp:last_offer_amount"] = offer_amount
+
+        message: dict[str, Any] = {
+            "type": "valuation_result",
+            "deviceName": effective_result.get("device_name", "Unknown"),
+            "condition": effective_result.get("grade", "Fair"),
+            "price": offer_amount,
+            "currency": effective_result.get("currency", "NGN"),
+            "details": effective_result.get("summary", ""),
+            "negotiable": offer_amount > 0,
+        }
+        # Include adjustment info when questionnaire was used
+        if "original_vision_grade" in effective_result:
+            message["originalGrade"] = effective_result["original_vision_grade"]
+        if "adjustments" in effective_result:
+            message["adjustments"] = effective_result["adjustments"]
+
+        queue_server_message(tool_context.state, message)
         return None
 
     if tool.name == "create_booking":
