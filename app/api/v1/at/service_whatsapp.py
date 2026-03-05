@@ -180,8 +180,8 @@ async def _handle_media_message(
     if not media_bytes:
         logger.debug(
             "Empty media received for %s, media_id=%s",
-            media_type,
-            media_id,
+            sanitize_log(media_type),
+            sanitize_log(media_id),
         )
         return "Sorry, the media file appears to be empty. Please try sending it again."
 
