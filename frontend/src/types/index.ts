@@ -37,7 +37,7 @@ export interface ValuationResult {
   currency: string
   details: string
   negotiable: boolean
-  originalGrade?: string
+  originalGrade?: 'Excellent' | 'Good' | 'Fair' | 'Poor'
   adjustments?: string[]
 }
 

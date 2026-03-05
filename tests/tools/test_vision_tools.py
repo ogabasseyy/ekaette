@@ -4,6 +4,7 @@ import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from google.genai import types as genai_types
 import pytest
 
 
@@ -445,7 +446,6 @@ class TestEnhancedAnalysisOutput:
         call_kwargs = mock_client.aio.models.generate_content.call_args
         config = call_kwargs.kwargs.get("config") or call_kwargs[1].get("config")
         assert config is not None
-        from google.genai import types as genai_types
         assert config.media_resolution == genai_types.MediaResolution.MEDIA_RESOLUTION_HIGH
 
     @pytest.mark.asyncio
