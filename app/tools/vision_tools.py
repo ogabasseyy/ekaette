@@ -196,7 +196,8 @@ def _artifact_filename(mime_type: str) -> str:
         "video/3gpp": "3gp",
     }
     ext = ext_map.get(mime_type, "bin")
-    media_category = mime_type.split("/")[0] if mime_type else "image"
+    raw_category = mime_type.split("/")[0] if mime_type else ""
+    media_category = raw_category if raw_category in ("image", "video") else "media"
     return f"customer_{media_category}_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}.{ext}"
 
 

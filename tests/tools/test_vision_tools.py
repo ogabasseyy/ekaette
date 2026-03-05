@@ -141,6 +141,9 @@ class TestUploadToCloudStorage:
         assert video_name.startswith("customer_video_")
         assert video_name.endswith(".mp4")
 
+        unknown_name = _artifact_filename("application/octet-stream")
+        assert unknown_name.startswith("customer_media_")
+
     @pytest.mark.asyncio
     async def test_uploads_with_correct_bucket_and_path(self):
         """Should upload to configured bucket with structured path."""
