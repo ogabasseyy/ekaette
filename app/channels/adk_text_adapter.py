@@ -36,6 +36,7 @@ CHANNEL_LIMITS: dict[str, dict[str, int]] = {
 
 _DEFAULT_FALLBACK = "Thanks for your message. How can I help you today?"
 _DEFAULT_IMAGE_PROMPT = "The customer sent this image. Analyze it and respond helpfully."
+_MAX_IMAGE_BYTES = 20 * 1024 * 1024  # 20 MB — generous limit for any channel
 
 
 # ─── Session ID derivation ────────────────────────────────────
@@ -46,7 +47,13 @@ def derive_session_id(channel: str, user_id: str) -> str:
 
     Session IDs are stable across messages so the same WhatsApp user
     maintains conversation continuity with full agent state.
+
+    Raises ValueError if channel or user_id is empty/None.
     """
+    if not channel:
+        raise ValueError("channel must be a non-empty string")
+    if not user_id:
+        raise ValueError("user_id must be a non-empty string")
     raw = f"{channel}:{user_id}"
     digest = hashlib.sha256(raw.encode()).hexdigest()[:24]
     return f"{channel}-{digest}"
@@ -150,6 +157,14 @@ async def send_image_message(
     Returns:
         Dict with text, session_id, channel keys.
     """
+    if len(image_bytes) > _MAX_IMAGE_BYTES:
+        logger.warning("Image too large: %d bytes (limit %d)", len(image_bytes), _MAX_IMAGE_BYTES)
+        return {
+            "text": "Sorry, that image is too large to process. Please send a smaller image.",
+            "session_id": derive_session_id(channel, user_id),
+            "channel": channel,
+        }
+
     session_id = derive_session_id(channel, user_id)
 
     session_id = await _ensure_session(

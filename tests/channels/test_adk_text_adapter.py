@@ -406,6 +406,83 @@ class TestSessionIdDerivation:
         sid = derive_session_id("whatsapp", "+234 800-123-4567")
         assert all(c.isalnum() or c == "-" for c in sid)
 
+    def test_empty_channel_raises(self):
+        from app.channels.adk_text_adapter import derive_session_id
+
+        with pytest.raises(ValueError, match="channel"):
+            derive_session_id("", "2348001234567")
+
+    def test_empty_user_id_raises(self):
+        from app.channels.adk_text_adapter import derive_session_id
+
+        with pytest.raises(ValueError, match="user_id"):
+            derive_session_id("whatsapp", "")
+
+    def test_none_channel_raises(self):
+        from app.channels.adk_text_adapter import derive_session_id
+
+        with pytest.raises((ValueError, TypeError)):
+            derive_session_id(None, "2348001234567")
+
+    def test_none_user_id_raises(self):
+        from app.channels.adk_text_adapter import derive_session_id
+
+        with pytest.raises((ValueError, TypeError)):
+            derive_session_id("whatsapp", None)
+
+
+# ─── Test: Image size validation ─────────────────────────────
+
+
+class TestImageSizeValidation:
+    """Test that oversized images are rejected gracefully."""
+
+    @pytest.mark.asyncio
+    async def test_oversized_image_returns_friendly_error(self):
+        from app.channels.adk_text_adapter import send_image_message, _MAX_IMAGE_BYTES
+
+        mock_runner = MagicMock()
+        mock_session_service = MagicMock()
+
+        oversized = b"x" * (_MAX_IMAGE_BYTES + 1)
+        result = await send_image_message(
+            runner=mock_runner,
+            session_service=mock_session_service,
+            app_name="ekaette",
+            user_id="wa_user",
+            image_bytes=oversized,
+            mime_type="image/jpeg",
+        )
+
+        assert "too large" in result["text"].lower()
+        mock_runner.run_async.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_image_at_limit_is_accepted(self):
+        from app.channels.adk_text_adapter import send_image_message, _MAX_IMAGE_BYTES
+
+        mock_runner = MagicMock()
+        mock_runner.run_async = MagicMock(
+            return_value=_async_gen(_make_event("Analysis done."))
+        )
+        mock_session_service = MagicMock()
+        mock_session_service.get_session = AsyncMock(return_value=None)
+        mock_session_service.create_session = AsyncMock(
+            return_value=MagicMock(id="sess-img")
+        )
+
+        exactly_at_limit = b"x" * _MAX_IMAGE_BYTES
+        result = await send_image_message(
+            runner=mock_runner,
+            session_service=mock_session_service,
+            app_name="ekaette",
+            user_id="wa_user",
+            image_bytes=exactly_at_limit,
+        )
+
+        assert result["text"] == "Analysis done."
+        mock_runner.run_async.assert_called_once()
+
 
 # ─── Test: Channel config ─────────────────────────────────────
 
