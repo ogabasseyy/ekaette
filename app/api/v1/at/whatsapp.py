@@ -291,8 +291,8 @@ async def _process_message(
             "WA outbound send failed",
             extra={
                 "to": sanitize_log(from_),
-                "status": status,
-                "has_response_body": bool(send_body),
+                "status": sanitize_log(str(status)),
+                "has_response_body": sanitize_log("1" if bool(send_body) else "0"),
             },
         )
         raise RuntimeError(f"WhatsApp send failed with status={status}")
