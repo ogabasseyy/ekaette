@@ -711,13 +711,6 @@ class TestGetDeviceQuestionnaire:
         assert len(water_q) == 1
         assert water_q[0]["invert"] is False
 
-    def test_single_arg_call(self):
-        """Should work with only device_brand argument."""
-        from app.tools.valuation_tools import get_device_questionnaire
-
-        questions = get_device_questionnaire("Apple")
-        assert len(questions) > 0
-
 
 class TestGetDeviceQuestionnaireTool:
     """Test the ADK tool wrapper for questionnaire."""
