@@ -185,6 +185,53 @@ class TestWhatsAppBridgeConfigTLSValidation:
         assert not any("tls" in e.lower() or "cert" in e.lower() for e in errors)
 
 
+class TestWhatsAppServiceApiUrl:
+    """WA_SERVICE_API_BASE_URL config and validation."""
+
+    def test_loaded_from_env(self, monkeypatch):
+        monkeypatch.setenv("WA_SERVICE_API_BASE_URL", "https://wa-service.example.com/")
+        from sip_bridge.wa_config import WhatsAppBridgeConfig
+
+        cfg = WhatsAppBridgeConfig.from_env()
+        assert cfg.wa_service_api_base_url == "https://wa-service.example.com"
+
+    def test_default_empty(self, monkeypatch):
+        monkeypatch.delenv("WA_SERVICE_API_BASE_URL", raising=False)
+        from sip_bridge.wa_config import WhatsAppBridgeConfig
+
+        cfg = WhatsAppBridgeConfig.from_env()
+        assert cfg.wa_service_api_base_url == ""
+
+    def test_production_validation_fails_when_missing(self, monkeypatch):
+        monkeypatch.setenv("WA_SANDBOX_MODE", "false")
+        monkeypatch.setenv("GOOGLE_API_KEY", "key")
+        monkeypatch.setenv("WA_SIP_USERNAME", "user")
+        monkeypatch.setenv("WA_SIP_PASSWORD", "pass")
+        monkeypatch.setenv("WA_SIP_ALLOWED_CIDRS", "10.0.0.0/8")
+        monkeypatch.setenv("WA_TLS_CERTFILE", "/cert.pem")
+        monkeypatch.setenv("WA_TLS_KEYFILE", "/key.pem")
+        monkeypatch.setenv("WA_SERVICE_API_BASE_URL", "")
+        monkeypatch.setenv("WA_SERVICE_SECRET", "secret")
+        from sip_bridge.wa_config import WhatsAppBridgeConfig
+
+        cfg = WhatsAppBridgeConfig.from_env()
+        errors = cfg.validate()
+        assert any("WA_SERVICE_API_BASE_URL" in e for e in errors)
+
+    def test_sandbox_allows_missing(self, monkeypatch):
+        monkeypatch.setenv("WA_SANDBOX_MODE", "true")
+        monkeypatch.setenv("GOOGLE_API_KEY", "key")
+        monkeypatch.setenv("WA_SIP_USERNAME", "user")
+        monkeypatch.setenv("WA_SIP_PASSWORD", "pass")
+        monkeypatch.setenv("WA_SERVICE_API_BASE_URL", "")
+        monkeypatch.setenv("WA_SERVICE_SECRET", "")
+        from sip_bridge.wa_config import WhatsAppBridgeConfig
+
+        cfg = WhatsAppBridgeConfig.from_env()
+        errors = cfg.validate()
+        assert not any("WA_SERVICE_API_BASE_URL" in e for e in errors)
+
+
 class TestWhatsAppBridgeConfigImmutability:
     """Config is frozen — cannot be modified after creation."""
 

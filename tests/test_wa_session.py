@@ -441,6 +441,7 @@ class TestWaSessionGeminiBidi:
                     return
 
             response = MagicMock()
+            response.tool_call = None  # No tool call in this response
             part = MagicMock()
             part.inline_data = MagicMock()
             part.inline_data.data = b"\x00" * 960  # 24kHz PCM16 frame

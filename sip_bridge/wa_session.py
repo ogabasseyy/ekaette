@@ -136,6 +136,10 @@ class WaSession:
                     )
                 )
 
+                # During-call messaging tool
+                from .wa_tools import SEND_WA_MESSAGE_TOOL
+                tools_list = [SEND_WA_MESSAGE_TOOL]
+
                 live_config = {
                     "response_modalities": ["AUDIO"],
                     "speech_config": speech_config,
@@ -143,6 +147,7 @@ class WaSession:
                     "input_audio_transcription": types.AudioTranscriptionConfig(),
                     "output_audio_transcription": types.AudioTranscriptionConfig(),
                     "proactivity": types.ProactivityConfig(proactive_audio=True),
+                    "tools": tools_list,
                 }
 
                 if getattr(self, "_use_explicit_vad", False):
@@ -403,6 +408,12 @@ class WaSession:
                     got_any = True
                     if self._shutdown.is_set():
                         return
+                    # Handle tool calls (e.g., send_whatsapp_message)
+                    tc = getattr(response, "tool_call", None)
+                    if tc is not None:
+                        await self._handle_tool_call(tc)
+                        continue
+
                     sc = getattr(response, "server_content", None)
                     if sc is None:
                         continue
@@ -430,6 +441,41 @@ class WaSession:
         except Exception:
             if not self._shutdown.is_set():
                 logger.exception("Gemini recv error")
+
+    async def _handle_tool_call(self, tool_call) -> None:
+        """Handle Gemini tool calls (e.g., send_whatsapp_message)."""
+        from .wa_tools import handle_send_wa_message
+        from google.genai import types
+
+        for fc in getattr(tool_call, "function_calls", []):
+            fn_name = fc.name
+            fn_args = dict(fc.args) if fc.args else {}
+            fn_id = fc.id
+
+            logger.info("Tool call: %s(%s)", fn_name, list(fn_args.keys()))
+
+            if fn_name == "send_whatsapp_message":
+                result = await handle_send_wa_message(
+                    args=fn_args,
+                    caller_phone=getattr(self, "_caller_phone", ""),
+                    config=getattr(self, "_bridge_config", None),
+                )
+            else:
+                result = {"status": "error", "detail": f"Unknown tool: {fn_name}"}
+
+            # Return tool response to Gemini
+            try:
+                await self.gemini_session.send_tool_response(
+                    function_responses=[
+                        types.FunctionResponse(
+                            name=fn_name,
+                            id=fn_id,
+                            response=result,
+                        )
+                    ]
+                )
+            except Exception:
+                logger.warning("Failed to send tool response for %s", fn_name, exc_info=True)
 
     async def _media_outbound_loop(self) -> None:
         """Read AI response audio, encode, SRTP protect, send."""

@@ -29,6 +29,8 @@ class WhatsAppBridgeConfig:
     company_id: str
     tenant_id: str
     health_port: int
+    wa_service_api_base_url: str
+    wa_service_secret: str
 
     @classmethod
     def from_env(cls) -> WhatsAppBridgeConfig:
@@ -61,6 +63,8 @@ class WhatsAppBridgeConfig:
             company_id=os.getenv("WA_COMPANY_ID", "ekaette-electronics"),
             tenant_id=os.getenv("WA_TENANT_ID", "public"),
             health_port=int(os.getenv("WA_HEALTH_PORT", "8082")),
+            wa_service_api_base_url=os.getenv("WA_SERVICE_API_BASE_URL", "").rstrip("/"),
+            wa_service_secret=os.getenv("WA_SERVICE_SECRET", ""),
         )
 
     def validate(self) -> list[str]:
@@ -81,5 +85,10 @@ class WhatsAppBridgeConfig:
             errors.append(
                 "WA_TLS_CERTFILE and WA_TLS_KEYFILE are required in production "
                 "(non-sandbox) mode — SIP over TLS is mandatory"
+            )
+        if not self.sandbox_mode and not self.wa_service_api_base_url:
+            errors.append(
+                "WA_SERVICE_API_BASE_URL is required in production "
+                "(non-sandbox) mode — needed for during-call messaging"
             )
         return errors
