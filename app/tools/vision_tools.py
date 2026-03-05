@@ -197,10 +197,13 @@ EXTENSION_MAP: dict[str, str] = {
 
 
 def _artifact_filename(mime_type: str) -> str:
-    ext = EXTENSION_MAP.get(mime_type, "bin")
-    raw_category = mime_type.split("/")[0] if mime_type else ""
-    media_category = raw_category if raw_category in ("image", "video") else "media"
-    return f"customer_{media_category}_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}.{ext}"
+    if not mime_type or mime_type not in EXTENSION_MAP:
+        raise ValueError(f"Unsupported MIME type for artifact: {mime_type!r}")
+    raw_category = mime_type.split("/")[0]
+    if raw_category not in ("image", "video"):
+        raise ValueError(f"MIME category {raw_category!r} not allowed; expected image or video")
+    ext = EXTENSION_MAP[mime_type]
+    return f"customer_{raw_category}_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}.{ext}"
 
 
 def _sanitize_path_segment(value: str, *, fallback: str) -> str:
