@@ -281,7 +281,7 @@ async def analyze_device_image(
             config=types.GenerateContentConfig(
                 response_mime_type="application/json",
                 response_schema=DeviceAnalysis.model_json_schema(),
-                media_resolution="MEDIA_RESOLUTION_HIGH",
+                media_resolution=types.MediaResolution.MEDIA_RESOLUTION_HIGH,
             ),
         )
         if not response.text:

@@ -4,6 +4,7 @@ Pure logic functions — no API calls. These tools implement the pricing
 math for trade-in valuations. The valuation agent calls them as ADK tools.
 """
 
+import copy
 import json
 import logging
 import re
@@ -59,7 +60,9 @@ def grade_device(analysis: dict[str, Any]) -> dict[str, Any]:
     """
     device_name = analysis.get("device_name", "Unknown")
     condition = analysis.get("condition", "Unknown")
-    details = analysis.get("details", {})
+    details = analysis.get("details") or {}
+    if not isinstance(details, dict):
+        details = {}
 
     # Map condition to valid grade
     if condition in VALID_GRADES:
@@ -111,6 +114,8 @@ def calculate_trade_in_value(
     # Check hardcoded/custom pricing table first
     if device_name != "Unknown" and device_name in table:
         device_prices = table[device_name]
+        if not isinstance(device_prices, dict):
+            device_prices = {}
         offer = device_prices.get(grade, 0)
         return {
             "device_name": device_name,
@@ -341,10 +346,10 @@ def get_device_questionnaire(
     Returns:
         List of question dicts with id, question, type, invert fields.
     """
-    questions = list(UNIVERSAL_QUESTIONS)
+    questions = copy.deepcopy(UNIVERSAL_QUESTIONS)
     brand_key = (device_brand or "").strip().lower()
     brand_specific = BRAND_QUESTIONS.get(brand_key, [])
-    questions.extend(brand_specific)
+    questions.extend(copy.deepcopy(brand_specific))
     return questions
 
 

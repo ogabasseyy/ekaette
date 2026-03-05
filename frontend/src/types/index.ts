@@ -37,6 +37,8 @@ export interface ValuationResult {
   currency: string
   details: string
   negotiable: boolean
+  originalGrade?: string
+  adjustments?: string[]
 }
 
 export interface BookingConfirmation {
