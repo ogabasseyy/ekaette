@@ -114,16 +114,19 @@ def calculate_trade_in_value(
     # Check hardcoded/custom pricing table first
     if device_name != "Unknown" and device_name in table:
         device_prices = table[device_name]
-        if not isinstance(device_prices, dict):
-            device_prices = {}
-        offer = device_prices.get(grade, 0)
-        return {
-            "device_name": device_name,
-            "grade": grade,
-            "offer_amount": offer,
-            "currency": "NGN",
-            "formatted": f"₦{offer:,}",
-        }
+        if isinstance(device_prices, dict):
+            raw_offer = device_prices.get(grade, 0)
+            try:
+                offer = int(raw_offer)
+            except (TypeError, ValueError):
+                offer = 0
+            return {
+                "device_name": device_name,
+                "grade": grade,
+                "offer_amount": offer,
+                "currency": "NGN",
+                "formatted": f"₦{offer:,}",
+            }
 
     # Percentage-based fallback from retail price
     if isinstance(retail_price, int) and retail_price > 0:
@@ -347,7 +350,7 @@ def get_device_questionnaire(
         List of question dicts with id, question, type, invert fields.
     """
     questions = copy.deepcopy(UNIVERSAL_QUESTIONS)
-    brand_key = (device_brand or "").strip().lower()
+    brand_key = (device_brand.strip().lower() if isinstance(device_brand, str) else "")
     brand_specific = BRAND_QUESTIONS.get(brand_key, [])
     questions.extend(copy.deepcopy(brand_specific))
     return questions
