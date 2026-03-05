@@ -223,10 +223,6 @@ async def send_media_message(
     }
 
 
-# Backward-compat aliases
-_MAX_IMAGE_BYTES = _MAX_MEDIA_BYTES
-
-
 async def send_image_message(
     *,
     image_bytes: bytes = b"",

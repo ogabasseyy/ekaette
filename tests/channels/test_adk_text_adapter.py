@@ -452,12 +452,12 @@ class TestImageSizeValidation:
 
     @pytest.mark.asyncio
     async def test_oversized_image_returns_friendly_error(self):
-        from app.channels.adk_text_adapter import send_image_message, _MAX_IMAGE_BYTES
+        from app.channels.adk_text_adapter import send_image_message, _MAX_MEDIA_BYTES
 
         mock_runner = MagicMock()
         mock_session_service = MagicMock()
 
-        oversized = b"x" * (_MAX_IMAGE_BYTES + 1)
+        oversized = b"x" * (_MAX_MEDIA_BYTES + 1)
         result = await send_image_message(
             runner=mock_runner,
             session_service=mock_session_service,
@@ -472,7 +472,7 @@ class TestImageSizeValidation:
 
     @pytest.mark.asyncio
     async def test_image_at_limit_is_accepted(self):
-        from app.channels.adk_text_adapter import send_image_message, _MAX_IMAGE_BYTES
+        from app.channels.adk_text_adapter import send_image_message, _MAX_MEDIA_BYTES
 
         mock_runner = MagicMock()
         mock_runner.run_async = MagicMock(
@@ -484,7 +484,7 @@ class TestImageSizeValidation:
             return_value=MagicMock(id="sess-img")
         )
 
-        exactly_at_limit = b"x" * _MAX_IMAGE_BYTES
+        exactly_at_limit = b"x" * _MAX_MEDIA_BYTES
         result = await send_image_message(
             runner=mock_runner,
             session_service=mock_session_service,
