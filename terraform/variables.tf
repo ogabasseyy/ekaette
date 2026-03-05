@@ -79,3 +79,63 @@ variable "kms_key_name" {
   type        = string
   default     = null
 }
+
+# ── WhatsApp Cloud Tasks ──
+
+variable "wa_cloud_tasks_max_attempts" {
+  description = "Max retry attempts for WhatsApp webhook processing tasks"
+  type        = number
+  default     = 3
+}
+
+variable "wa_cloud_tasks_queue_name" {
+  description = "Cloud Tasks queue name for WhatsApp webhook processing"
+  type        = string
+  default     = "wa-webhook-processing"
+}
+
+# ── WhatsApp Replay Artifacts ──
+
+variable "wa_replay_bucket_name" {
+  description = "Dedicated GCS bucket for WhatsApp replay artifacts"
+  type        = string
+  default     = ""
+}
+
+variable "wa_replay_blob_prefix" {
+  description = "Blob prefix for replay artifacts in the replay bucket"
+  type        = string
+  default     = "wa/replay/"
+}
+
+variable "wa_replay_blob_ttl_days" {
+  description = "Retention days for WhatsApp replay artifacts"
+  type        = number
+  default     = 1
+}
+
+# ── WhatsApp Edge / LB ──
+
+variable "wa_webhook_domain" {
+  description = "Public domain for Meta webhook (e.g. wa-webhook.ekaette.com)"
+  type        = string
+  default     = ""
+}
+
+variable "wa_service_api_domain" {
+  description = "Service API domain for VM/Cloud Tasks traffic (e.g. wa-service.ekaette.com)"
+  type        = string
+  default     = ""
+}
+
+variable "app_public_domain" {
+  description = "Existing public app domain (e.g. app.ekaette.com)"
+  type        = string
+  default     = ""
+}
+
+variable "wa_vm_egress_cidrs" {
+  description = "Trusted VM/NAT CIDRs allowed to call /whatsapp/send"
+  type        = list(string)
+  default     = []
+}

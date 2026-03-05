@@ -16,6 +16,8 @@ locals {
     "cloudbuild.googleapis.com",
     "iam.googleapis.com",
     "aiplatform.googleapis.com",
+    "cloudtasks.googleapis.com",
+    "compute.googleapis.com",
   ]
 }
 
