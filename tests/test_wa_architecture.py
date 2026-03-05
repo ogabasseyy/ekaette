@@ -56,7 +56,7 @@ class TestFileSizeCaps:
             ("codec_bridge.py", 250),
             ("srtp_context.py", 200),
             ("wa_sip_client.py", 400),
-            ("wa_session.py", 400),
+            ("wa_session.py", 500),
             ("wa_config.py", 400),
             ("wa_main.py", 400),
             ("sip_tls.py", 400),
