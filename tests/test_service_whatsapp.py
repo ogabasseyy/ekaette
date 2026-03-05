@@ -225,10 +225,12 @@ class TestSendIdempotency:
             send_fn=AsyncMock(return_value=(200, {"id": "should-not-run"})),
         )
         release.set()
-        await first
+        first_status, first_body = await first
 
         assert status == 409
         assert body["error"] == "Idempotency key conflict"
+        assert first_status == 200
+        assert first_body["id"] == "msg2"
 
 
 class TestInteractiveButtons:
