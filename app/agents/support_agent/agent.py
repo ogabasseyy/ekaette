@@ -34,10 +34,7 @@ from app.tools.shipping_tools import (
 
 LIVE_MODEL_ID = resolve_live_model_id()
 
-support_agent = Agent(
-    name="support_agent",
-    model=LIVE_MODEL_ID,
-    instruction="""You answer general customer questions, FAQs, and provide support.
+_INSTRUCTION = """You answer general customer questions, FAQs, and provide support.
 
     Grounding priority:
     1) Use company tools first for company-specific truth:
@@ -85,23 +82,41 @@ support_agent = Agent(
     - For trade-in related questions, suggest transferring to the valuation agent
     - For booking questions, suggest transferring to the booking agent
     - Always be honest if you don't know — never make up information
-    """,
-    tools=[
-        search_company_knowledge,
-        get_company_profile_fact,
-        query_company_system,
-        create_virtual_account_payment,
-        check_payment_status,
-        get_virtual_account_record,
-        get_topship_delivery_quote,
-        create_order_record,
-        track_order_delivery,
-        send_order_review_followup,
-        google_search,
-    ],
+    """
+
+_TOOLS = [
+    search_company_knowledge,
+    get_company_profile_fact,
+    query_company_system,
+    create_virtual_account_payment,
+    check_payment_status,
+    get_virtual_account_record,
+    get_topship_delivery_quote,
+    create_order_record,
+    track_order_delivery,
+    send_order_review_followup,
+    google_search,
+]
+
+_CALLBACKS = dict(
     before_model_callback=before_model_inject_config,
     after_model_callback=after_model_valuation_sanity,
     before_tool_callback=before_tool_capability_guard_and_log,
     after_tool_callback=after_tool_emit_messages,
     on_tool_error_callback=on_tool_error_emit,
 )
+
+
+def create_support_agent(model: str) -> Agent:
+    """Create a support agent with the specified model."""
+    return Agent(
+        name="support_agent",
+        model=model,
+        instruction=_INSTRUCTION,
+        tools=_TOOLS,
+        **_CALLBACKS,
+    )
+
+
+# Module-level singleton for bidi-streaming (Live API)
+support_agent = create_support_agent(LIVE_MODEL_ID)

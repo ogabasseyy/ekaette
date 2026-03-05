@@ -23,10 +23,7 @@ from app.tools.knowledge_tools import (
 
 LIVE_MODEL_ID = resolve_live_model_id()
 
-catalog_agent = Agent(
-    name="catalog_agent",
-    model=LIVE_MODEL_ID,
-    instruction="""You search for products in the catalog and make recommendations.
+_INSTRUCTION = """You search for products in the catalog and make recommendations.
 
     When the customer asks about a product:
     1. Call search_catalog with their query (and category if mentioned)
@@ -58,16 +55,34 @@ catalog_agent = Agent(
     - Proactively offer image upload when product identity is unclear:
       "If you upload a photo, I can identify it and match what we have."
     - For trade-in customers, mention they can offset the price with their trade-in value
-    """,
-    tools=[
-        search_catalog,
-        search_company_knowledge,
-        get_company_profile_fact,
-        query_company_system,
-    ],
+    """
+
+_TOOLS = [
+    search_catalog,
+    search_company_knowledge,
+    get_company_profile_fact,
+    query_company_system,
+]
+
+_CALLBACKS = dict(
     before_model_callback=before_model_inject_config,
     after_model_callback=after_model_valuation_sanity,
     before_tool_callback=before_tool_capability_guard_and_log,
     after_tool_callback=after_tool_emit_messages,
     on_tool_error_callback=on_tool_error_emit,
 )
+
+
+def create_catalog_agent(model: str) -> Agent:
+    """Create a catalog agent with the specified model."""
+    return Agent(
+        name="catalog_agent",
+        model=model,
+        instruction=_INSTRUCTION,
+        tools=_TOOLS,
+        **_CALLBACKS,
+    )
+
+
+# Module-level singleton for bidi-streaming (Live API)
+catalog_agent = create_catalog_agent(LIVE_MODEL_ID)

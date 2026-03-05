@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 
 DEFAULT_LIVE_MODEL_ID = "gemini-2.5-flash-native-audio-preview-12-2025"
+DEFAULT_TEXT_MODEL_ID = "gemini-3-flash-preview"
 
 
 def _env_flag(name: str, default: str = "false") -> bool:
@@ -24,6 +25,15 @@ def resolve_live_model_id() -> str:
     if fallback:
         return fallback
     return DEFAULT_LIVE_MODEL_ID
+
+
+def resolve_text_model_id() -> str:
+    """Resolve the model for text channels (WhatsApp, SMS).
+
+    Text channels use Runner.run_async() which calls generateContent —
+    requires a standard API model, not the Live API audio model.
+    """
+    return os.getenv("TEXT_MODEL_ID", DEFAULT_TEXT_MODEL_ID).strip() or DEFAULT_TEXT_MODEL_ID
 
 
 def get_live_model_candidates() -> list[str]:

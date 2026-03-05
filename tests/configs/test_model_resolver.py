@@ -31,3 +31,22 @@ def test_get_live_model_candidates_falls_back_to_default(monkeypatch):
     monkeypatch.delenv("LIVE_MODEL_ID", raising=False)
     monkeypatch.delenv("LIVE_MODEL_FALLBACK", raising=False)
     assert get_live_model_candidates() == [DEFAULT_LIVE_MODEL_ID]
+
+
+# ─── Text model resolver ───
+
+
+def test_resolve_text_model_defaults_to_gemini3(monkeypatch):
+    from app.configs.model_resolver import DEFAULT_TEXT_MODEL_ID, resolve_text_model_id
+
+    monkeypatch.delenv("TEXT_MODEL_ID", raising=False)
+    result = resolve_text_model_id()
+    assert result == DEFAULT_TEXT_MODEL_ID
+    assert "gemini-3" in result
+
+
+def test_resolve_text_model_reads_env(monkeypatch):
+    from app.configs.model_resolver import resolve_text_model_id
+
+    monkeypatch.setenv("TEXT_MODEL_ID", "gemini-2.5-flash")
+    assert resolve_text_model_id() == "gemini-2.5-flash"

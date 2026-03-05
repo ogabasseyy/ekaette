@@ -130,6 +130,20 @@ class TestUploadToCloudStorage:
         filename = _artifact_filename("image/heic")
         assert filename.endswith(".heic")
 
+    def test_artifact_filename_uses_media_category_prefix(self):
+        """Video artifacts should use customer_video_ prefix, images customer_image_."""
+        from app.tools.vision_tools import _artifact_filename
+
+        image_name = _artifact_filename("image/jpeg")
+        assert image_name.startswith("customer_image_")
+
+        video_name = _artifact_filename("video/mp4")
+        assert video_name.startswith("customer_video_")
+        assert video_name.endswith(".mp4")
+
+        with pytest.raises(ValueError, match="Unsupported MIME type"):
+            _artifact_filename("application/octet-stream")
+
     @pytest.mark.asyncio
     async def test_uploads_with_correct_bucket_and_path(self):
         """Should upload to configured bucket with structured path."""
@@ -279,7 +293,7 @@ class TestAnalyzeDeviceImageTool:
         )
 
         with patch(
-            "app.tools.vision_tools.analyze_device_image",
+            "app.tools.vision_tools.analyze_device_media",
             new=AsyncMock(
                 return_value={"device_name": "iPhone 14 Pro", "condition": "Good", "details": {}}
             ),
@@ -539,3 +553,122 @@ class TestNormalizeAnalysisResult:
         assert isinstance(result["details"]["screen"], dict)
         assert "confidence" in result
         assert isinstance(result["confidence"], (int, float))
+
+
+class TestMediaAwareAnalysis:
+    """Test that analysis prompt and behavior adapt based on MIME type."""
+
+    def test_get_analysis_prompt_image(self):
+        from app.tools.vision_tools import get_analysis_prompt
+
+        prompt = get_analysis_prompt("image/jpeg")
+        assert "image" in prompt.lower() or "device" in prompt.lower()
+        # Should NOT mention video
+        assert "video" not in prompt.lower()
+
+    def test_get_analysis_prompt_video(self):
+        from app.tools.vision_tools import get_analysis_prompt
+
+        prompt = get_analysis_prompt("video/mp4")
+        assert "video" in prompt.lower()
+        # Video prompt should mention temporal/frames/walkthrough
+        assert any(word in prompt.lower() for word in ["frame", "walkthrough", "throughout", "movement", "angle"])
+
+    def test_get_analysis_prompt_unknown_defaults_to_image(self):
+        from app.tools.vision_tools import get_analysis_prompt
+
+        prompt = get_analysis_prompt("application/octet-stream")
+        # Should fall back to the image prompt
+        assert "device" in prompt.lower()
+        assert "video" not in prompt.lower()
+
+    @pytest.mark.asyncio
+    async def test_analyze_device_media_with_video_uses_video_prompt(self):
+        """analyze_device_media with video MIME should use video-specific prompt."""
+        from app.tools.vision_tools import analyze_device_media
+
+        mock_response = MagicMock()
+        mock_response.text = json.dumps({
+            "device_name": "iPhone 14 Pro",
+            "condition": "Fair",
+            "details": {},
+        })
+        mock_client = MagicMock()
+        mock_client.aio.models.generate_content = AsyncMock(return_value=mock_response)
+
+        with patch("app.tools.vision_tools._get_genai_client", return_value=mock_client):
+            await analyze_device_media(b"fake-video", "video/mp4")
+
+        # Check the prompt sent to the model contains video-specific language
+        call_args = mock_client.aio.models.generate_content.call_args
+        contents = call_args.kwargs.get("contents") or call_args.args[0]
+        text_parts = []
+        for content in contents:
+            for part in content.parts:
+                if hasattr(part, "text") and part.text:
+                    text_parts.append(part.text)
+        prompt_text = " ".join(text_parts).lower()
+        assert "video" in prompt_text
+
+    @pytest.mark.asyncio
+    async def test_analyze_device_image_still_works_as_alias(self):
+        """analyze_device_image should still work (backward compat)."""
+        from app.tools.vision_tools import analyze_device_image
+
+        mock_response = MagicMock()
+        mock_response.text = json.dumps({
+            "device_name": "Test", "condition": "Good", "details": {},
+        })
+        mock_client = MagicMock()
+        mock_client.aio.models.generate_content = AsyncMock(return_value=mock_response)
+
+        with patch("app.tools.vision_tools._get_genai_client", return_value=mock_client):
+            result = await analyze_device_image(b"fake-image", "image/jpeg")
+
+        assert result["device_name"] == "Test"
+
+
+class TestUploadVideoToCloudStorage:
+    """Test Cloud Storage upload handles video MIME types."""
+
+    @pytest.mark.asyncio
+    async def test_upload_video_mp4_uses_mp4_extension(self):
+        from app.tools.vision_tools import upload_to_cloud_storage
+
+        mock_blob = MagicMock()
+        mock_bucket = MagicMock()
+        mock_bucket.blob.return_value = mock_blob
+        mock_storage_client = MagicMock()
+        mock_storage_client.bucket.return_value = mock_bucket
+
+        with patch("app.tools.vision_tools._get_storage_client", return_value=mock_storage_client), \
+             patch("app.tools.vision_tools.MEDIA_BUCKET", "test-bucket"):
+            result = await upload_to_cloud_storage(
+                image_data=b"fake-video-bytes",
+                mime_type="video/mp4",
+                user_id="test-user",
+                session_id="test-session",
+            )
+
+        assert result["blob_path"].endswith(".mp4")
+
+    @pytest.mark.asyncio
+    async def test_upload_video_quicktime_uses_mov_extension(self):
+        from app.tools.vision_tools import upload_to_cloud_storage
+
+        mock_blob = MagicMock()
+        mock_bucket = MagicMock()
+        mock_bucket.blob.return_value = mock_blob
+        mock_storage_client = MagicMock()
+        mock_storage_client.bucket.return_value = mock_bucket
+
+        with patch("app.tools.vision_tools._get_storage_client", return_value=mock_storage_client), \
+             patch("app.tools.vision_tools.MEDIA_BUCKET", "test-bucket"):
+            result = await upload_to_cloud_storage(
+                image_data=b"fake-video-bytes",
+                mime_type="video/quicktime",
+                user_id="test-user",
+                session_id="test-session",
+            )
+
+        assert result["blob_path"].endswith(".mov")

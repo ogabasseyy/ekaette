@@ -22,16 +22,13 @@ from app.tools.knowledge_tools import (
 )
 from app.tools.vision_tools import analyze_device_image_tool
 
-# Bidi mode requires Live API-compatible model for all agents
 LIVE_MODEL_ID = resolve_live_model_id()
 
-vision_agent = Agent(
-    name="vision_agent",
-    model=LIVE_MODEL_ID,
-    instruction="""You are an expert device appraiser. When a customer sends a photo,
-    narrate your findings like a knowledgeable human appraiser examining the device.
+_INSTRUCTION = """You are an expert device appraiser. When a customer sends a photo
+    or video, narrate your findings like a knowledgeable human appraiser examining
+    the device.
 
-    When the customer sends a photo of their device:
+    When the customer sends a photo or video of their device:
     1. Say a filler like "Let me take a closer look at your device..."
     2. Call analyze_device_image_tool (NON_BLOCKING — keep talking while it processes)
     3. Narrate your findings naturally, walking through each area:
@@ -44,29 +41,56 @@ vision_agent = Agent(
          the model — could you confirm?"
     4. After narrating, suggest proceeding to valuation for a price quote
 
+    VIDEO WALKTHROUGH:
+    - When the customer sends a video, the tool analyzes multiple frames throughout
+      the video to catch defects visible from different angles and movement.
+    - Narrate video findings the same way — screen, body, accessories — but mention
+      if the video showed angles that reveal issues not visible in a single photo
+      (e.g. "From the side angle in your video, I can see a small dent...").
+    - If the video is too short or blurry, ask for a longer/clearer walkthrough.
+
     IMPORTANT:
     - The analyze_device_image_tool calls gemini-3-flash for detailed visual analysis.
+      It handles both images and videos automatically.
       This is a NON_BLOCKING operation — keep talking while it processes.
     - If a customer asks policy/business questions mid-analysis, use:
       - search_company_knowledge
       - get_company_profile_fact
       - query_company_system (if connectors are configured)
     - If analysis returns device_name "Unknown", ask the customer to tell you what
-      the device is or to send a clearer photo.
+      the device is or to send a clearer photo or video.
     - Sound like a knowledgeable human appraiser, not a robot reading a form.
       Lead with positives, mention issues second.
 
     Your analysis feeds into the valuation_agent for pricing.
-    """,
-    tools=[
-        analyze_device_image_tool,
-        search_company_knowledge,
-        get_company_profile_fact,
-        query_company_system,
-    ],
+    """
+
+_TOOLS = [
+    analyze_device_image_tool,
+    search_company_knowledge,
+    get_company_profile_fact,
+    query_company_system,
+]
+
+_CALLBACKS = dict(
     before_model_callback=before_model_inject_config,
     after_model_callback=after_model_valuation_sanity,
     before_tool_callback=before_tool_capability_guard_and_log,
     after_tool_callback=after_tool_emit_messages,
     on_tool_error_callback=on_tool_error_emit,
 )
+
+
+def create_vision_agent(model: str) -> Agent:
+    """Create a vision agent with the specified model."""
+    return Agent(
+        name="vision_agent",
+        model=model,
+        instruction=_INSTRUCTION,
+        tools=_TOOLS,
+        **_CALLBACKS,
+    )
+
+
+# Module-level singleton for bidi-streaming (Live API)
+vision_agent = create_vision_agent(LIVE_MODEL_ID)

@@ -452,12 +452,12 @@ class TestImageSizeValidation:
 
     @pytest.mark.asyncio
     async def test_oversized_image_returns_friendly_error(self):
-        from app.channels.adk_text_adapter import send_image_message, _MAX_IMAGE_BYTES
+        from app.channels.adk_text_adapter import send_image_message, _MAX_MEDIA_BYTES
 
         mock_runner = MagicMock()
         mock_session_service = MagicMock()
 
-        oversized = b"x" * (_MAX_IMAGE_BYTES + 1)
+        oversized = b"x" * (_MAX_MEDIA_BYTES + 1)
         result = await send_image_message(
             runner=mock_runner,
             session_service=mock_session_service,
@@ -472,7 +472,7 @@ class TestImageSizeValidation:
 
     @pytest.mark.asyncio
     async def test_image_at_limit_is_accepted(self):
-        from app.channels.adk_text_adapter import send_image_message, _MAX_IMAGE_BYTES
+        from app.channels.adk_text_adapter import send_image_message, _MAX_MEDIA_BYTES
 
         mock_runner = MagicMock()
         mock_runner.run_async = MagicMock(
@@ -484,7 +484,7 @@ class TestImageSizeValidation:
             return_value=MagicMock(id="sess-img")
         )
 
-        exactly_at_limit = b"x" * _MAX_IMAGE_BYTES
+        exactly_at_limit = b"x" * _MAX_MEDIA_BYTES
         result = await send_image_message(
             runner=mock_runner,
             session_service=mock_session_service,
@@ -517,3 +517,48 @@ class TestChannelConfig:
         from app.channels.adk_text_adapter import CHANNEL_LIMITS
 
         assert "default" in CHANNEL_LIMITS
+
+
+# ─── Test: empty media guard ─────────────────────────────────
+
+
+class TestEmptyMediaGuard:
+    """Empty media bytes should return early with a helpful message."""
+
+    @pytest.mark.asyncio
+    async def test_empty_media_bytes_returns_error(self):
+        from app.channels.adk_text_adapter import send_media_message
+
+        mock_runner = MagicMock()
+        mock_session_service = MagicMock()
+
+        result = await send_media_message(
+            runner=mock_runner,
+            session_service=mock_session_service,
+            app_name="ekaette",
+            user_id="wa_user",
+            media_bytes=b"",
+            mime_type="image/jpeg",
+        )
+
+        assert "empty" in result["text"].lower()
+        mock_runner.run_async.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_empty_media_bytes_preserves_channel(self):
+        from app.channels.adk_text_adapter import send_media_message
+
+        mock_runner = MagicMock()
+        mock_session_service = MagicMock()
+
+        result = await send_media_message(
+            runner=mock_runner,
+            session_service=mock_session_service,
+            app_name="ekaette",
+            user_id="wa_user",
+            media_bytes=b"",
+            mime_type="video/mp4",
+            channel="whatsapp",
+        )
+
+        assert result["channel"] == "whatsapp"

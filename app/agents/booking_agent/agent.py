@@ -34,10 +34,7 @@ from app.tools.shipping_tools import (
 
 LIVE_MODEL_ID = resolve_live_model_id()
 
-booking_agent = Agent(
-    name="booking_agent",
-    model=LIVE_MODEL_ID,
-    instruction="""You handle delivery quotes, purchase finalization, and pickup scheduling.
+_INSTRUCTION = """You handle delivery quotes, purchase finalization, and pickup scheduling.
 
     INTENT PRIORITY:
     - For purchase intents, start with delivery quote + checkout flow.
@@ -79,25 +76,43 @@ booking_agent = Agent(
     - Booking is optional for completed purchases; do not block checkout on slot availability.
     - Always confirm critical details before tool calls.
     - Be warm and helpful; keep transitions concise.
-    """,
-    tools=[
-        check_availability,
-        create_booking,
-        cancel_booking,
-        create_virtual_account_payment,
-        check_payment_status,
-        get_virtual_account_record,
-        get_topship_delivery_quote,
-        create_order_record,
-        track_order_delivery,
-        send_order_review_followup,
-        search_company_knowledge,
-        get_company_profile_fact,
-        query_company_system,
-    ],
+    """
+
+_TOOLS = [
+    check_availability,
+    create_booking,
+    cancel_booking,
+    create_virtual_account_payment,
+    check_payment_status,
+    get_virtual_account_record,
+    get_topship_delivery_quote,
+    create_order_record,
+    track_order_delivery,
+    send_order_review_followup,
+    search_company_knowledge,
+    get_company_profile_fact,
+    query_company_system,
+]
+
+_CALLBACKS = dict(
     before_model_callback=before_model_inject_config,
     after_model_callback=after_model_valuation_sanity,
     before_tool_callback=before_tool_capability_guard_and_log,
     after_tool_callback=after_tool_emit_messages,
     on_tool_error_callback=on_tool_error_emit,
 )
+
+
+def create_booking_agent(model: str) -> Agent:
+    """Create a booking agent with the specified model."""
+    return Agent(
+        name="booking_agent",
+        model=model,
+        instruction=_INSTRUCTION,
+        tools=_TOOLS,
+        **_CALLBACKS,
+    )
+
+
+# Module-level singleton for bidi-streaming (Live API)
+booking_agent = create_booking_agent(LIVE_MODEL_ID)
