@@ -32,7 +32,8 @@ graph TB
         WW["Web App<br/>(Vite + React 19)"]
         MW["Mobile Web"]
         PHONE["Phone Call<br/>(&lt;service-number&gt;)"]
-        WA["WhatsApp Call"]
+        WA_CALL["WhatsApp Call"]
+        WA_MSG["WhatsApp Chat<br/>(Text + Image)"]
         SMS_C["SMS"]
     end
 
@@ -40,7 +41,8 @@ graph TB
         WS["WebSocket<br/>(Voice + Real-time)"]
         HTTP["HTTP REST<br/>(Config + Upload)"]
         SIP["SIP/RTP<br/>(G.711 μ-law)"]
-        SRTP["SRTP/Opus<br/>(WhatsApp)"]
+        SRTP["SRTP/Opus<br/>(WhatsApp Call)"]
+        WA_HOOK["WhatsApp Webhook<br/>(Cloud Tasks)"]
         SMS_T["SMS Webhook"]
     end
 
@@ -69,9 +71,11 @@ graph TB
             ORCH["Orchestrator<br/>Task lifecycle,<br/>graceful shutdown"]
         end
 
-        subgraph "ADK Bidi-Streaming Runtime"
+        subgraph "ADK Runtime"
             LRQ["LiveRequestQueue"]
-            RUN["Runner.run_live()"]
+            RUN_LIVE["Runner.run_live()<br/>(Voice — bidi streaming)"]
+            RUN_ASYNC["Runner.run_async()<br/>(Text channels — request/response)"]
+            ADAPTER["adk_text_adapter<br/>(app/channels/)<br/>Session bootstrap,<br/>text/image routing"]
         end
 
         subgraph "Multi-Agent Hierarchy (ADK)"
@@ -130,7 +134,8 @@ graph TB
     MW --> HTTP
     PHONE -->|"PSTN"| AT_SIP
     AT_SIP -->|"SIP INVITE"| SIP_SVR
-    WA -->|"WhatsApp Call"| WA_SESS
+    WA_CALL -->|"WhatsApp Call"| WA_SESS
+    WA_MSG -->|"Meta Webhook"| WA_HOOK
     SMS_C -->|"AT Webhook"| SMS_T
 
     WS --> SESS_INIT
@@ -139,12 +144,16 @@ graph TB
     HTTP --> BOOT
     HTTP --> UPLOAD
     HTTP --> ADMIN_R
-    SMS_T --> ADMIN_R
 
     SESS_INIT --> STREAM
     STREAM --> LRQ
-    LRQ --> RUN
-    RUN --> ROOT
+    LRQ --> RUN_LIVE
+    RUN_LIVE --> ROOT
+
+    WA_HOOK --> ADAPTER
+    SMS_T --> ADAPTER
+    ADAPTER --> RUN_ASYNC
+    RUN_ASYNC --> ROOT
 
     SIP_SVR --> CALL_SESS
     CALL_SESS --> CODEC
@@ -304,6 +313,9 @@ graph LR
         VIDEO -->|"WebSocket"| LRQ
 
         LRQ --> RUNNER["Runner.run_live()"]
+
+        TEXT -->|"WhatsApp/SMS<br/>adk_text_adapter"| RUNNER2["Runner.run_async()"]
+        IMAGE -->|"WhatsApp image<br/>adk_text_adapter"| RUNNER2
     end
 
     subgraph "Agent Processing"

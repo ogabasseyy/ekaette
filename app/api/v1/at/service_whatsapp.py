@@ -3,6 +3,11 @@
 Handles text, image, interactive messages. Service window tracking.
 Template fallback for during-call sends outside 24h window.
 Routes delegate here — no business logic in whatsapp.py.
+
+When the ADK Runner is initialized (after FastAPI lifespan), all messages
+route through the full agent graph (vision, valuation, booking, catalog,
+support). Falls back to bridge_text.py when Runner is unavailable (tests,
+early startup).
 """
 
 from __future__ import annotations
@@ -14,7 +19,9 @@ import os
 import threading
 import time
 from collections.abc import Awaitable, Callable
+from typing import Any
 
+from app.channels import adk_text_adapter
 from app.configs import sanitize_log
 
 from . import bridge_text
@@ -40,6 +47,27 @@ UNSUPPORTED_MESSAGE_TYPES = {
 }
 
 
+# ─── ADK Runner Access ───
+
+
+def _get_adk_runner_and_service() -> tuple[Any, Any, Any]:
+    """Access the ADK Runner and session_service singletons from main.py.
+
+    Returns (runner, session_service, app_name) or (None, None, None)
+    if not yet initialized.
+    """
+    try:
+        import main as main_module
+        runner = getattr(main_module, "runner", None)
+        session_service = getattr(main_module, "session_service", None)
+        app_name = getattr(main_module, "SESSION_APP_NAME", None)
+        if runner is not None and session_service is not None and app_name:
+            return runner, session_service, app_name
+    except Exception:
+        pass
+    return None, None, None
+
+
 # ── Text Message Handling ──
 
 
@@ -50,7 +78,27 @@ async def handle_text_message(
     tenant_id: str = "public",
     company_id: str = "ekaette-electronics",
 ) -> str:
-    """Process inbound text → AI reply via Gemini. Returns reply text."""
+    """Process inbound text through the ADK agent graph. Returns reply text.
+
+    Falls back to bridge_text (standalone Gemini) when Runner is unavailable.
+    """
+    runner, session_service, app_name = _get_adk_runner_and_service()
+
+    if runner is not None:
+        result = await adk_text_adapter.send_text_message(
+            runner=runner,
+            session_service=session_service,
+            app_name=app_name,
+            user_id=f"wa_{from_}",
+            message_text=text,
+            channel="whatsapp",
+            tenant_id=tenant_id,
+            company_id=company_id,
+        )
+        return result["text"][:WA_MAX_CHARS]
+
+    # Fallback: standalone Gemini (no agent graph)
+    logger.debug("ADK Runner not available, using bridge_text fallback")
     ai_reply = await bridge_text.query_text(
         user_message=text,
         company_id=company_id,
@@ -71,14 +119,52 @@ async def handle_image_message(
     tenant_id: str = "public",
     company_id: str = "ekaette-electronics",
 ) -> str:
-    """Download image → Gemini vision → reply text."""
+    """Download image → route through ADK agent graph → reply text.
+
+    Falls back to legacy direct Gemini vision when Runner is unavailable.
+    """
     image_bytes, content_type = await providers.whatsapp_download_media(
         access_token=WHATSAPP_ACCESS_TOKEN,
         media_id=media_id,
         media_type="image",
     )
 
-    # Use Gemini vision for image analysis
+    resolved_mime = mime_type or content_type or "image/jpeg"
+    runner, session_service, app_name = _get_adk_runner_and_service()
+
+    if runner is not None:
+        result = await adk_text_adapter.send_image_message(
+            runner=runner,
+            session_service=session_service,
+            app_name=app_name,
+            user_id=f"wa_{from_}",
+            image_bytes=image_bytes,
+            mime_type=resolved_mime,
+            caption=caption,
+            channel="whatsapp",
+            tenant_id=tenant_id,
+            company_id=company_id,
+        )
+        return result["text"][:WA_MAX_CHARS]
+
+    # Fallback: direct Gemini vision (no agent graph)
+    logger.debug("ADK Runner not available, using legacy image analysis")
+    return await _legacy_image_analysis(
+        image_bytes=image_bytes,
+        resolved_mime=resolved_mime,
+        caption=caption,
+        company_id=company_id,
+    )
+
+
+async def _legacy_image_analysis(
+    *,
+    image_bytes: bytes,
+    resolved_mime: str,
+    caption: str,
+    company_id: str,
+) -> str:
+    """Legacy fallback: direct Gemini vision call without ADK agent graph."""
     try:
         from app.configs.model_resolver import resolve_live_model_id
         from app.tools.vision_tools import _get_genai_client
@@ -86,7 +172,6 @@ async def handle_image_message(
 
         client = _get_genai_client()
         resolved_model = resolve_live_model_id()
-        resolved_mime = mime_type or content_type or "image/jpeg"
         response = await asyncio.to_thread(
             client.models.generate_content,
             model=resolved_model,

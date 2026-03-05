@@ -1,9 +1,16 @@
 """Shared test fixtures for Ekaette backend tests."""
 
+import os
 from copy import deepcopy
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+
+# WhatsApp settings module validates at import time. Provide safe defaults
+# so any test that transitively imports the AT package doesn't crash.
+os.environ.setdefault("WA_TASKS_INVOKER_EMAIL", "test@example.com")
+os.environ.setdefault("WA_CLOUD_TASKS_AUDIENCE", "https://test.example.com")
+os.environ.setdefault("WA_REPLAY_BUCKET", "test-bucket")
 
 
 @pytest.fixture(autouse=True)

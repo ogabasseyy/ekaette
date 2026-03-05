@@ -30,8 +30,9 @@ graph TB
     subgraph "Client Layer"
         WW["Web App<br/>(Vite + React 19)"]
         MW["Mobile Web"]
-        PHONE["Phone Call<br/>(<service-number>)"]
-        WA["WhatsApp Call"]
+        PHONE["Phone Call<br/>(&lt;service-number&gt;)"]
+        WA_CALL["WhatsApp Call"]
+        WA_MSG["WhatsApp Chat<br/>(Text + Image)"]
         SMS_C["SMS"]
     end
 
@@ -39,7 +40,8 @@ graph TB
         WS["WebSocket<br/>(Voice + Real-time)"]
         HTTP["HTTP REST<br/>(Config + Upload)"]
         SIP["SIP/RTP<br/>(G.711 μ-law)"]
-        SRTP["SRTP/Opus<br/>(WhatsApp)"]
+        SRTP["SRTP/Opus<br/>(WhatsApp Call)"]
+        WA_HOOK["WhatsApp Webhook<br/>(Cloud Tasks)"]
         SMS_T["SMS Webhook"]
     end
 
@@ -64,52 +66,64 @@ graph TB
 
         subgraph "app/api/v1/realtime — WebSocket Streaming"
             SESS_INIT["Session Init<br/>Origin validation,<br/>registry config resolution,<br/>ADK session create/resume"]
-            STREAM["Stream Tasks<br/>upstream, downstream,<br/>keepalive + silence nudge"]
+            STREAM["Stream Tasks<br/>upstream (client to agent),<br/>downstream (agent to client),<br/>keepalive + silence nudge"]
             ORCH["Orchestrator<br/>Task lifecycle,<br/>graceful shutdown"]
         end
 
-        subgraph "ADK Bidi-Streaming Runtime"
+        subgraph "ADK Runtime"
             LRQ["LiveRequestQueue"]
-            RUN["Runner.run_live()"]
+            RUN_LIVE["Runner.run_live()<br/>(Voice — bidi streaming)"]
+            RUN_ASYNC["Runner.run_async()<br/>(Text channels — request/response)"]
+            ADAPTER["adk_text_adapter<br/>(app/channels/)<br/>Session bootstrap,<br/>text/image routing"]
         end
 
         subgraph "Multi-Agent Hierarchy (ADK)"
             ROOT["ekaette_router<br/>(Root Agent)<br/>Model: gemini-2.5-flash-native-audio<br/>Real-time voice I/O,<br/>intent detection, agent routing"]
-            VA["vision_agent<br/>Image/video analysis, Visual Thinking"]
-            VLA["valuation_agent<br/>Condition grading, price calculation"]
-            BA["booking_agent<br/>Availability, reservation CRUD"]
-            CA["catalog_agent<br/>Product search, Vertex AI Search RAG"]
-            SA["support_agent<br/>FAQs, Google Search grounding"]
+
+            VA["vision_agent<br/>Image/video analysis,<br/>Visual Thinking"]
+
+            VLA["valuation_agent<br/>Condition grading,<br/>price calculation"]
+
+            BA["booking_agent<br/>Availability checking,<br/>reservation CRUD"]
+
+            CA["catalog_agent<br/>Product search,<br/>Vertex AI Search RAG"]
+
+            SA["support_agent<br/>FAQs + order tracking,<br/>Google Search grounding"]
         end
     end
 
     subgraph "Google Cloud Services"
-        FS["Firestore<br/>Registry, sessions, knowledge,<br/>products, booking slots"]
-        CS["Cloud Storage<br/>Customer photos/videos"]
-        VAS["Vertex AI Search<br/>Product catalog index"]
+        FS["Firestore<br/>Registry (templates + companies),<br/>sessions, knowledge, products,<br/>booking slots"]
+
+        CS["Cloud Storage<br/>Customer photos/videos,<br/>assessment reports"]
+
+        VAS["Vertex AI Search<br/>Product catalog index,<br/>multimodal search"]
+
         GS["Google Search<br/>Real-time grounding"]
-        MB["Memory Bank (Agent Engine)<br/>Long-term customer memory"]
+
+        MB["Memory Bank<br/>(Agent Engine)<br/>Long-term customer memory,<br/>cross-session recall"]
     end
 
-    subgraph "GCE VM — SIP Bridge (<reserved-static-ip>)"
+    subgraph "GCE VM — SIP Bridge (&lt;reserved-static-ip&gt;)"
         SIP_SVR["SIPServer<br/>UDP :6060, SIP REGISTER,<br/>INVITE/ACK/BYE handling"]
-        CALL_SESS["CallSession<br/>4-task pipeline:<br/>recv, decode, Gemini, encode"]
-        WA_SESS["WaSession<br/>4-task pipeline:<br/>SRTP, Opus, Gemini, Opus"]
-        CODEC["CodecBridge<br/>G.711 (AT) / Opus (WA)"]
+        CALL_SESS["CallSession<br/>4-task pipeline:<br/>recv → decode → Gemini → encode"]
+        WA_SESS["WaSession<br/>4-task pipeline:<br/>SRTP → Opus decode → Gemini → Opus encode"]
+        CODEC["CodecBridge<br/>G.711 μ-law ↔ PCM16 (AT)<br/>Opus ↔ PCM16 (WhatsApp)"]
     end
 
     subgraph "Africa's Talking"
         AT_SIP["AT SIP Registrar<br/>(ng.sip.africastalking.com)"]
-        AT_VOICE["AT Voice API"]
-        AT_SMS["AT SMS API"]
+        AT_VOICE["AT Voice API<br/>Outbound calls, transfers"]
+        AT_SMS["AT SMS API<br/>Send/receive SMS"]
     end
 
-    subgraph "Payments"
-        PAYSTACK["Paystack<br/>Checkout, virtual accounts"]
+    subgraph "Payment &amp; Shipping"
+        PAYSTACK["Paystack<br/>Checkout, virtual accounts,<br/>webhooks"]
+        TOPSHIP["Topship<br/>Shipping quotes,<br/>order tracking"]
     end
 
     subgraph "AI Models"
-        G25["Gemini 2.5 Flash Native Audio<br/>(Live API)"]
+        G25["Gemini 2.5 Flash<br/>Native Audio<br/>(Live API)"]
         G3F["Gemini 3 Flash<br/>(Standard API)"]
     end
 
@@ -119,7 +133,8 @@ graph TB
     MW --> HTTP
     PHONE -->|"PSTN"| AT_SIP
     AT_SIP -->|"SIP INVITE"| SIP_SVR
-    WA -->|"WhatsApp Call"| WA_SESS
+    WA_CALL -->|"WhatsApp Call"| WA_SESS
+    WA_MSG -->|"Meta Webhook"| WA_HOOK
     SMS_C -->|"AT Webhook"| SMS_T
 
     WS --> SESS_INIT
@@ -128,37 +143,43 @@ graph TB
     HTTP --> BOOT
     HTTP --> UPLOAD
     HTTP --> ADMIN_R
-    SMS_T --> ADMIN_R
 
     SESS_INIT --> STREAM
     STREAM --> LRQ
-    LRQ --> RUN
-    RUN --> ROOT
+    LRQ --> RUN_LIVE
+    RUN_LIVE --> ROOT
+
+    WA_HOOK --> ADAPTER
+    SMS_T --> ADAPTER
+    ADAPTER --> RUN_ASYNC
+    RUN_ASYNC --> ROOT
 
     SIP_SVR --> CALL_SESS
     CALL_SESS --> CODEC
     WA_SESS --> CODEC
-    CALL_SESS -.->|"Gemini Live (direct)"| G25
-    WA_SESS -.->|"Gemini Live (direct)"| G25
+    CALL_SESS -.->|"Gemini Live<br/>(direct, no ADK)"| G25
+    WA_SESS -.->|"Gemini Live<br/>(direct, no ADK)"| G25
 
     ROOT -->|"photo received"| VA
     ROOT -->|"assess/price"| VLA
     ROOT -->|"book/schedule"| BA
     ROOT -->|"search/find"| CA
     ROOT -->|"help/FAQ"| SA
+
     ROOT -.->|"Live API Bidi"| G25
     VA -.->|"Standard API"| G3F
     VLA -.->|"Standard API"| G3F
     BA -.->|"Standard API"| G3F
     CA -.->|"Standard API"| G3F
     SA -.->|"Standard API"| G3F
+
     ROOT --> FS
     BA --> FS
     VA --> CS
     CA --> VAS
     SA --> GS
     VLA --> FS
-    ROOT -->|"PreloadMemoryTool"| MB
+    ROOT -->|"PreloadMemoryTool<br/>+ after_agent_callback"| MB
     ADMIN_R --> FS
     CALL_SESS --> FS
     WA_SESS --> FS
@@ -176,6 +197,7 @@ graph TB
     classDef sipbridge fill:#FFF9C4,stroke:#F9A825,stroke-width:2px
     classDef telco fill:#E8EAF6,stroke:#283593,stroke-width:2px
     classDef payments fill:#F3E5F5,stroke:#7B1FA2,stroke-width:2px
+
     class WW,MW,PHONE,WA,SMS_C client
     class WS,HTTP,SIP,SRTP,SMS_T transport
     class LIFE,AUTH_MW composition
@@ -188,7 +210,7 @@ graph TB
     class G25,G3F model
     class SIP_SVR,CALL_SESS,WA_SESS,CODEC sipbridge
     class AT_SIP,AT_VOICE,AT_SMS telco
-    class PAYSTACK payments
+    class PAYSTACK,TOPSHIP payments
         </pre>
     </div>
 
@@ -283,7 +305,11 @@ graph LR
         TEXT -->|"WebSocket<br/>send_content()"| LRQ
         IMAGE -->|"WebSocket<br/>binary + base64"| LRQ
         VIDEO -->|"WebSocket"| LRQ
+
         LRQ --> RUNNER["Runner.run_live()"]
+
+        TEXT -->|"WhatsApp/SMS<br/>adk_text_adapter"| RUNNER2["Runner.run_async()"]
+        IMAGE -->|"WhatsApp image<br/>adk_text_adapter"| RUNNER2
     end
 
     subgraph "Agent Processing"
