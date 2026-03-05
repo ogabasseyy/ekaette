@@ -1,7 +1,7 @@
 """Tests for ADK text channel adapter — TDD for unified channel routing."""
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 
 # ─── Helpers ───────────────────────────────────────────────────
@@ -365,6 +365,7 @@ class TestSendImageMessage:
             mime_type="image/jpeg",
         )
 
+        assert result["text"] == "Analysis complete."
         call_kwargs = mock_runner.run_async.call_args.kwargs
         new_message = call_kwargs["new_message"]
         # Should have a default text part
