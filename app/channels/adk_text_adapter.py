@@ -240,9 +240,14 @@ async def _ensure_session(
     try:
         from app.configs import registry_enabled
         from app.configs.registry_loader import resolve_registry_config
+        from app.api.v1.admin import shared as admin_shared
 
         if registry_enabled():
+            db = admin_shared.company_config_client or admin_shared.industry_config_client
+            if db is None:
+                raise RuntimeError("Registry DB client not initialized")
             registry_config = await resolve_registry_config(
+                db,
                 tenant_id=tenant_id,
                 company_id=company_id,
             )

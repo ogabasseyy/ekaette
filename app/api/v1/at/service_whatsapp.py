@@ -168,15 +168,13 @@ async def _legacy_image_analysis(
 ) -> str:
     """Legacy fallback: direct Gemini vision call without ADK agent graph."""
     try:
-        from app.configs.model_resolver import resolve_live_model_id
-        from app.tools.vision_tools import _get_genai_client
+        from app.tools.vision_tools import _get_genai_client, VISION_MODEL
         from google.genai import types
 
         client = _get_genai_client()
-        resolved_model = resolve_live_model_id()
         response = await asyncio.to_thread(
             client.models.generate_content,
-            model=resolved_model,
+            model=VISION_MODEL,
             contents=[
                 types.Part(
                     inline_data=types.Blob(
