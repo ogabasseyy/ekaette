@@ -36,10 +36,11 @@ jobs:
 
       - name: Comment with AI summary
         run: |
-          gh issue comment "$ISSUE_NUMBER" --body "${{ steps.inference.outputs.response }}" || {
+          gh issue comment "$ISSUE_NUMBER" --body "$RESPONSE" || {
             echo "Error: Failed to post comment to issue #$ISSUE_NUMBER"
             exit 1
           }
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
+          RESPONSE: ${{ steps.inference.outputs.response }}
