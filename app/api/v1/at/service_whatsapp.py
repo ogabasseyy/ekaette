@@ -178,11 +178,7 @@ async def _handle_media_message(
     )
 
     if not media_bytes:
-        logger.debug(
-            "Empty media received for %s, media_id=%s",
-            sanitize_log(media_type),
-            sanitize_log(media_id),
-        )
+        logger.debug("Empty media bytes after download — returning fallback")
         return "Sorry, the media file appears to be empty. Please try sending it again."
 
     resolved_mime = mime_type or content_type or default_mime
