@@ -116,7 +116,7 @@ def _ensure_singletons_initialized() -> None:
         )
     if text_runner is None:
         text_model = resolve_text_model_id()
-        text_router = create_ekaette_router(model=text_model)
+        text_router = create_ekaette_router(model=text_model, channel="text")
         text_adk_app = create_adk_app(name=f"{SESSION_APP_NAME}_text", root_agent=text_router)
         text_runner = Runner(
             app=text_adk_app,
