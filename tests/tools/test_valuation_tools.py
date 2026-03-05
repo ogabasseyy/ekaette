@@ -711,11 +711,10 @@ class TestGetDeviceQuestionnaire:
         assert len(water_q) == 1
         assert water_q[0]["invert"] is False
 
-    def test_default_device_category_is_phone(self):
-        """device_category defaults to 'phone'."""
+    def test_single_arg_call(self):
+        """Should work with only device_brand argument."""
         from app.tools.valuation_tools import get_device_questionnaire
 
-        # Should not raise with only 1 arg
         questions = get_device_questionnaire("Apple")
         assert len(questions) > 0
 
@@ -848,7 +847,8 @@ class TestGradeAndValueToolWithQuestionnaire:
         }
         answers = json.dumps({"battery_health_pct": 75, "biometric_not_working": "yes"})
         result = grade_and_value_tool(json.dumps(analysis), questionnaire_answers=answers)
-        assert result["grade"] != "Good"
+        # battery_health_pct=75 → -1 step; biometric_not_working="yes" inverted to False (no penalty)
+        assert result["grade"] == "Fair"
         assert "adjustments" in result
         assert result["original_vision_grade"] == "Good"
 
@@ -867,7 +867,7 @@ class TestGradeAndValueToolWithQuestionnaire:
             analysis,
             questionnaire_answers=json.dumps({"water_damage": True}),
         )
-        assert adjusted["offer_amount"] <= unadjusted["offer_amount"]
+        assert adjusted["offer_amount"] < unadjusted["offer_amount"]
 
     def test_malformed_questionnaire_falls_back_to_vision_only(self):
         """Malformed JSON questionnaire → ignored, vision-only grade."""
@@ -901,7 +901,7 @@ class TestGradeAndValueToolWithQuestionnaire:
         assert result["adjustment_count"] == 1
 
 
-# ─── Phase 6: Percentage-based trade-in pricing ──────────────
+# ─── Phase 5: Percentage-based trade-in pricing ──────────────
 
 
 class TestTradeInMultipliers:
@@ -944,7 +944,7 @@ class TestCalculateTradeInWithRetailPrice:
             grade="Good",
             retail_price=680_000,
         )
-        expected = int(680_000 * TRADE_IN_MULTIPLIERS["Good"])
+        expected = round(680_000 * TRADE_IN_MULTIPLIERS["Good"])
         assert result["offer_amount"] == expected
         assert result["currency"] == "NGN"
         assert "error" not in result
@@ -952,26 +952,26 @@ class TestCalculateTradeInWithRetailPrice:
 
     def test_retail_price_excellent_grade(self):
         """Excellent grade should use 68% of retail price."""
-        from app.tools.valuation_tools import calculate_trade_in_value
+        from app.tools.valuation_tools import calculate_trade_in_value, TRADE_IN_MULTIPLIERS
 
         result = calculate_trade_in_value(
             device_name="MacBook Air M3",
             grade="Excellent",
             retail_price=1_250_000,
         )
-        assert result["offer_amount"] == int(1_250_000 * 0.68)
+        assert result["offer_amount"] == round(1_250_000 * TRADE_IN_MULTIPLIERS["Excellent"])
         assert result["pricing_method"] == "percentage"
 
     def test_retail_price_poor_grade(self):
         """Poor grade should use 29% of retail price."""
-        from app.tools.valuation_tools import calculate_trade_in_value
+        from app.tools.valuation_tools import calculate_trade_in_value, TRADE_IN_MULTIPLIERS
 
         result = calculate_trade_in_value(
             device_name="AirPods Pro 2",
             grade="Poor",
             retail_price=180_000,
         )
-        assert result["offer_amount"] == int(180_000 * 0.29)
+        assert result["offer_amount"] == round(180_000 * TRADE_IN_MULTIPLIERS["Poor"])
 
     def test_hardcoded_table_takes_precedence_over_retail_price(self):
         """Device in DEFAULT_PRICING should use table price, not retail_price."""
@@ -1023,14 +1023,14 @@ class TestCalculateTradeInWithRetailPrice:
 
     def test_formatted_price_with_retail_fallback(self):
         """Percentage-based pricing should still return formatted price."""
-        from app.tools.valuation_tools import calculate_trade_in_value
+        from app.tools.valuation_tools import calculate_trade_in_value, TRADE_IN_MULTIPLIERS
 
         result = calculate_trade_in_value(
             device_name="iPad Air M2",
             grade="Fair",
             retail_price=680_000,
         )
-        expected = int(680_000 * 0.45)
+        expected = round(680_000 * TRADE_IN_MULTIPLIERS["Fair"])
         assert result["formatted"] == f"₦{expected:,}"
 
 
@@ -1070,5 +1070,5 @@ class TestGradeAndValueToolWithRetailPrice:
         )
         # Good -1 step = Fair
         assert result["grade"] == "Fair"
-        expected = int(680_000 * TRADE_IN_MULTIPLIERS["Fair"])
+        expected = round(680_000 * TRADE_IN_MULTIPLIERS["Fair"])
         assert result["offer_amount"] == expected

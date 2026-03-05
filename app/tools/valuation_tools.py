@@ -123,7 +123,7 @@ def calculate_trade_in_value(
     # Percentage-based fallback from retail price
     if isinstance(retail_price, int) and retail_price > 0:
         multiplier = TRADE_IN_MULTIPLIERS.get(grade, TRADE_IN_MULTIPLIERS["Fair"])
-        offer = int(retail_price * multiplier)
+        offer = round(retail_price * multiplier)
         return {
             "device_name": device_name,
             "grade": grade,
@@ -332,13 +332,11 @@ BRAND_QUESTIONS: dict[str, list[dict[str, Any]]] = {
 
 def get_device_questionnaire(
     device_brand: str,
-    device_category: str = "phone",
 ) -> list[dict[str, Any]]:
     """Get brand-specific questionnaire questions.
 
     Args:
         device_brand: Device brand (e.g. "Apple", "Samsung").
-        device_category: Device category (default "phone").
 
     Returns:
         List of question dicts with id, question, type, invert fields.
@@ -480,7 +478,7 @@ def grade_and_value_tool(
             if isinstance(parsed, dict):
                 parsed_answers = parsed
         except json.JSONDecodeError:
-            pass  # Fall back to vision-only grade
+            logger.debug("Invalid questionnaire_answers JSON; falling back to vision-only grade")
 
     if parsed_answers is not None:
         brand = safe_analysis.get("brand", "Unknown")
@@ -522,16 +520,14 @@ def negotiate_tool(
 
 def get_device_questionnaire_tool(
     device_brand: str = "",
-    device_category: str = "phone",
 ) -> dict[str, Any]:
     """ADK tool: Get brand-specific diagnostic questions for trade-in evaluation.
 
     Args:
         device_brand: Device brand (e.g. "Apple", "Samsung").
-        device_category: Device category (default "phone").
 
     Returns:
         Dict with 'questions' key containing list of question objects.
     """
-    questions = get_device_questionnaire(device_brand or "", device_category)
+    questions = get_device_questionnaire(device_brand or "")
     return {"questions": questions}

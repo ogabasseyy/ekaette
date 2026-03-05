@@ -649,7 +649,7 @@ async def after_tool_emit_messages(
         return None
 
     if tool.name == "grade_and_value_tool":
-        offer_amount = int(effective_result.get("offer_amount", 0))
+        offer_amount = int(effective_result.get("offer_amount") or 0)
         tool_context.state["temp:last_offer_amount"] = offer_amount
 
         message: dict[str, Any] = {

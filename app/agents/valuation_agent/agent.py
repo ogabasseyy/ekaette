@@ -40,8 +40,9 @@ valuation_agent = Agent(
     2. Ask the questions naturally and conversationally — not like a form
     3. CRITICAL: Store answers using the EXACT customer response — "yes", "no", or the
        number they say. Do NOT interpret or invert answers yourself. Pass the raw answers
-       dict directly to grade_and_value_tool. Example: if customer says "yes" to "Does
-       Face ID work?", store {"biometric_not_working": "yes"}. The tool handles inversion.
+       dict directly to grade_and_value_tool, keyed by the question ID.
+       Example: if customer says "yes" to question id "biometric_not_working",
+       store {"biometric_not_working": "yes"}. The tool handles inversion internally.
     4. Look up the device's retail price: call search_catalog with the device name to find it
        in our product catalog. Extract the "price" field from the matching product.
     5. Call grade_and_value_tool with the analysis JSON string, raw questionnaire_answers

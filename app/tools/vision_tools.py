@@ -8,6 +8,7 @@ with Visual Thinking capabilities.
 
 import base64
 import binascii
+import copy
 import json
 import logging
 import os
@@ -72,7 +73,7 @@ class DeviceDetails(BaseModel):
 class DeviceAnalysis(BaseModel):
     device_name: str = Field(default="Unknown", description="Identified device model")
     brand: str = Field(default="Unknown")
-    category: str = Field(default="phone")
+    category: str = Field(default="Unknown")
     condition: str = Field(default="Unknown", description="Excellent|Good|Fair|Poor")
     condition_justification: str = Field(default="")
     details: DeviceDetails = Field(default_factory=DeviceDetails)
@@ -189,10 +190,10 @@ def normalize_analysis_result(raw: dict[str, Any]) -> dict[str, Any]:
     - If details.screen/body is a string → wrap as {"description": value}
     - Fill missing optional fields with schema defaults
     """
-    result = dict(raw)
+    result = copy.deepcopy(raw)
     result.setdefault("device_name", "Unknown")
     result.setdefault("brand", "Unknown")
-    result.setdefault("category", "phone")
+    result.setdefault("category", "Unknown")
     result.setdefault("condition", "Unknown")
     result.setdefault("condition_justification", "")
     result.setdefault("accessories_detected", [])
@@ -283,6 +284,8 @@ async def analyze_device_image(
                 media_resolution="MEDIA_RESOLUTION_HIGH",
             ),
         )
+        if not response.text:
+            raise ValueError("Empty response from structured output")
         result = json.loads(response.text)
         return normalize_analysis_result(result)
 
@@ -296,7 +299,14 @@ async def analyze_device_image(
             contents=contents,
         )
 
-        raw_text = response.text.strip()
+        raw_text = (response.text or "").strip()
+        if not raw_text:
+            return normalize_analysis_result({
+                "device_name": "Unknown",
+                "condition": "Unknown",
+                "details": {},
+                "error": "Empty response from vision model",
+            })
 
         try:
             if raw_text.startswith("```"):

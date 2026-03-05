@@ -464,6 +464,7 @@ class TestEnhancedAnalysisOutput:
         with patch("app.tools.vision_tools._get_genai_client", return_value=mock_client):
             result = await analyze_device_image(b"fake-image", "image/jpeg")
 
+        assert mock_client.aio.models.generate_content.call_count == 2
         assert result["device_name"] == "iPhone 14"
         assert result["condition"] == "Good"
 
