@@ -288,12 +288,8 @@ async def _process_message(
     )
     if status < 200 or status >= 300:
         logger.warning(
-            "WA outbound send failed",
-            extra={
-                "to": sanitize_log(from_),
-                "status": sanitize_log(str(status)),
-                "has_response_body": sanitize_log("1" if bool(send_body) else "0"),
-            },
+            "WA outbound send failed; provider returned non-2xx",
+            extra={"event": "wa_outbound_send_failed"},
         )
         raise RuntimeError(f"WhatsApp send failed with status={status}")
 
