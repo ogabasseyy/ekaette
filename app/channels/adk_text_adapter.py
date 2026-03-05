@@ -35,8 +35,12 @@ CHANNEL_LIMITS: dict[str, dict[str, int]] = {
 }
 
 _DEFAULT_FALLBACK = "Thanks for your message. How can I help you today?"
-_DEFAULT_IMAGE_PROMPT = "The customer sent this image. Analyze it and respond helpfully."
-_MAX_IMAGE_BYTES = 20 * 1024 * 1024  # 20 MB — generous limit for any channel
+_DEFAULT_MEDIA_PROMPTS: dict[str, str] = {
+    "image": "The customer sent this image. Analyze it and respond helpfully.",
+    "video": "The customer sent a video of their device. Analyze the video and respond helpfully.",
+    "default": "The customer sent media. Analyze it and respond helpfully.",
+}
+_MAX_MEDIA_BYTES = 20 * 1024 * 1024  # 20 MB — generous limit for any channel
 
 
 # ─── Session ID derivation ────────────────────────────────────
@@ -120,35 +124,35 @@ async def send_text_message(
     }
 
 
-# ─── Core: send image ────────────────────────────────────────
+# ─── Core: send media (image/video) ──────────────────────────
 
 
-async def send_image_message(
+async def send_media_message(
     *,
     runner: Any,
     session_service: Any,
     app_name: str,
     user_id: str,
-    image_bytes: bytes,
+    media_bytes: bytes,
     mime_type: str = "image/jpeg",
     caption: str = "",
     channel: str = "whatsapp",
     tenant_id: str = "public",
     company_id: str = "ekaette-electronics",
 ) -> dict[str, Any]:
-    """Send an image through the ADK agent graph and collect the response.
+    """Send image or video through the ADK agent graph and collect the response.
 
-    The image is packaged as inline data in the Content message alongside
-    the caption (or a default prompt). This lets the root agent route to
-    vision_agent for analysis, then valuation_agent for pricing.
+    Media is packaged as inline data in the Content message alongside
+    the caption (or a context-aware default prompt). Gemini 3 handles
+    both image and video natively via inline_data.
 
     Args:
         runner: ADK Runner instance.
         session_service: ADK session service.
         app_name: ADK app name.
         user_id: Channel-specific user identifier.
-        image_bytes: Raw image data.
-        mime_type: Image MIME type.
+        media_bytes: Raw media data (image or video).
+        mime_type: Media MIME type (e.g. image/jpeg, video/mp4).
         caption: Optional user caption/instruction.
         channel: Channel name.
         tenant_id: Multi-tenant scoping.
@@ -159,10 +163,10 @@ async def send_image_message(
     """
     session_id = derive_session_id(channel, user_id)
 
-    if len(image_bytes) > _MAX_IMAGE_BYTES:
-        logger.warning("Image too large: %d bytes (limit %d)", len(image_bytes), _MAX_IMAGE_BYTES)
+    if len(media_bytes) > _MAX_MEDIA_BYTES:
+        logger.warning("Media too large: %d bytes (limit %d)", len(media_bytes), _MAX_MEDIA_BYTES)
         return {
-            "text": "Sorry, that image is too large to process. Please send a smaller image.",
+            "text": "Sorry, that file is too large to process. Please send a smaller one.",
             "session_id": session_id,
             "channel": channel,
         }
@@ -176,14 +180,18 @@ async def send_image_message(
         company_id=company_id,
     )
 
-    text_prompt = caption.strip() if caption and caption.strip() else _DEFAULT_IMAGE_PROMPT
+    if caption and caption.strip():
+        text_prompt = caption.strip()
+    else:
+        media_category = mime_type.split("/")[0] if "/" in mime_type else "default"
+        text_prompt = _DEFAULT_MEDIA_PROMPTS.get(media_category, _DEFAULT_MEDIA_PROMPTS["default"])
 
     content = types.Content(
         parts=[
             types.Part(
                 inline_data=types.Blob(
                     mime_type=mime_type,
-                    data=image_bytes,
+                    data=media_bytes,
                 )
             ),
             types.Part(text=text_prompt),
@@ -205,6 +213,23 @@ async def send_image_message(
         "session_id": session_id,
         "channel": channel,
     }
+
+
+# Backward-compat aliases
+_MAX_IMAGE_BYTES = _MAX_MEDIA_BYTES
+
+
+async def send_image_message(
+    *,
+    image_bytes: bytes = b"",
+    media_bytes: bytes = b"",
+    **kwargs: Any,
+) -> dict[str, Any]:
+    """Backward-compat wrapper — accepts image_bytes or media_bytes."""
+    return await send_media_message(
+        media_bytes=media_bytes or image_bytes,
+        **kwargs,
+    )
 
 
 # ─── Internals ────────────────────────────────────────────────

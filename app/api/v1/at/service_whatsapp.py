@@ -39,11 +39,11 @@ logger = logging.getLogger(__name__)
 WA_MAX_CHARS = 4096
 
 # Supported inbound types for AI processing
-SUPPORTED_MESSAGE_TYPES = {"text", "image", "interactive"}
+SUPPORTED_MESSAGE_TYPES = {"text", "image", "video", "interactive"}
 
 # Unsupported types that get a polite reply (no AI processing)
 UNSUPPORTED_MESSAGE_TYPES = {
-    "audio", "video", "document", "location", "contacts", "reaction", "sticker",
+    "audio", "document", "location", "contacts", "reaction", "sticker",
 }
 
 
@@ -58,7 +58,7 @@ def _get_adk_runner_and_service() -> tuple[Any, Any, Any]:
     """
     try:
         import main as main_module
-        runner = getattr(main_module, "runner", None)
+        runner = getattr(main_module, "text_runner", None)
         session_service = getattr(main_module, "session_service", None)
         app_name = getattr(main_module, "SESSION_APP_NAME", None)
         if runner is not None and session_service is not None and app_name:
@@ -120,26 +120,73 @@ async def handle_image_message(
     tenant_id: str = "public",
     company_id: str = "ekaette-electronics",
 ) -> str:
-    """Download image → route through ADK agent graph → reply text.
-
-    Falls back to legacy direct Gemini vision when Runner is unavailable.
-    """
-    image_bytes, content_type = await providers.whatsapp_download_media(
-        access_token=WHATSAPP_ACCESS_TOKEN,
+    """Download image → route through ADK agent graph → reply text."""
+    return await _handle_media_message(
+        from_=from_,
         media_id=media_id,
         media_type="image",
+        mime_type=mime_type,
+        default_mime="image/jpeg",
+        caption=caption,
+        tenant_id=tenant_id,
+        company_id=company_id,
     )
 
-    resolved_mime = mime_type or content_type or "image/jpeg"
+
+async def handle_video_message(
+    *,
+    from_: str,
+    media_id: str,
+    mime_type: str = "",
+    caption: str = "",
+    tenant_id: str = "public",
+    company_id: str = "ekaette-electronics",
+) -> str:
+    """Download video → route through ADK agent graph → reply text."""
+    return await _handle_media_message(
+        from_=from_,
+        media_id=media_id,
+        media_type="video",
+        mime_type=mime_type,
+        default_mime="video/mp4",
+        caption=caption,
+        tenant_id=tenant_id,
+        company_id=company_id,
+    )
+
+
+async def _handle_media_message(
+    *,
+    from_: str,
+    media_id: str,
+    media_type: str,
+    mime_type: str,
+    default_mime: str,
+    caption: str,
+    tenant_id: str,
+    company_id: str,
+) -> str:
+    """Shared handler for image/video — download, route through ADK, reply.
+
+    Gemini 3 handles both natively via inline_data.
+    Falls back to legacy direct Gemini vision when Runner is unavailable.
+    """
+    media_bytes, content_type = await providers.whatsapp_download_media(
+        access_token=WHATSAPP_ACCESS_TOKEN,
+        media_id=media_id,
+        media_type=media_type,
+    )
+
+    resolved_mime = mime_type or content_type or default_mime
     runner, session_service, app_name = _get_adk_runner_and_service()
 
     if runner is not None:
-        result = await adk_text_adapter.send_image_message(
+        result = await adk_text_adapter.send_media_message(
             runner=runner,
             session_service=session_service,
             app_name=app_name,
             user_id=f"wa_{from_}",
-            image_bytes=image_bytes,
+            media_bytes=media_bytes,
             mime_type=resolved_mime,
             caption=caption,
             channel="whatsapp",
@@ -149,19 +196,18 @@ async def handle_image_message(
         reply_text = result.get("text") or ""
         return reply_text[:WA_MAX_CHARS]
 
-    # Fallback: direct Gemini vision (no agent graph)
-    logger.debug("ADK Runner not available, using legacy image analysis")
-    return await _legacy_image_analysis(
-        image_bytes=image_bytes,
+    logger.debug("ADK Runner not available, using legacy %s analysis", media_type)
+    return await _legacy_media_analysis(
+        media_bytes=media_bytes,
         resolved_mime=resolved_mime,
         caption=caption,
         company_id=company_id,
     )
 
 
-async def _legacy_image_analysis(
+async def _legacy_media_analysis(
     *,
-    image_bytes: bytes,
+    media_bytes: bytes,
     resolved_mime: str,
     caption: str,
     company_id: str,
@@ -179,15 +225,15 @@ async def _legacy_image_analysis(
                 types.Part(
                     inline_data=types.Blob(
                         mime_type=resolved_mime,
-                        data=image_bytes,
+                        data=media_bytes,
                     )
                 ),
-                caption or "Describe this image and provide any relevant assistance.",
+                caption or "Analyze this media and provide any relevant assistance.",
             ],
             config=types.GenerateContentConfig(
                 system_instruction=(
                     f"You are Ekaette, AI assistant for {company_id}. "
-                    "Analyze the image and respond helpfully. Focus on concrete "
+                    "Analyze the media and respond helpfully. Focus on concrete "
                     "business tasks like product identification, trade-in valuation, "
                     "or customer support."
                 ),
@@ -196,10 +242,10 @@ async def _legacy_image_analysis(
         )
         text = (response.text or "").strip()
         if not text:
-            text = "I received your image but couldn't analyze it. Could you send it again or describe what you need?"
+            text = "I received your media but couldn't analyze it. Could you send it again or describe what you need?"
     except Exception:
-        logger.warning("Vision analysis failed", exc_info=True)
-        text = "I received your image but had trouble analyzing it. Please try again or send a text message."
+        logger.warning("Media analysis failed", exc_info=True)
+        text = "I received your media but had trouble analyzing it. Please try again or send a text message."
 
     return text[:WA_MAX_CHARS]
 

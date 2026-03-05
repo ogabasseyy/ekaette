@@ -268,6 +268,14 @@ async def _process_message(
             mime_type=image_data.get("mime_type", ""),
             caption=image_data.get("caption", ""),
         )
+    elif msg_type == "video":
+        video_data = message.get("video", {})
+        reply = await service_whatsapp.handle_video_message(
+            from_=from_,
+            media_id=video_data.get("id", ""),
+            mime_type=video_data.get("mime_type", ""),
+            caption=video_data.get("caption", ""),
+        )
     elif msg_type == "interactive":
         # Handle button_reply or list_reply
         interactive = message.get("interactive", {})

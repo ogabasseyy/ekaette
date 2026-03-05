@@ -24,11 +24,11 @@ from app.agents.callbacks import (
 )
 from app.agents.dedup import telemetry_after_agent
 from app.configs.model_resolver import resolve_live_model_id
-from app.agents.vision_agent.agent import vision_agent
-from app.agents.valuation_agent.agent import valuation_agent
-from app.agents.booking_agent.agent import booking_agent
-from app.agents.catalog_agent.agent import catalog_agent
-from app.agents.support_agent.agent import support_agent
+from app.agents.vision_agent.agent import create_vision_agent
+from app.agents.valuation_agent.agent import create_valuation_agent
+from app.agents.booking_agent.agent import create_booking_agent
+from app.agents.catalog_agent.agent import create_catalog_agent
+from app.agents.support_agent.agent import create_support_agent
 
 LIVE_MODEL_ID = resolve_live_model_id()
 logger = logging.getLogger(__name__)
@@ -103,10 +103,7 @@ async def save_session_and_telemetry_callback(callback_context: CallbackContext)
     return None
 
 
-ekaette_router = Agent(
-    name="ekaette_router",
-    model=LIVE_MODEL_ID,
-    instruction="""You are Ekaette, an AI-powered customer service assistant.
+_INSTRUCTION = """You are Ekaette, an AI-powered customer service assistant.
     You handle real-time voice conversations with customers.
     Always identify yourself as an AI assistant in your opening greeting.
     If a customer asks to speak with a human, acknowledge the request and
@@ -114,7 +111,7 @@ ekaette_router = Agent(
     contact channels.
 
     You have specialist sub-agents for different tasks:
-    - vision_agent: When the customer sends photos or needs visual analysis
+    - vision_agent: When the customer sends photos, videos, or needs visual analysis
     - valuation_agent: When assessing condition, calculating trade-in/market value,
       or when the customer wants to swap/upgrade their device (e.g. "swap my 14 Pro
       for a 15 Pro Max", "trade in and upgrade", "what would I pay to switch to...")
@@ -179,19 +176,13 @@ ekaette_router = Agent(
     After the initial greeting, NEVER greet again — no "hello", no "good
     morning", no "how can I help you". Just respond naturally to whatever
     the customer says.
-    """,
-    # Thinking budget: low for fast routing decisions
-    generate_content_config=types.GenerateContentConfig(
-        thinking_config=types.ThinkingConfig(thinking_budget=256),
-    ),
-    tools=[PreloadMemoryTool()],
-    sub_agents=[
-        vision_agent,
-        valuation_agent,
-        booking_agent,
-        catalog_agent,
-        support_agent,
-    ],
+    """
+
+_THINKING_CONFIG = types.GenerateContentConfig(
+    thinking_config=types.ThinkingConfig(thinking_budget=256),
+)
+
+_CALLBACKS = dict(
     before_agent_callback=before_agent_isolation_guard_and_dedup,
     before_model_callback=before_model_inject_config,
     after_model_callback=after_model_valuation_sanity,
@@ -200,6 +191,29 @@ ekaette_router = Agent(
     on_tool_error_callback=on_tool_error_emit,
     after_agent_callback=save_session_and_telemetry_callback,
 )
+
+
+def create_ekaette_router(model: str) -> Agent:
+    """Create the root router agent with all sub-agents using the given model."""
+    return Agent(
+        name="ekaette_router",
+        model=model,
+        instruction=_INSTRUCTION,
+        generate_content_config=_THINKING_CONFIG,
+        tools=[PreloadMemoryTool()],
+        sub_agents=[
+            create_vision_agent(model),
+            create_valuation_agent(model),
+            create_booking_agent(model),
+            create_catalog_agent(model),
+            create_support_agent(model),
+        ],
+        **_CALLBACKS,
+    )
+
+
+# Module-level singleton for bidi-streaming (Live API)
+ekaette_router = create_ekaette_router(LIVE_MODEL_ID)
 
 # Export for ADK discovery (adk web uses `agent` by convention)
 agent = ekaette_router

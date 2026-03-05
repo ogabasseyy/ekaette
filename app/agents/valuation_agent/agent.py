@@ -29,10 +29,7 @@ from app.tools.valuation_tools import (
 
 LIVE_MODEL_ID = resolve_live_model_id()
 
-valuation_agent = Agent(
-    name="valuation_agent",
-    model=LIVE_MODEL_ID,
-    instruction="""You assess item condition, calculate trade-in value, and handle device swaps/upgrades.
+_INSTRUCTION = """You assess item condition, calculate trade-in value, and handle device swaps/upgrades.
 
     TRADE-IN VALUATION FLOW:
     When you receive analysis results from the vision_agent:
@@ -102,23 +99,42 @@ valuation_agent = Agent(
     - Be warm and fair — this is a negotiation, not an argument
     - Highlight positives about the device before mentioning issues
     - After agreement, suggest scheduling a pickup via the booking_agent
-    """,
-    # Higher thinking budget for accurate pricing math
-    generate_content_config=types.GenerateContentConfig(
-        thinking_config=types.ThinkingConfig(thinking_budget=2048),
-    ),
-    tools=[
-        get_device_questionnaire_tool,
-        grade_and_value_tool,
-        negotiate_tool,
-        search_catalog,
-        search_company_knowledge,
-        get_company_profile_fact,
-        query_company_system,
-    ],
+    """
+
+_THINKING_CONFIG = types.GenerateContentConfig(
+    thinking_config=types.ThinkingConfig(thinking_budget=2048),
+)
+
+_TOOLS = [
+    get_device_questionnaire_tool,
+    grade_and_value_tool,
+    negotiate_tool,
+    search_catalog,
+    search_company_knowledge,
+    get_company_profile_fact,
+    query_company_system,
+]
+
+_CALLBACKS = dict(
     before_model_callback=before_model_inject_config,
     after_model_callback=after_model_valuation_sanity,
     before_tool_callback=before_tool_capability_guard_and_log,
     after_tool_callback=after_tool_emit_messages,
     on_tool_error_callback=on_tool_error_emit,
 )
+
+
+def create_valuation_agent(model: str) -> Agent:
+    """Create a valuation agent with the specified model."""
+    return Agent(
+        name="valuation_agent",
+        model=model,
+        instruction=_INSTRUCTION,
+        generate_content_config=_THINKING_CONFIG,
+        tools=_TOOLS,
+        **_CALLBACKS,
+    )
+
+
+# Module-level singleton for bidi-streaming (Live API)
+valuation_agent = create_valuation_agent(LIVE_MODEL_ID)

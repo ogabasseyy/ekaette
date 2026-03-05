@@ -81,10 +81,27 @@ class DeviceAnalysis(BaseModel):
     confidence: float = Field(default=0.5, ge=0.0, le=1.0, description="Overall assessment confidence")
 
 
-ANALYSIS_PROMPT = """Analyze this device image for trade-in valuation.
+_IMAGE_ANALYSIS_PROMPT = """Analyze this device image for trade-in valuation.
 Identify the device model and brand. Assess condition as Excellent, Good, Fair, or Poor.
 Be specific about scratches, dents, cracks, and defect locations (top-left, center, bottom-right, etc.).
 Note any visible accessories (case, charger, box)."""
+
+_VIDEO_ANALYSIS_PROMPT = """Analyze this video walkthrough of a device for trade-in valuation.
+Identify the device model and brand. Assess condition as Excellent, Good, Fair, or Poor.
+Examine multiple frames throughout the video for scratches, dents, cracks, and defect locations
+(top-left, center, bottom-right, etc.) visible from different angles and movement.
+Note any visible accessories (case, charger, box)."""
+
+# Backward compat alias
+ANALYSIS_PROMPT = _IMAGE_ANALYSIS_PROMPT
+
+
+def get_analysis_prompt(mime_type: str) -> str:
+    """Return the appropriate analysis prompt based on media MIME type."""
+    media_category = mime_type.split("/")[0] if mime_type else "image"
+    if media_category == "video":
+        return _VIDEO_ANALYSIS_PROMPT
+    return _IMAGE_ANALYSIS_PROMPT
 
 
 def _get_genai_client() -> genai.Client:
@@ -173,6 +190,10 @@ def _artifact_filename(mime_type: str) -> str:
         "image/webp": "webp",
         "image/heic": "heic",
         "image/heif": "heif",
+        "video/mp4": "mp4",
+        "video/quicktime": "mov",
+        "video/webm": "webm",
+        "video/3gpp": "3gp",
     }
     ext = ext_map.get(mime_type, "bin")
     return f"customer_image_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}.{ext}"
@@ -244,20 +265,21 @@ def normalize_analysis_result(raw: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
-async def analyze_device_image(
-    image_data: bytes,
+async def analyze_device_media(
+    media_data: bytes,
     mime_type: str = "image/jpeg",
 ) -> dict[str, Any]:
-    """Analyze a device image using Gemini Standard API with structured output.
+    """Analyze device media (image or video) using Gemini Standard API with structured output.
 
     Args:
-        image_data: Raw image bytes.
-        mime_type: MIME type of the image.
+        media_data: Raw media bytes (image or video).
+        mime_type: MIME type of the media.
 
     Returns:
         Normalized analysis dict with device_name, brand, condition, nested details.
         On failure, returns a dict with device_name="Unknown" and an error key.
     """
+    prompt = get_analysis_prompt(mime_type)
     client = _get_genai_client()
     contents = [
         types.Content(
@@ -265,10 +287,10 @@ async def analyze_device_image(
                 types.Part(
                     inline_data=types.Blob(
                         mime_type=mime_type,
-                        data=image_data,
+                        data=media_data,
                     )
                 ),
-                types.Part(text=ANALYSIS_PROMPT),
+                types.Part(text=prompt),
             ]
         )
     ]
@@ -362,6 +384,10 @@ async def upload_to_cloud_storage(
         "image/webp": "webp",
         "image/heic": "heic",
         "image/heif": "heif",
+        "video/mp4": "mp4",
+        "video/quicktime": "mov",
+        "video/webm": "webm",
+        "video/3gpp": "3gp",
     }
     ext = ext_map.get(mime_type, "bin")
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
@@ -382,6 +408,15 @@ async def upload_to_cloud_storage(
     except Exception as exc:
         logger.error("Cloud Storage upload failed: %s", sanitize_log(str(exc)), exc_info=True)
         return {"error": "Cloud Storage upload failed"}
+
+
+# Backward-compat alias
+async def analyze_device_image(
+    image_data: bytes,
+    mime_type: str = "image/jpeg",
+) -> dict[str, Any]:
+    """Backward-compat alias for analyze_device_media."""
+    return await analyze_device_media(media_data=image_data, mime_type=mime_type)
 
 
 async def analyze_device_image_tool(
@@ -444,7 +479,7 @@ async def analyze_device_image_tool(
             "error": "No image payload available for analysis",
         }
 
-    analysis = await analyze_device_image(image_data, mime_type)
+    analysis = await analyze_device_media(image_data, mime_type)
 
     if tool_context is None:
         return analysis
