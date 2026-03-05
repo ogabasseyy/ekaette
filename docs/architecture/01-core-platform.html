@@ -198,13 +198,13 @@ graph TB
     classDef telco fill:#E8EAF6,stroke:#283593,stroke-width:2px
     classDef payments fill:#F3E5F5,stroke:#7B1FA2,stroke-width:2px
 
-    class WW,MW,PHONE,WA,SMS_C client
-    class WS,HTTP,SIP,SRTP,SMS_T transport
+    class WW,MW,PHONE,WA_CALL,WA_MSG,SMS_C client
+    class WS,HTTP,SIP,SRTP,WA_HOOK,SMS_T transport
     class LIFE,AUTH_MW composition
     class TOKEN,ONBOARD,BOOT,UPLOAD public
     class ADMIN_R,ADMIN_S,ADMIN_I admin
     class SESS_INIT,STREAM,ORCH realtime
-    class LRQ,RUN adk
+    class LRQ,RUN_LIVE,RUN_ASYNC,ADAPTER adk
     class ROOT,VA,VLA,BA,CA,SA agent
     class FS,CS,VAS,GS,MB gcp
     class G25,G3F model

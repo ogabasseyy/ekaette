@@ -89,7 +89,7 @@ class TestHandleImageMessageADK:
                 caption="Check this phone",
             )
 
-        assert "iPhone" in reply
+        assert reply == "I can see an iPhone 14 Pro in good condition."
         mock_send.assert_called_once()
 
     @pytest.mark.asyncio
@@ -121,12 +121,13 @@ class TestHandleImageMessageADK:
 class TestGetADKRunnerAndService:
     """Test the runner/service accessor."""
 
-    def test_returns_none_tuple_when_not_initialized(self):
-        """Before lifespan init, returns (None, None, None)."""
+    def test_returns_none_tuple_when_runner_absent(self):
+        """When main.py has no runner attribute, returns (None, None, None)."""
         from app.api.v1.at.service_whatsapp import _get_adk_runner_and_service
 
-        # In test environment, the main.py singletons may not be initialized
-        # The function should return None gracefully
-        result = _get_adk_runner_and_service()
+        # Simulate main module without runner initialized
+        fake_main = MagicMock(spec=[])  # empty spec — no runner/session_service attrs
+        with patch.dict("sys.modules", {"main": fake_main}):
+            result = _get_adk_runner_and_service()
         assert isinstance(result, tuple)
-        assert len(result) == 3
+        assert result == (None, None, None)

@@ -64,7 +64,7 @@ def _get_adk_runner_and_service() -> tuple[Any, Any, Any]:
         if runner is not None and session_service is not None and app_name:
             return runner, session_service, app_name
     except Exception:
-        pass
+        logger.debug("ADK runner access failed", exc_info=True)
     return None, None, None
 
 
@@ -95,7 +95,8 @@ async def handle_text_message(
             tenant_id=tenant_id,
             company_id=company_id,
         )
-        return result["text"][:WA_MAX_CHARS]
+        reply_text = result.get("text") or ""
+        return reply_text[:WA_MAX_CHARS]
 
     # Fallback: standalone Gemini (no agent graph)
     logger.debug("ADK Runner not available, using bridge_text fallback")
@@ -145,7 +146,8 @@ async def handle_image_message(
             tenant_id=tenant_id,
             company_id=company_id,
         )
-        return result["text"][:WA_MAX_CHARS]
+        reply_text = result.get("text") or ""
+        return reply_text[:WA_MAX_CHARS]
 
     # Fallback: direct Gemini vision (no agent graph)
     logger.debug("ADK Runner not available, using legacy image analysis")

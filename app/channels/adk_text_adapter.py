@@ -224,13 +224,6 @@ async def _ensure_session(
     # Load registry config if available
     try:
         from app.configs import registry_enabled
-        from app.configs.industry_loader import load_industry_config, build_session_state
-        from app.configs.company_loader import (
-            load_company_profile,
-            load_company_knowledge,
-            build_company_session_state,
-            create_company_config_client,
-        )
         from app.configs.registry_loader import resolve_registry_config
 
         if registry_enabled():

@@ -226,7 +226,8 @@ class TestSendTextMessage:
             message_text="Hello",
         )
 
-        assert "error" in result or result["text"]
+        assert "text" in result
+        assert result["text"]  # Non-empty fallback provided
 
 
 # ─── Test: Session Management ─────────────────────────────────
