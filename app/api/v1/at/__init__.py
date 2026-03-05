@@ -15,6 +15,7 @@ from .analytics_routes import router as analytics_router
 from .payments import router as payments_router
 from .shipping import router as shipping_router
 from .health import router as health_router
+from .whatsapp import router as whatsapp_router
 from .deps import init_at_sdk
 
 # Initialize AT SDK once at import time
@@ -27,3 +28,4 @@ at_router.include_router(analytics_router)
 at_router.include_router(payments_router)
 at_router.include_router(shipping_router)
 at_router.include_router(health_router)
+at_router.include_router(whatsapp_router)
