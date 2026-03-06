@@ -262,17 +262,19 @@ async def _process_message(
     if not from_ or not msg_type:
         return
 
-    # Fire typing indicator immediately (fire-and-forget)
-    # Requires inbound message_id to mark as read + show "typing..."
+    # Fire typing indicator as background task (never block the hot path)
     wamid = message.get("id", "")
     if wamid:
-        try:
-            await providers.whatsapp_send_typing_indicator(
-                access_token=WHATSAPP_ACCESS_TOKEN,
-                message_id=wamid,
-            )
-        except Exception:
-            pass  # Never block message processing
+        async def _fire_typing() -> None:
+            try:
+                await providers.whatsapp_send_typing_indicator(
+                    access_token=WHATSAPP_ACCESS_TOKEN,
+                    message_id=wamid,
+                )
+            except Exception:
+                pass  # Never block message processing
+
+        asyncio.create_task(_fire_typing())
 
     # Generate reply based on message type
     if msg_type == "text":
@@ -365,19 +367,24 @@ async def _send_voice_reply(
             mime_type=mime_type,
             phone_number_id=phone_number_id,
         )
-        return await providers.whatsapp_send_audio(
+        status, body = await providers.whatsapp_send_audio(
             access_token=WHATSAPP_ACCESS_TOKEN,
             to=to,
             media_id=media_id,
             phone_number_id=phone_number_id,
         )
+        if 200 <= status < 300:
+            return status, body
+        # Non-2xx audio send — fall back to text
+        logger.warning("Audio send returned %s, falling back to text", status)
     except Exception:
         logger.warning("Voice reply failed, falling back to text", exc_info=True)
-        return await providers.whatsapp_send_text(
-            access_token=WHATSAPP_ACCESS_TOKEN,
-            to=to,
-            body=text,
-        )
+
+    return await providers.whatsapp_send_text(
+        access_token=WHATSAPP_ACCESS_TOKEN,
+        to=to,
+        body=text,
+    )
 
 
 # ── Silence Nudge ──
@@ -410,6 +417,8 @@ async def _schedule_nudge(
         location = os.environ.get("CLOUD_TASKS_LOCATION", "us-central1")
 
         def _create_nudge_task_sync() -> None:
+            import uuid
+
             client = tasks_v2.CloudTasksClient()
             parent = client.queue_path(project, location, WA_CLOUD_TASKS_QUEUE_NAME)
             schedule_time = timestamp_pb2.Timestamp()
@@ -422,7 +431,9 @@ async def _schedule_nudge(
                 "user_phone": user_phone,
                 "phone_number_id": phone_number_id,
             })
+            task_name = f"{parent}/tasks/wa-nudge-{uuid.uuid4().hex[:12]}"
             task = tasks_v2.Task(
+                name=task_name,
                 schedule_time=schedule_time,
                 http_request=tasks_v2.HttpRequest(
                     http_method=tasks_v2.HttpMethod.POST,
@@ -460,7 +471,7 @@ async def _execute_nudge(
         return
 
     nudge_text = service_whatsapp.get_nudge_message()
-    status, _ = await providers.whatsapp_send_text(
+    status, resp_body = await providers.whatsapp_send_text(
         access_token=WHATSAPP_ACCESS_TOKEN,
         to=user_phone,
         body=nudge_text,
@@ -468,6 +479,10 @@ async def _execute_nudge(
     if 200 <= status < 300:
         service_whatsapp.mark_nudge_sent(user_phone, phone_number_id)
         logger.info("Silence nudge sent to user")
+    else:
+        raise RuntimeError(
+            f"Nudge send failed: status={status} body={resp_body}"
+        )
 
 
 # ── POST /whatsapp/send — Internal API (service-auth) ──

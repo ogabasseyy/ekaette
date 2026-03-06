@@ -102,21 +102,21 @@ class TestTypingIndicatorInProcessMessage:
     """Test that _process_message fires typing indicator before AI processing."""
 
     @pytest.mark.asyncio
-    async def test_typing_fires_before_text_handling(self):
-        """Typing indicator is sent before handle_text_message."""
+    async def test_typing_fires_during_text_handling(self):
+        """Typing indicator is scheduled as background task during message processing."""
+        import asyncio
         from app.api.v1.at.whatsapp import _process_message
 
-        call_order = []
+        typing_called = False
 
         async def mock_typing(**kwargs):
-            call_order.append("typing")
+            nonlocal typing_called
+            typing_called = True
 
         async def mock_handle_text(**kwargs):
-            call_order.append("handle_text")
             return "Hello!"
 
         async def mock_send_text(**kwargs):
-            call_order.append("send_text")
             return 200, {"messages": [{"id": "wamid.123"}]}
 
         with patch(
@@ -136,12 +136,15 @@ class TestTypingIndicatorInProcessMessage:
                 "text": {"body": "Hi"},
             }
             await _process_message(message, "test_phone_id")
+            # Let background typing task complete
+            await asyncio.sleep(0)
 
-        assert call_order == ["typing", "handle_text", "send_text"]
+        assert typing_called
 
     @pytest.mark.asyncio
-    async def test_typing_fires_before_image_handling(self):
-        """Typing indicator fires before image processing too."""
+    async def test_typing_fires_during_image_handling(self):
+        """Typing indicator fires as background task for image processing too."""
+        import asyncio
         from app.api.v1.at.whatsapp import _process_message
 
         typing_called = False
@@ -173,6 +176,8 @@ class TestTypingIndicatorInProcessMessage:
                 "image": {"id": "media-123", "mime_type": "image/jpeg"},
             }
             await _process_message(message, "test_phone_id")
+            # Let background typing task complete
+            await asyncio.sleep(0)
 
         assert typing_called
 

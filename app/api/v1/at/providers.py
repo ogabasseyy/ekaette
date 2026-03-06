@@ -323,7 +323,15 @@ async def text_to_speech(text: str) -> tuple[bytes, str]:
         ),
     )
 
-    pcm_data = response.candidates[0].content.parts[0].inline_data.data
+    candidates = getattr(response, "candidates", None) or []
+    if not candidates:
+        raise RuntimeError("TTS response missing candidates")
+    content = getattr(candidates[0], "content", None)
+    parts = (getattr(content, "parts", None) or []) if content else []
+    if not parts:
+        raise RuntimeError("TTS response missing content/parts")
+    inline_data = getattr(parts[0], "inline_data", None)
+    pcm_data = getattr(inline_data, "data", None) if inline_data else None
     if not pcm_data:
         raise RuntimeError("TTS returned empty audio data")
 
@@ -367,6 +375,21 @@ def _pcm_to_ogg_opus(pcm_data: bytes, sample_rate: int = 24000) -> bytes:
 
 # ── WhatsApp Media Upload ──
 
+_MIME_TO_EXT = {
+    "audio/ogg": "audio.ogg",
+    "audio/mpeg": "audio.mp3",
+    "audio/aac": "audio.aac",
+    "audio/amr": "audio.amr",
+    "image/jpeg": "image.jpg",
+    "image/png": "image.png",
+    "video/mp4": "video.mp4",
+}
+
+
+def _filename_for_mime(mime_type: str) -> str:
+    """Derive a filename from mime_type for multipart upload."""
+    return _MIME_TO_EXT.get(mime_type, f"file.{mime_type.split('/')[-1]}")
+
 
 async def whatsapp_upload_media(
     *,
@@ -395,7 +418,7 @@ async def whatsapp_upload_media(
             url,
             headers=headers,
             data={"messaging_product": "whatsapp", "type": mime_type},
-            files={"file": ("audio.ogg", media_bytes, mime_type)},
+            files={"file": (_filename_for_mime(mime_type), media_bytes, mime_type)},
         )
 
     if response.status_code != 200:

@@ -429,6 +429,14 @@ _NUDGE_MESSAGES = [
 ]
 
 
+def _nudge_doc_ref(key: str):
+    """Firestore doc ref for nudge state, keyed by window key hash."""
+    client = _get_firestore_state_client()
+    collection_name = os.getenv("WA_NUDGE_STATE_COLLECTION", "wa_nudge_state")
+    key_hash = hashlib.sha256(key.encode()).hexdigest()
+    return client.collection(collection_name).document(key_hash)
+
+
 def record_outbound_timestamp(
     user_phone: str,
     phone_number_id: str = "",
@@ -442,7 +450,15 @@ def record_outbound_timestamp(
         tenant_id,
         company_id,
     )
-    _outbound_timestamps[key] = time.time()
+    now = time.time()
+    _outbound_timestamps[key] = now
+
+    if _state_store_uses_firestore():
+        try:
+            doc_ref = _nudge_doc_ref(key)
+            doc_ref.set({"key": key, "outbound_ts": now}, merge=True)
+        except Exception:
+            logger.debug("Nudge outbound Firestore write failed", exc_info=True)
 
 
 def check_needs_nudge(
@@ -458,18 +474,57 @@ def check_needs_nudge(
         tenant_id,
         company_id,
     )
+
+    if _state_store_uses_firestore():
+        return _check_needs_nudge_firestore(key)
+
     outbound_ts = _outbound_timestamps.get(key)
     if outbound_ts is None:
         return False
 
-    # If already nudged for this outbound, skip
     nudge_ts = _nudge_sent.get(key)
     if nudge_ts is not None and nudge_ts >= outbound_ts:
         return False
 
-    # Check if user replied after the outbound
     inbound_ts = _service_windows.get(key)
     if inbound_ts is not None and inbound_ts >= outbound_ts:
+        return False
+
+    return True
+
+
+def _check_needs_nudge_firestore(key: str) -> bool:
+    """Firestore-backed nudge check — works across replicas."""
+    try:
+        nudge_snap = _nudge_doc_ref(key).get()
+        nudge_data = nudge_snap.to_dict() if nudge_snap.exists else {}
+
+        window_snap = _service_window_doc_ref(key).get()
+        window_data = window_snap.to_dict() if window_snap.exists else {}
+    except Exception:
+        logger.debug("Nudge Firestore read failed, falling back to local", exc_info=True)
+        # Fall back to local check
+        outbound_ts = _outbound_timestamps.get(key)
+        if outbound_ts is None:
+            return False
+        nudge_ts = _nudge_sent.get(key)
+        if nudge_ts is not None and nudge_ts >= outbound_ts:
+            return False
+        inbound_ts = _service_windows.get(key)
+        if inbound_ts is not None and inbound_ts >= outbound_ts:
+            return False
+        return True
+
+    outbound_ts = float(nudge_data.get("outbound_ts", 0) or 0)
+    if outbound_ts == 0:
+        return False
+
+    nudge_ts = float(nudge_data.get("nudge_sent_ts", 0) or 0)
+    if nudge_ts >= outbound_ts:
+        return False
+
+    inbound_ts = float(window_data.get("updated_at", 0) or 0)
+    if inbound_ts >= outbound_ts:
         return False
 
     return True
@@ -488,7 +543,15 @@ def mark_nudge_sent(
         tenant_id,
         company_id,
     )
-    _nudge_sent[key] = time.time()
+    now = time.time()
+    _nudge_sent[key] = now
+
+    if _state_store_uses_firestore():
+        try:
+            doc_ref = _nudge_doc_ref(key)
+            doc_ref.set({"nudge_sent_ts": now}, merge=True)
+        except Exception:
+            logger.debug("Nudge mark-sent Firestore write failed", exc_info=True)
 
 
 def get_nudge_message() -> str:

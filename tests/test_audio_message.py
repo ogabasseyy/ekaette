@@ -114,6 +114,10 @@ class TestAudioInProcessMessage:
             "app.api.v1.at.whatsapp.service_whatsapp.handle_audio_message",
             side_effect=mock_handle_audio,
         ) as audio_mock, patch(
+            "app.api.v1.at.whatsapp._send_voice_reply",
+            new_callable=AsyncMock,
+            return_value=(200, {"messages": [{"id": "wamid.audio_reply"}]}),
+        ), patch(
             "app.api.v1.at.whatsapp.providers.whatsapp_send_text",
             side_effect=mock_send_text,
         ), patch(
