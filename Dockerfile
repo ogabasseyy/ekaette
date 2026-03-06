@@ -10,9 +10,9 @@ RUN pnpm run build
 # ─── Stage 2: Python runtime ───
 FROM python:3.13.12-slim@sha256:a208155746991fb5c4baf3c501401c3fee09e814ab0e5121a0f53b2ca659e0e2
 
-# System deps for grpc / crypto wheels
+# System deps for grpc / crypto wheels + ffmpeg for TTS audio conversion
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential libffi-dev && \
+    build-essential libffi-dev ffmpeg && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

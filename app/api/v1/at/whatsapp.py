@@ -322,12 +322,15 @@ async def _process_message(
         logger.info("Unknown WA message type received")
         return
 
-    # Send reply and surface provider failures so Cloud Tasks can retry.
-    status, send_body = await providers.whatsapp_send_text(
-        access_token=WHATSAPP_ACCESS_TOKEN,
-        to=from_,
-        body=reply,
-    )
+    # Send reply — voice note in → voice note out, text in → text out.
+    if msg_type == "audio" and reply:
+        status, send_body = await _send_voice_reply(from_, reply, phone_number_id)
+    else:
+        status, send_body = await providers.whatsapp_send_text(
+            access_token=WHATSAPP_ACCESS_TOKEN,
+            to=from_,
+            body=reply,
+        )
     if status < 200 or status >= 300:
         logger.warning(
             "WA outbound send failed; provider returned non-2xx",
@@ -340,6 +343,41 @@ async def _process_message(
         await _schedule_nudge(user_phone=from_, phone_number_id=phone_number_id)
     except Exception:
         pass  # Never block message processing
+
+
+# ── Voice Reply (TTS → Upload → Send Audio) ──
+
+
+async def _send_voice_reply(
+    to: str,
+    text: str,
+    phone_number_id: str,
+) -> tuple[int, dict]:
+    """Convert text reply to voice note and send as audio message.
+
+    Falls back to text message if TTS or upload fails.
+    """
+    try:
+        audio_bytes, mime_type = await providers.text_to_speech(text)
+        media_id = await providers.whatsapp_upload_media(
+            access_token=WHATSAPP_ACCESS_TOKEN,
+            media_bytes=audio_bytes,
+            mime_type=mime_type,
+            phone_number_id=phone_number_id,
+        )
+        return await providers.whatsapp_send_audio(
+            access_token=WHATSAPP_ACCESS_TOKEN,
+            to=to,
+            media_id=media_id,
+            phone_number_id=phone_number_id,
+        )
+    except Exception:
+        logger.warning("Voice reply failed, falling back to text", exc_info=True)
+        return await providers.whatsapp_send_text(
+            access_token=WHATSAPP_ACCESS_TOKEN,
+            to=to,
+            body=text,
+        )
 
 
 # ── Silence Nudge ──
