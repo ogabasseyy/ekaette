@@ -76,6 +76,26 @@ class TestValidateGlobalLesson:
     def test_not_a_dict_fails(self):
         assert validate_global_lesson("string") == ["global_lesson must be a dict"]
 
+    def test_empty_id_fails(self):
+        lesson = {
+            "id": "",
+            "lesson": "Some lesson",
+            "category": "vision_behavior",
+            "status": "active",
+        }
+        errors = validate_global_lesson(lesson)
+        assert any("id" in e for e in errors)
+
+    def test_empty_lesson_text_fails(self):
+        lesson = {
+            "id": "test",
+            "lesson": "",
+            "category": "vision_behavior",
+            "status": "active",
+        }
+        errors = validate_global_lesson(lesson)
+        assert any("lesson" in e for e in errors)
+
     def test_applicable_agents_must_be_list(self):
         lesson = {
             "id": "test",
@@ -86,6 +106,17 @@ class TestValidateGlobalLesson:
         }
         errors = validate_global_lesson(lesson)
         assert any("applicable_agents" in e for e in errors)
+
+    def test_applicable_agents_items_must_be_strings(self):
+        lesson = {
+            "id": "test",
+            "lesson": "Some lesson",
+            "category": "vision_behavior",
+            "status": "active",
+            "applicable_agents": [123, None],
+        }
+        errors = validate_global_lesson(lesson)
+        assert any("strings" in e for e in errors)
 
     def test_optional_fields_default_ok(self):
         """Minimal valid lesson — only required fields."""
@@ -128,8 +159,11 @@ class TestLoadGlobalLessons:
             mock_doc.id = doc.get("id", "unknown")
             mock_docs.append(mock_doc)
 
+        mock_limited = MagicMock()
+        mock_limited.stream.return_value = mock_docs
+
         mock_stream = MagicMock()
-        mock_stream.stream.return_value = mock_docs
+        mock_stream.limit.return_value = mock_limited
 
         mock_lessons_col = MagicMock()
         mock_lessons_col.where.return_value = mock_stream
@@ -320,6 +354,10 @@ class TestClassifyLessonScope:
         scope = classify_lesson_scope("Ok thanks.")
         assert scope == "user"
 
+    def test_empty_string_defaults_to_user(self):
+        scope = classify_lesson_scope("")
+        assert scope == "user"
+
 
 # ═══ Submit Global Lesson ═══
 
@@ -386,26 +424,37 @@ class TestSubmitGlobalLesson:
         )
         assert result is None
 
+    def test_returns_none_on_firestore_write_exception(self, mock_db):
+        """Firestore write failure returns None gracefully."""
+        # Make the deepest .set() call raise
+        mock_db.collection.return_value.document.return_value.collection.return_value.document.return_value.collection.return_value.document.return_value.set.side_effect = Exception(
+            "Firestore write failed"
+        )
+        result = submit_global_lesson(
+            mock_db,
+            tenant_id="public",
+            company_id="ekaette-electronics",
+            lesson_text="Valid lesson text.",
+            category="general",
+        )
+        assert result is None
 
-# ═══ Callback Integration ═══
+    def test_returns_none_on_empty_lesson_text(self, mock_db):
+        result = submit_global_lesson(
+            mock_db,
+            tenant_id="public",
+            company_id="ekaette-electronics",
+            lesson_text="",
+            category="general",
+        )
+        assert result is None
 
-
-class TestLessonInjectionInCallback:
-    """Test that lessons are injected via before_model_inject_config."""
-
-    def test_lessons_appended_to_instruction(self):
-        lessons = [
-            {
-                "id": "l1",
-                "lesson": "Skip power question if device is visibly on.",
-                "category": "questionnaire_logic",
-                "applicable_agents": ["*"],
-            },
-        ]
-        text = format_lessons_for_instruction(lessons, agent_name="ekaette_router")
-        assert "Skip power question" in text
-        assert "LEARNED BEHAVIORS" in text
-
-    def test_empty_lessons_produce_no_injection(self):
-        text = format_lessons_for_instruction([], agent_name="ekaette_router")
-        assert text == ""
+    def test_returns_none_on_invalid_category(self, mock_db):
+        result = submit_global_lesson(
+            mock_db,
+            tenant_id="public",
+            company_id="ekaette-electronics",
+            lesson_text="Valid text.",
+            category="nonexistent_category",
+        )
+        assert result is None

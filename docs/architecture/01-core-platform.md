@@ -401,7 +401,7 @@ graph TB
         GLESSONS["Firestore Global Lessons<br/>(per tenant/company)"]
         CLASSIFY["Lesson Classifier<br/>User-specific vs. global<br/>(keyword heuristics)"]
         INJECT["before_model_callback<br/>Inject LEARNED BEHAVIORS<br/>into system instruction"]
-        EXTRACT["Lesson Extractor<br/>after_agent_callback<br/>(async, non-blocking)"]
+        LESSON_EXTRACT["Lesson Extractor<br/>after_agent_callback<br/>(async, non-blocking)"]
     end
 
     subgraph "Tier 4: Industry Knowledge (registry-driven)"

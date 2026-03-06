@@ -75,8 +75,11 @@ def validate_global_lesson(data: Any) -> list[str]:
         )
 
     applicable_agents = data.get("applicable_agents")
-    if applicable_agents is not None and not isinstance(applicable_agents, list):
-        errors.append("applicable_agents must be a list if present")
+    if applicable_agents is not None:
+        if not isinstance(applicable_agents, list):
+            errors.append("applicable_agents must be a list if present")
+        elif not all(isinstance(a, str) for a in applicable_agents):
+            errors.append("applicable_agents items must be strings")
 
     return errors
 
@@ -107,14 +110,15 @@ def load_global_lessons(
             .document(company_id)
             .collection("global_lessons")
         )
-        docs = col.where("status", "==", "active").stream()
+        docs = col.where("status", "==", "active").limit(50).stream()
 
         lessons: list[dict[str, Any]] = []
         for doc in docs:
             data = doc.to_dict()
             if not isinstance(data, dict):
                 continue
-            if validate_global_lesson(data):
+            validation_errors = validate_global_lesson(data)
+            if validation_errors:
                 logger.debug("Skipping invalid global lesson: %s", doc.id)
                 continue
             lessons.append(data)
@@ -203,6 +207,14 @@ def submit_global_lesson(
     Returns the lesson dict on success, None on failure.
     """
     if db is None:
+        return None
+
+    if not lesson_text or not lesson_text.strip():
+        logger.warning("Cannot submit global lesson with empty lesson_text")
+        return None
+
+    if category not in LESSON_CATEGORIES:
+        logger.warning("Invalid category %r for global lesson", category)
         return None
 
     status = "active" if source == "admin" else "pending_review"

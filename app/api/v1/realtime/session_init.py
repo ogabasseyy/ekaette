@@ -409,7 +409,7 @@ async def initialize_session(
                 if global_lessons:
                     initial_state["app:global_lessons"] = global_lessons
         except Exception as exc:
-            logger.debug("Global lessons load skipped: %s", exc)
+            logger.info("Global lessons load skipped: %s", exc)
 
         create_kwargs: dict[str, object] = {
             "app_name": session_app_name,

@@ -287,7 +287,10 @@ def validate_global_lesson(data: Any) -> list[str]:
         )
 
     applicable_agents = data.get("applicable_agents")
-    if applicable_agents is not None and not isinstance(applicable_agents, list):
-        errors.append("applicable_agents must be a list if present")
+    if applicable_agents is not None:
+        if not isinstance(applicable_agents, list):
+            errors.append("applicable_agents must be a list if present")
+        elif not all(isinstance(a, str) for a in applicable_agents):
+            errors.append("applicable_agents items must be strings")
 
     return errors

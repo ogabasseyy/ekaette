@@ -565,12 +565,13 @@ def seed_all(
     Templates are seeded first so that company provisioning can verify references.
     Default path uses the git-tracked ``tests/fixtures/registry`` for reproducibility.
 
-    When ``include_runtime_data=True``, also seeds products, booking_slots, and
-    knowledge entries from their respective subdirectories. Runtime data fixtures
-    should be tagged with ``data_tier: "demo"`` for traceability.
+    When ``include_runtime_data=True``, also seeds products, booking_slots,
+    knowledge entries, and global_lessons from their respective subdirectories.
+    Runtime data fixtures should be tagged with ``data_tier: "demo"`` for traceability.
 
     Returns {"templates": {...}, "companies": {...}, "products": {...},
-             "booking_slots": {...}, "knowledge": {...}, "errors": list[str]}.
+             "booking_slots": {...}, "knowledge": {...}, "global_lessons": {...},
+             "errors": list[str]}.
     """
     root = Path(data_dir)
     errors: list[str] = []
