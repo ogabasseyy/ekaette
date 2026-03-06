@@ -9,7 +9,7 @@
 [![Cloud Run](https://img.shields.io/badge/Cloud_Run-Deployed-4285F4?logo=googlecloud&logoColor=white)](https://cloud.google.com/run)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-> **Ekaette** transforms customer service through real-time multimodal AI conversations — customers speak naturally, show products via camera, negotiate prices, and book appointments, all in one voice call. Built for the [Gemini Live Agent Challenge](https://geminiliveagentchallenge.devpost.com/).
+> **Ekaette** transforms customer service through real-time multimodal AI conversations — customers speak naturally, show products via camera, negotiate prices, and book appointments, all in one voice call or WhatsApp chat. Built for the [Gemini Live Agent Challenge](https://geminiliveagentchallenge.devpost.com/).
 
 [Live Demo](https://ekaette-233619833678.us-central1.run.app) | [Demo Video](https://youtube.com/watch?v=XXXXX) | [Blog Post](https://dev.to/bassey/building-ekaette-XXXXX) | [Devpost](https://devpost.com/software/ekaette)
 
@@ -36,20 +36,26 @@ Traditional e-commerce customer service forces customers into slow, text-only ch
 
 ## What Ekaette Does
 
-Ekaette is a **multimodal AI customer service agent** that handles the full trade-in lifecycle through natural voice conversation:
+Ekaette is a **multimodal AI customer service agent** that handles the full trade-in lifecycle through natural conversation — voice or text:
 
-- **See**: Customer shows their device on camera — AI identifies the product, assesses condition, and spots damage in real-time
+- **See**: Customer shows their device on camera or sends a photo via WhatsApp — AI identifies the product, assesses condition, and spots damage
 - **Hear**: Bidirectional audio streaming via Gemini Live API — sub-second voice responses with natural conversation flow
-- **Value**: Automated condition grading and pricing with transparent rubric-based valuation
-- **Negotiate**: Voice-driven price negotiation with counter-offers — just like a real market interaction
-- **Book**: Appointment scheduling and pickup confirmation, all within the same voice call
+- **Value**: Automated condition grading with brand-specific diagnostic questionnaires and transparent itemized pricing deductions
+- **Negotiate**: Natural price negotiation with counter-offers — "I was quoted 550k but I want 500k" works on both voice and WhatsApp
+- **Book**: Appointment scheduling and pickup confirmation, all within the same conversation
 - **Remember**: Long-term memory across sessions — returning customers are greeted by name with context from prior interactions
+- **WhatsApp**: Full-featured WhatsApp Business channel — text, image, video, and voice note replies with typing indicators and silence nudges
 
-One codebase serves **multiple industries** (electronics, hotel, automotive, fashion) with per-industry voice personas, pricing rubrics, and conversation styles.
+One codebase serves **6 industries** (electronics, hotel, automotive, fashion, telecom, aviation) with per-industry voice personas, pricing rubrics, and conversation styles.
 
 ---
 
 ## Architecture
+
+![Ekaette Architecture](docs/images/architecture.png)
+
+<details>
+<summary>View as Mermaid source</summary>
 
 ```mermaid
 graph TB
@@ -57,6 +63,11 @@ graph TB
         UI["Web UI"]
         WS["WebSocket Client"]
         MIC["Microphone / Camera"]
+    end
+
+    subgraph "WhatsApp Channel"
+        WA["WhatsApp Business API"]
+        TTS["Gemini TTS"]
     end
 
     subgraph "Backend — FastAPI + Python 3.13"
@@ -69,6 +80,7 @@ graph TB
             CA["catalog_agent"]
             SA["support_agent"]
         end
+        TR["Text Runner<br/>(WhatsApp + fallback)"]
     end
 
     subgraph "Google Cloud"
@@ -76,12 +88,16 @@ graph TB
         FS["Firestore"]
         CS["Cloud Storage"]
         MB["Memory Bank"]
+        CT["Cloud Tasks"]
     end
 
     UI --> WS
     MIC --> WS
     WS -->|"WSS"| GW
+    WA -->|"Webhook"| GW
     GW --> ROOT
+    GW --> TR
+    TR --> ROOT
     ROOT -->|"photo"| VA
     ROOT -->|"price"| VLA
     ROOT -->|"book"| BA
@@ -92,11 +108,16 @@ graph TB
     ROOT --> FS
     VA --> CS
     ROOT -->|"Memory"| MB
+    TR -->|"Voice reply"| TTS
+    TTS -->|"Audio"| WA
+    CT -->|"Nudge"| WA
 ```
 
-**Dual-model strategy**: The root agent uses `gemini-2.5-flash-native-audio` via the Live API for real-time voice I/O. Specialist agents use `gemini-3-flash` via the Standard API for reasoning-heavy tasks (vision analysis, pricing calculations). This keeps voice latency low while allowing deep analysis when needed.
+</details>
 
-For the full architecture with all data flows, memory tiers, and latency mitigations, see [Core Platform Architecture](docs/architecture/01-core-platform.md).
+**Dual-model strategy**: The root agent uses `gemini-2.5-flash-native-audio` via the Live API for real-time voice I/O. Specialist agents use `gemini-3-flash` via the Standard API for reasoning-heavy tasks (vision analysis, pricing calculations). The WhatsApp text runner uses the same agent graph with a text-optimized model. This keeps voice latency low while allowing deep analysis when needed.
+
+For the full architecture with all data flows, memory tiers, and transport layers, see [Core Platform Architecture](docs/architecture/01-core-platform.md).
 
 ---
 
@@ -108,7 +129,7 @@ Six specialized agents coordinated by Google ADK, with LLM-driven routing:
 
 | Agent | Role | Model |
 |---|---|---|
-| **ekaette_router** | Voice I/O, intent detection, agent routing | Gemini 2.5 Flash (Live API) |
+| **ekaette_router** | Voice/text I/O, intent detection, agent routing | Gemini 2.5 Flash (Live API / Text) |
 | **vision_agent** | Image analysis, product identification, damage detection | Gemini 3 Flash |
 | **valuation_agent** | Condition grading, price calculation, negotiation logic | Gemini 3 Flash |
 | **booking_agent** | Availability checking, appointment scheduling | Gemini 3 Flash |
@@ -122,6 +143,26 @@ Bidirectional PCM audio via Gemini Live API with:
 - Barge-in support (interrupt the agent mid-sentence)
 - Voice Activity Detection (automatic + manual fallback for noisy environments)
 - Voice filler UX during agent transfers ("Let me take a closer look...")
+- Session resumption tokens + context compression for conversations beyond 10 minutes
+
+### WhatsApp Business Channel
+
+Full conversational AI over WhatsApp with:
+- **Text messages** — processed through the same ADK agent graph as voice
+- **Image & video analysis** — send a photo of your device, get a trade-in valuation
+- **Voice note replies** — Gemini TTS generates natural speech, converted to OGG/Opus via ffmpeg
+- **Typing indicators** — fire-and-forget status updates while the agent thinks
+- **Silence nudges** — Cloud Tasks-scheduled follow-ups when the customer goes quiet
+- **Price negotiation** — counter-offer naturally in text ("I want 500k instead")
+- **Webhook security** — HMAC signature verification on all inbound messages
+
+### Trade-In Valuation Pipeline
+
+Structured device assessment with:
+- **Vision analysis** — Gemini 3 Flash with structured output (`response_schema`) and high-resolution media
+- **Brand-specific questionnaires** — diagnostic questions the camera can't answer (battery health %, Face ID status, water damage history)
+- **Composite grading** — vision grade adjusted by questionnaire answers with transparent itemized deductions
+- **Negotiation engine** — accept / counter / reject logic with configurable thresholds
 
 ### 3-Tier Memory Architecture
 
@@ -129,13 +170,18 @@ Bidirectional PCM audio via Gemini Live API with:
 2. **Memory Bank** (Vertex AI Agent Engine) — cross-session long-term memory with Gemini-powered extraction and consolidation
 3. **Industry Knowledge** (Firestore configs) — shared pricing rubrics, voice personas, booking rules
 
-### Multi-Industry Support
+### Multi-Industry Support (6 Templates)
 
-Switch industries at onboarding — each gets its own voice persona, pricing rubric, and conversation style:
-- **Electronics**: Aoede voice, device trade-in + valuation flow
-- **Hotel**: Puck voice, room booking + concierge
-- **Automotive**: Service scheduling + trade-in estimates
-- **Fashion**: Catalog recommendations + consultation
+Registry-driven multi-tenant architecture — switch industries at onboarding:
+
+| Template | Voice | Key Capabilities |
+|---|---|---|
+| **Electronics** | Aoede | Trade-in valuation, device grading, price negotiation |
+| **Hotel** | Puck | Room booking, concierge services |
+| **Automotive** | Charon | Vehicle inspection, service scheduling |
+| **Fashion** | Kore | Catalog recommendations, style consultation |
+| **Telecom** | Fenrir | Plan catalog, support, billing inquiries |
+| **Aviation** | Leda | Flight status, baggage policies (no booking) |
 
 ### Direct-Live Transport Mode
 
@@ -154,6 +200,7 @@ Optional low-latency mode that fetches an ephemeral token from the backend and c
 | [Google ADK](https://google.github.io/adk-docs/) | 1.25.1 | Multi-agent orchestration |
 | [Gemini Live API](https://ai.google.dev/gemini-api/docs/live) | 2.5 Flash | Real-time voice streaming |
 | [Gemini 3 Flash](https://ai.google.dev) | Preview | Vision + reasoning |
+| [Gemini TTS](https://ai.google.dev/gemini-api/docs/text-generation) | 2.5 Flash Preview | Voice note generation |
 | [google-genai](https://pypi.org/project/google-genai/) | 1.64.0 | Gemini SDK |
 
 ### Frontend
@@ -171,11 +218,12 @@ Optional low-latency mode that fetches an ephemeral token from the backend and c
 | Technology | Purpose |
 |---|---|
 | [Google Cloud Run](https://cloud.google.com/run) | Serverless container hosting (session affinity, 60min timeout) |
-| [Firestore](https://firebase.google.com/docs/firestore) | Sessions, configs, bookings |
+| [Firestore](https://firebase.google.com/docs/firestore) | Sessions, configs, bookings, nudge state |
 | [Cloud Storage](https://cloud.google.com/storage) | Customer photos, ADK artifacts |
+| [Cloud Tasks](https://cloud.google.com/tasks) | Silence nudge scheduling |
 | [Vertex AI Agent Engine](https://cloud.google.com/agent-builder) | Memory Bank for long-term customer memory |
 | [Terraform](https://terraform.io) | Infrastructure as Code |
-| [Docker](https://docker.com) | Multi-stage container build |
+| [Docker](https://docker.com) | Multi-stage container build (uv for fast installs) |
 
 ---
 
@@ -236,11 +284,11 @@ Open [http://localhost:5173](http://localhost:5173) — select an industry, then
 ### Running Tests
 
 ```bash
-# Backend (212 tests)
+# Backend (1,478 tests)
 source .venv/bin/activate
 pytest tests/ -v
 
-# Frontend (81 tests)
+# Frontend (312 tests)
 cd frontend
 pnpm exec vitest run
 ```
@@ -259,7 +307,14 @@ docker build -t ekaette .
 docker run -p 8080:8080 --env-file .env ekaette
 ```
 
-### Cloud Run (gcloud CLI)
+### Cloud Run (deploy script)
+
+```bash
+# Uses .env for env vars, runs release gates before deploy
+ALLOW_UNAUTHENTICATED=1 bash scripts/deploy_cloud_run.sh
+```
+
+Or manually:
 
 ```bash
 gcloud run deploy ekaette \
@@ -303,13 +358,14 @@ This provisions:
 ekaette/
 ├── app/
 │   ├── agents/               # Multi-agent hierarchy (6 agents)
-│   │   ├── ekaette_router/   # Root agent — voice I/O + routing
-│   │   ├── vision_agent/     # Image analysis
-│   │   ├── valuation_agent/  # Condition grading + pricing
+│   │   ├── ekaette_router/   # Root agent — voice/text I/O + routing
+│   │   ├── vision_agent/     # Image analysis + structured grading
+│   │   ├── valuation_agent/  # Condition grading + pricing + negotiation
 │   │   ├── booking_agent/    # Appointment scheduling
 │   │   ├── catalog_agent/    # Product search
 │   │   └── support_agent/    # FAQ + Google Search grounding
-│   ├── configs/              # Industry config loaders
+│   ├── api/v1/at/            # WhatsApp Business channel (webhook, TTS, media)
+│   ├── configs/              # Registry-driven industry config loaders
 │   ├── memory/               # Memory Bank factory
 │   └── tools/                # Agent tool implementations
 ├── frontend/
@@ -317,11 +373,13 @@ ekaette/
 │       ├── components/       # React UI components
 │       ├── hooks/            # useEkaetteSocket, useAudioWorklet, useDemoMode
 │       ├── lib/              # Utilities (format, transcript, cn)
-│       └── types/            # TypeScript interfaces (12 ServerMessage types)
+│       └── types/            # TypeScript interfaces (14 ServerMessage types)
+├── scripts/                  # Registry CLI, deploy, release gates
 ├── terraform/                # GCP Infrastructure as Code
-├── tests/                    # Backend test suite (212 tests)
+├── tests/                    # Backend test suite (1,478 tests)
+│   └── fixtures/registry/    # Industry templates, companies, products, knowledge
 ├── main.py                   # FastAPI application entry
-├── Dockerfile                # Multi-stage build (Node + Python)
+├── Dockerfile                # Multi-stage build (Node + Python + uv)
 └── seed_data.py              # Firestore data seeding
 ```
 
@@ -345,6 +403,10 @@ Sessions are limited to ~10 minutes. Implemented session resumption with `Sessio
 
 Agent transfers introduce 5-10 seconds of silence. Solved with voice filler instructions ("Let me take a closer look...") baked into the root agent, plus `NON_BLOCKING` tool behavior and `WHEN_IDLE` scheduling for tool results.
 
+### Cloud Build Docker Compatibility
+
+`gcloud run deploy --source` uses legacy Docker (no BuildKit). Multi-stage builds work but `--mount` caches and `COPY --link` do not. Solution: standard `COPY` with `--no-cache` flags and uv for fast Python package installs.
+
 ---
 
 ## What's Next
@@ -354,6 +416,7 @@ Agent transfers introduce 5-10 seconds of silence. Solved with voice filler inst
 - **Multi-language support** — Yoruba, Igbo, and Pidgin English alongside standard English
 - **Mobile-native app** — React Native with on-device AudioWorklet for lower latency
 - **Analytics dashboard** — Real-time session monitoring, conversion funnels, and cost tracking
+- **Payment integration** — In-chat payment collection for trade-in deposits and bookings
 
 ---
 
