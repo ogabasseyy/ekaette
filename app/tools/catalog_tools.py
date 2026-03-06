@@ -213,10 +213,27 @@ def _fallback_products(query: str, category: str | None, max_results: int) -> li
             continue
         if not _product_matches_query(item, query):
             continue
-        products.append(dict(item))
+        products.append(_format_product(dict(item)))
         if len(products) >= safe_max:
             break
     return products
+
+
+def _format_product(product: dict[str, Any]) -> dict[str, Any]:
+    """Format a product for display, flattening storage variants into the price field."""
+    variants = product.get("storage_variants")
+    if not variants or not isinstance(variants, list):
+        return product
+    formatted = dict(product)
+    # Replace flat price with variant breakdown
+    prices = [
+        f"{v['storage']}: ₦{v['price']:,}" for v in variants
+        if isinstance(v, dict) and "storage" in v and "price" in v
+    ]
+    if prices:
+        formatted["price_by_storage"] = " | ".join(prices)
+        formatted["base_price"] = f"₦{product.get('price', 0):,} (base)"
+    return formatted
 
 
 def _safe_max_results(value: Any, *, default: int) -> int:
@@ -280,7 +297,7 @@ async def search_catalog(
                 continue
             if not _product_matches_query(product, query_text):
                 continue
-            products.append(product)
+            products.append(_format_product(product))
             if len(products) >= safe_max:
                 break
 
