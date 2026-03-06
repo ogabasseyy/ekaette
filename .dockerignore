@@ -23,6 +23,7 @@ Thumbs.db
 *.swo
 Ekaette_*.md
 compressed-*.md
+frontend/dist/
 htmlcov/
 .pytest_cache/
 .coverage
