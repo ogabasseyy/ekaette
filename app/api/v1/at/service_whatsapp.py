@@ -385,6 +385,91 @@ def record_inbound_timestamp(
 def reset_service_windows() -> None:
     """Reset service windows (for testing)."""
     _service_windows.clear()
+    _outbound_timestamps.clear()
+    _nudge_sent.clear()
+
+
+# ── Silence Nudge Tracking ──
+
+# Track when Ekaette last replied, so we can nudge if user goes silent.
+_outbound_timestamps: dict[str, float] = {}
+_nudge_sent: dict[str, float] = {}
+
+WA_NUDGE_DELAY_SECONDS = int(os.getenv("WA_NUDGE_DELAY_SECONDS", "120"))
+
+_NUDGE_MESSAGES = [
+    "Still thinking it over? I'm here whenever you're ready — happy to help! 😊",
+    "Just checking in — let me know if you have any questions!",
+    "No rush at all! I'm here if you'd like to continue.",
+]
+
+
+def record_outbound_timestamp(
+    user_phone: str,
+    phone_number_id: str = "",
+    tenant_id: str = "public",
+    company_id: str = "ekaette-electronics",
+) -> None:
+    """Record when Ekaette sent a reply to this user."""
+    key = _window_key(
+        user_phone,
+        phone_number_id or WHATSAPP_PHONE_NUMBER_ID,
+        tenant_id,
+        company_id,
+    )
+    _outbound_timestamps[key] = time.time()
+
+
+def check_needs_nudge(
+    user_phone: str,
+    phone_number_id: str = "",
+    tenant_id: str = "public",
+    company_id: str = "ekaette-electronics",
+) -> bool:
+    """Check if user needs a nudge (outbound is newer than inbound, not already nudged)."""
+    key = _window_key(
+        user_phone,
+        phone_number_id or WHATSAPP_PHONE_NUMBER_ID,
+        tenant_id,
+        company_id,
+    )
+    outbound_ts = _outbound_timestamps.get(key)
+    if outbound_ts is None:
+        return False
+
+    # If already nudged for this outbound, skip
+    nudge_ts = _nudge_sent.get(key)
+    if nudge_ts is not None and nudge_ts >= outbound_ts:
+        return False
+
+    # Check if user replied after the outbound
+    inbound_ts = _service_windows.get(key)
+    if inbound_ts is not None and inbound_ts >= outbound_ts:
+        return False
+
+    return True
+
+
+def mark_nudge_sent(
+    user_phone: str,
+    phone_number_id: str = "",
+    tenant_id: str = "public",
+    company_id: str = "ekaette-electronics",
+) -> None:
+    """Mark that a nudge was sent for this user's current conversation turn."""
+    key = _window_key(
+        user_phone,
+        phone_number_id or WHATSAPP_PHONE_NUMBER_ID,
+        tenant_id,
+        company_id,
+    )
+    _nudge_sent[key] = time.time()
+
+
+def get_nudge_message() -> str:
+    """Return a random, friendly nudge message."""
+    import random
+    return random.choice(_NUDGE_MESSAGES)
 
 
 # ── Template Fallback ──
