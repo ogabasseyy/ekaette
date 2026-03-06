@@ -246,3 +246,51 @@ def validate_booking_slot(data: Any) -> list[str]:
         errors.append("data_tier must be a string if present")
 
     return errors
+
+
+# ═══ Global Lesson Validation ═══
+
+_LESSON_CATEGORIES = frozenset({
+    "vision_behavior",
+    "questionnaire_logic",
+    "greeting",
+    "general",
+    "routing",
+    "tone",
+})
+
+_LESSON_STATUSES = frozenset({"active", "pending_review", "retired"})
+
+
+def validate_global_lesson(data: Any) -> list[str]:
+    """Validate a global lesson document. Returns list of error strings (empty = valid)."""
+    if not isinstance(data, dict):
+        return ["global_lesson must be a dict"]
+
+    errors: list[str] = []
+
+    for field in ("id", "lesson"):
+        value = data.get(field)
+        if not isinstance(value, str) or not value.strip():
+            errors.append(f"missing or empty required string field: {field}")
+
+    category = data.get("category")
+    if not isinstance(category, str) or category not in _LESSON_CATEGORIES:
+        errors.append(
+            f"invalid category: {category!r} (must be one of {sorted(_LESSON_CATEGORIES)})"
+        )
+
+    status = data.get("status")
+    if not isinstance(status, str) or status not in _LESSON_STATUSES:
+        errors.append(
+            f"invalid status: {status!r} (must be one of {sorted(_LESSON_STATUSES)})"
+        )
+
+    applicable_agents = data.get("applicable_agents")
+    if applicable_agents is not None:
+        if not isinstance(applicable_agents, list):
+            errors.append("applicable_agents must be a list if present")
+        elif not all(isinstance(a, str) for a in applicable_agents):
+            errors.append("applicable_agents items must be strings")
+
+    return errors

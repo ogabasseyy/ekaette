@@ -29,6 +29,7 @@ from app.configs.registry_schema import (
     validate_booking_slot,
     validate_capability_overrides,
     validate_company,
+    validate_global_lesson,
     validate_knowledge_entry,
     validate_product,
     validate_template,
@@ -320,6 +321,58 @@ def import_booking_slots(
     return {"written": written, "errors": errors, "operations": operations}
 
 
+# ═══ import-global-lessons ═══
+
+
+def import_global_lessons(
+    db: Any,
+    *,
+    tenant_id: str,
+    company_id: str,
+    lessons: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Validate and write global lesson documents under a company's global_lessons subcollection.
+
+    Returns {"written": int, "errors": list[str], "operations": {...}}.
+    """
+    written = 0
+    errors: list[str] = []
+    operations = _new_write_ops()
+
+    for lesson in lessons:
+        validation_errors = validate_global_lesson(lesson)
+        if validation_errors:
+            lesson_id = lesson.get("id", "<unknown>")
+            errors.append(f"lesson '{lesson_id}': {'; '.join(validation_errors)}")
+            operations["failed"] += 1
+            continue
+
+        lesson_id = lesson["id"]
+        doc_ref = (
+            db.collection("tenants")
+            .document(tenant_id)
+            .collection("companies")
+            .document(company_id)
+            .collection("global_lessons")
+            .document(lesson_id)
+        )
+        normalized_lesson = dict(lesson)
+        existing_doc = doc_ref.get()
+        if getattr(existing_doc, "exists", False):
+            existing_data = existing_doc.to_dict() if hasattr(existing_doc, "to_dict") else {}
+            if existing_data == normalized_lesson:
+                operations["unchanged"] += 1
+                continue
+            op = "updated"
+        else:
+            op = "created"
+        doc_ref.set(normalized_lesson)
+        operations[op] += 1
+        written += 1
+
+    return {"written": written, "errors": errors, "operations": operations}
+
+
 # ═══ purge-demo-data ═══
 
 
@@ -512,12 +565,13 @@ def seed_all(
     Templates are seeded first so that company provisioning can verify references.
     Default path uses the git-tracked ``tests/fixtures/registry`` for reproducibility.
 
-    When ``include_runtime_data=True``, also seeds products, booking_slots, and
-    knowledge entries from their respective subdirectories. Runtime data fixtures
-    should be tagged with ``data_tier: "demo"`` for traceability.
+    When ``include_runtime_data=True``, also seeds products, booking_slots,
+    knowledge entries, and global_lessons from their respective subdirectories.
+    Runtime data fixtures should be tagged with ``data_tier: "demo"`` for traceability.
 
     Returns {"templates": {...}, "companies": {...}, "products": {...},
-             "booking_slots": {...}, "knowledge": {...}, "errors": list[str]}.
+             "booking_slots": {...}, "knowledge": {...}, "global_lessons": {...},
+             "errors": list[str]}.
     """
     root = Path(data_dir)
     errors: list[str] = []
@@ -526,6 +580,7 @@ def seed_all(
     product_ops = _new_write_ops()
     slot_ops = _new_write_ops()
     knowledge_ops = _new_write_ops()
+    lesson_ops = _new_write_ops()
 
     # --- templates ---
     templates_dir = root / "templates"
@@ -615,12 +670,33 @@ def seed_all(
                     knowledge_ops[key] += result["operations"][key]
                 errors.extend(result["errors"])
 
+        # --- global_lessons ---
+        lessons_dir = root / "global_lessons"
+        if lessons_dir.is_dir():
+            for fp in sorted(lessons_dir.glob("*.json")):
+                company_id = fp.stem
+                with open(fp) as f:
+                    lessons = json.load(f)
+                if not isinstance(lessons, list):
+                    lessons = [lessons]
+                tenant_id = _tenant_id_from_company_fixture(root, company_id)
+                result = import_global_lessons(
+                    db,
+                    tenant_id=tenant_id,
+                    company_id=company_id,
+                    lessons=lessons,
+                )
+                for key in lesson_ops:
+                    lesson_ops[key] += result["operations"][key]
+                errors.extend(result["errors"])
+
     return {
         "templates": template_ops,
         "companies": company_ops,
         "products": product_ops,
         "booking_slots": slot_ops,
         "knowledge": knowledge_ops,
+        "global_lessons": lesson_ops,
         "errors": errors,
     }
 
@@ -672,6 +748,12 @@ def _create_parser() -> argparse.ArgumentParser:
     sp.add_argument("--tenant", required=True)
     sp.add_argument("--company", required=True)
     sp.add_argument("--file", required=True, help="JSON file with slot array")
+
+    # import-global-lessons
+    sp = subparsers.add_parser("import-global-lessons", help="Import global lessons")
+    sp.add_argument("--tenant", required=True)
+    sp.add_argument("--company", required=True)
+    sp.add_argument("--file", required=True, help="JSON file with lesson array")
 
     # purge-demo-data
     sp = subparsers.add_parser(
@@ -782,6 +864,19 @@ def main(argv: list[str] | None = None) -> None:
             tenant_id=args.tenant,
             company_id=args.company,
             slots=slots,
+        )
+        print(json.dumps(result, indent=2))
+
+    elif args.command == "import-global-lessons":
+        with open(args.file) as f:
+            lessons = json.load(f)
+        if not isinstance(lessons, list):
+            lessons = [lessons]
+        result = import_global_lessons(
+            db,
+            tenant_id=args.tenant,
+            company_id=args.company,
+            lessons=lessons,
         )
         print(json.dumps(result, indent=2))
 

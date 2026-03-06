@@ -19,6 +19,7 @@ from app.configs.agent_policy import (
     KNOWN_SUB_AGENT_NAMES,
     resolve_enabled_agents_from_state,
 )
+from app.tools.global_lessons import format_lessons_for_instruction
 
 logger = logging.getLogger(__name__)
 
@@ -364,6 +365,16 @@ async def before_model_inject_config(
     if company_line:
         instruction_lines.append(company_line)
         has_runtime_context = True
+
+    # Inject global lessons (Tier 2 learning — cross-session behavioral rules)
+    global_lessons = callback_context.state.get("app:global_lessons")
+    if isinstance(global_lessons, list) and global_lessons:
+        lessons_text = format_lessons_for_instruction(
+            global_lessons, agent_name=callback_context.agent_name,
+        )
+        if lessons_text:
+            instruction_lines.append(lessons_text)
+            has_runtime_context = True
 
     if has_runtime_context:
         instruction_lines.append(
