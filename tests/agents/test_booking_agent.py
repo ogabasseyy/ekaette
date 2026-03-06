@@ -23,5 +23,5 @@ class TestBookingAgentTools:
 
         instruction = booking_agent.instruction.lower()
         assert "delivery quote + checkout flow" in instruction
-        assert "intent priority" in instruction
+        assert "fulfillment preference" in instruction
         assert "booking is optional for completed purchases" in instruction

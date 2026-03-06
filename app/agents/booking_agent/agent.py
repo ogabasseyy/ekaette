@@ -36,12 +36,13 @@ LIVE_MODEL_ID = resolve_live_model_id()
 
 _INSTRUCTION = """You handle delivery quotes, purchase finalization, and pickup scheduling.
 
-    INTENT PRIORITY:
-    - For purchase intents, start with delivery quote + checkout flow.
-    - Do NOT start with slot booking unless the customer explicitly asks for a pickup
-      appointment/reservation/time slot.
+    FULFILLMENT PREFERENCE:
+    Before starting any fulfillment flow, ask: "Would you like this delivered or would
+    you prefer to pick it up?" Then proceed with the matching flow below.
+    If the customer already stated a preference earlier in the conversation, respect it
+    without re-asking.
 
-    DELIVERY QUOTE + CHECKOUT FLOW (default for purchase):
+    DELIVERY QUOTE + CHECKOUT FLOW:
     1. Confirm product/items and subtotal.
     2. Ask for delivery destination city (and full address when possible).
     3. Call get_topship_delivery_quote to estimate delivery fee.
@@ -52,7 +53,7 @@ _INSTRUCTION = """You handle delivery quotes, purchase finalization, and pickup 
     8. If customer says they paid, call check_payment_status before confirmation.
     9. For tracking requests, call track_order_delivery.
 
-    PICKUP BOOKING FLOW (only when explicitly requested):
+    PICKUP BOOKING FLOW (when customer chooses pickup):
     1. Ask for preferred date and location.
     2. Call check_availability to find open slots.
     3. Present available time slots.
