@@ -33,7 +33,7 @@ graph TB
         MW["Mobile Web"]
         PHONE["Phone Call<br/>(&lt;service-number&gt;)"]
         WA_CALL["WhatsApp Call"]
-        WA_MSG["WhatsApp Chat<br/>(Text + Image)"]
+        WA_MSG["WhatsApp Chat<br/>(Text + Image + Video)"]
         SMS_C["SMS"]
     end
 
@@ -79,7 +79,9 @@ graph TB
         end
 
         subgraph "Multi-Agent Hierarchy (ADK)"
-            ROOT["ekaette_router<br/>(Root Agent)<br/>Model: gemini-2.5-flash-native-audio<br/>Real-time voice I/O,<br/>intent detection, agent routing"]
+            ROOT["ekaette_router<br/>(Voice Root Agent)<br/>Model: gemini-2.5-flash-native-audio<br/>Real-time voice I/O,<br/>intent detection, agent routing"]
+
+            TEXT_ROOT["ekaette_router<br/>(Text Root Agent)<br/>Model: gemini-3-flash-preview<br/>WhatsApp/SMS text channels,<br/>text-specific instructions"]
 
             VA["vision_agent<br/>Image/video analysis,<br/>Visual Thinking"]
 
@@ -153,7 +155,7 @@ graph TB
     WA_HOOK --> ADAPTER
     SMS_T --> ADAPTER
     ADAPTER --> RUN_ASYNC
-    RUN_ASYNC --> ROOT
+    RUN_ASYNC --> TEXT_ROOT
 
     SIP_SVR --> CALL_SESS
     CALL_SESS --> CODEC
@@ -167,7 +169,14 @@ graph TB
     ROOT -->|"search/find"| CA
     ROOT -->|"help/FAQ"| SA
 
+    TEXT_ROOT -->|"photo/video"| VA
+    TEXT_ROOT -->|"assess/price"| VLA
+    TEXT_ROOT -->|"book/schedule"| BA
+    TEXT_ROOT -->|"search/find"| CA
+    TEXT_ROOT -->|"help/FAQ"| SA
+
     ROOT -.->|"Live API Bidi"| G25
+    TEXT_ROOT -.->|"Standard API"| G3F
     VA -.->|"Standard API"| G3F
     VLA -.->|"Standard API"| G3F
     BA -.->|"Standard API"| G3F
@@ -206,7 +215,7 @@ graph TB
     class ADMIN_R,ADMIN_S,ADMIN_I admin
     class SESS_INIT,STREAM,ORCH realtime
     class LRQ,RUN_LIVE,RUN_ASYNC,ADAPTER adk
-    class ROOT,VA,VLA,BA,CA,SA agent
+    class ROOT,TEXT_ROOT,VA,VLA,BA,CA,SA agent
     class FS,CS,VAS,GS,MB gcp
     class G25,G3F model
     class SIP_SVR,CALL_SESS,WA_SESS,CODEC sipbridge
@@ -314,8 +323,9 @@ graph LR
 
         LRQ --> RUNNER["Runner.run_live()"]
 
-        TEXT -->|"WhatsApp/SMS<br/>adk_text_adapter"| RUNNER2["Runner.run_async()"]
+        TEXT -->|"WhatsApp/SMS<br/>adk_text_adapter"| RUNNER2["Runner.run_async()<br/>(Text Root Agent,<br/>gemini-3-flash)"]
         IMAGE -->|"WhatsApp image<br/>adk_text_adapter"| RUNNER2
+        VIDEO -->|"WhatsApp video<br/>adk_text_adapter"| RUNNER2
     end
 
     subgraph "Agent Processing"
