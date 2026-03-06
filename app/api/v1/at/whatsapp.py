@@ -297,6 +297,13 @@ async def _process_message(
             mime_type=video_data.get("mime_type", ""),
             caption=video_data.get("caption", ""),
         )
+    elif msg_type == "audio":
+        audio_data = message.get("audio", {})
+        reply = await service_whatsapp.handle_audio_message(
+            from_=from_,
+            media_id=audio_data.get("id", ""),
+            mime_type=audio_data.get("mime_type", ""),
+        )
     elif msg_type == "interactive":
         # Handle button_reply or list_reply
         interactive = message.get("interactive", {})

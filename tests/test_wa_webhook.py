@@ -416,7 +416,7 @@ class TestProcessHandler:
     @patch("app.api.v1.at.providers.whatsapp_send_text", new_callable=AsyncMock)
     @patch("app.api.v1.at.service_whatsapp.handle_unsupported_message_type", new_callable=AsyncMock)
     def test_process_unsupported_type(self, mock_unsupported, mock_send) -> None:
-        mock_unsupported.return_value = "Sorry, I can't process audio messages yet."
+        mock_unsupported.return_value = "Sorry, I can't process document messages yet."
         mock_send.return_value = (200, {})
         app = _build_wa_app_with_oidc_bypass()
         client = TestClient(app)
@@ -424,10 +424,10 @@ class TestProcessHandler:
             "/api/v1/at/whatsapp/process",
             json={
                 "message": {
-                    "id": "wamid.audio1",
+                    "id": "wamid.doc1",
                     "from": "234",
-                    "type": "audio",
-                    "audio": {"id": "media_a"},
+                    "type": "document",
+                    "document": {"id": "media_d"},
                 },
                 "phone_number_id": "test",
             },

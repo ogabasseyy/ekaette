@@ -39,11 +39,11 @@ logger = logging.getLogger(__name__)
 WA_MAX_CHARS = 4096
 
 # Supported inbound types for AI processing
-SUPPORTED_MESSAGE_TYPES = {"text", "image", "video", "interactive"}
+SUPPORTED_MESSAGE_TYPES = {"text", "image", "video", "audio", "interactive"}
 
 # Unsupported types that get a polite reply (no AI processing)
 UNSUPPORTED_MESSAGE_TYPES = {
-    "audio", "document", "location", "contacts", "reaction", "sticker",
+    "document", "location", "contacts", "reaction", "sticker",
 }
 
 
@@ -154,6 +154,31 @@ async def handle_video_message(
         mime_type=mime_type,
         default_mime="video/mp4",
         caption=caption,
+        tenant_id=tenant_id,
+        company_id=company_id,
+    )
+
+
+async def handle_audio_message(
+    *,
+    from_: str,
+    media_id: str,
+    mime_type: str = "",
+    tenant_id: str = "public",
+    company_id: str = "ekaette-electronics",
+) -> str:
+    """Download voice note → route through ADK agent graph → reply text.
+
+    Gemini 2.5-pro natively understands audio — no separate transcription
+    step needed. The model processes the audio inline and responds directly.
+    """
+    return await _handle_media_message(
+        from_=from_,
+        media_id=media_id,
+        media_type="audio",
+        mime_type=mime_type,
+        default_mime="audio/ogg",
+        caption="",
         tenant_id=tenant_id,
         company_id=company_id,
     )
