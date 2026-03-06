@@ -36,13 +36,13 @@ def test_get_live_model_candidates_falls_back_to_default(monkeypatch):
 # ─── Text model resolver ───
 
 
-def test_resolve_text_model_defaults_to_2_5_flash(monkeypatch):
+def test_resolve_text_model_defaults_to_2_5_pro(monkeypatch):
     from app.configs.model_resolver import DEFAULT_TEXT_MODEL_ID, resolve_text_model_id
 
     monkeypatch.delenv("TEXT_MODEL_ID", raising=False)
     result = resolve_text_model_id()
     assert result == DEFAULT_TEXT_MODEL_ID
-    assert result == "gemini-2.5-flash"
+    assert result == "gemini-2.5-pro"
 
 
 def test_resolve_text_model_reads_env(monkeypatch):

@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 
 DEFAULT_LIVE_MODEL_ID = "gemini-2.5-flash-native-audio-preview-12-2025"
-DEFAULT_TEXT_MODEL_ID = "gemini-2.5-flash"
+DEFAULT_TEXT_MODEL_ID = "gemini-2.5-pro"
 DEFAULT_TEXT_FALLBACK_MODEL_ID = "gemini-2.5-flash"
 DEFAULT_VISION_MODEL_ID = "gemini-2.5-pro"
 
