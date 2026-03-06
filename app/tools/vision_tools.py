@@ -23,10 +23,11 @@ from google.genai import types
 from pydantic import BaseModel, Field
 
 from app.configs import sanitize_log
+from app.configs.model_resolver import resolve_vision_model_id
 
 logger = logging.getLogger(__name__)
 
-VISION_MODEL = os.getenv("VISION_MODEL", "gemini-3-flash-preview")
+VISION_MODEL = resolve_vision_model_id()
 MEDIA_BUCKET = os.getenv("MEDIA_BUCKET", "")
 
 _genai_client: genai.Client | None = None

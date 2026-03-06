@@ -5,8 +5,9 @@ from __future__ import annotations
 import os
 
 DEFAULT_LIVE_MODEL_ID = "gemini-2.5-flash-native-audio-preview-12-2025"
-DEFAULT_TEXT_MODEL_ID = "gemini-3-flash-preview"
+DEFAULT_TEXT_MODEL_ID = "gemini-2.5-flash"
 DEFAULT_TEXT_FALLBACK_MODEL_ID = "gemini-2.5-flash"
+DEFAULT_VISION_MODEL_ID = "gemini-2.5-pro"
 
 
 def _env_flag(name: str, default: str = "false") -> bool:
@@ -40,6 +41,11 @@ def resolve_text_model_id() -> str:
 def resolve_text_fallback_model_id() -> str:
     """Resolve fallback model for text channels when primary is unavailable."""
     return os.getenv("TEXT_FALLBACK_MODEL_ID", DEFAULT_TEXT_FALLBACK_MODEL_ID).strip() or DEFAULT_TEXT_FALLBACK_MODEL_ID
+
+
+def resolve_vision_model_id() -> str:
+    """Resolve the model for vision/analysis tools (image grading, device ID)."""
+    return os.getenv("VISION_MODEL", DEFAULT_VISION_MODEL_ID).strip() or DEFAULT_VISION_MODEL_ID
 
 
 def get_live_model_candidates() -> list[str]:
