@@ -20,7 +20,7 @@ class TestHandleTextMessageADK:
 
         with patch(
             "app.api.v1.at.service_whatsapp._get_adk_runner_and_service",
-            return_value=(MagicMock(), MagicMock(), "ekaette"),
+            return_value=(MagicMock(), MagicMock(), "ekaette", None, ""),
         ), patch(
             "app.channels.adk_text_adapter.send_text_message",
             new_callable=AsyncMock,
@@ -41,7 +41,7 @@ class TestHandleTextMessageADK:
 
         with patch(
             "app.api.v1.at.service_whatsapp._get_adk_runner_and_service",
-            return_value=(None, None, None),
+            return_value=(None, None, None, None, ""),
         ), patch(
             "app.api.v1.at.bridge_text.query_text",
             new_callable=AsyncMock,
@@ -72,7 +72,7 @@ class TestHandleImageMessageADK:
 
         with patch(
             "app.api.v1.at.service_whatsapp._get_adk_runner_and_service",
-            return_value=(MagicMock(), MagicMock(), "ekaette"),
+            return_value=(MagicMock(), MagicMock(), "ekaette", None, ""),
         ), patch(
             "app.channels.adk_text_adapter.send_media_message",
             new_callable=AsyncMock,
@@ -99,7 +99,7 @@ class TestHandleImageMessageADK:
 
         with patch(
             "app.api.v1.at.service_whatsapp._get_adk_runner_and_service",
-            return_value=(None, None, None),
+            return_value=(None, None, None, None, ""),
         ), patch(
             "app.api.v1.at.providers.whatsapp_download_media",
             new_callable=AsyncMock,
@@ -134,7 +134,7 @@ class TestHandleVideoMessageADK:
 
         with patch(
             "app.api.v1.at.service_whatsapp._get_adk_runner_and_service",
-            return_value=(MagicMock(), MagicMock(), "ekaette"),
+            return_value=(MagicMock(), MagicMock(), "ekaette", None, ""),
         ), patch(
             "app.channels.adk_text_adapter.send_media_message",
             new_callable=AsyncMock,
@@ -164,7 +164,7 @@ class TestHandleVideoMessageADK:
 
         with patch(
             "app.api.v1.at.service_whatsapp._get_adk_runner_and_service",
-            return_value=(None, None, None),
+            return_value=(None, None, None, None, ""),
         ), patch(
             "app.api.v1.at.providers.whatsapp_download_media",
             new_callable=AsyncMock,
@@ -193,11 +193,74 @@ class TestHandleVideoMessageADK:
         assert "video" not in UNSUPPORTED_MESSAGE_TYPES
 
 
+class TestModelOverloadedFallback:
+    """Test automatic fallback when primary model returns 503."""
+
+    @pytest.mark.asyncio
+    async def test_text_falls_back_on_model_overloaded(self):
+        """When primary runner raises ModelOverloadedError, fallback runner succeeds."""
+        from app.channels.adk_text_adapter import (
+            ModelOverloadedError,
+            send_text_message,
+        )
+
+        # Primary runner raises overloaded; fallback runner succeeds
+        mock_run_collect = AsyncMock(
+            side_effect=[ModelOverloadedError("503"), "Fallback reply from 2.5-flash"]
+        )
+        mock_ensure = AsyncMock(return_value="session-abc")
+
+        with patch(
+            "app.channels.adk_text_adapter._run_and_collect_text", mock_run_collect,
+        ), patch(
+            "app.channels.adk_text_adapter._ensure_session", mock_ensure,
+        ):
+            result = await send_text_message(
+                runner=MagicMock(),
+                session_service=MagicMock(),
+                app_name="ekaette_text",
+                user_id="wa_2348001234567",
+                message_text="Hello",
+                fallback_runner=MagicMock(),
+                fallback_app_name="ekaette_text_fallback",
+            )
+
+        assert result["text"] == "Fallback reply from 2.5-flash"
+        assert mock_run_collect.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_text_returns_default_when_overloaded_and_no_fallback(self):
+        """When primary raises ModelOverloadedError and no fallback, returns default."""
+        from app.channels.adk_text_adapter import (
+            ModelOverloadedError,
+            _DEFAULT_FALLBACK,
+            send_text_message,
+        )
+
+        mock_run_collect = AsyncMock(side_effect=ModelOverloadedError("503"))
+        mock_ensure = AsyncMock(return_value="session-abc")
+
+        with patch(
+            "app.channels.adk_text_adapter._run_and_collect_text", mock_run_collect,
+        ), patch(
+            "app.channels.adk_text_adapter._ensure_session", mock_ensure,
+        ):
+            result = await send_text_message(
+                runner=MagicMock(),
+                session_service=MagicMock(),
+                app_name="ekaette_text",
+                user_id="wa_2348001234567",
+                message_text="Hello",
+            )
+
+        assert result["text"] == _DEFAULT_FALLBACK
+
+
 class TestGetADKRunnerAndService:
     """Test the runner/service accessor."""
 
     def test_returns_none_tuple_when_runner_absent(self):
-        """When main.py has no runner attribute, returns (None, None, None)."""
+        """When main.py has no runner attribute, returns (None, None, None, None, "")."""
         from app.api.v1.at.service_whatsapp import _get_adk_runner_and_service
 
         # Simulate main module without runner initialized
@@ -205,4 +268,4 @@ class TestGetADKRunnerAndService:
         with patch.dict("sys.modules", {"main": fake_main}):
             result = _get_adk_runner_and_service()
         assert isinstance(result, tuple)
-        assert result == (None, None, None)
+        assert result == (None, None, None, None, "")

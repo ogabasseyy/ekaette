@@ -23,6 +23,7 @@ import logging
 from typing import Any
 
 from google.genai import types
+from google.genai.errors import APIError, ServerError
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +36,12 @@ CHANNEL_LIMITS: dict[str, dict[str, int]] = {
 }
 
 _DEFAULT_FALLBACK = "Thanks for your message. How can I help you today?"
+
+
+class ModelOverloadedError(Exception):
+    """Raised when the model returns 503/overloaded so callers can retry with fallback."""
+
+
 _DEFAULT_MEDIA_PROMPTS: dict[str, str] = {
     "image": "The customer sent this image. Analyze it and respond helpfully.",
     "video": "The customer sent a video of their device. Analyze the video and respond helpfully.",
@@ -76,18 +83,13 @@ async def send_text_message(
     channel: str = "whatsapp",
     tenant_id: str = "public",
     company_id: str = "ekaette-electronics",
+    fallback_runner: Any = None,
+    fallback_app_name: str = "",
 ) -> dict[str, Any]:
     """Send a text message through the ADK agent graph and collect the response.
 
-    Args:
-        runner: ADK Runner instance.
-        session_service: ADK session service for get/create sessions.
-        app_name: ADK app name (e.g. "ekaette").
-        user_id: Channel-specific user identifier (e.g. phone number).
-        message_text: The user's text message.
-        channel: Channel name ("whatsapp", "sms", etc.).
-        tenant_id: Multi-tenant scoping.
-        company_id: Company scoping.
+    If the primary runner's model is overloaded (503), automatically retries
+    with fallback_runner when provided.
 
     Returns:
         Dict with text, session_id, channel keys.
@@ -108,12 +110,34 @@ async def send_text_message(
         role="user",
     )
 
-    text = await _run_and_collect_text(
-        runner=runner,
-        user_id=user_id,
-        session_id=session_id,
-        new_message=content,
-    )
+    try:
+        text = await _run_and_collect_text(
+            runner=runner,
+            user_id=user_id,
+            session_id=session_id,
+            new_message=content,
+        )
+    except ModelOverloadedError:
+        if fallback_runner is not None:
+            logger.info("Retrying with fallback text runner")
+            fb_session_id = derive_session_id(channel, user_id)
+            fb_app = fallback_app_name or f"{app_name}_fallback"
+            fb_session_id = await _ensure_session(
+                session_service=session_service,
+                app_name=fb_app,
+                user_id=user_id,
+                session_id=fb_session_id,
+                tenant_id=tenant_id,
+                company_id=company_id,
+            )
+            text = await _run_and_collect_text(
+                runner=fallback_runner,
+                user_id=user_id,
+                session_id=fb_session_id,
+                new_message=content,
+            )
+        else:
+            text = _DEFAULT_FALLBACK
 
     limit = CHANNEL_LIMITS.get(channel, CHANNEL_LIMITS["default"])["max_chars"]
 
@@ -139,24 +163,14 @@ async def send_media_message(
     channel: str = "whatsapp",
     tenant_id: str = "public",
     company_id: str = "ekaette-electronics",
+    fallback_runner: Any = None,
+    fallback_app_name: str = "",
 ) -> dict[str, Any]:
     """Send image or video through the ADK agent graph and collect the response.
 
-    Media is packaged as inline data in the Content message alongside
-    the caption (or a context-aware default prompt). Gemini 3 handles
-    both image and video natively via inline_data.
-
-    Args:
-        runner: ADK Runner instance.
-        session_service: ADK session service.
-        app_name: ADK app name.
-        user_id: Channel-specific user identifier.
-        media_bytes: Raw media data (image or video).
-        mime_type: Media MIME type (e.g. image/jpeg, video/mp4).
-        caption: Optional user caption/instruction.
-        channel: Channel name.
-        tenant_id: Multi-tenant scoping.
-        company_id: Company scoping.
+    If the primary runner's model is overloaded (503), automatically retries
+    with fallback_runner when provided. Both gemini-3-flash and gemini-2.5-flash
+    support image and video via inline_data.
 
     Returns:
         Dict with text, session_id, channel keys.
@@ -207,12 +221,34 @@ async def send_media_message(
         role="user",
     )
 
-    text = await _run_and_collect_text(
-        runner=runner,
-        user_id=user_id,
-        session_id=session_id,
-        new_message=content,
-    )
+    try:
+        text = await _run_and_collect_text(
+            runner=runner,
+            user_id=user_id,
+            session_id=session_id,
+            new_message=content,
+        )
+    except ModelOverloadedError:
+        if fallback_runner is not None:
+            logger.info("Retrying media with fallback text runner")
+            fb_session_id = derive_session_id(channel, user_id)
+            fb_app = fallback_app_name or f"{app_name}_fallback"
+            fb_session_id = await _ensure_session(
+                session_service=session_service,
+                app_name=fb_app,
+                user_id=user_id,
+                session_id=fb_session_id,
+                tenant_id=tenant_id,
+                company_id=company_id,
+            )
+            text = await _run_and_collect_text(
+                runner=fallback_runner,
+                user_id=user_id,
+                session_id=fb_session_id,
+                new_message=content,
+            )
+        else:
+            text = _DEFAULT_FALLBACK
 
     limit = CHANNEL_LIMITS.get(channel, CHANNEL_LIMITS["default"])["max_chars"]
 
@@ -347,6 +383,12 @@ async def _run_and_collect_text(
                 if getattr(part, "text", None):
                     text_parts.append(part.text)
 
+    except ServerError as exc:
+        logger.warning("Model overloaded, eligible for fallback: %s", exc)
+        raise ModelOverloadedError(str(exc)) from exc
+    except APIError as exc:
+        logger.error("ADK runner API error: %s", exc, exc_info=True)
+        return _DEFAULT_FALLBACK
     except Exception as exc:
         logger.error("ADK runner error: %s", exc, exc_info=True)
         return _DEFAULT_FALLBACK

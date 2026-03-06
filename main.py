@@ -25,7 +25,7 @@ from pydantic import BaseModel, ConfigDict, Field
 load_dotenv()
 
 from app.agents.ekaette_router.agent import create_ekaette_router, ekaette_router  # noqa: E402
-from app.configs.model_resolver import resolve_text_model_id  # noqa: E402
+from app.configs.model_resolver import resolve_text_model_id, resolve_text_fallback_model_id  # noqa: E402
 from app.agents.tool_scheduling import install_tool_response_scheduling_patch  # noqa: E402
 from app.api.v1.admin import admin_router  # noqa: E402
 from app.api.v1.at import at_router  # noqa: E402
@@ -88,6 +88,7 @@ company_config_client = None
 memory_service = None
 runner = None
 text_runner = None
+text_fallback_runner = None
 TOKEN_CLIENT = None
 _runtime_wiring_state = {"public": False, "realtime": False}
 
@@ -97,7 +98,7 @@ def _ensure_singletons_initialized() -> None:
 
     Called both at module level (test-safe fallback) and in the ASGI lifespan.
     """
-    global session_service, industry_config_client, company_config_client, memory_service, runner, text_runner
+    global session_service, industry_config_client, company_config_client, memory_service, runner, text_runner, text_fallback_runner
 
     if session_service is None:
         session_service = create_session_service()
@@ -123,6 +124,16 @@ def _ensure_singletons_initialized() -> None:
             session_service=session_service,
             memory_service=memory_service,
         )
+    if text_fallback_runner is None:
+        fallback_model = resolve_text_fallback_model_id()
+        if fallback_model != resolve_text_model_id():
+            fb_router = create_ekaette_router(model=fallback_model, channel="text")
+            fb_app = create_adk_app(name=f"{SESSION_APP_NAME}_text_fallback", root_agent=fb_router)
+            text_fallback_runner = Runner(
+                app=fb_app,
+                session_service=session_service,
+                memory_service=memory_service,
+            )
     sync_admin_runtime_clients(
         industry_client=industry_config_client,
         company_client=company_config_client,
@@ -131,7 +142,7 @@ def _ensure_singletons_initialized() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global session_service, industry_config_client, company_config_client, memory_service, runner, text_runner, TOKEN_CLIENT
+    global session_service, industry_config_client, company_config_client, memory_service, runner, text_runner, text_fallback_runner, TOKEN_CLIENT
 
     _ensure_singletons_initialized()
     app.state.session_service = session_service
@@ -140,6 +151,7 @@ async def lifespan(app: FastAPI):
     app.state.memory_service = memory_service
     app.state.runner = runner
     app.state.text_runner = text_runner
+    app.state.text_fallback_runner = text_fallback_runner
     app.state.token_client = TOKEN_CLIENT
     # Prime runtime wiring at startup when sync mode resolves to startup.
     _sync_public_runtime()
