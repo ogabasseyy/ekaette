@@ -231,8 +231,9 @@ def _format_product(product: dict[str, Any]) -> dict[str, Any]:
         if isinstance(v, dict) and "storage" in v and "price" in v
     ]
     if prices:
-        formatted["price_by_storage"] = " | ".join(prices)
-        formatted["base_price"] = f"₦{product.get('price', 0):,} (base)"
+        formatted["price"] = " | ".join(prices)
+        # Remove raw numeric price and variants to avoid model picking the flat number
+        formatted.pop("storage_variants", None)
     return formatted
 
 
