@@ -1,0 +1,54 @@
+graph TB
+    subgraph "Frontend — React 19 + Vite 7 + Tailwind v4"
+        UI["Web UI"]
+        WS["WebSocket Client"]
+        MIC["Microphone / Camera"]
+    end
+
+    subgraph "WhatsApp Channel"
+        WA["WhatsApp Business API"]
+        TTS["Gemini TTS"]
+    end
+
+    subgraph "Backend — FastAPI + Python 3.13"
+        GW["API Gateway"]
+        subgraph "Google ADK 1.25.1"
+            ROOT["ekaette_router<br/>(Gemini 2.5 Flash Native Audio)"]
+            VA["vision_agent<br/>(Gemini 3 Flash)"]
+            VLA["valuation_agent"]
+            BA["booking_agent"]
+            CA["catalog_agent"]
+            SA["support_agent"]
+        end
+        TR["Text Runner<br/>(WhatsApp + fallback)"]
+    end
+
+    subgraph "Google Cloud"
+        LIVE["Gemini Live API"]
+        G3F["Gemini 3 Flash<br/>(Standard API)"]
+        FS["Firestore"]
+        CS["Cloud Storage"]
+        MB["Memory Bank"]
+        CT["Cloud Tasks"]
+    end
+
+    UI --> WS
+    MIC --> WS
+    WS -->|"WSS"| GW
+    WA -->|"Webhook"| GW
+    GW --> ROOT
+    GW --> TR
+    TR --> ROOT
+    ROOT -->|"photo"| VA
+    ROOT -->|"price"| VLA
+    ROOT -->|"book"| BA
+    ROOT -->|"search"| CA
+    ROOT -->|"help"| SA
+    ROOT -.->|"Bidi Audio"| LIVE
+    VA -.->|"Vision"| G3F
+    ROOT --> FS
+    VA --> CS
+    ROOT -->|"Memory"| MB
+    TR -->|"Voice reply"| TTS
+    TTS -->|"Audio"| WA
+    CT -->|"Nudge"| WA
