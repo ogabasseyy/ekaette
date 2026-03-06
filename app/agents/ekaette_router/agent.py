@@ -89,7 +89,7 @@ def _check_for_global_lessons(callback_context: CallbackContext) -> None:
     """Scan recent user messages for behavioral corrections and submit as global lessons.
 
     Only processes messages since the last check (cursor-based).
-    Non-blocking — failures are logged and swallowed.
+    Runs synchronously but scheduled via asyncio.create_task in the caller.
     """
     state = callback_context.state
     events = list(getattr(callback_context.session, "events", None) or [])
@@ -103,7 +103,16 @@ def _check_for_global_lessons(callback_context: CallbackContext) -> None:
     tenant_id = state.get("app:tenant_id")
     company_id = state.get("app:company_id")
     if not isinstance(tenant_id, str) or not isinstance(company_id, str):
+        state["temp:lesson_check_cursor"] = len(events)
         return
+
+    # Resolve Firestore client once before the loop
+    try:
+        from app.api.v1.admin import shared as admin_shared
+
+        db = admin_shared.company_config_client or admin_shared.industry_config_client
+    except Exception:
+        db = None
 
     # Scan recent user messages for global corrections
     for event in events[cursor:]:
@@ -123,16 +132,18 @@ def _check_for_global_lessons(callback_context: CallbackContext) -> None:
         if not text or len(text) < 20:
             continue
 
-        scope = classify_lesson_scope(text)
+        try:
+            scope = classify_lesson_scope(text)
+        except Exception as exc:
+            logger.debug("Lesson scope classification failed: %s", exc)
+            continue
+
         if scope != "global":
             continue
 
         # Found a global correction — submit as pending_review
-        try:
-            from app.api.v1.admin import shared as admin_shared
-
-            db = admin_shared.company_config_client or admin_shared.industry_config_client
-            if db is not None:
+        if db is not None:
+            try:
                 submit_global_lesson(
                     db,
                     tenant_id=tenant_id,
@@ -142,10 +153,17 @@ def _check_for_global_lessons(callback_context: CallbackContext) -> None:
                     source="customer_feedback",
                 )
                 logger.info("Global lesson candidate submitted from user feedback")
-        except Exception as exc:
-            logger.debug("Global lesson submission failed: %s", exc)
+            except Exception as exc:
+                logger.debug("Global lesson submission failed: %s", exc)
 
     state["temp:lesson_check_cursor"] = len(events)
+
+
+def _log_lesson_check_result(task: asyncio.Task) -> None:
+    try:
+        task.result()
+    except Exception as exc:
+        logger.debug("Global lesson check task failed: %s", exc)
 
 
 async def save_session_and_telemetry_callback(callback_context: CallbackContext):
@@ -165,11 +183,11 @@ async def save_session_and_telemetry_callback(callback_context: CallbackContext)
     except Exception as exc:
         logger.debug("Memory save scheduling failed (non-blocking): %s", exc)
 
-    # Global lesson extraction (non-blocking, background)
-    try:
-        _check_for_global_lessons(callback_context)
-    except Exception as exc:
-        logger.debug("Global lesson check failed (non-blocking): %s", exc)
+    # Global lesson extraction (background task — never blocks audio)
+    task = asyncio.create_task(
+        asyncio.to_thread(_check_for_global_lessons, callback_context)
+    )
+    task.add_done_callback(_log_lesson_check_result)
     return None
 
 
