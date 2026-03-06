@@ -23,6 +23,7 @@ from app.agents.callbacks import (
     on_tool_error_emit,
 )
 from app.agents.dedup import telemetry_after_agent
+from app.tools.global_lessons import classify_lesson_scope, submit_global_lesson
 from app.configs.model_resolver import resolve_live_model_id
 from app.agents.vision_agent.agent import create_vision_agent
 from app.agents.valuation_agent.agent import create_valuation_agent
@@ -84,6 +85,69 @@ def _schedule_memory_save(callback_context: CallbackContext) -> None:
     task.add_done_callback(_log_background_task_result)
 
 
+def _check_for_global_lessons(callback_context: CallbackContext) -> None:
+    """Scan recent user messages for behavioral corrections and submit as global lessons.
+
+    Only processes messages since the last check (cursor-based).
+    Non-blocking — failures are logged and swallowed.
+    """
+    state = callback_context.state
+    events = list(getattr(callback_context.session, "events", None) or [])
+    if not events:
+        return
+
+    cursor = _state_int(state, "temp:lesson_check_cursor", 0)
+    if cursor >= len(events):
+        return
+
+    tenant_id = state.get("app:tenant_id")
+    company_id = state.get("app:company_id")
+    if not isinstance(tenant_id, str) or not isinstance(company_id, str):
+        return
+
+    # Scan recent user messages for global corrections
+    for event in events[cursor:]:
+        author = getattr(event, "author", None)
+        if author != "user":
+            continue
+        content = getattr(event, "content", None)
+        if content is None:
+            continue
+        parts = getattr(content, "parts", None)
+        if not parts:
+            continue
+        text = " ".join(
+            getattr(part, "text", "") for part in parts
+            if getattr(part, "text", None)
+        ).strip()
+        if not text or len(text) < 20:
+            continue
+
+        scope = classify_lesson_scope(text)
+        if scope != "global":
+            continue
+
+        # Found a global correction — submit as pending_review
+        try:
+            from app.api.v1.admin import shared as admin_shared
+
+            db = admin_shared.company_config_client or admin_shared.industry_config_client
+            if db is not None:
+                submit_global_lesson(
+                    db,
+                    tenant_id=tenant_id,
+                    company_id=company_id,
+                    lesson_text=text,
+                    category="general",
+                    source="customer_feedback",
+                )
+                logger.info("Global lesson candidate submitted from user feedback")
+        except Exception as exc:
+            logger.debug("Global lesson submission failed: %s", exc)
+
+    state["temp:lesson_check_cursor"] = len(events)
+
+
 async def save_session_and_telemetry_callback(callback_context: CallbackContext):
     """Save conversation insights to Memory Bank + log token telemetry.
 
@@ -100,6 +164,12 @@ async def save_session_and_telemetry_callback(callback_context: CallbackContext)
         _schedule_memory_save(callback_context)
     except Exception as exc:
         logger.debug("Memory save scheduling failed (non-blocking): %s", exc)
+
+    # Global lesson extraction (non-blocking, background)
+    try:
+        _check_for_global_lessons(callback_context)
+    except Exception as exc:
+        logger.debug("Global lesson check failed (non-blocking): %s", exc)
     return None
 
 

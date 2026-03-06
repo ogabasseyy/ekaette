@@ -290,6 +290,18 @@ async def _ensure_session(
                 version = getattr(registry_config, "registry_version", None)
                 if version:
                     initial_state["app:registry_version"] = version
+
+            # Load global lessons (Tier 2 learning)
+            try:
+                from app.tools.global_lessons import load_global_lessons
+
+                global_lessons = load_global_lessons(
+                    db, tenant_id=tenant_id, company_id=company_id,
+                )
+                if global_lessons:
+                    initial_state["app:global_lessons"] = global_lessons
+            except Exception as exc:
+                logger.debug("Global lessons load skipped: %s", exc)
     except Exception as exc:
         logger.debug("Registry state bootstrap skipped: %s", exc)
 

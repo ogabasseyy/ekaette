@@ -20,6 +20,7 @@ tenants/{tenantId}/companies/{companyId}/knowledge/{id}
 tenants/{tenantId}/companies/{companyId}/products/{id}
 tenants/{tenantId}/companies/{companyId}/booking_slots/{id}
 tenants/{tenantId}/companies/{companyId}/bookings/{id}
+tenants/{tenantId}/companies/{companyId}/global_lessons/{id}
 ```
 
 ---
@@ -361,15 +362,18 @@ graph LR
     end
 
     subgraph "Learning Layer"
-        FS -->|"after_agent_callback<br/>(async)"| MB2["Memory Bank"]
+        FS -->|"after_agent_callback<br/>(async)"| MB2["Memory Bank<br/>(per-user)"]
         MB2 -->|"PreloadMemoryTool<br/>(each turn start)"| ROOT
         MB2 -->|"PreloadMemoryTool<br/>(each turn start)"| TEXT_ROOT
+        FS -->|"classify_lesson_scope<br/>(async)"| GL["Global Lessons<br/>(per-company, Firestore)"]
+        GL -->|"before_model_callback<br/>(LEARNED BEHAVIORS)"| ROOT
+        GL -->|"before_model_callback<br/>(LEARNED BEHAVIORS)"| TEXT_ROOT
     end
 ```
 
 ---
 
-## Session and Memory Architecture (3-Tier)
+## Session and Memory Architecture (4-Tier)
 
 ```mermaid
 graph TB
@@ -393,7 +397,14 @@ graph TB
         SCOPE["Scoped per user_id<br/>Data isolation, TTL expiration,<br/>memory revisions"]
     end
 
-    subgraph "Tier 3: Industry Knowledge (registry-driven)"
+    subgraph "Tier 3: Global Lessons (cross-session learning)"
+        GLESSONS["Firestore Global Lessons<br/>(per tenant/company)"]
+        CLASSIFY["Lesson Classifier<br/>User-specific vs. global<br/>(keyword heuristics)"]
+        INJECT["before_model_callback<br/>Inject LEARNED BEHAVIORS<br/>into system instruction"]
+        EXTRACT["Lesson Extractor<br/>after_agent_callback<br/>(async, non-blocking)"]
+    end
+
+    subgraph "Tier 4: Industry Knowledge (registry-driven)"
         TEMPLATES["Firestore Templates<br/>Capabilities, voice personas,<br/>default config per industry"]
         COMPANIES["Firestore Companies<br/>Company profile, knowledge base,<br/>products + booking slots"]
         VASEARCH["Vertex AI Search<br/>Product catalog index,<br/>multimodal search"]

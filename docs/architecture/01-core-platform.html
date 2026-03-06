@@ -355,15 +355,18 @@ graph LR
     end
 
     subgraph "Learning Layer"
-        FS -->|"after_agent_callback<br/>(async)"| MB2["Memory Bank"]
+        FS -->|"after_agent_callback<br/>(async)"| MB2["Memory Bank<br/>(per-user)"]
         MB2 -->|"PreloadMemoryTool<br/>(each turn start)"| ROOT
         MB2 -->|"PreloadMemoryTool<br/>(each turn start)"| TEXT_ROOT
+        FS -->|"classify_lesson_scope<br/>(async)"| GL["Global Lessons<br/>(per-company, Firestore)"]
+        GL -->|"before_model_callback<br/>(LEARNED BEHAVIORS)"| ROOT
+        GL -->|"before_model_callback<br/>(LEARNED BEHAVIORS)"| TEXT_ROOT
     end
         </pre>
     </div>
 
     <hr>
-    <h2>4. Session and Memory Architecture (3-Tier)</h2>
+    <h2>4. Session and Memory Architecture (4-Tier)</h2>
     <div class="diagram-container">
         <pre class="mermaid">
 graph TB
@@ -386,7 +389,14 @@ graph TB
         SCOPE["Scoped per user_id<br/>Data isolation, TTL expiration"]
     end
 
-    subgraph "Tier 3: Industry Knowledge (registry-driven)"
+    subgraph "Tier 3: Global Lessons (cross-session learning)"
+        GLESSONS["Firestore Global Lessons<br/>(per tenant/company)"]
+        CLASSIFY["Lesson Classifier<br/>User-specific vs. global"]
+        INJECT["before_model_callback<br/>Inject LEARNED BEHAVIORS"]
+        EXTRACT["Lesson Extractor<br/>after_agent_callback (async)"]
+    end
+
+    subgraph "Tier 4: Industry Knowledge (registry-driven)"
         TEMPLATES["Firestore Templates<br/>Capabilities, voice personas"]
         COMPANIES["Firestore Companies<br/>Profile, knowledge, products"]
         VASEARCH["Vertex AI Search<br/>Product catalog index"]

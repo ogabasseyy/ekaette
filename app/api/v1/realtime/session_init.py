@@ -396,6 +396,21 @@ async def initialize_session(
         )
         if registry_config is not None:
             initial_state.update(canonical_state_updates_from_registry_fn(registry_config))
+
+        # Load global lessons (Tier 2 learning — cross-session behavioral rules)
+        try:
+            from app.tools.global_lessons import load_global_lessons
+
+            db = company_config_client_obj or industry_config_client_obj
+            if db is not None:
+                global_lessons = load_global_lessons(
+                    db, tenant_id=tenant_id, company_id=company_id,
+                )
+                if global_lessons:
+                    initial_state["app:global_lessons"] = global_lessons
+        except Exception as exc:
+            logger.debug("Global lessons load skipped: %s", exc)
+
         create_kwargs: dict[str, object] = {
             "app_name": session_app_name,
             "user_id": user_id,

@@ -1,0 +1,47 @@
+[
+  {
+    "id": "skip-power-question-if-visible",
+    "lesson": "If the vision analysis or video clearly shows the device is powered on and displaying content, do not ask the customer whether the device powers on. The camera already confirmed it.",
+    "category": "questionnaire_logic",
+    "applicable_agents": ["valuation_agent", "ekaette_router"],
+    "status": "active",
+    "source": "admin",
+    "trigger_count": 0
+  },
+  {
+    "id": "suggest-video-for-assessment",
+    "lesson": "When asking customers to send media of their device for assessment, always suggest video as the preferred option alongside photos. Videos capture multiple angles and reveal defects that single photos miss.",
+    "category": "vision_behavior",
+    "applicable_agents": ["ekaette_router", "vision_agent"],
+    "status": "active",
+    "source": "admin",
+    "trigger_count": 0
+  },
+  {
+    "id": "no-internal-transfer-language",
+    "lesson": "Never mention internal system details like agent names, transfers, or routing to the customer. Say 'Let me check that for you' instead of 'I will transfer you to the valuation agent'.",
+    "category": "tone",
+    "applicable_agents": ["*"],
+    "status": "active",
+    "source": "admin",
+    "trigger_count": 0
+  },
+  {
+    "id": "narrate-visible-condition",
+    "lesson": "When the device condition is clearly visible in photos or video (e.g., cracked screen, pristine body), narrate what you see before asking diagnostic questions. Customers feel heard when the agent acknowledges what is obvious.",
+    "category": "vision_behavior",
+    "applicable_agents": ["vision_agent", "valuation_agent"],
+    "status": "active",
+    "source": "admin",
+    "trigger_count": 0
+  },
+  {
+    "id": "battery-health-from-video",
+    "lesson": "If the customer's video or photo shows the battery health screen (Settings > Battery > Battery Health), read the percentage directly from the image instead of asking the customer to check it manually.",
+    "category": "questionnaire_logic",
+    "applicable_agents": ["valuation_agent", "vision_agent"],
+    "status": "active",
+    "source": "admin",
+    "trigger_count": 0
+  }
+]
