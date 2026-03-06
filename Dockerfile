@@ -36,17 +36,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     rm -rf /var/lib/apt/lists/*
 
 # Copy installed Python packages from builder
-COPY --link --from=python-build /usr/local/lib/python3.13/site-packages /usr/local/lib/python3.13/site-packages
-COPY --link --from=python-build /usr/local/bin /usr/local/bin
+COPY --from=python-build /usr/local/lib/python3.13/site-packages /usr/local/lib/python3.13/site-packages
+COPY --from=python-build /usr/local/bin /usr/local/bin
 
 WORKDIR /app
 
 # Copy backend code
-COPY --link main.py seed_data.py ./
-COPY --link app/ app/
+COPY main.py seed_data.py ./
+COPY app/ app/
 
 # Copy built frontend
-COPY --link --from=frontend-build /app/frontend/dist frontend/dist
+COPY --from=frontend-build /app/frontend/dist frontend/dist
 
 # Run as non-root user
 RUN useradd --create-home --uid 10001 appuser && chown -R appuser:appuser /app
