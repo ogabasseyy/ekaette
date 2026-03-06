@@ -7,19 +7,33 @@ RUN pnpm install --frozen-lockfile
 COPY frontend/ .
 RUN pnpm run build
 
-# ─── Stage 2: Python runtime ───
-FROM python:3.13.12-slim@sha256:a208155746991fb5c4baf3c501401c3fee09e814ab0e5121a0f53b2ca659e0e2
+# ─── Stage 2: Build Python deps (compile wheels, then discard build tools) ───
+FROM python:3.13.12-slim@sha256:a208155746991fb5c4baf3c501401c3fee09e814ab0e5121a0f53b2ca659e0e2 AS python-build
 
-# System deps for grpc / crypto wheels + ffmpeg for TTS audio conversion
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential libffi-dev ffmpeg && \
+    build-essential libffi-dev && \
     rm -rf /var/lib/apt/lists/*
 
-WORKDIR /app
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
-# Install Python deps first (layer caching)
+WORKDIR /app
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv pip install --system --no-cache -r requirements.txt
+
+# ─── Stage 3: Lean runtime ───
+FROM python:3.13.12-slim@sha256:a208155746991fb5c4baf3c501401c3fee09e814ab0e5121a0f53b2ca659e0e2
+
+# Runtime-only system deps: ffmpeg for TTS audio conversion
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg && \
+    rm -rf /var/lib/apt/lists/*
+
+# Copy installed Python packages from builder
+COPY --from=python-build /usr/local/lib/python3.13/site-packages /usr/local/lib/python3.13/site-packages
+COPY --from=python-build /usr/local/bin /usr/local/bin
+
+WORKDIR /app
 
 # Copy backend code
 COPY main.py seed_data.py ./
