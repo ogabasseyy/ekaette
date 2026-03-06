@@ -226,13 +226,16 @@ def _format_product(product: dict[str, Any]) -> dict[str, Any]:
         return product
     formatted = dict(product)
     # Replace flat price with variant breakdown
+    default_currency = formatted.get("currency", "₦")
     prices = [
-        f"{v['storage']}: ₦{v['price']:,}" for v in variants
+        f"{v['storage']}: {v.get('currency', default_currency)}{v['price']:,}"
+        for v in variants
         if isinstance(v, dict) and "storage" in v and "price" in v
     ]
     if prices:
-        formatted["price_by_storage"] = " | ".join(prices)
-        formatted["base_price"] = f"₦{product.get('price', 0):,} (base)"
+        formatted["price"] = " | ".join(prices)
+        # Remove raw numeric price and variants to avoid model picking the flat number
+        formatted.pop("storage_variants", None)
     return formatted
 
 

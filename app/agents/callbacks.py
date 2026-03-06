@@ -703,10 +703,15 @@ async def after_tool_emit_messages(
         for item in products_raw[:3]:
             if not isinstance(item, dict):
                 continue
+            raw_price = item.get("price", 0)
+            try:
+                price_value = int(raw_price) if isinstance(raw_price, (int, float)) else 0
+            except (TypeError, ValueError):
+                price_value = 0
             products.append(
                 {
                     "name": item.get("name", "Unknown"),
-                    "price": int(item.get("price", 0) or 0),
+                    "price": str(raw_price) if isinstance(raw_price, str) else price_value,
                     "currency": item.get("currency", "NGN"),
                     "available": bool(item.get("in_stock", False)),
                     "description": _format_product_description(item),

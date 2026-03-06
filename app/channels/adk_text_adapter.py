@@ -45,6 +45,7 @@ class ModelOverloadedError(Exception):
 _DEFAULT_MEDIA_PROMPTS: dict[str, str] = {
     "image": "The customer sent this image. Analyze it and respond helpfully.",
     "video": "The customer sent a video of their device. Analyze the video and respond helpfully.",
+    "audio": "The customer sent a voice note. Listen to what they said and respond helpfully.",
     "default": "The customer sent media. Analyze it and respond helpfully.",
 }
 _MAX_MEDIA_BYTES = 20 * 1024 * 1024  # 20 MB — generous limit for any channel

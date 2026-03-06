@@ -39,11 +39,11 @@ logger = logging.getLogger(__name__)
 WA_MAX_CHARS = 4096
 
 # Supported inbound types for AI processing
-SUPPORTED_MESSAGE_TYPES = {"text", "image", "video", "interactive"}
+SUPPORTED_MESSAGE_TYPES = {"text", "image", "video", "audio", "interactive"}
 
 # Unsupported types that get a polite reply (no AI processing)
 UNSUPPORTED_MESSAGE_TYPES = {
-    "audio", "document", "location", "contacts", "reaction", "sticker",
+    "document", "location", "contacts", "reaction", "sticker",
 }
 
 
@@ -154,6 +154,31 @@ async def handle_video_message(
         mime_type=mime_type,
         default_mime="video/mp4",
         caption=caption,
+        tenant_id=tenant_id,
+        company_id=company_id,
+    )
+
+
+async def handle_audio_message(
+    *,
+    from_: str,
+    media_id: str,
+    mime_type: str = "",
+    tenant_id: str = "public",
+    company_id: str = "ekaette-electronics",
+) -> str:
+    """Download voice note → route through ADK agent graph → reply text.
+
+    Gemini 2.5-pro natively understands audio — no separate transcription
+    step needed. The model processes the audio inline and responds directly.
+    """
+    return await _handle_media_message(
+        from_=from_,
+        media_id=media_id,
+        media_type="audio",
+        mime_type=mime_type,
+        default_mime="audio/ogg",
+        caption="",
         tenant_id=tenant_id,
         company_id=company_id,
     )
@@ -385,6 +410,154 @@ def record_inbound_timestamp(
 def reset_service_windows() -> None:
     """Reset service windows (for testing)."""
     _service_windows.clear()
+    _outbound_timestamps.clear()
+    _nudge_sent.clear()
+
+
+# ── Silence Nudge Tracking ──
+
+# Track when Ekaette last replied, so we can nudge if user goes silent.
+_outbound_timestamps: dict[str, float] = {}
+_nudge_sent: dict[str, float] = {}
+
+WA_NUDGE_DELAY_SECONDS = int(os.getenv("WA_NUDGE_DELAY_SECONDS", "120"))
+
+_NUDGE_MESSAGES = [
+    "Still thinking it over? I'm here whenever you're ready — happy to help! 😊",
+    "Just checking in — let me know if you have any questions!",
+    "No rush at all! I'm here if you'd like to continue.",
+]
+
+
+def _nudge_doc_ref(key: str):
+    """Firestore doc ref for nudge state, keyed by window key hash."""
+    client = _get_firestore_state_client()
+    collection_name = os.getenv("WA_NUDGE_STATE_COLLECTION", "wa_nudge_state")
+    key_hash = hashlib.sha256(key.encode()).hexdigest()
+    return client.collection(collection_name).document(key_hash)
+
+
+def record_outbound_timestamp(
+    user_phone: str,
+    phone_number_id: str = "",
+    tenant_id: str = "public",
+    company_id: str = "ekaette-electronics",
+) -> None:
+    """Record when Ekaette sent a reply to this user."""
+    key = _window_key(
+        user_phone,
+        phone_number_id or WHATSAPP_PHONE_NUMBER_ID,
+        tenant_id,
+        company_id,
+    )
+    now = time.time()
+    _outbound_timestamps[key] = now
+
+    if _state_store_uses_firestore():
+        try:
+            doc_ref = _nudge_doc_ref(key)
+            doc_ref.set({"key": key, "outbound_ts": now}, merge=True)
+        except Exception:
+            logger.debug("Nudge outbound Firestore write failed", exc_info=True)
+
+
+def check_needs_nudge(
+    user_phone: str,
+    phone_number_id: str = "",
+    tenant_id: str = "public",
+    company_id: str = "ekaette-electronics",
+) -> bool:
+    """Check if user needs a nudge (outbound is newer than inbound, not already nudged)."""
+    key = _window_key(
+        user_phone,
+        phone_number_id or WHATSAPP_PHONE_NUMBER_ID,
+        tenant_id,
+        company_id,
+    )
+
+    if _state_store_uses_firestore():
+        return _check_needs_nudge_firestore(key)
+
+    outbound_ts = _outbound_timestamps.get(key)
+    if outbound_ts is None:
+        return False
+
+    nudge_ts = _nudge_sent.get(key)
+    if nudge_ts is not None and nudge_ts >= outbound_ts:
+        return False
+
+    inbound_ts = _service_windows.get(key)
+    if inbound_ts is not None and inbound_ts >= outbound_ts:
+        return False
+
+    return True
+
+
+def _check_needs_nudge_firestore(key: str) -> bool:
+    """Firestore-backed nudge check — works across replicas."""
+    try:
+        nudge_snap = _nudge_doc_ref(key).get()
+        nudge_data = nudge_snap.to_dict() if nudge_snap.exists else {}
+
+        window_snap = _service_window_doc_ref(key).get()
+        window_data = window_snap.to_dict() if window_snap.exists else {}
+    except Exception:
+        logger.debug("Nudge Firestore read failed, falling back to local", exc_info=True)
+        # Fall back to local check
+        outbound_ts = _outbound_timestamps.get(key)
+        if outbound_ts is None:
+            return False
+        nudge_ts = _nudge_sent.get(key)
+        if nudge_ts is not None and nudge_ts >= outbound_ts:
+            return False
+        inbound_ts = _service_windows.get(key)
+        if inbound_ts is not None and inbound_ts >= outbound_ts:
+            return False
+        return True
+
+    outbound_ts = float(nudge_data.get("outbound_ts", 0) or 0)
+    if outbound_ts == 0:
+        return False
+
+    nudge_ts = float(nudge_data.get("nudge_sent_ts", 0) or 0)
+    if nudge_ts >= outbound_ts:
+        return False
+
+    inbound_ts = float(window_data.get("updated_at", 0) or 0)
+    if inbound_ts >= outbound_ts:
+        return False
+
+    return True
+
+
+def mark_nudge_sent(
+    user_phone: str,
+    phone_number_id: str = "",
+    tenant_id: str = "public",
+    company_id: str = "ekaette-electronics",
+) -> None:
+    """Mark that a nudge was sent for this user's current conversation turn."""
+    key = _window_key(
+        user_phone,
+        phone_number_id or WHATSAPP_PHONE_NUMBER_ID,
+        tenant_id,
+        company_id,
+    )
+    now = time.time()
+    _nudge_sent[key] = now
+
+    if _state_store_uses_firestore():
+        try:
+            doc_ref = _nudge_doc_ref(key)
+            doc_ref.set({"nudge_sent_ts": now}, merge=True)
+        except Exception:
+            logger.debug("Nudge mark-sent Firestore write failed", exc_info=True)
+
+
+def get_nudge_message() -> str:
+    """Return a random, friendly nudge message."""
+    import random
+    return random.choice(_NUDGE_MESSAGES)
 
 
 # ── Template Fallback ──

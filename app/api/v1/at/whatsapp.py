@@ -209,6 +209,15 @@ async def wa_process(
 ) -> dict:
     """Process a queued WhatsApp message. Idempotent via state machine."""
     body = await request.json()
+
+    # Handle nudge tasks (delayed silence nudge)
+    if body.get("nudge"):
+        user_phone = body.get("user_phone", "")
+        phone_number_id = body.get("phone_number_id", "")
+        if user_phone and phone_number_id:
+            await _execute_nudge(user_phone, phone_number_id)
+        return {"status": "ok", "nudge": True}
+
     message = body.get("message", {})
     phone_number_id = body.get("phone_number_id", "")
 
@@ -253,6 +262,20 @@ async def _process_message(
     if not from_ or not msg_type:
         return
 
+    # Fire typing indicator as background task (never block the hot path)
+    wamid = message.get("id", "")
+    if wamid:
+        async def _fire_typing() -> None:
+            try:
+                await providers.whatsapp_send_typing_indicator(
+                    access_token=WHATSAPP_ACCESS_TOKEN,
+                    message_id=wamid,
+                )
+            except Exception:
+                pass  # Never block message processing
+
+        asyncio.create_task(_fire_typing())
+
     # Generate reply based on message type
     if msg_type == "text":
         text_body = message.get("text", {}).get("body", "")
@@ -276,6 +299,13 @@ async def _process_message(
             mime_type=video_data.get("mime_type", ""),
             caption=video_data.get("caption", ""),
         )
+    elif msg_type == "audio":
+        audio_data = message.get("audio", {})
+        reply = await service_whatsapp.handle_audio_message(
+            from_=from_,
+            media_id=audio_data.get("id", ""),
+            mime_type=audio_data.get("mime_type", ""),
+        )
     elif msg_type == "interactive":
         # Handle button_reply or list_reply
         interactive = message.get("interactive", {})
@@ -294,18 +324,165 @@ async def _process_message(
         logger.info("Unknown WA message type received")
         return
 
-    # Send reply and surface provider failures so Cloud Tasks can retry.
-    status, send_body = await providers.whatsapp_send_text(
-        access_token=WHATSAPP_ACCESS_TOKEN,
-        to=from_,
-        body=reply,
-    )
+    # Send reply — voice note in → voice note out, text in → text out.
+    if msg_type == "audio" and reply:
+        status, send_body = await _send_voice_reply(from_, reply, phone_number_id)
+    else:
+        status, send_body = await providers.whatsapp_send_text(
+            access_token=WHATSAPP_ACCESS_TOKEN,
+            to=from_,
+            body=reply,
+        )
     if status < 200 or status >= 300:
         logger.warning(
             "WA outbound send failed; provider returned non-2xx",
             extra={"event": "wa_outbound_send_failed"},
         )
         raise RuntimeError(f"WhatsApp send failed with status={status}")
+
+    # Schedule silence nudge (fire-and-forget)
+    try:
+        await _schedule_nudge(user_phone=from_, phone_number_id=phone_number_id)
+    except Exception:
+        pass  # Never block message processing
+
+
+# ── Voice Reply (TTS → Upload → Send Audio) ──
+
+
+async def _send_voice_reply(
+    to: str,
+    text: str,
+    phone_number_id: str,
+) -> tuple[int, dict]:
+    """Convert text reply to voice note and send as audio message.
+
+    Falls back to text message if TTS or upload fails.
+    """
+    try:
+        audio_bytes, mime_type = await providers.text_to_speech(text)
+        media_id = await providers.whatsapp_upload_media(
+            access_token=WHATSAPP_ACCESS_TOKEN,
+            media_bytes=audio_bytes,
+            mime_type=mime_type,
+            phone_number_id=phone_number_id,
+        )
+        status, body = await providers.whatsapp_send_audio(
+            access_token=WHATSAPP_ACCESS_TOKEN,
+            to=to,
+            media_id=media_id,
+            phone_number_id=phone_number_id,
+        )
+        if 200 <= status < 300:
+            return status, body
+        # Non-2xx audio send — fall back to text
+        logger.warning("Audio send returned %s, falling back to text", status)
+    except Exception:
+        logger.warning("Voice reply failed, falling back to text", exc_info=True)
+
+    return await providers.whatsapp_send_text(
+        access_token=WHATSAPP_ACCESS_TOKEN,
+        to=to,
+        body=text,
+    )
+
+
+# ── Silence Nudge ──
+
+
+async def _schedule_nudge(
+    user_phone: str,
+    phone_number_id: str,
+) -> None:
+    """Schedule a nudge check after WA_NUDGE_DELAY_SECONDS.
+
+    Production: Cloud Tasks with schedule_time offset.
+    Dev/test: asyncio background task with sleep.
+    """
+    service_whatsapp.record_outbound_timestamp(user_phone, phone_number_id)
+
+    delay = service_whatsapp.WA_NUDGE_DELAY_SECONDS
+
+    try:
+        from google.cloud import tasks_v2
+        from google.protobuf import timestamp_pb2
+        import datetime
+
+        from .settings import (
+            WA_CLOUD_TASKS_AUDIENCE,
+            WA_CLOUD_TASKS_QUEUE_NAME,
+        )
+
+        project = os.environ.get("GOOGLE_CLOUD_PROJECT", "")
+        location = os.environ.get("CLOUD_TASKS_LOCATION", "us-central1")
+
+        def _create_nudge_task_sync() -> None:
+            import uuid
+
+            client = tasks_v2.CloudTasksClient()
+            parent = client.queue_path(project, location, WA_CLOUD_TASKS_QUEUE_NAME)
+            schedule_time = timestamp_pb2.Timestamp()
+            schedule_time.FromDatetime(
+                datetime.datetime.now(datetime.timezone.utc)
+                + datetime.timedelta(seconds=delay)
+            )
+            task_body = json.dumps({
+                "nudge": True,
+                "user_phone": user_phone,
+                "phone_number_id": phone_number_id,
+            })
+            task_name = f"{parent}/tasks/wa-nudge-{uuid.uuid4().hex[:12]}"
+            task = tasks_v2.Task(
+                name=task_name,
+                schedule_time=schedule_time,
+                http_request=tasks_v2.HttpRequest(
+                    http_method=tasks_v2.HttpMethod.POST,
+                    url=WA_CLOUD_TASKS_AUDIENCE,
+                    headers={"Content-Type": "application/json"},
+                    body=task_body.encode(),
+                    oidc_token=tasks_v2.OidcToken(
+                        service_account_email=WA_TASKS_INVOKER_EMAIL,
+                        audience=WA_CLOUD_TASKS_AUDIENCE,
+                    ),
+                ),
+            )
+            client.create_task(parent=parent, task=task)
+
+        await asyncio.to_thread(_create_nudge_task_sync)
+
+    except ImportError:
+        # Dev/test: background asyncio task
+        async def _delayed_nudge() -> None:
+            await asyncio.sleep(delay)
+            try:
+                await _execute_nudge(user_phone, phone_number_id)
+            except Exception:
+                logger.debug("Dev nudge failed (non-blocking)", exc_info=True)
+
+        asyncio.create_task(_delayed_nudge())
+
+
+async def _execute_nudge(
+    user_phone: str,
+    phone_number_id: str,
+) -> None:
+    """Check if nudge is still needed and send it."""
+    if not service_whatsapp.check_needs_nudge(user_phone, phone_number_id):
+        return
+
+    nudge_text = service_whatsapp.get_nudge_message()
+    status, resp_body = await providers.whatsapp_send_text(
+        access_token=WHATSAPP_ACCESS_TOKEN,
+        to=user_phone,
+        body=nudge_text,
+    )
+    if 200 <= status < 300:
+        service_whatsapp.mark_nudge_sent(user_phone, phone_number_id)
+        logger.info("Silence nudge sent to user")
+    else:
+        raise RuntimeError(
+            f"Nudge send failed: status={status} body={resp_body}"
+        )
 
 
 # ── POST /whatsapp/send — Internal API (service-auth) ──

@@ -193,6 +193,51 @@ async def paystack_fetch_dedicated_account_providers(*, secret_key: str) -> tupl
 # ── WhatsApp Cloud API (Meta) ──
 
 
+async def whatsapp_send_typing_indicator(
+    *,
+    access_token: str,
+    message_id: str,
+    phone_number_id: str | None = None,
+    api_version: str | None = None,
+) -> None:
+    """Mark message as read + show typing indicator in user's WhatsApp.
+
+    Fire-and-forget: errors are logged but never raised.
+    The indicator auto-dismisses after 25s or when a reply is sent.
+
+    Requires the inbound message_id (wamid) — Meta's API marks it read
+    and shows "typing..." simultaneously.
+    """
+    try:
+        resolved_phone_id = _normalize_phone_number_id(
+            (phone_number_id or "").strip() or WHATSAPP_PHONE_NUMBER_ID
+        )
+        resolved_version = _normalize_graph_api_version(
+            (api_version or "").strip() or WHATSAPP_API_VERSION
+        )
+        url = _graph_api_url(resolved_version, resolved_phone_id, "messages")
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "messaging_product": "whatsapp",
+            "status": "read",
+            "message_id": message_id,
+            "typing_indicator": {"type": "text"},
+        }
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.post(url, headers=headers, json=payload)
+            if resp.status_code >= 300:
+                logger.warning(
+                    "Typing indicator API error: status=%s body=%s",
+                    resp.status_code,
+                    resp.text[:300],
+                )
+    except Exception:
+        logger.warning("Typing indicator failed (non-blocking)", exc_info=True)
+
+
 async def whatsapp_send_text(
     *,
     access_token: str,
@@ -224,6 +269,198 @@ async def whatsapp_send_text(
         "to": to.lstrip("+"),
         "type": "text",
         "text": {"preview_url": False, "body": body},
+    }
+    return await _wa_graph_request(
+        "POST",
+        path_segments=(resolved_version, resolved_phone_id, "messages"),
+        headers=headers,
+        json=payload,
+    )
+
+
+# ── Text-to-Speech (Gemini TTS) ──
+
+
+_TTS_MODEL = "gemini-2.5-flash-preview-tts"
+_TTS_VOICE = "Kore"  # Warm, friendly female voice
+
+_genai_client = None
+
+
+def _get_genai_client():
+    """Get or create the GenAI client."""
+    global _genai_client
+    if _genai_client is None:
+        from google import genai
+        _genai_client = genai.Client()
+    return _genai_client
+
+
+async def text_to_speech(text: str) -> tuple[bytes, str]:
+    """Convert text to audio using Gemini TTS.
+
+    Returns (ogg_bytes, mime_type). Uses gemini-2.5-flash-preview-tts
+    for fast generation with natural-sounding voice.
+    """
+    if not text or not text.strip():
+        raise ValueError("Text must not be empty for TTS")
+
+    from google.genai import types
+
+    client = _get_genai_client()
+    response = await client.aio.models.generate_content(
+        model=_TTS_MODEL,
+        contents=text,
+        config=types.GenerateContentConfig(
+            response_modalities=["AUDIO"],
+            speech_config=types.SpeechConfig(
+                voice_config=types.VoiceConfig(
+                    prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                        voice_name=_TTS_VOICE,
+                    )
+                )
+            ),
+        ),
+    )
+
+    candidates = getattr(response, "candidates", None) or []
+    if not candidates:
+        raise RuntimeError("TTS response missing candidates")
+    content = getattr(candidates[0], "content", None)
+    parts = (getattr(content, "parts", None) or []) if content else []
+    if not parts:
+        raise RuntimeError("TTS response missing content/parts")
+    inline_data = getattr(parts[0], "inline_data", None)
+    pcm_data = getattr(inline_data, "data", None) if inline_data else None
+    if not pcm_data:
+        raise RuntimeError("TTS returned empty audio data")
+
+    # Convert PCM (24kHz, 16-bit, mono) to OGG/opus for WhatsApp
+    ogg_bytes = _pcm_to_ogg_opus(pcm_data, sample_rate=24000)
+    return ogg_bytes, "audio/ogg"
+
+
+def _pcm_to_ogg_opus(pcm_data: bytes, sample_rate: int = 24000) -> bytes:
+    """Convert raw PCM to OGG/opus using ffmpeg (available on Cloud Run)."""
+    import subprocess
+    import tempfile
+    import os
+
+    with tempfile.NamedTemporaryFile(suffix=".pcm", delete=False) as pcm_f:
+        pcm_f.write(pcm_data)
+        pcm_path = pcm_f.name
+
+    ogg_path = pcm_path.replace(".pcm", ".ogg")
+    try:
+        subprocess.run(
+            [
+                "ffmpeg", "-y",
+                "-f", "s16le", "-ar", str(sample_rate), "-ac", "1",
+                "-i", pcm_path,
+                "-c:a", "libopus", "-b:a", "32k",
+                ogg_path,
+            ],
+            check=True,
+            capture_output=True,
+        )
+        with open(ogg_path, "rb") as f:
+            return f.read()
+    finally:
+        for p in (pcm_path, ogg_path):
+            try:
+                os.unlink(p)
+            except OSError:
+                pass  # Best-effort cleanup of temp files
+
+
+# ── WhatsApp Media Upload ──
+
+_MIME_TO_EXT = {
+    "audio/ogg": "audio.ogg",
+    "audio/mpeg": "audio.mp3",
+    "audio/aac": "audio.aac",
+    "audio/amr": "audio.amr",
+    "image/jpeg": "image.jpg",
+    "image/png": "image.png",
+    "video/mp4": "video.mp4",
+}
+
+
+def _filename_for_mime(mime_type: str) -> str:
+    """Derive a filename from mime_type for multipart upload."""
+    return _MIME_TO_EXT.get(mime_type, f"file.{mime_type.split('/')[-1]}")
+
+
+async def whatsapp_upload_media(
+    *,
+    access_token: str,
+    media_bytes: bytes,
+    mime_type: str = "audio/ogg",
+    phone_number_id: str | None = None,
+    api_version: str | None = None,
+) -> str:
+    """Upload media to WhatsApp Cloud API. Returns media_id.
+
+    POST /{version}/{phone_number_id}/media
+    Content-Type: multipart/form-data
+    """
+    resolved_phone_id = _normalize_phone_number_id(
+        (phone_number_id or "").strip() or WHATSAPP_PHONE_NUMBER_ID
+    )
+    resolved_version = _normalize_graph_api_version(
+        (api_version or "").strip() or WHATSAPP_API_VERSION
+    )
+    url = _graph_api_url(resolved_version, resolved_phone_id, "media")
+    headers = {"Authorization": f"Bearer {access_token}"}
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.post(
+            url,
+            headers=headers,
+            data={"messaging_product": "whatsapp", "type": mime_type},
+            files={"file": (_filename_for_mime(mime_type), media_bytes, mime_type)},
+        )
+
+    if response.status_code != 200:
+        raise RuntimeError(
+            f"Media upload failed: {response.status_code} {response.text[:300]}"
+        )
+
+    body = response.json()
+    media_id = body.get("id", "")
+    if not media_id:
+        raise RuntimeError("Media upload returned no id")
+    return media_id
+
+
+# ── WhatsApp Send Audio Message ──
+
+
+async def whatsapp_send_audio(
+    *,
+    access_token: str,
+    to: str,
+    media_id: str,
+    phone_number_id: str | None = None,
+    api_version: str | None = None,
+) -> tuple[int, dict]:
+    """Send an audio message via WhatsApp Cloud API using uploaded media_id."""
+    resolved_phone_id = _normalize_phone_number_id(
+        (phone_number_id or "").strip() or WHATSAPP_PHONE_NUMBER_ID
+    )
+    resolved_version = _normalize_graph_api_version(
+        (api_version or "").strip() or WHATSAPP_API_VERSION
+    )
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "messaging_product": "whatsapp",
+        "recipient_type": "individual",
+        "to": to.lstrip("+"),
+        "type": "audio",
+        "audio": {"id": media_id},
     }
     return await _wa_graph_request(
         "POST",
