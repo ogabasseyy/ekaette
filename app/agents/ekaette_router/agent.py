@@ -187,12 +187,17 @@ async def save_session_and_telemetry_callback(callback_context: CallbackContext)
     tenant_id = callback_context.state.get("app:tenant_id")
     company_id = callback_context.state.get("app:company_id")
 
-    if isinstance(tenant_id, str) and isinstance(company_id, str):
+    if isinstance(tenant_id, str) and isinstance(company_id, str) and not callback_context.state.get("temp:lesson_check_in_flight", False):
+        callback_context.state["temp:lesson_check_in_flight"] = True
+
         async def _run_lesson_check() -> None:
-            new_cursor = await asyncio.to_thread(
-                _check_for_global_lessons, events_snapshot, lesson_cursor, tenant_id, company_id,
-            )
-            callback_context.state["temp:lesson_check_cursor"] = new_cursor
+            try:
+                new_cursor = await asyncio.to_thread(
+                    _check_for_global_lessons, events_snapshot, lesson_cursor, tenant_id, company_id,
+                )
+                callback_context.state["temp:lesson_check_cursor"] = new_cursor
+            finally:
+                callback_context.state["temp:lesson_check_in_flight"] = False
 
         task = asyncio.create_task(_run_lesson_check())
         task.add_done_callback(_log_lesson_check_result)
