@@ -5,7 +5,8 @@
 Registry-driven multi-tenant model: **tenant -> company -> industry template -> capabilities**.
 
 - Root orchestrator agent (Live API voice model) delegates to 5 sub-agents (vision, valuation, booking, catalog, support).
-- ALL agents must use a Live API-compatible model (`LIVE_MODEL_ID`). `gemini-3-flash-preview` does NOT support `bidiGenerateContent`. Complex tasks use tools that internally call standard API models.
+- **Dual-runner architecture**: Voice channels use a Live API-compatible model (`LIVE_MODEL_ID`) via `bidiGenerateContent`. Text channels (WhatsApp, SMS) use `gemini-3-flash-preview` (`TEXT_MODEL_ID`) via `Runner.run_async()` / `generateContent`. The text model does NOT support `bidiGenerateContent` — this is intentional; text channels never use the Live API.
+- ALL agents in the **voice pipeline** must use a Live API-compatible model. The text pipeline uses `create_ekaette_router(model=text_model, channel="text")` with its own instruction set.
 - Config source: `REGISTRY_ENABLED=true` (default) makes Firestore registry authoritative. Setting `false` enables legacy local-config fallback (deprecated).
 
 ## TDD Rule

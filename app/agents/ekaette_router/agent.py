@@ -150,7 +150,7 @@ _CORE_INSTRUCTION = """You are Ekaette, an AI-powered customer service assistant
     If unsure which agent to use, ask the customer to clarify.
 
     Current industry configuration is loaded in session state under app:industry_config.
-    Use the configured voice persona and greeting for the current industry.
+    Use the configured persona and greeting for the current industry.
     Company grounding context is loaded under:
     - app:company_profile
     - app:company_knowledge
