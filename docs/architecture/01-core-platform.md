@@ -332,16 +332,17 @@ graph LR
 
     subgraph "Agent Processing"
         RUNNER --> ROOT["Root Agent<br/>(Voice via Live API)"]
-        RUNNER2 --> TEXT_RT["Text Root Agent<br/>(gemini-3-flash-preview)"]
+        RUNNER2 --> TEXT_ROOT["Text Root Agent<br/>(gemini-3-flash-preview)"]
         ROOT --> VA["Vision Agent"]
         ROOT --> BA["Booking Agent"]
         ROOT --> CA["Catalog Agent"]
         ROOT --> SA["Support Agent"]
         VA --> VLA["Valuation Agent"]
-        TEXT_RT --> VA
-        TEXT_RT --> BA
-        TEXT_RT --> CA
-        TEXT_RT --> SA
+        TEXT_ROOT --> VA
+        TEXT_ROOT --> VLA
+        TEXT_ROOT --> BA
+        TEXT_ROOT --> CA
+        TEXT_ROOT --> SA
     end
 
     subgraph "Output"
@@ -354,7 +355,7 @@ graph LR
 
     subgraph "Persistence"
         ROOT --> FS["Firestore<br/>Sessions + State"]
-        TEXT_RT --> FS
+        TEXT_ROOT --> FS
         TRANSCRIPT --> FS
         CONFIRM --> FS
     end
@@ -362,7 +363,7 @@ graph LR
     subgraph "Learning Layer"
         FS -->|"after_agent_callback<br/>(async)"| MB2["Memory Bank"]
         MB2 -->|"PreloadMemoryTool<br/>(each turn start)"| ROOT
-        MB2 -->|"PreloadMemoryTool<br/>(each turn start)"| TEXT_RT
+        MB2 -->|"PreloadMemoryTool<br/>(each turn start)"| TEXT_ROOT
     end
 ```
 
