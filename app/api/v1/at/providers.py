@@ -362,7 +362,7 @@ def _pcm_to_ogg_opus(pcm_data: bytes, sample_rate: int = 24000) -> bytes:
             try:
                 os.unlink(p)
             except OSError:
-                pass
+                pass  # Best-effort cleanup of temp files
 
 
 # ── WhatsApp Media Upload ──

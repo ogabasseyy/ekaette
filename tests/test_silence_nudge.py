@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-import asyncio
 import time
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 from app.api.v1.at.service_whatsapp import (
     record_inbound_timestamp,
@@ -157,8 +156,6 @@ class TestNudgeInProcessMessage:
 
         async def mock_typing(**kwargs):
             pass
-
-        original_schedule = None
 
         async def mock_schedule_nudge(**kwargs):
             nonlocal nudge_scheduled
