@@ -3,8 +3,7 @@ FROM node:24-slim@sha256:b4687aef2571c632a1953695ce4d61d6462a7eda471fe6e272eebf0
 WORKDIR /app/frontend
 RUN corepack enable && corepack prepare pnpm@latest --activate
 COPY frontend/package.json frontend/pnpm-lock.yaml ./
-RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
-    pnpm install --frozen-lockfile
+RUN pnpm install --frozen-lockfile
 COPY frontend/ .
 RUN pnpm run build
 
@@ -19,8 +18,7 @@ COPY --from=ghcr.io/astral-sh/uv:0.7 /uv /usr/local/bin/uv
 
 WORKDIR /app
 COPY requirements.txt .
-RUN --mount=type=cache,target=/root/.cache/uv \
-    uv pip install --system --no-cache -r requirements.txt && \
+RUN uv pip install --system --no-cache -r requirements.txt && \
     rm /usr/local/bin/uv
 
 # ─── Stage 3: Lean runtime ───
