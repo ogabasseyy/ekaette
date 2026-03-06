@@ -227,9 +227,15 @@ async def whatsapp_send_typing_indicator(
             "typing_indicator": {"type": "text"},
         }
         async with httpx.AsyncClient(timeout=5.0) as client:
-            await client.post(url, headers=headers, json=payload)
+            resp = await client.post(url, headers=headers, json=payload)
+            if resp.status_code >= 300:
+                logger.warning(
+                    "Typing indicator API error: status=%s body=%s",
+                    resp.status_code,
+                    resp.text[:300],
+                )
     except Exception:
-        logger.debug("Typing indicator failed (non-blocking)", exc_info=True)
+        logger.warning("Typing indicator failed (non-blocking)", exc_info=True)
 
 
 async def whatsapp_send_text(
