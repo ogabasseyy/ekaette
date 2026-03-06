@@ -25,6 +25,7 @@ graph TB
 
     subgraph "Google Cloud"
         LIVE["Gemini Live API"]
+        G3F["Gemini 3 Flash<br/>(Standard API)"]
         FS["Firestore"]
         CS["Cloud Storage"]
         MB["Memory Bank"]
@@ -44,7 +45,7 @@ graph TB
     ROOT -->|"search"| CA
     ROOT -->|"help"| SA
     ROOT -.->|"Bidi Audio"| LIVE
-    VA -.->|"Vision"| LIVE
+    VA -.->|"Vision"| G3F
     ROOT --> FS
     VA --> CS
     ROOT -->|"Memory"| MB

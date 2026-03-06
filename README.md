@@ -85,6 +85,7 @@ graph TB
 
     subgraph "Google Cloud"
         LIVE["Gemini Live API"]
+        G3F["Gemini 3 Flash<br/>(Standard API)"]
         FS["Firestore"]
         CS["Cloud Storage"]
         MB["Memory Bank"]
@@ -104,7 +105,7 @@ graph TB
     ROOT -->|"search"| CA
     ROOT -->|"help"| SA
     ROOT -.->|"Bidi Audio"| LIVE
-    VA -.->|"Vision"| LIVE
+    VA -.->|"Vision"| G3F
     ROOT --> FS
     VA --> CS
     ROOT -->|"Memory"| MB
@@ -284,11 +285,11 @@ Open [http://localhost:5173](http://localhost:5173) — select an industry, then
 ### Running Tests
 
 ```bash
-# Backend (1,478 tests)
+# Backend
 source .venv/bin/activate
 pytest tests/ -v
 
-# Frontend (312 tests)
+# Frontend
 cd frontend
 pnpm exec vitest run
 ```
@@ -376,7 +377,7 @@ ekaette/
 │       └── types/            # TypeScript interfaces (14 ServerMessage types)
 ├── scripts/                  # Registry CLI, deploy, release gates
 ├── terraform/                # GCP Infrastructure as Code
-├── tests/                    # Backend test suite (1,478 tests)
+├── tests/                    # Backend test suite
 │   └── fixtures/registry/    # Industry templates, companies, products, knowledge
 ├── main.py                   # FastAPI application entry
 ├── Dockerfile                # Multi-stage build (Node + Python + uv)
