@@ -85,33 +85,30 @@ def _schedule_memory_save(callback_context: CallbackContext) -> None:
     task.add_done_callback(_log_background_task_result)
 
 
-def _check_for_global_lessons(callback_context: CallbackContext) -> None:
+def _check_for_global_lessons(
+    events: list,
+    cursor: int,
+    tenant_id: str,
+    company_id: str,
+) -> int:
     """Scan recent user messages for behavioral corrections and submit as global lessons.
 
-    Only processes messages since the last check (cursor-based).
-    Runs synchronously but scheduled via asyncio.create_task in the caller.
+    Thread-safe: operates only on pre-captured snapshots, never touches shared state.
+    Returns the new cursor value.
     """
-    state = callback_context.state
-    events = list(getattr(callback_context.session, "events", None) or [])
     if not events:
-        return
+        return cursor
 
-    cursor = _state_int(state, "temp:lesson_check_cursor", 0)
     if cursor >= len(events):
-        return
-
-    tenant_id = state.get("app:tenant_id")
-    company_id = state.get("app:company_id")
-    if not isinstance(tenant_id, str) or not isinstance(company_id, str):
-        state["temp:lesson_check_cursor"] = len(events)
-        return
+        return cursor
 
     # Resolve Firestore client once before the loop
     try:
         from app.api.v1.admin import shared as admin_shared
 
         db = admin_shared.company_config_client or admin_shared.industry_config_client
-    except Exception:
+    except Exception as exc:
+        logger.debug("Firestore client resolution failed: %s", exc)
         db = None
 
     # Scan recent user messages for global corrections
@@ -156,14 +153,14 @@ def _check_for_global_lessons(callback_context: CallbackContext) -> None:
             except Exception as exc:
                 logger.debug("Global lesson submission failed: %s", exc)
 
-    state["temp:lesson_check_cursor"] = len(events)
+    return len(events)
 
 
 def _log_lesson_check_result(task: asyncio.Task) -> None:
     try:
         task.result()
     except Exception as exc:
-        logger.debug("Global lesson check task failed: %s", exc)
+        logger.warning("Global lesson check task failed: %s", exc)
 
 
 async def save_session_and_telemetry_callback(callback_context: CallbackContext):
@@ -184,10 +181,21 @@ async def save_session_and_telemetry_callback(callback_context: CallbackContext)
         logger.debug("Memory save scheduling failed (non-blocking): %s", exc)
 
     # Global lesson extraction (background task — never blocks audio)
-    task = asyncio.create_task(
-        asyncio.to_thread(_check_for_global_lessons, callback_context)
-    )
-    task.add_done_callback(_log_lesson_check_result)
+    # Capture state values before threading to avoid race conditions
+    lesson_cursor = _state_int(callback_context.state, "temp:lesson_check_cursor", 0)
+    events_snapshot = list(getattr(callback_context.session, "events", None) or [])
+    tenant_id = callback_context.state.get("app:tenant_id")
+    company_id = callback_context.state.get("app:company_id")
+
+    if isinstance(tenant_id, str) and isinstance(company_id, str):
+        async def _run_lesson_check() -> None:
+            new_cursor = await asyncio.to_thread(
+                _check_for_global_lessons, events_snapshot, lesson_cursor, tenant_id, company_id,
+            )
+            callback_context.state["temp:lesson_check_cursor"] = new_cursor
+
+        task = asyncio.create_task(_run_lesson_check())
+        task.add_done_callback(_log_lesson_check_result)
     return None
 
 
