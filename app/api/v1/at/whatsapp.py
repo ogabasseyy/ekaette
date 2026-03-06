@@ -253,6 +253,15 @@ async def _process_message(
     if not from_ or not msg_type:
         return
 
+    # Fire typing indicator immediately (fire-and-forget)
+    try:
+        await providers.whatsapp_send_typing_indicator(
+            access_token=WHATSAPP_ACCESS_TOKEN,
+            to=from_,
+        )
+    except Exception:
+        pass  # Never block message processing
+
     # Generate reply based on message type
     if msg_type == "text":
         text_body = message.get("text", {}).get("body", "")

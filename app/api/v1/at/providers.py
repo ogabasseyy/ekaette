@@ -193,6 +193,43 @@ async def paystack_fetch_dedicated_account_providers(*, secret_key: str) -> tupl
 # ── WhatsApp Cloud API (Meta) ──
 
 
+async def whatsapp_send_typing_indicator(
+    *,
+    access_token: str,
+    to: str,
+    phone_number_id: str | None = None,
+    api_version: str | None = None,
+) -> None:
+    """Send typing indicator to show 'typing...' in the user's WhatsApp.
+
+    Fire-and-forget: errors are logged but never raised.
+    The indicator auto-dismisses after 25s or when a reply is sent.
+    """
+    try:
+        resolved_phone_id = _normalize_phone_number_id(
+            (phone_number_id or "").strip() or WHATSAPP_PHONE_NUMBER_ID
+        )
+        resolved_version = _normalize_graph_api_version(
+            (api_version or "").strip() or WHATSAPP_API_VERSION
+        )
+        url = _graph_api_url(resolved_version, resolved_phone_id, "messages")
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "messaging_product": "whatsapp",
+            "recipient_type": "individual",
+            "to": to.lstrip("+"),
+            "type": "typing",
+            "typing": {"status": "typing"},
+        }
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            await client.post(url, headers=headers, json=payload)
+    except Exception:
+        logger.debug("Typing indicator failed (non-blocking)", exc_info=True)
+
+
 async def whatsapp_send_text(
     *,
     access_token: str,
