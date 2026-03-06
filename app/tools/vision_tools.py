@@ -199,9 +199,7 @@ EXTENSION_MAP: dict[str, str] = {
 def _artifact_filename(mime_type: str) -> str:
     if not mime_type or mime_type not in EXTENSION_MAP:
         raise ValueError(f"Unsupported MIME type for artifact: {mime_type!r}")
-    raw_category = mime_type.split("/")[0]
-    if raw_category not in ("image", "video"):
-        raise ValueError(f"MIME category {raw_category!r} not allowed; expected image or video")
+    raw_category = mime_type.split("/")[0]  # Always "image" or "video" per EXTENSION_MAP
     ext = EXTENSION_MAP[mime_type]
     return f"customer_{raw_category}_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}.{ext}"
 

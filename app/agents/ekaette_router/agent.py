@@ -235,6 +235,8 @@ def create_ekaette_router(model: str, *, channel: str = "voice") -> Agent:
         model: Gemini model ID.
         channel: "voice" for Live API bidi, "text" for WhatsApp/SMS.
     """
+    if channel not in ("voice", "text"):
+        raise ValueError(f"Invalid channel: {channel!r}. Must be 'voice' or 'text'.")
     instruction = _TEXT_INSTRUCTION if channel == "text" else _INSTRUCTION
     return Agent(
         name="ekaette_router",
