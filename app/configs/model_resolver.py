@@ -6,6 +6,7 @@ import os
 
 DEFAULT_LIVE_MODEL_ID = "gemini-2.5-flash-native-audio-preview-12-2025"
 DEFAULT_TEXT_MODEL_ID = "gemini-3-flash-preview"
+DEFAULT_TEXT_FALLBACK_MODEL_ID = "gemini-2.5-flash"
 
 
 def _env_flag(name: str, default: str = "false") -> bool:
@@ -34,6 +35,11 @@ def resolve_text_model_id() -> str:
     requires a standard API model, not the Live API audio model.
     """
     return os.getenv("TEXT_MODEL_ID", DEFAULT_TEXT_MODEL_ID).strip() or DEFAULT_TEXT_MODEL_ID
+
+
+def resolve_text_fallback_model_id() -> str:
+    """Resolve fallback model for text channels when primary is unavailable."""
+    return os.getenv("TEXT_FALLBACK_MODEL_ID", DEFAULT_TEXT_FALLBACK_MODEL_ID).strip() or DEFAULT_TEXT_FALLBACK_MODEL_ID
 
 
 def get_live_model_candidates() -> list[str]:

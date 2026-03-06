@@ -36,7 +36,7 @@ def _no_adk_runner():
     """Ensure ADK runner is not available so tests exercise bridge_text fallback."""
     with patch(
         "app.api.v1.at.service_whatsapp._get_adk_runner_and_service",
-        return_value=(None, None, None),
+        return_value=(None, None, None, None, ""),
     ):
         yield
 

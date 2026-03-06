@@ -20,7 +20,7 @@ class TestHandleTextMessageADK:
 
         with patch(
             "app.api.v1.at.service_whatsapp._get_adk_runner_and_service",
-            return_value=(MagicMock(), MagicMock(), "ekaette"),
+            return_value=(MagicMock(), MagicMock(), "ekaette", None, ""),
         ), patch(
             "app.channels.adk_text_adapter.send_text_message",
             new_callable=AsyncMock,
@@ -41,7 +41,7 @@ class TestHandleTextMessageADK:
 
         with patch(
             "app.api.v1.at.service_whatsapp._get_adk_runner_and_service",
-            return_value=(None, None, None),
+            return_value=(None, None, None, None, ""),
         ), patch(
             "app.api.v1.at.bridge_text.query_text",
             new_callable=AsyncMock,
@@ -72,7 +72,7 @@ class TestHandleImageMessageADK:
 
         with patch(
             "app.api.v1.at.service_whatsapp._get_adk_runner_and_service",
-            return_value=(MagicMock(), MagicMock(), "ekaette"),
+            return_value=(MagicMock(), MagicMock(), "ekaette", None, ""),
         ), patch(
             "app.channels.adk_text_adapter.send_media_message",
             new_callable=AsyncMock,
@@ -99,7 +99,7 @@ class TestHandleImageMessageADK:
 
         with patch(
             "app.api.v1.at.service_whatsapp._get_adk_runner_and_service",
-            return_value=(None, None, None),
+            return_value=(None, None, None, None, ""),
         ), patch(
             "app.api.v1.at.providers.whatsapp_download_media",
             new_callable=AsyncMock,
@@ -134,7 +134,7 @@ class TestHandleVideoMessageADK:
 
         with patch(
             "app.api.v1.at.service_whatsapp._get_adk_runner_and_service",
-            return_value=(MagicMock(), MagicMock(), "ekaette"),
+            return_value=(MagicMock(), MagicMock(), "ekaette", None, ""),
         ), patch(
             "app.channels.adk_text_adapter.send_media_message",
             new_callable=AsyncMock,
@@ -164,7 +164,7 @@ class TestHandleVideoMessageADK:
 
         with patch(
             "app.api.v1.at.service_whatsapp._get_adk_runner_and_service",
-            return_value=(None, None, None),
+            return_value=(None, None, None, None, ""),
         ), patch(
             "app.api.v1.at.providers.whatsapp_download_media",
             new_callable=AsyncMock,
@@ -205,4 +205,4 @@ class TestGetADKRunnerAndService:
         with patch.dict("sys.modules", {"main": fake_main}):
             result = _get_adk_runner_and_service()
         assert isinstance(result, tuple)
-        assert result == (None, None, None)
+        assert result == (None, None, None, None, "")

@@ -50,22 +50,24 @@ UNSUPPORTED_MESSAGE_TYPES = {
 # ─── ADK Runner Access ───
 
 
-def _get_adk_runner_and_service() -> tuple[Any, Any, Any]:
+def _get_adk_runner_and_service() -> tuple[Any, Any, Any, Any, str]:
     """Access the ADK Runner and session_service singletons from main.py.
 
-    Returns (runner, session_service, app_name) or (None, None, None)
-    if not yet initialized.
+    Returns (runner, session_service, app_name, fallback_runner, fallback_app_name)
+    or (None, None, None, None, "") if not yet initialized.
     """
     try:
         import main as main_module
         runner = getattr(main_module, "text_runner", None)
         session_service = getattr(main_module, "session_service", None)
         base_name = getattr(main_module, "SESSION_APP_NAME", None)
+        fallback_runner = getattr(main_module, "text_fallback_runner", None)
         if runner is not None and session_service is not None and base_name:
-            return runner, session_service, f"{base_name}_text"
+            fb_app = f"{base_name}_text_fallback" if fallback_runner else ""
+            return runner, session_service, f"{base_name}_text", fallback_runner, fb_app
     except Exception:
         logger.debug("ADK runner access failed", exc_info=True)
-    return None, None, None
+    return None, None, None, None, ""
 
 
 # ── Text Message Handling ──
@@ -82,7 +84,7 @@ async def handle_text_message(
 
     Falls back to bridge_text (standalone Gemini) when Runner is unavailable.
     """
-    runner, session_service, app_name = _get_adk_runner_and_service()
+    runner, session_service, app_name, fallback_runner, fb_app = _get_adk_runner_and_service()
 
     if runner is not None:
         result = await adk_text_adapter.send_text_message(
@@ -94,6 +96,8 @@ async def handle_text_message(
             channel="whatsapp",
             tenant_id=tenant_id,
             company_id=company_id,
+            fallback_runner=fallback_runner,
+            fallback_app_name=fb_app,
         )
         reply_text = result.get("text") or ""
         return reply_text[:WA_MAX_CHARS]
@@ -182,7 +186,7 @@ async def _handle_media_message(
         return "Sorry, the media file appears to be empty. Please try sending it again."
 
     resolved_mime = content_type or mime_type or default_mime
-    runner, session_service, app_name = _get_adk_runner_and_service()
+    runner, session_service, app_name, fallback_runner, fb_app = _get_adk_runner_and_service()
 
     if runner is not None:
         result = await adk_text_adapter.send_media_message(
@@ -196,6 +200,8 @@ async def _handle_media_message(
             channel="whatsapp",
             tenant_id=tenant_id,
             company_id=company_id,
+            fallback_runner=fallback_runner,
+            fallback_app_name=fb_app,
         )
         reply_text = result.get("text") or ""
         return reply_text[:WA_MAX_CHARS]
