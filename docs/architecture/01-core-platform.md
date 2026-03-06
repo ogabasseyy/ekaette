@@ -184,6 +184,7 @@ graph TB
     SA -.->|"Standard API"| G3F
 
     ROOT --> FS
+    TEXT_ROOT --> FS
     BA --> FS
     VA --> CS
     CA --> VAS
@@ -323,7 +324,7 @@ graph LR
 
         LRQ --> RUNNER["Runner.run_live()"]
 
-        TEXT -->|"WhatsApp/SMS<br/>adk_text_adapter"| RUNNER2["Runner.run_async()<br/>(Text Root Agent,<br/>gemini-3-flash)"]
+        TEXT -->|"WhatsApp/SMS<br/>adk_text_adapter"| RUNNER2["Runner.run_async()<br/>(Text Root Agent,<br/>gemini-3-flash-preview)"]
         IMAGE -->|"WhatsApp image<br/>adk_text_adapter"| RUNNER2
         VIDEO -->|"WhatsApp video<br/>adk_text_adapter"| RUNNER2
     end
