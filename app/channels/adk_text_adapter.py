@@ -23,6 +23,7 @@ import logging
 from typing import Any
 
 from google.genai import types
+from google.genai.errors import APIError, ServerError
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +40,8 @@ _DEFAULT_FALLBACK = "Thanks for your message. How can I help you today?"
 
 class ModelOverloadedError(Exception):
     """Raised when the model returns 503/overloaded so callers can retry with fallback."""
+
+
 _DEFAULT_MEDIA_PROMPTS: dict[str, str] = {
     "image": "The customer sent this image. Analyze it and respond helpfully.",
     "video": "The customer sent a video of their device. Analyze the video and respond helpfully.",
@@ -380,12 +383,13 @@ async def _run_and_collect_text(
                 if getattr(part, "text", None):
                     text_parts.append(part.text)
 
+    except ServerError as exc:
+        logger.warning("Model overloaded, eligible for fallback: %s", exc)
+        raise ModelOverloadedError(str(exc)) from exc
+    except APIError as exc:
+        logger.error("ADK runner API error: %s", exc, exc_info=True)
+        return _DEFAULT_FALLBACK
     except Exception as exc:
-        # Detect 503/overloaded errors so callers can retry with a fallback runner
-        exc_str = str(exc).lower()
-        if "503" in exc_str or "unavailable" in exc_str or "overloaded" in exc_str:
-            logger.warning("Model overloaded, eligible for fallback: %s", exc)
-            raise ModelOverloadedError(str(exc)) from exc
         logger.error("ADK runner error: %s", exc, exc_info=True)
         return _DEFAULT_FALLBACK
 
