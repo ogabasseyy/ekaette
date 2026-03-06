@@ -196,14 +196,17 @@ async def paystack_fetch_dedicated_account_providers(*, secret_key: str) -> tupl
 async def whatsapp_send_typing_indicator(
     *,
     access_token: str,
-    to: str,
+    message_id: str,
     phone_number_id: str | None = None,
     api_version: str | None = None,
 ) -> None:
-    """Send typing indicator to show 'typing...' in the user's WhatsApp.
+    """Mark message as read + show typing indicator in user's WhatsApp.
 
     Fire-and-forget: errors are logged but never raised.
     The indicator auto-dismisses after 25s or when a reply is sent.
+
+    Requires the inbound message_id (wamid) — Meta's API marks it read
+    and shows "typing..." simultaneously.
     """
     try:
         resolved_phone_id = _normalize_phone_number_id(
@@ -219,10 +222,9 @@ async def whatsapp_send_typing_indicator(
         }
         payload = {
             "messaging_product": "whatsapp",
-            "recipient_type": "individual",
-            "to": to.lstrip("+"),
-            "type": "typing",
-            "typing": {"status": "typing"},
+            "status": "read",
+            "message_id": message_id,
+            "typing_indicator": {"type": "text"},
         }
         async with httpx.AsyncClient(timeout=5.0) as client:
             await client.post(url, headers=headers, json=payload)

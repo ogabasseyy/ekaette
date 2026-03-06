@@ -11,7 +11,7 @@ class TestWhatsappSendTypingIndicator:
 
     @pytest.mark.asyncio
     async def test_sends_correct_payload(self):
-        """Typing indicator sends correct Graph API payload."""
+        """Typing indicator sends read+typing payload with message_id."""
         from app.api.v1.at.providers import whatsapp_send_typing_indicator
 
         mock_client = AsyncMock()
@@ -24,7 +24,7 @@ class TestWhatsappSendTypingIndicator:
 
             await whatsapp_send_typing_indicator(
                 access_token="test-token",
-                to="2348001234567",
+                message_id="wamid.abc123",
                 phone_number_id="123456789",
             )
 
@@ -32,10 +32,9 @@ class TestWhatsappSendTypingIndicator:
         _, kwargs = mock_client.post.call_args
         payload = kwargs["json"]
         assert payload["messaging_product"] == "whatsapp"
-        assert payload["recipient_type"] == "individual"
-        assert payload["to"] == "2348001234567"
-        assert payload["type"] == "typing"
-        assert payload["typing"]["status"] == "typing"
+        assert payload["status"] == "read"
+        assert payload["message_id"] == "wamid.abc123"
+        assert payload["typing_indicator"]["type"] == "text"
 
     @pytest.mark.asyncio
     async def test_uses_correct_auth_header(self):
@@ -52,7 +51,7 @@ class TestWhatsappSendTypingIndicator:
 
             await whatsapp_send_typing_indicator(
                 access_token="my-secret-token",
-                to="2348001234567",
+                message_id="wamid.abc123",
                 phone_number_id="123456789",
             )
 
@@ -74,7 +73,7 @@ class TestWhatsappSendTypingIndicator:
             # Should not raise
             await whatsapp_send_typing_indicator(
                 access_token="test-token",
-                to="2348001234567",
+                message_id="wamid.abc123",
                 phone_number_id="123456789",
             )
 
@@ -83,13 +82,9 @@ class TestWhatsappSendTypingIndicator:
         """Non-200 response is silently ignored."""
         from app.api.v1.at.providers import whatsapp_send_typing_indicator
 
-        async def mock_post(url, *, headers=None, json=None, **kwargs):
-            resp = MagicMock()
-            resp.status_code = 400
-            return resp
-
         mock_client = AsyncMock()
-        mock_client.post = mock_post
+        mock_resp = MagicMock(status_code=400)
+        mock_client.post.return_value = mock_resp
 
         with patch("app.api.v1.at.providers.httpx.AsyncClient") as mock_cls:
             mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
@@ -98,7 +93,7 @@ class TestWhatsappSendTypingIndicator:
             # Should not raise
             await whatsapp_send_typing_indicator(
                 access_token="test-token",
-                to="2348001234567",
+                message_id="wamid.abc123",
                 phone_number_id="123456789",
             )
 
@@ -134,7 +129,12 @@ class TestTypingIndicatorInProcessMessage:
             "app.api.v1.at.whatsapp.providers.whatsapp_send_text",
             side_effect=mock_send_text,
         ):
-            message = {"from": "2348001234567", "type": "text", "text": {"body": "Hi"}}
+            message = {
+                "from": "2348001234567",
+                "id": "wamid.inbound123",
+                "type": "text",
+                "text": {"body": "Hi"},
+            }
             await _process_message(message, "test_phone_id")
 
         assert call_order == ["typing", "handle_text", "send_text"]
@@ -168,6 +168,7 @@ class TestTypingIndicatorInProcessMessage:
         ):
             message = {
                 "from": "2348001234567",
+                "id": "wamid.inbound456",
                 "type": "image",
                 "image": {"id": "media-123", "mime_type": "image/jpeg"},
             }
@@ -199,6 +200,44 @@ class TestTypingIndicatorInProcessMessage:
             "app.api.v1.at.whatsapp.providers.whatsapp_send_text",
             side_effect=mock_send_text,
         ):
-            message = {"from": "2348001234567", "type": "text", "text": {"body": "Hi"}}
+            message = {
+                "from": "2348001234567",
+                "id": "wamid.inbound789",
+                "type": "text",
+                "text": {"body": "Hi"},
+            }
             # Should not raise even though typing fails
             await _process_message(message, "test_phone_id")
+
+    @pytest.mark.asyncio
+    async def test_no_typing_when_message_id_missing(self):
+        """No typing indicator sent when message has no id."""
+        from app.api.v1.at.whatsapp import _process_message
+
+        typing_called = False
+
+        async def mock_typing(**kwargs):
+            nonlocal typing_called
+            typing_called = True
+
+        async def mock_handle_text(**kwargs):
+            return "Reply!"
+
+        async def mock_send_text(**kwargs):
+            return 200, {"messages": [{"id": "wamid.123"}]}
+
+        with patch(
+            "app.api.v1.at.whatsapp.providers.whatsapp_send_typing_indicator",
+            side_effect=mock_typing,
+        ), patch(
+            "app.api.v1.at.whatsapp.service_whatsapp.handle_text_message",
+            side_effect=mock_handle_text,
+        ), patch(
+            "app.api.v1.at.whatsapp.providers.whatsapp_send_text",
+            side_effect=mock_send_text,
+        ):
+            # No "id" field in message
+            message = {"from": "2348001234567", "type": "text", "text": {"body": "Hi"}}
+            await _process_message(message, "test_phone_id")
+
+        assert not typing_called

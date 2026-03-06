@@ -254,13 +254,16 @@ async def _process_message(
         return
 
     # Fire typing indicator immediately (fire-and-forget)
-    try:
-        await providers.whatsapp_send_typing_indicator(
-            access_token=WHATSAPP_ACCESS_TOKEN,
-            to=from_,
-        )
-    except Exception:
-        pass  # Never block message processing
+    # Requires inbound message_id to mark as read + show "typing..."
+    wamid = message.get("id", "")
+    if wamid:
+        try:
+            await providers.whatsapp_send_typing_indicator(
+                access_token=WHATSAPP_ACCESS_TOKEN,
+                message_id=wamid,
+            )
+        except Exception:
+            pass  # Never block message processing
 
     # Generate reply based on message type
     if msg_type == "text":
