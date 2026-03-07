@@ -159,7 +159,11 @@ def electronics_session_state():
 @pytest.fixture
 def hotel_session_state():
     """Pre-built session state for hotel industry."""
-    return make_session_state("hotel", "ekaette-hotel")
+    return make_session_state(
+        "hotel",
+        "ekaette-hotel",
+        extra={"app:tenant_id": "public"},
+    )
 
 
 # ═══ Factory Fixtures (2026 pattern) ═══

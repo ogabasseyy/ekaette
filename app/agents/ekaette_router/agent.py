@@ -309,6 +309,9 @@ _CORE_INSTRUCTION = """You are Ekaette, the company's virtual assistant.
     the customer says.
     """
 
+# The router keeps the broad voice-playbook in its static instruction. The
+# before_model_inject_config callback separately reasserts the latency rule at
+# runtime so transferred voice turns and non-router agents get the same guardrail.
 _VOICE_SUPPLEMENT = """
     You handle real-time voice conversations with customers.
 

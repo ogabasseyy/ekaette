@@ -381,6 +381,9 @@ async def before_model_inject_config(
         channel = _state_get(callback_context.state, "app:channel")
         normalized_channel = channel.strip().lower() if isinstance(channel, str) else ""
         if normalized_channel == "voice":
+            # This intentionally overlaps with the router's static voice supplement:
+            # the router carries the base voice playbook, while this runtime check
+            # reinforces the low-latency filler rule for any voice-session agent.
             instruction_lines.append(
                 "CRITICAL latency policy: On a phone call, silence feels like a "
                 "dropped connection. You MUST speak a brief filler phrase (e.g., "
