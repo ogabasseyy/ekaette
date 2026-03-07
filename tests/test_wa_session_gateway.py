@@ -137,10 +137,12 @@ class TestWaSessionGatewayMode:
 
         await s._gateway_recv_loop()
 
-        mock_client.send_text.assert_awaited_once_with(json.dumps({
+        mock_client.send_text.assert_awaited_once()
+        actual_payload = mock_client.send_text.await_args.args[0]
+        assert json.loads(actual_payload) == {
             "type": "text",
             "text": "[Call connected]",
-        }))
+        }
         assert mock_client.canonical_session_id == "canonical-xyz"
         assert s._gateway_greeting_sent is True
         assert s._model_speaking is True
@@ -197,12 +199,24 @@ class TestWaSessionGatewayMode:
                     "sessionId": "canonical-xyz",
                 }),
             ),
+            GatewayFrame(
+                is_audio=False,
+                text_data=json.dumps({"type": "interrupted"}),
+            ),
+            GatewayFrame(
+                is_audio=False,
+                text_data=json.dumps({
+                    "type": "session_started",
+                    "sessionId": "canonical-resumed",
+                }),
+            ),
         ]
         s.gateway_client = mock_client
 
         await s._gateway_recv_loop()
 
         mock_client.send_text.assert_awaited_once()
+        assert mock_client.canonical_session_id == "canonical-resumed"
         assert s._gateway_greeting_sent is True
         assert s._model_speaking is False
 
