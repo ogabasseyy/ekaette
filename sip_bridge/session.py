@@ -604,13 +604,18 @@ class CallSession:
                 self._model_speaking
                 or (time.time() - self._model_speech_end_time) < ECHO_HOLDOFF_SEC
             )
-            await self.gateway_client.send_audio(SILENCE_FRAME if echo_muted else pcm16)
+            gateway_client = self.gateway_client
+            if gateway_client is None:
+                await asyncio.sleep(0.05)
+                continue
+            await gateway_client.send_audio(SILENCE_FRAME if echo_muted else pcm16)
 
     async def _gateway_recv_loop(self) -> None:
         """Receive from Cloud Run, route audio to outbound, handle JSON protocol."""
-        if self.gateway_client is None:
+        gateway_client = self.gateway_client
+        if gateway_client is None:
             return
-        async for frame in self.gateway_client.receive():
+        async for frame in gateway_client.receive():
             if self._shutdown.is_set():
                 break
             if frame.is_audio:
@@ -624,12 +629,10 @@ class CallSession:
                 try:
                     msg = json.loads(frame.text_data)
                 except json.JSONDecodeError:
-                    session_ref = ""
-                    if self.gateway_client is not None:
-                        session_ref = (
-                            self.gateway_client.canonical_session_id
-                            or self.gateway_client.session_id
-                        )
+                    session_ref = (
+                        gateway_client.canonical_session_id
+                        or gateway_client.session_id
+                    )
                     logger.warning(
                         "Ignoring malformed gateway JSON call_id=%s session_id=%s payload=%r",
                         self.call_id,
@@ -642,7 +645,7 @@ class CallSession:
                 if msg_type == "session_started":
                     canonical_id = msg.get("sessionId", "")
                     if canonical_id:
-                        self.gateway_client.remember_canonical_session_id(canonical_id)
+                        gateway_client.remember_canonical_session_id(canonical_id)
                     logger.info("Gateway session started: %s", canonical_id)
                 elif msg_type == "transcription":
                     logger.debug(
@@ -655,7 +658,7 @@ class CallSession:
                     if reason == "live_session_ended":
                         self._shutdown.set()
                     elif reason == "session_resumption":
-                        self.gateway_client.remember_resumption_token(
+                        gateway_client.remember_resumption_token(
                             msg.get("resumptionToken", "")
                         )
                         logger.info("Resumption token received")
@@ -675,10 +678,10 @@ class CallSession:
                 elif msg_type == "agent_transfer":
                     session_id = msg.get("sessionId", "")
                     if session_id:
-                        self.gateway_client.remember_canonical_session_id(session_id)
+                        gateway_client.remember_canonical_session_id(session_id)
                     resumption_token = msg.get("resumptionToken", "")
                     if resumption_token:
-                        self.gateway_client.remember_resumption_token(resumption_token)
+                        gateway_client.remember_resumption_token(resumption_token)
                     logger.info(
                         "Gateway agent transfer: type=%s from=%s to=%s reason=%s sessionId=%s resumptionToken=%s",
                         msg.get("transferType", ""),

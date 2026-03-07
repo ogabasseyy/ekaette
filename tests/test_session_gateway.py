@@ -122,6 +122,20 @@ class TestCallSessionGatewayMode:
         original_send.assert_called_once_with(SILENCE_FRAME)
 
     @pytest.mark.asyncio
+    async def test_gateway_send_loop_tolerates_missing_gateway_client(self, monkeypatch):
+        """A missing gateway_client should not raise while shutdown is in progress."""
+        s = CallSession(call_id="c1", tenant_id="public", company_id="acme")
+        await s._gemini_in_queue.put(b"\x01\x02" * 320)
+        s.gateway_client = None
+
+        async def _sleep_and_stop(_delay: float) -> None:
+            s._shutdown.set()
+
+        monkeypatch.setattr("sip_bridge.session.asyncio.sleep", _sleep_and_stop)
+
+        await s._gateway_send_loop()
+
+    @pytest.mark.asyncio
     async def test_gateway_recv_loop_routes_audio_to_outbound(self):
         """Audio from gateway goes to outbound_queue."""
         from sip_bridge.gateway_client import GatewayFrame
