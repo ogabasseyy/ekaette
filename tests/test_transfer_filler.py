@@ -252,8 +252,12 @@ async def _run_nudge_task(st, silence_state: SilenceState):
     finally:
         session_alive.clear()
         task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await task
+        task_results = await asyncio.gather(task, return_exceptions=True)
+        task_error = task_results[0] if task_results else None
+        if isinstance(task_error, BaseException) and not isinstance(
+            task_error, asyncio.CancelledError,
+        ):
+            raise task_error
         st.bind_runtime_values = original_bind
 
 

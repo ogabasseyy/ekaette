@@ -222,7 +222,6 @@ class WaSession:
                         await gemini_ctx.__aexit__(None, None, None)
                     except Exception:
                         logger.debug("Gemini cleanup failed after connect error", exc_info=True)
-                gemini_ctx = None
                 self._cleanup_transport()
                 self._write_call_end(time.time() - self.started_at)
                 return
