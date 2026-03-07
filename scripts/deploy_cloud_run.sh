@@ -127,7 +127,7 @@ if env_file.exists():
             continue
         key, raw_value = match.groups()
         value = normalize_value(raw_value)
-        if not value or value.startswith("<") and value.endswith(">"):
+        if not value or (value.startswith("<") and value.endswith(">")):
             continue
         if key in RESERVED:
             continue

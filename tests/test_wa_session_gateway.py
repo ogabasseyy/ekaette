@@ -7,8 +7,7 @@ instead of direct Gemini Live when gateway_mode=True.
 from __future__ import annotations
 
 import json
-from unittest.mock import patch
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
