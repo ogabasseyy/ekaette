@@ -672,6 +672,22 @@ class CallSession:
                     if msg.get("status") == "idle":
                         self._model_speaking = False
                         self._model_speech_end_time = time.time()
+                elif msg_type == "agent_transfer":
+                    session_id = msg.get("sessionId", "")
+                    if session_id:
+                        self.gateway_client.remember_canonical_session_id(session_id)
+                    resumption_token = msg.get("resumptionToken", "")
+                    if resumption_token:
+                        self.gateway_client.remember_resumption_token(resumption_token)
+                    logger.info(
+                        "Gateway agent transfer: type=%s from=%s to=%s reason=%s sessionId=%s resumptionToken=%s",
+                        msg.get("transferType", ""),
+                        msg.get("from", ""),
+                        msg.get("to", ""),
+                        msg.get("reason", ""),
+                        session_id,
+                        bool(resumption_token),
+                    )
                 elif msg_type == "error":
                     logger.warning("Gateway error: %s", msg.get("message", ""))
                 else:

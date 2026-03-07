@@ -243,6 +243,36 @@ class TestCallSessionGatewayMode:
         assert not s._shutdown.is_set()
 
     @pytest.mark.asyncio
+    async def test_gateway_recv_loop_agent_transfer_logs_and_tracks_tokens(self, caplog):
+        """agent_transfer should be visible in logs and update reconnect state."""
+        from sip_bridge.gateway_client import GatewayFrame
+
+        caplog.set_level("INFO")
+        s = CallSession(call_id="c1", tenant_id="public", company_id="acme")
+        mock_client = MockGatewayClient()
+        mock_client._frames_to_yield = [
+            GatewayFrame(
+                is_audio=False,
+                text_data=json.dumps({
+                    "type": "agent_transfer",
+                    "transferType": "handoff",
+                    "from": "catalog_agent",
+                    "to": "support_agent",
+                    "reason": "pricing_question",
+                    "sessionId": "canonical-transfer",
+                    "resumptionToken": "resume-transfer",
+                }),
+            ),
+        ]
+        s.gateway_client = mock_client
+
+        await s._gateway_recv_loop()
+
+        assert "Gateway agent transfer" in caplog.text
+        assert mock_client.canonical_session_id == "canonical-transfer"
+        assert mock_client.resumption_token == "resume-transfer"
+
+    @pytest.mark.asyncio
     async def test_gateway_recv_loop_ignores_malformed_json_and_continues(self, caplog):
         """Malformed JSON should be logged and skipped without aborting the loop."""
         from sip_bridge.gateway_client import GatewayFrame
