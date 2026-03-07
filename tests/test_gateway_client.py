@@ -15,7 +15,6 @@ import pytest
 from sip_bridge.gateway_client import (
     GatewayClient,
     GatewayConnectionError,
-    GatewayFrame,
 )
 
 

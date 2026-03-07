@@ -371,7 +371,6 @@ class TestGatewayRecvBackpressure:
     @pytest.mark.asyncio
     async def test_outbound_queue_full_increments_drops(self):
         """QueueFull on outbound increments outbound_drops instead of raising."""
-        import asyncio
         from sip_bridge.gateway_client import GatewayFrame
 
         s = CallSession(call_id="c1", tenant_id="public", company_id="acme")
@@ -460,7 +459,7 @@ class TestServerDoneCallback:
         from sip_bridge.server import SIPServer
 
         server = SIPServer(config=self._make_config())
-        session = server.handle_invite("call-done-1", ("1.2.3.4", 5060))
+        _session = server.handle_invite("call-done-1", ("1.2.3.4", 5060))
         assert "call-done-1" in server._active_sessions
 
         # Simulate what SIPProtocol._handle_invite does: create task + done-callback
@@ -476,7 +475,7 @@ class TestServerDoneCallback:
 
         task.add_done_callback(_on_done)
 
-        await task  # let it complete
+        await task
         # Allow callbacks to fire
         await asyncio.sleep(0)
 
@@ -488,7 +487,7 @@ class TestServerDoneCallback:
         from sip_bridge.server import SIPServer
 
         server = SIPServer(config=self._make_config())
-        session = server.handle_invite("call-done-2", ("1.2.3.4", 5060))
+        _session = server.handle_invite("call-done-2", ("1.2.3.4", 5060))
         assert "call-done-2" in server._active_sessions
 
         async def _fake_run():

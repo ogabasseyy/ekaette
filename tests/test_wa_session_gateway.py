@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from sip_bridge.wa_session import WaSession, SILENCE_FRAME
+from sip_bridge.wa_session import WaSession
 
 
 # ---------------------------------------------------------------------------

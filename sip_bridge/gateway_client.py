@@ -143,7 +143,7 @@ class GatewayClient:
         if self._ws is not None:
             try:
                 await self._ws.close()
-            except Exception:
+            except Exception:  # noqa: S110 — best-effort cleanup before reconnect
                 pass
             self._ws = None
 

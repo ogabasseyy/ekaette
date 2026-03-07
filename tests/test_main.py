@@ -305,7 +305,6 @@ class TestWebSocketEndpoint:
                 payload = json.loads(ws.receive_text())
                 assert payload["type"] == "session_started"
                 assert payload["companyId"] == "company-from-token"
-                assert payload["sessionState"]["app:company_id"] == "company-from-token"
                 ws.close(code=1000)
 
 

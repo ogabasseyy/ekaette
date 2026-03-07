@@ -263,7 +263,7 @@ class WaSession:
         if self._owns_transport and self.media_transport is not None:
             try:
                 self.media_transport.close()
-            except Exception:
+            except Exception:  # noqa: S110 — best-effort cleanup of UDP transport
                 pass
             self.media_transport = None
 
