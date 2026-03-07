@@ -90,6 +90,7 @@ class WaSession:
     # Echo suppression
     _model_speaking: bool = False
     _model_speech_end_time: float = 0.0
+    _gateway_greeting_sent: bool = False
 
     # Metrics
     frames_received: int = 0
@@ -640,22 +641,24 @@ class WaSession:
                     if canonical_id:
                         self.gateway_client.remember_canonical_session_id(canonical_id)
                     logger.info("Gateway session started: %s", canonical_id)
-                    # Trigger virtual assistant greeting — mirrors direct-mode.
-                    # self._model_speaking is cleared later by interrupted,
-                    # agent_status=idle, or final agent transcription messages,
-                    # and reset below if sending the greeting itself fails.
-                    self._model_speaking = True
-                    try:
-                        await self.gateway_client.send_text(json.dumps({
-                            "type": "text",
-                            "text": "[Call connected]",
-                        }))
-                    except Exception:
-                        self._model_speaking = False
-                        logger.warning(
-                            "Failed to send virtual assistant greeting",
-                            exc_info=True,
-                        )
+                    if not self._gateway_greeting_sent:
+                        # Trigger the virtual assistant greeting once per call.
+                        # self._model_speaking is cleared later by interrupted,
+                        # agent_status=idle, or final agent transcription messages,
+                        # and reset below if sending the greeting itself fails.
+                        self._gateway_greeting_sent = True
+                        self._model_speaking = True
+                        try:
+                            await self.gateway_client.send_text(json.dumps({
+                                "type": "text",
+                                "text": "[Call connected]",
+                            }))
+                        except Exception:
+                            self._model_speaking = False
+                            logger.warning(
+                                "Failed to send virtual assistant greeting",
+                                exc_info=True,
+                            )
                 elif msg_type == "session_ending":
                     reason = msg.get("reason", "")
                     logger.info("Gateway session ending: reason=%s", reason)
