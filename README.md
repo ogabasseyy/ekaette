@@ -1,8 +1,8 @@
 # Ekaette — Multimodal AI Customer Service Agent
 
 [![Python 3.13](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white)](https://python.org)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.131-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
-[![Google ADK 1.25](https://img.shields.io/badge/Google_ADK-1.25.1-4285F4?logo=google&logoColor=white)](https://google.github.io/adk-docs/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.135-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
+[![Google ADK 1.26](https://img.shields.io/badge/Google_ADK-1.26.0-4285F4?logo=google&logoColor=white)](https://google.github.io/adk-docs/)
 [![Gemini Live API](https://img.shields.io/badge/Gemini_Live_API-Multimodal-8E75B2?logo=google&logoColor=white)](https://ai.google.dev/gemini-api/docs/live)
 [![React 19](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)](https://react.dev)
 [![Tailwind v4](https://img.shields.io/badge/Tailwind_CSS-v4-06B6D4?logo=tailwindcss&logoColor=white)](https://tailwindcss.com)
@@ -45,8 +45,9 @@ Ekaette is a **multimodal AI customer service agent** that handles the full trad
 - **Book**: Appointment scheduling and pickup confirmation, all within the same conversation
 - **Remember**: Long-term memory across sessions — returning customers are greeted by name with context from prior interactions
 - **WhatsApp**: Full-featured WhatsApp Business channel — text, image, video, and voice note replies with typing indicators and silence nudges
+- **Phone**: PSTN phone calls via Africa's Talking SIP bridge — with `GATEWAY_MODE=true`, phone callers get the same full agent graph as web and WhatsApp, with G.711/Opus codec conversion
 
-One codebase serves **6 industries** (electronics, hotel, automotive, fashion, telecom, aviation) with per-industry voice personas, pricing rubrics, and conversation styles.
+One codebase serves **6 industries** (electronics, hotel, automotive, fashion, telecom, aviation) with per-industry voice personas, pricing rubrics, and conversation styles. With gateway mode enabled, all channels — web, WhatsApp, and phone — share **one AI brain**: the same ADK agent graph, tools, session state, and memory.
 
 ---
 
@@ -70,9 +71,14 @@ graph TB
         TTS["Gemini TTS"]
     end
 
-    subgraph "Backend — FastAPI + Python 3.13"
-        GW["API Gateway"]
-        subgraph "Google ADK 1.25.1"
+    subgraph "Phone Channel"
+        PHONE["PSTN / Africa's Talking"]
+        SIP_B["SIP Bridge<br/>(G.711/Opus ↔ PCM16)"]
+    end
+
+    subgraph "Backend — Cloud Run (FastAPI + Python 3.13)"
+        GW["API Gateway + WebSocket"]
+        subgraph "Google ADK 1.26.0"
             ROOT["ekaette_router<br/>(Gemini 2.5 Flash Native Audio)"]
             VA["vision_agent<br/>(Gemini 3 Flash)"]
             VLA["valuation_agent"]
@@ -96,6 +102,8 @@ graph TB
     MIC --> WS
     WS -->|"WSS"| GW
     WA -->|"Webhook"| GW
+    PHONE --> SIP_B
+    SIP_B -->|"WSS (PCM16)"| GW
     GW --> ROOT
     GW --> TR
     TR --> ROOT
@@ -116,7 +124,7 @@ graph TB
 
 </details>
 
-**Dual-model strategy**: The root agent uses `gemini-2.5-flash-native-audio` via the Live API for real-time voice I/O. Specialist agents use `gemini-3-flash` via the Standard API for reasoning-heavy tasks (vision analysis, pricing calculations). The WhatsApp text runner uses the same agent graph with a text-optimized model. This keeps voice latency low while allowing deep analysis when needed.
+**Single AI brain**: All channels (web, WhatsApp text, phone calls) converge to the same Cloud Run backend and ADK agent graph. The SIP bridge is a thin transport adapter — codec conversion and SIP signaling only — that connects as a WebSocket client to Cloud Run. The root agent uses `gemini-2.5-flash-native-audio` via the Live API for real-time voice I/O. Specialist agents use `gemini-3-flash` via the Standard API for reasoning-heavy tasks (vision analysis, pricing calculations). The WhatsApp text runner uses the same agent graph with a text-optimized model.
 
 For the full architecture with all data flows, memory tiers, and transport layers, see [Core Platform Architecture](docs/architecture/01-core-platform.md).
 
@@ -197,12 +205,12 @@ Optional low-latency mode that fetches an ephemeral token from the backend and c
 | Technology | Version | Purpose |
 |---|---|---|
 | [Python](https://python.org) | 3.13 | Runtime |
-| [FastAPI](https://fastapi.tiangolo.com) | 0.131 | Async API + WebSocket server |
-| [Google ADK](https://google.github.io/adk-docs/) | 1.25.1 | Multi-agent orchestration |
+| [FastAPI](https://fastapi.tiangolo.com) | 0.135 | Async API + WebSocket server |
+| [Google ADK](https://google.github.io/adk-docs/) | 1.26.0 | Multi-agent orchestration |
 | [Gemini Live API](https://ai.google.dev/gemini-api/docs/live) | 2.5 Flash | Real-time voice streaming |
 | [Gemini 3 Flash](https://ai.google.dev) | Preview | Vision + reasoning |
 | [Gemini TTS](https://ai.google.dev/gemini-api/docs/text-generation) | 2.5 Flash Preview | Voice note generation |
-| [google-genai](https://pypi.org/project/google-genai/) | 1.64.0 | Gemini SDK |
+| [google-genai](https://pypi.org/project/google-genai/) | 1.65.0 | Gemini SDK |
 
 ### Frontend
 
@@ -268,6 +276,25 @@ GOOGLE_API_KEY=your_gemini_api_key_here
 GOOGLE_GENAI_USE_VERTEXAI=FALSE
 ```
 
+#### SIP Bridge Gateway Mode (Phone Channel)
+
+To route phone calls through the full ADK agent graph instead of direct Gemini:
+
+```bash
+# On the SIP bridge VM:
+GATEWAY_MODE=true                                    # Enable gateway routing
+GATEWAY_WS_URL=wss://your-cloud-run-url.run.app      # Cloud Run WebSocket URL
+GATEWAY_WS_SECRET=                                   # Shared HMAC secret (same as WS_TOKEN_SECRET on Cloud Run)
+
+# For WhatsApp calls:
+WA_GATEWAY_MODE=true
+WA_GATEWAY_WS_URL=wss://your-cloud-run-url.run.app
+WA_GATEWAY_WS_SECRET=                                # Shared HMAC secret (same as WS_TOKEN_SECRET on Cloud Run)
+
+# On Cloud Run (required for SIP bridge connections which lack Origin header):
+ALLOW_MISSING_WS_ORIGIN=true
+```
+
 ### Running Locally
 
 ```bash
@@ -326,7 +353,7 @@ gcloud run deploy ekaette \
   --memory 1Gi \
   --cpu 2 \
   --min-instances=1 \
-  --set-env-vars "GOOGLE_GENAI_USE_VERTEXAI=TRUE"
+  --set-env-vars "GOOGLE_GENAI_USE_VERTEXAI=TRUE,ALLOW_MISSING_WS_ORIGIN=true"
 ```
 
 ### Terraform (Infrastructure as Code)

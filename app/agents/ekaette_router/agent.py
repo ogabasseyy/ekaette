@@ -24,6 +24,7 @@ from app.agents.callbacks import (
 )
 from app.agents.dedup import telemetry_after_agent
 from app.tools.global_lessons import classify_lesson_scope, submit_global_lesson
+from app.tools.wa_messaging import send_whatsapp_message
 from app.configs.model_resolver import resolve_live_model_id
 from app.agents.vision_agent.agent import create_vision_agent
 from app.agents.valuation_agent.agent import create_valuation_agent
@@ -330,12 +331,21 @@ _VOICE_SUPPLEMENT = """
 _TEXT_SUPPLEMENT = """
     You handle text-based conversations via WhatsApp and SMS.
 
-    RESPONSE LENGTH:
-    Keep responses concise and natural for messaging. Aim for 1-3 short paragraphs.
-    Do NOT write long walls of text. Customers are reading on their phones.
-    First messages should be brief and welcoming (1-2 sentences).
-    Follow-up messages should be focused — answer the question, ask one follow-up
-    if needed, and stop. Never list more than 3-4 bullet points.
+    RESPONSE STYLE:
+    - Keep responses concise and natural for messaging. Aim for 1-3 short paragraphs.
+    - Do NOT write long walls of text. Customers are reading on their phones.
+    - First messages should be brief and welcoming (1-2 sentences).
+    - Follow-up messages should be focused — answer the question, ask one follow-up
+      if needed, and stop. Never list more than 3-4 bullet points.
+
+    NO PROCESSING NARRATION:
+    - Do NOT narrate what you are about to do. Just do it and present the result.
+    - BAD: "Let me calculate the delivery fee... One moment... Okay, the fee is ₦2,776."
+    - GOOD: "Delivery to Yaba, Lagos: ₦2,776"
+    - BAD: "I'll just need to check availability... Great, I found slots."
+    - GOOD: "Here are the available slots:"
+    - Never say "one moment", "let me check", "I'll just need to", or similar filler.
+      In a text chat the customer doesn't see you working — they only see the final message.
 
     Do NOT use voice-specific language like "I hear you" or "sounds like".
     Use messaging-appropriate language instead.
@@ -369,18 +379,21 @@ def create_ekaette_router(model: str, *, channel: str = "voice") -> Agent:
     if channel not in ("voice", "text"):
         raise ValueError(f"Invalid channel: {channel!r}. Must be 'voice' or 'text'.")
     instruction = _TEXT_INSTRUCTION if channel == "text" else _INSTRUCTION
+    tools = [PreloadMemoryTool()]
+    if channel == "voice":
+        tools.append(send_whatsapp_message)
     return Agent(
         name="ekaette_router",
         model=model,
         instruction=instruction,
         generate_content_config=_THINKING_CONFIG,
-        tools=[PreloadMemoryTool()],
+        tools=tools,
         sub_agents=[
             create_vision_agent(model),
-            create_valuation_agent(model),
-            create_booking_agent(model),
-            create_catalog_agent(model),
-            create_support_agent(model),
+            create_valuation_agent(model, channel=channel),
+            create_booking_agent(model, channel=channel),
+            create_catalog_agent(model, channel=channel),
+            create_support_agent(model, channel=channel),
         ],
         **_CALLBACKS,
     )

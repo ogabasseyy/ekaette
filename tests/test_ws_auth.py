@@ -51,6 +51,19 @@ class TestWsTokenValidation:
         assert claims.tenant_id == "public"
         assert claims.company_id == "acme"
 
+    def test_validate_token_preserves_caller_phone_claim(self):
+        ws_auth = _make_module()
+        token = ws_auth.create_ws_token(
+            "user1",
+            "public",
+            "acme",
+            300,
+            caller_phone="+2348012345678",
+        )
+        claims = ws_auth.validate_ws_token(token, expected_user_id="user1")
+        assert claims is not None
+        assert claims.caller_phone == "+2348012345678"
+
     def test_validate_expired_token_returns_none(self):
         ws_auth = _make_module()
         token = ws_auth.create_ws_token("user1", "public", "acme", ttl_seconds=-1)

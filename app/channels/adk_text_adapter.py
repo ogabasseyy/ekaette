@@ -394,4 +394,5 @@ async def _run_and_collect_text(
         logger.error("ADK runner error: %s", exc, exc_info=True)
         return _DEFAULT_FALLBACK
 
-    return "".join(text_parts) if text_parts else _DEFAULT_FALLBACK
+    cleaned_parts = [part.strip() for part in text_parts if isinstance(part, str) and part.strip()]
+    return "\n\n".join(cleaned_parts) if cleaned_parts else _DEFAULT_FALLBACK

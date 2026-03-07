@@ -40,6 +40,7 @@ TOOL_CAPABILITY_MAP: dict[str, str] = {
     "search_company_knowledge": "policy_qa",
     "get_company_profile_fact": "policy_qa",
     "query_company_system": "connector_dispatch",
+    "send_whatsapp_message": "outbound_messaging",
     "get_device_questionnaire_tool": "valuation_tradein",
 }
 

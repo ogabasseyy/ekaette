@@ -12,7 +12,7 @@
     "title": "Automotive Service Lane",
     "hint": "Trade-ins, inspections, parts and service scheduling."
   },
-  "capabilities": ["booking_reservations", "valuation_tradein", "catalog_lookup"],
+  "capabilities": ["booking_reservations", "valuation_tradein", "catalog_lookup", "outbound_messaging"],
   "enabled_agents": ["vision_agent", "valuation_agent", "booking_agent", "catalog_agent", "support_agent"],
   "connectors_supported": ["dms"],
   "status": "active"

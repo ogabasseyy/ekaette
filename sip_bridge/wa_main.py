@@ -13,11 +13,13 @@ import os
 import re
 import socket
 import sys
+import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
 _NONCE_RE = re.compile(r'nonce="([^"]+)"')
 
+from .gateway_client import GatewayClient
 from .sip_auth import verify_digest
 from .sip_tls import SipMessage, parse_message, serialize_message
 from .wa_config import WhatsAppBridgeConfig
@@ -307,6 +309,24 @@ class WaSIPServer:
             remote_addr = (media_ip, media_port)
             caller_phone = _extract_caller_phone(invite.headers.get("from", ""))
 
+            # Build gateway client if gateway mode enabled
+            gateway_client = None
+            if getattr(self.config, "gateway_mode", False) and getattr(self.config, "gateway_ws_url", ""):
+                if not getattr(self.config, "gateway_ws_secret", ""):
+                    raise ValueError("WA_GATEWAY_WS_SECRET is required when WA_GATEWAY_MODE is enabled")
+                user_id = f"wa-{uuid.uuid4().hex[:24]}"
+                session_id = f"wa-{uuid.uuid4().hex[:24]}"
+                gateway_client = GatewayClient(
+                    gateway_ws_url=self.config.gateway_ws_url,
+                    user_id=user_id,
+                    session_id=session_id,
+                    tenant_id=self.config.tenant_id,
+                    company_id=self.config.company_id,
+                    industry="",  # omit — session_init resolves from registry
+                    caller_phone=caller_phone,
+                    ws_secret=getattr(self.config, "gateway_ws_secret", ""),
+                )
+
             # Create WaSession with full media pipeline (import here to avoid circular)
             from .wa_session import WaSession
 
@@ -326,6 +346,7 @@ class WaSIPServer:
                 _caller_phone=caller_phone,
                 _bridge_config=self.config,
                 _owns_transport=True,
+                gateway_client=gateway_client,
             )
             self.active_sessions[call_id] = session
             task = asyncio.create_task(session.run(), name=f"wa_session_{call_id}")

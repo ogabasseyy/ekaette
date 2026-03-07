@@ -15,6 +15,7 @@ from app.agents.callbacks import (
     on_tool_error_emit,
 )
 from app.configs.model_resolver import resolve_live_model_id
+from app.tools.wa_messaging import send_whatsapp_message
 from app.tools.knowledge_tools import (
     get_company_profile_fact,
     query_company_system,
@@ -105,7 +106,7 @@ _THINKING_CONFIG = types.GenerateContentConfig(
     thinking_config=types.ThinkingConfig(thinking_budget=2048),
 )
 
-_TOOLS = [
+_BASE_TOOLS = [
     get_device_questionnaire_tool,
     grade_and_value_tool,
     negotiate_tool,
@@ -124,14 +125,23 @@ _CALLBACKS = dict(
 )
 
 
-def create_valuation_agent(model: str) -> Agent:
+def _tools_for_channel(channel: str) -> list[object]:
+    tools = list(_BASE_TOOLS)
+    if channel == "voice":
+        tools.append(send_whatsapp_message)
+    return tools
+
+
+def create_valuation_agent(model: str, *, channel: str = "voice") -> Agent:
     """Create a valuation agent with the specified model."""
+    if channel not in ("voice", "text"):
+        raise ValueError(f"Invalid channel: {channel!r}. Must be 'voice' or 'text'.")
     return Agent(
         name="valuation_agent",
         model=model,
         instruction=_INSTRUCTION,
         generate_content_config=_THINKING_CONFIG,
-        tools=_TOOLS,
+        tools=_tools_for_channel(channel),
         **_CALLBACKS,
     )
 

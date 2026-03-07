@@ -126,8 +126,56 @@ class TestEkaetteRouterAgent:
     def test_agent_has_preload_memory_tool(self):
         """Root agent includes PreloadMemoryTool in tool list."""
         from app.agents.ekaette_router.agent import ekaette_router
-        tool_names = {tool.name for tool in ekaette_router.tools}
+        tool_names = {
+            getattr(tool, "name", getattr(tool, "__name__", str(tool)))
+            for tool in ekaette_router.tools
+        }
         assert "preload_memory" in tool_names
+
+    def test_agent_has_send_whatsapp_message_tool(self):
+        """Root agent includes send_whatsapp_message for SIP bridge calls."""
+        from app.agents.ekaette_router.agent import ekaette_router
+        tool_names = {
+            getattr(tool, "name", getattr(tool, "__name__", str(tool)))
+            for tool in ekaette_router.tools
+        }
+        assert "send_whatsapp_message" in tool_names
+
+    def test_text_router_omits_send_whatsapp_message_tool(self):
+        from app.agents.ekaette_router.agent import create_ekaette_router
+
+        agent = create_ekaette_router(model="gemini-3-flash-preview", channel="text")
+        tool_names = {
+            getattr(tool, "name", getattr(tool, "__name__", str(tool)))
+            for tool in agent.tools
+        }
+        assert "send_whatsapp_message" not in tool_names
+
+    def test_text_router_sub_agents_omit_send_whatsapp_message_tool(self):
+        from app.agents.ekaette_router.agent import create_ekaette_router
+
+        agent = create_ekaette_router(model="gemini-3-flash-preview", channel="text")
+        for sub_agent in agent.sub_agents:
+            tool_names = {
+                getattr(tool, "name", getattr(tool, "__name__", str(tool)))
+                for tool in getattr(sub_agent, "tools", [])
+            }
+            assert "send_whatsapp_message" not in tool_names
+
+    def test_voice_router_expected_sub_agents_include_send_whatsapp_message_tool(self):
+        from app.agents.ekaette_router.agent import create_ekaette_router
+        from app.configs.model_resolver import resolve_live_model_id
+
+        agent = create_ekaette_router(model=resolve_live_model_id(), channel="voice")
+        tool_names_by_agent = {
+            sub_agent.name: {
+                getattr(tool, "name", getattr(tool, "__name__", str(tool)))
+                for tool in getattr(sub_agent, "tools", [])
+            }
+            for sub_agent in agent.sub_agents
+        }
+        for agent_name in {"valuation_agent", "booking_agent", "catalog_agent", "support_agent"}:
+            assert "send_whatsapp_message" in tool_names_by_agent[agent_name]
 
     def test_model_reads_from_env(self):
         """Root agent reads LIVE_MODEL_ID from environment at module load time."""

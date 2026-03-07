@@ -12,7 +12,7 @@
     "title": "Hospitality Concierge",
     "hint": "Real-time booking and guest support voice assistant."
   },
-  "capabilities": ["booking_reservations", "policy_qa"],
+  "capabilities": ["booking_reservations", "policy_qa", "outbound_messaging"],
   "enabled_agents": ["booking_agent", "support_agent"],
   "connectors_supported": ["pms"],
   "status": "active"

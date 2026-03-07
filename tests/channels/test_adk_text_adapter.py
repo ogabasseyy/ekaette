@@ -115,7 +115,7 @@ class TestSendTextMessage:
             message_text="Hello",
         )
 
-        assert result["text"] == "Part one. Part two."
+        assert result["text"] == "Part one.\n\nPart two."
 
     @pytest.mark.asyncio
     async def test_skips_partial_events(self):

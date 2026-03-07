@@ -17,7 +17,8 @@
     "public_search_fallback",
     "flight_status_lookup",
     "schedule_lookup",
-    "escalation_handoff"
+    "escalation_handoff",
+    "outbound_messaging"
   ],
   "enabled_agents": ["support_agent"],
   "connectors_supported": [],

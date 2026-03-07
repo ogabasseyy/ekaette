@@ -178,7 +178,7 @@ ELECTRONICS_TEMPLATE = {
         "title": "Electronics Trade Desk",
         "hint": "Inspect. Value. Negotiate. Book pickup.",
     },
-    "capabilities": ["catalog_lookup", "valuation_tradein", "booking_reservations"],
+    "capabilities": ["catalog_lookup", "valuation_tradein", "booking_reservations", "outbound_messaging"],
     "enabled_agents": ["vision_agent", "valuation_agent", "booking_agent"],
     "connectors_supported": ["crm"],
     "status": "active",
@@ -198,7 +198,7 @@ HOTEL_TEMPLATE = {
         "title": "Hospitality Concierge",
         "hint": "Real-time booking and guest support voice assistant.",
     },
-    "capabilities": ["booking_reservations", "policy_qa"],
+    "capabilities": ["booking_reservations", "policy_qa", "outbound_messaging"],
     "enabled_agents": ["booking_agent", "support_agent"],
     "connectors_supported": ["pms"],
     "status": "active",
@@ -290,7 +290,7 @@ class TestRegistrySchemaValidation:
         """Capability overrides must reference capabilities the template knows about."""
         from app.configs.registry_schema import validate_capability_overrides
 
-        template_capabilities = ["catalog_lookup", "valuation_tradein", "booking_reservations"]
+        template_capabilities = ELECTRONICS_TEMPLATE["capabilities"]
         overrides = {
             "add": ["custom_tool"],  # OK — adding new is always valid
             "remove": ["nonexistent_capability"],  # BAD — not in template

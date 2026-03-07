@@ -8,7 +8,8 @@
 - **Modular backend:** Three isolated API packages (admin, public, realtime) with enforced architectural boundaries — no circular dependencies
 - **Agent-per-capability:** Root orchestrator delegates to specialized sub-agents; each agent owns one domain
 - **Fail-closed config:** Missing registry data returns explicit errors, never silent defaults
-- **Zero-latency voice:** Ephemeral tokens enable direct client-to-API WebSocket; backend handles auth and config only
+- **Single AI brain (gateway-enabled):** When `GATEWAY_MODE=true` and `WA_GATEWAY_MODE=true`, phone and WA-call traffic converge with web and WhatsApp text on one ADK agent graph on Cloud Run; both flags default to `false`, so this is not the default deployment
+- **Zero-latency voice:** For direct web voice, ephemeral tokens enable a direct client-to-API WebSocket and the backend handles auth/config only; SIP and WhatsApp voice use gateway/backend routing when `GATEWAY_MODE=true` or `WA_GATEWAY_MODE=true`
 - **Privacy by design:** AI disclosure at first interaction (EU AI Act), NDPA-compliant consent, PII redaction pipeline across logs/sessions/transcripts, HMAC-signed WebSocket tokens
 
 ### Firestore Data Model
@@ -110,8 +111,9 @@ graph TB
 
     subgraph "GCE VM — SIP Bridge (<reserved-static-ip>)"
         SIP_SVR["SIPServer<br/>UDP :6060, SIP REGISTER,<br/>INVITE/ACK/BYE handling"]
-        CALL_SESS["CallSession<br/>4-task pipeline:<br/>recv → decode → Gemini → encode"]
-        WA_SESS["WaSession<br/>4-task pipeline:<br/>SRTP → Opus decode → Gemini → Opus encode"]
+        CALL_SESS["CallSession<br/>4-task pipeline:<br/>recv → decode → Direct Gemini or Gateway WS → encode"]
+        WA_SESS["WaSession<br/>4-task pipeline:<br/>SRTP → Opus decode → Direct Gemini or Gateway WS → encode"]
+        GW_CLIENT["GatewayClient<br/>WSS → Cloud Run<br/>(feature-flagged path)"]
         CODEC["CodecBridge<br/>G.711 μ-law ↔ PCM16 (AT)<br/>Opus ↔ PCM16 (WhatsApp)"]
     end
 
@@ -161,8 +163,11 @@ graph TB
     SIP_SVR --> CALL_SESS
     CALL_SESS --> CODEC
     WA_SESS --> CODEC
-    CALL_SESS -.->|"Gemini Live<br/>(direct, no ADK)"| G25
-    WA_SESS -.->|"Gemini Live<br/>(direct, no ADK)"| G25
+    CALL_SESS -.->|"WSS (PCM16)<br/>if GATEWAY_MODE=true"| GW_CLIENT
+    WA_SESS -.->|"WSS (PCM16)<br/>if WA_GATEWAY_MODE=true"| GW_CLIENT
+    GW_CLIENT -->|"Cloud Run WS bridge<br/>(feature-flagged)"| SESS_INIT
+    CALL_SESS -.->|"Direct Gemini (default)"| G25
+    WA_SESS -.->|"Direct Gemini (default)"| G25
 
     ROOT -->|"photo received"| VA
     ROOT -->|"assess/price"| VLA

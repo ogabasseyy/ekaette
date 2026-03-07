@@ -15,6 +15,7 @@ from app.agents.callbacks import (
     on_tool_error_emit,
 )
 from app.configs.model_resolver import resolve_live_model_id
+from app.tools.wa_messaging import send_whatsapp_message
 from app.tools.knowledge_tools import (
     get_company_profile_fact,
     query_company_system,
@@ -34,7 +35,16 @@ from app.tools.shipping_tools import (
 
 LIVE_MODEL_ID = resolve_live_model_id()
 
-_INSTRUCTION = """You answer general customer questions, FAQs, and provide support.
+_VOICE_PAYMENT_FOLLOWUP = (
+    "    - Offer to send the account details via WhatsApp when helpful and use "
+    "send_whatsapp_message only if the customer wants that follow-up."
+)
+_TEXT_PAYMENT_FOLLOWUP = (
+    "    - Share the account details directly in this chat and do not promise a "
+    "separate SMS/WhatsApp follow-up."
+)
+
+_INSTRUCTION_TEMPLATE = """You answer general customer questions, FAQs, and provide support.
 
     Grounding priority:
     1) Use company tools first for company-specific truth:
@@ -54,7 +64,7 @@ _INSTRUCTION = """You answer general customer questions, FAQs, and provide suppo
     PAYMENT FLOW:
     - For bank transfer payments, use create_virtual_account_payment to generate
       a dedicated account number and read it clearly to the caller.
-    - Tell the customer you've sent the account details via SMS/WhatsApp as follow-up.
+{payment_followup_line}
     - If customer says they have paid, use check_payment_status before confirming.
     - Confirm payment only when status is successful from webhook/verification.
 
@@ -84,7 +94,7 @@ _INSTRUCTION = """You answer general customer questions, FAQs, and provide suppo
     - Always be honest if you don't know — never make up information
     """
 
-_TOOLS = [
+_BASE_TOOLS = [
     search_company_knowledge,
     get_company_profile_fact,
     query_company_system,
@@ -107,13 +117,27 @@ _CALLBACKS = dict(
 )
 
 
-def create_support_agent(model: str) -> Agent:
+def _tools_for_channel(channel: str) -> list[object]:
+    tools = list(_BASE_TOOLS)
+    if channel == "voice":
+        tools.append(send_whatsapp_message)
+    return tools
+
+
+def create_support_agent(model: str, *, channel: str = "voice") -> Agent:
     """Create a support agent with the specified model."""
+    if channel not in ("voice", "text"):
+        raise ValueError(f"Invalid channel: {channel!r}. Must be 'voice' or 'text'.")
+    instruction = _INSTRUCTION_TEMPLATE.format(
+        payment_followup_line=(
+            _VOICE_PAYMENT_FOLLOWUP if channel == "voice" else _TEXT_PAYMENT_FOLLOWUP
+        )
+    )
     return Agent(
         name="support_agent",
         model=model,
-        instruction=_INSTRUCTION,
-        tools=_TOOLS,
+        instruction=instruction,
+        tools=_tools_for_channel(channel),
         **_CALLBACKS,
     )
 

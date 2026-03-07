@@ -25,7 +25,7 @@ graph TB
                 subgraph "4-Task Pattern"
                     T1["1. _media_recv_loop<br/>UDP recvfrom → inbound_queue"]
                     T2["2. _media_inbound_loop<br/>RTP parse → codec decode → PCM16 16kHz"]
-                    T3["3. _gemini_bidi_loop<br/>PCM16 ↔ Gemini Live WebSocket"]
+                    T3["3. _gemini_bidi_loop / _gateway_bidi_loop<br/>PCM16 ↔ Gemini Live (direct) or Cloud Run WS (gateway)"]
                     T4["4. _media_outbound_loop<br/>PCM16 24kHz → codec encode → RTP send"]
                 end
             end
@@ -36,11 +36,16 @@ graph TB
                 AUDIO["audio_codec.py<br/>G.711 μ-law ↔ PCM16,<br/>resample 8k↔16k↔24k"]
                 SRTP_CTX["srtp_context.py<br/>SRTP protect/unprotect"]
             end
+
+            subgraph "Gateway Mode"
+                GW_CLIENT["gateway_client.py<br/>GatewayClient WSS → Cloud Run<br/>reconnect + resumption tokens"]
+            end
         end
     end
 
     subgraph "External"
         AT["AT SIP Registrar<br/>(ng.sip.africastalking.com)"]
+        CR["Cloud Run (ADK)<br/>Full agent graph"]
         GEMINI["Gemini Live API<br/>(v1alpha, native audio)"]
         FSTORE["Firestore<br/>(wa_calls collection)"]
     end
@@ -66,8 +71,9 @@ graph TB
     WA_S --> SRTP_CTX
 
     REGISTER -->|"REGISTER/401/200"| AT
-    T3 -->|"PCM16 bidi"| GEMINI
-    SESS --> FSTORE
+    T3 -->|"Gateway mode:<br/>PCM16 via WSS"| GW_CLIENT
+    GW_CLIENT -->|"WSS"| CR
+    T3 -.->|"Direct mode:<br/>PCM16 bidi"| GEMINI
     WA_S --> FSTORE
 
     classDef entry fill:#E3F2FD,stroke:#1565C0,stroke-width:2px
@@ -85,7 +91,30 @@ graph TB
 
 ---
 
-## Inbound Phone Call Flow (AT → SIP Bridge → Gemini)
+## Gateway Mode — Single AI Brain
+
+When `GATEWAY_MODE=true`, the SIP bridge becomes a **thin transport adapter** that routes through Cloud Run instead of connecting directly to Gemini Live. This gives phone callers the full ADK agent graph (6 agents, all tools, registry config, persistent sessions, memory bank) — the same AI brain as web and WhatsApp text channels.
+
+```text
+Direct Mode (default):   Phone → SIP Bridge → Gemini Live (4-line prompt, 0 tools)
+Gateway Mode:            Phone → SIP Bridge → Cloud Run WS → ADK → Gemini Live (full agent graph)
+```
+
+**What SIP bridge keeps:** G.711/Opus codec conversion, SRTP, SIP signaling, echo suppression, RTP pacing.
+**What SIP bridge loses:** Direct Gemini connection, hardcoded system instructions, local tool handling.
+
+Key implementation:
+- `gateway_client.py`: WebSocket client connecting to Cloud Run `/ws/{user_id}/{session_id}`
+- Task 3 replaced: `_gateway_bidi_loop` instead of `_gemini_bidi_loop`
+- `caller_phone` travels in the signed WS auth token → stored as `user:caller_phone` in ADK session state
+- `send_whatsapp_message` is exposed only on voice-channel agents for during-call follow-up
+- Rollback: `GATEWAY_MODE=false` reverts to direct Gemini (zero code changes)
+
+---
+
+## Inbound Phone Call Flow
+
+### Gateway Mode (GATEWAY_MODE=true) — Full Agent Graph
 
 ```mermaid
 sequenceDiagram
@@ -93,10 +122,10 @@ sequenceDiagram
     participant AT as Africa's Talking<br/>(SIP Registrar)
     participant SIP as SIPServer<br/>(GCE VM :6060)
     participant SESS as CallSession<br/>(4-task pipeline)
-    participant GEMINI as Gemini Live API<br/>(v1alpha)
-    participant FS as Firestore
+    participant GW as GatewayClient<br/>(WSS)
+    participant CR as Cloud Run<br/>(ADK Agent Graph)
 
-    Note over CALLER,FS: SIP Registration (on startup)
+    Note over CALLER,CR: SIP Registration (on startup)
     SIP->>AT: SIP REGISTER (UDP)
     AT->>SIP: 401 Unauthorized (nonce challenge)
     SIP->>SIP: Compute digest auth (MD5/SHA-256)
@@ -104,85 +133,148 @@ sequenceDiagram
     AT->>SIP: 200 OK (registered)
     Note over SIP,AT: Re-registers at 80% of expiry
 
-    Note over CALLER,FS: Inbound Call
+    Note over CALLER,CR: Inbound Call
     CALLER->>AT: Dial <service-number>
     AT->>SIP: SIP INVITE (SDP: G.711 μ-law, port X)
     SIP->>AT: 100 Trying
-    SIP->>SIP: Allocate RTP port (10000-20000)
-    SIP->>SIP: Parse SDP, build G.711 SDP answer
+    SIP->>SIP: Allocate RTP port, extract caller phone from From header
+    SIP->>SIP: Derive namespaced gateway IDs from tenant/company + caller/call context
     SIP->>AT: 200 OK (SDP: G.711 μ-law, port Y)
     AT->>SIP: ACK
 
-    Note over SIP,FS: Session Setup
-    SIP->>SESS: Create CallSession(call_id, codec, rtp_ports)
-    SESS->>FS: Write call start record (wa_calls)
-    SESS->>GEMINI: Connect Gemini Live (dict config)
-    GEMINI-->>SESS: WebSocket connected
+    Note over SIP,CR: Session Setup (Gateway Mode)
+    SIP->>SESS: Create CallSession + GatewayClient
+    SESS->>GW: connect() → WSS to Cloud Run /ws/{user_id}/{session_id}?token=...
+    GW->>CR: WebSocket handshake
+    CR-->>GW: session_started {sessionId}
 
-    Note over SESS,GEMINI: Proactive Greeting (Pipecat Pattern)
-    SESS->>GEMINI: send_client_content("[Call connected]", turn_complete=True)
-    GEMINI->>SESS: Audio response (PCM16 24kHz greeting)
-    SESS->>SESS: Encode 24kHz → 8kHz → G.711 μ-law → RTP
-    SESS->>AT: RTP audio frames (greeting)
-    AT->>CALLER: Caller hears AI greeting
-
-    Note over CALLER,GEMINI: Bidirectional Audio (4 concurrent tasks)
+    Note over CALLER,CR: Bidirectional Audio (4 concurrent tasks)
 
     par Task 1+2: Caller speaks
         CALLER->>AT: Voice audio
         AT->>SIP: RTP G.711 μ-law frames
         SESS->>SESS: G.711 decode → resample 8k→16k
-        SESS->>GEMINI: send_realtime_input(audio=Blob, PCM16 16kHz)
+        SESS->>GW: send_audio(PCM16 16kHz)
+        GW->>CR: Binary WebSocket frame
     and Task 3+4: AI responds
-        GEMINI->>SESS: PCM16 24kHz audio chunks
+        CR->>GW: Binary WebSocket frame (PCM16 24kHz)
+        GW->>SESS: GatewayFrame(audio)
         SESS->>SESS: Resample 24k→8k → G.711 encode → RTP
         SESS->>AT: RTP audio frames
         AT->>CALLER: Caller hears AI response
     end
 
-    Note over SESS,GEMINI: Echo Suppression
-    SESS->>SESS: While model speaks: send SILENCE_FRAME<br/>to Gemini (not real mic audio).<br/>Holdoff 0.5s after model stops.
+    Note over SESS,CR: Echo Suppression
+    SESS->>SESS: While model speaks: send SILENCE_FRAME<br/>to Cloud Run (not real mic audio).<br/>Holdoff 0.5s after model stops.
 
-    Note over CALLER,FS: Call Ends
+    Note over CALLER,CR: Call Ends
     AT->>SIP: SIP BYE
     SESS->>SESS: Shutdown signal → cancel all tasks
-    SESS->>GEMINI: Close WebSocket
-    SESS->>FS: Write call end record (duration, frames)
+    GW->>CR: Close WebSocket
 ```
+
+### Direct Mode (GATEWAY_MODE=false, default) — Hardcoded Prompt
+
+```mermaid
+sequenceDiagram
+    participant CALLER as Caller (Phone)
+    participant AT as Africa's Talking
+    participant SESS as CallSession
+    participant GEMINI as Gemini Live API
+
+    Note over CALLER,GEMINI: Simplified — SIP registration and signaling same as above
+
+    SESS->>GEMINI: Connect Gemini Live (dict config, 4-line system instruction)
+    GEMINI-->>SESS: WebSocket connected
+
+    Note over SESS,GEMINI: Proactive Greeting (Pipecat Pattern)
+    SESS->>GEMINI: send_client_content("[Call connected]", turn_complete=True)
+    GEMINI->>SESS: Audio response (PCM16 24kHz greeting)
+
+    par Caller speaks
+        CALLER->>AT: Voice audio
+        AT->>SESS: RTP G.711 frames
+        SESS->>GEMINI: send_realtime_input(audio=Blob, PCM16 16kHz)
+    and AI responds
+        GEMINI->>SESS: PCM16 24kHz audio chunks
+        SESS->>AT: RTP audio frames
+        AT->>CALLER: Caller hears AI response
+    end
+
+    Note over CALLER,GEMINI: Call Ends
+    SESS->>GEMINI: Close WebSocket
+```
+
+> **Note:** Phone CallSession does not write Firestore call records (unlike WaSession which persists to `wa_calls`). Phone call persistence is planned but not yet implemented.
 
 ---
 
-## WhatsApp Call Flow (Opus/SRTP → Gemini)
+## WhatsApp Call Flow (Opus/SRTP)
+
+### Gateway Mode (WA_GATEWAY_MODE=true) — Full Agent Graph
 
 ```mermaid
 sequenceDiagram
     participant WA as WhatsApp Caller
     participant WA_SIP as WaSipClient<br/>(GCE VM)
     participant WA_SESS as WaSession<br/>(4-task pipeline)
-    participant GEMINI as Gemini Live API<br/>(v1alpha)
+    participant GW as GatewayClient<br/>(WSS)
+    participant CR as Cloud Run<br/>(ADK Agent Graph)
     participant FS as Firestore
 
     Note over WA,FS: WhatsApp Call Setup
     WA->>WA_SIP: WhatsApp call signaling
     WA_SIP->>WA_SIP: Negotiate Opus codec, SRTP keys (SDES)
+    WA_SIP->>WA_SIP: Extract caller phone, mint opaque gateway user_id/session_id
+    WA_SIP->>WA_SESS: Create WaSession + GatewayClient
+    WA_SESS->>FS: Write call start record (wa_calls)
+    WA_SESS->>GW: connect() → WSS to Cloud Run
+    GW->>CR: WebSocket handshake
+    CR-->>GW: session_started {sessionId}
+
+    Note over WA,CR: Bidirectional Audio
+
+    par Inbound: Caller speaks
+        WA->>WA_SIP: SRTP Opus frames (UDP)
+        WA_SESS->>WA_SESS: SRTP unprotect → Opus decode → PCM16 16kHz
+        WA_SESS->>GW: send_audio(PCM16 16kHz)
+        GW->>CR: Binary WebSocket frame
+    and Outbound: AI responds
+        CR->>GW: Binary WebSocket frame (PCM16 24kHz)
+        GW->>WA_SESS: GatewayFrame(audio)
+        WA_SESS->>WA_SESS: Opus encode → SRTP protect
+        WA_SESS->>WA: SRTP Opus frames (UDP)
+    end
+
+    Note over WA,FS: Call Ends
+    GW->>CR: Close WebSocket
+    WA_SESS->>FS: Write call end record
+```
+
+### Direct Mode (WA_GATEWAY_MODE=false, default) — Local Tool Handling
+
+```mermaid
+sequenceDiagram
+    participant WA as WhatsApp Caller
+    participant WA_SIP as WaSipClient
+    participant WA_SESS as WaSession
+    participant GEMINI as Gemini Live API
+    participant FS as Firestore
+
     WA_SIP->>WA_SESS: Create WaSession(call_id, srtp_ctx, codec_bridge)
     WA_SESS->>FS: Write call start record (wa_calls)
-    WA_SESS->>GEMINI: Connect Gemini Live (v1alpha, proactive_audio=True)
+    WA_SESS->>GEMINI: Connect Gemini Live (v1alpha, proactive_audio=True, SEND_WA_MESSAGE_TOOL)
 
     Note over WA_SESS,GEMINI: Proactive Greeting
     WA_SESS->>GEMINI: send_client_content("[Call connected]", turn_complete=True)
     GEMINI->>WA_SESS: Audio greeting (PCM16 24kHz)
 
-    Note over WA,GEMINI: Bidirectional Audio
-
-    par Inbound: Caller speaks
-        WA->>WA_SIP: SRTP Opus frames (UDP)
-        WA_SESS->>WA_SESS: SRTP unprotect → Opus decode → PCM16 16kHz
-        WA_SESS->>GEMINI: send_realtime_input(audio=Blob, PCM16 16kHz)
-    and Outbound: AI responds
-        GEMINI->>WA_SESS: PCM16 24kHz audio chunks
-        WA_SESS->>WA_SESS: Opus encode → SRTP protect
-        WA_SESS->>WA: SRTP Opus frames (UDP)
+    par Caller speaks
+        WA->>WA_SESS: SRTP Opus → PCM16 16kHz
+        WA_SESS->>GEMINI: send_realtime_input(audio=Blob)
+    and AI responds
+        GEMINI->>WA_SESS: PCM16 24kHz
+        WA_SESS->>WA: Opus encode → SRTP → UDP
     end
 
     Note over WA,FS: Call Ends

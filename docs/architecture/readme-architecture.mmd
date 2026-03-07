@@ -10,8 +10,13 @@ graph TB
         TTS["Gemini TTS"]
     end
 
-    subgraph "Backend — FastAPI + Python 3.13"
-        GW["API Gateway"]
+    subgraph "Phone Channel"
+        PHONE["PSTN / Africa's Talking"]
+        SIP_B["SIP Bridge<br/>(G.711/Opus ↔ PCM16)"]
+    end
+
+    subgraph "Backend — Cloud Run (FastAPI + Python 3.13)"
+        GW["API Gateway + WebSocket"]
         subgraph "Google ADK 1.25.1"
             ROOT["ekaette_router<br/>(Gemini 2.5 Flash Native Audio)"]
             VA["vision_agent<br/>(Gemini 3 Flash)"]
@@ -36,6 +41,8 @@ graph TB
     MIC --> WS
     WS -->|"WSS"| GW
     WA -->|"Webhook"| GW
+    PHONE --> SIP_B
+    SIP_B -->|"WSS (PCM16)"| GW
     GW --> ROOT
     GW --> TR
     TR --> ROOT

@@ -106,6 +106,7 @@ async def initialize_session(
 
     # ── WS token authentication (when WS_TOKEN_SECRET is configured) ──
     ws_secret = get_runtime_value_safe("WS_TOKEN_SECRET", "")
+    _token_claims = None  # populated when token auth succeeds
     if ws_secret:
         token_param = websocket.query_params.get("token")
         if not token_param:
@@ -117,6 +118,7 @@ async def initialize_session(
         if claims is None:
             await websocket.close(code=4401, reason="Invalid or expired token")
             return None
+        _token_claims = claims
 
     origin = websocket.headers.get("origin")
     ws_origin_allowed = is_websocket_origin_allowed_fn(origin)
@@ -157,6 +159,22 @@ async def initialize_session(
         or websocket.query_params.get("tenantId"),
         default="public",
     )
+    requested_company = websocket.query_params.get(
+        "company_id",
+        websocket.query_params.get("companyId", default_company_id),
+    )
+    company_id = normalize_company_id_fn(requested_company)
+
+    # When token auth succeeded, use claims as authoritative for tenant/company.
+    # The token was minted with specific tenant_id/company_id — those override
+    # query params to prevent a client from escalating to a different tenant.
+    if _token_claims is not None:
+        if _token_claims.tenant_id:
+            tenant_id = _token_claims.tenant_id
+        if _token_claims.company_id:
+            company_id = _token_claims.company_id
+    caller_phone = _token_claims.caller_phone.strip() if _token_claims and _token_claims.caller_phone else ""
+
     if not tenant_allowed_fn(tenant_id):
         logger.warning(
             "WebSocket startup rejected (tenant forbidden) %s",
@@ -175,11 +193,12 @@ async def initialize_session(
         await websocket.close(code=1008, reason="Tenant not allowed")
         return None
 
-    requested_company = websocket.query_params.get(
-        "company_id",
-        websocket.query_params.get("companyId", default_company_id),
+    # SIP bridge resumption token for reconnects
+    resumption_token = (
+        websocket.query_params.get("resumption_token")
+        or websocket.query_params.get("resumptionToken")
+        or ""
     )
-    company_id = normalize_company_id_fn(requested_company)
 
     uses_vertex_sessions = session_service_obj.__class__.__name__ == "VertexAiSessionService"
     resolved_session_id = session_id
@@ -199,14 +218,45 @@ async def initialize_session(
             industry = resumed_industry.strip().lower()
 
         resumed_company = session.state.get("app:company_id")
-        if isinstance(resumed_company, str) and resumed_company.strip():
-            company_id = normalize_company_id_fn(resumed_company)
-
         resumed_tenant = session.state.get("app:tenant_id")
-        if isinstance(resumed_tenant, str) and resumed_tenant.strip():
-            tenant_id = normalize_tenant_id_fn(resumed_tenant, default=tenant_id)
+        if _token_claims is not None:
+            resumed_company_norm = (
+                normalize_company_id_fn(resumed_company)
+                if isinstance(resumed_company, str) and resumed_company.strip()
+                else ""
+            )
+            resumed_tenant_norm = (
+                normalize_tenant_id_fn(resumed_tenant, default=tenant_id)
+                if isinstance(resumed_tenant, str) and resumed_tenant.strip()
+                else ""
+            )
+            if resumed_company_norm and resumed_company_norm != company_id:
+                await websocket.send_text(json.dumps({
+                    "type": "error",
+                    "code": "SESSION_SCOPE_MISMATCH",
+                    "message": "Authenticated company does not match resumed session",
+                    "companyId": company_id,
+                }))
+                await websocket.close(code=1008, reason="Session scope mismatch")
+                return None
+            if resumed_tenant_norm and resumed_tenant_norm != tenant_id:
+                await websocket.send_text(json.dumps({
+                    "type": "error",
+                    "code": "SESSION_SCOPE_MISMATCH",
+                    "message": "Authenticated tenant does not match resumed session",
+                    "tenantId": tenant_id,
+                }))
+                await websocket.close(code=1008, reason="Session scope mismatch")
+                return None
+        else:
+            if isinstance(resumed_company, str) and resumed_company.strip():
+                company_id = normalize_company_id_fn(resumed_company)
+            if isinstance(resumed_tenant, str) and resumed_tenant.strip():
+                tenant_id = normalize_tenant_id_fn(resumed_tenant, default=tenant_id)
 
         state_updates: dict[str, object] = {}
+        if "app:tenant_id" not in session.state:
+            state_updates["app:tenant_id"] = tenant_id
         if "app:industry_config" not in session.state:
             industry_config = await load_industry_config_fn(industry_config_client_obj, industry)
             state_updates.update(build_session_state_fn(industry_config, industry))
@@ -270,6 +320,10 @@ async def initialize_session(
                 return None
             if registry_config is not None:
                 state_updates.update(canonical_state_updates_from_registry_fn(registry_config))
+
+        # Inject caller phone into resumed session if provided and not already set
+        if caller_phone and "user:caller_phone" not in session.state:
+            state_updates["user:caller_phone"] = caller_phone
 
         if state_updates:
             await async_save_session_state_fn(
@@ -396,6 +450,11 @@ async def initialize_session(
         )
         if registry_config is not None:
             initial_state.update(canonical_state_updates_from_registry_fn(registry_config))
+        initial_state.setdefault("app:tenant_id", tenant_id)
+
+        # Inject caller phone for SIP bridge connections
+        if caller_phone:
+            initial_state["user:caller_phone"] = caller_phone
 
         # Load global lessons (Tier 2 learning — cross-session behavioral rules)
         try:
@@ -440,10 +499,17 @@ async def initialize_session(
     voice_override = session_state.get("app:voice") if isinstance(session_state.get("app:voice"), str) else None
     session_voice = voice_override or voice_for_industry_fn(session_industry)
 
+    # Build session resumption config (with handle if reconnecting)
+    if resumption_token:
+        session_resumption = types_mod.SessionResumptionConfig(handle=resumption_token)
+    else:
+        session_resumption = types_mod.SessionResumptionConfig()
+
     if is_native_audio:
         run_config_kwargs: dict[str, object] = {
             "streaming_mode": streaming_mode_cls.BIDI,
             **native_audio_live_config_fn(industry, voice_override=voice_override),
+            "session_resumption": session_resumption,
         }
         if realtime_input_config is not None:
             run_config_kwargs["realtime_input_config"] = realtime_input_config
@@ -452,7 +518,7 @@ async def initialize_session(
         run_config = run_config_cls(
             streaming_mode=streaming_mode_cls.BIDI,
             response_modalities=["TEXT"],
-            session_resumption=types_mod.SessionResumptionConfig(),
+            session_resumption=session_resumption,
         )
 
     logger.debug(

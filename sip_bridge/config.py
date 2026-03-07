@@ -41,6 +41,10 @@ class BridgeConfig:
     sip_username: str
     sip_password: str
     sip_register_interval: int
+    # Gateway mode — route via Cloud Run instead of direct Gemini
+    gateway_mode: bool = False
+    gateway_ws_url: str = ""
+    gateway_ws_secret: str = ""
 
     @classmethod
     def from_env(cls) -> BridgeConfig:
@@ -71,6 +75,9 @@ class BridgeConfig:
             company_id=os.getenv("SIP_COMPANY_ID", "ekaette-electronics"),
             tenant_id=os.getenv("SIP_TENANT_ID", "public"),
             health_port=_read_int_env("SIP_HEALTH_PORT", "8081"),
+            gateway_mode=os.getenv("GATEWAY_MODE", "false").lower() in ("true", "1", "yes"),
+            gateway_ws_url=os.getenv("GATEWAY_WS_URL", ""),
+            gateway_ws_secret=os.getenv("GATEWAY_WS_SECRET", ""),
             sip_registrar=os.getenv("SIP_REGISTRAR", "ng.sip.africastalking.com"),
             sip_username=os.getenv("SIP_USERNAME", ""),
             sip_password=os.getenv("SIP_PASSWORD", ""),
@@ -80,7 +87,7 @@ class BridgeConfig:
     def validate(self) -> list[str]:
         """Return list of config validation errors."""
         errors: list[str] = []
-        if not self.gemini_api_key:
+        if not self.gateway_mode and not self.gemini_api_key:
             errors.append("GOOGLE_API_KEY is required for Gemini Live")
         if not self.sip_public_ip or self.sip_public_ip == "127.0.0.1":
             errors.append("SIP_PUBLIC_IP should be set to a reachable public IP")
@@ -99,6 +106,11 @@ class BridgeConfig:
 
         if not isinstance(self.sip_register_interval, int) or self.sip_register_interval <= 0:
             errors.append("SIP_REGISTER_INTERVAL must be an integer greater than 0")
+
+        if self.gateway_mode and not self.gateway_ws_url:
+            errors.append("GATEWAY_WS_URL is required when GATEWAY_MODE is enabled")
+        if self.gateway_mode and not self.gateway_ws_secret:
+            errors.append("GATEWAY_WS_SECRET is required when GATEWAY_MODE is enabled")
 
         normalized_live_model = self.live_model_id.strip().lower()
         if normalized_live_model == "":
