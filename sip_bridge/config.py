@@ -109,6 +109,8 @@ class BridgeConfig:
 
         if self.gateway_mode and not self.gateway_ws_url:
             errors.append("GATEWAY_WS_URL is required when GATEWAY_MODE is enabled")
+        if self.gateway_mode and not self.gateway_ws_secret:
+            errors.append("GATEWAY_WS_SECRET is required when GATEWAY_MODE is enabled")
 
         normalized_live_model = self.live_model_id.strip().lower()
         if normalized_live_model == "":

@@ -137,12 +137,20 @@ class TestInitializeSession:
     async def test_new_session_injects_caller_phone_into_real_initialize_session(
         self, session_init_runtime
     ):
-        runtime = session_init_runtime()
+        claims = ws_auth.WsTokenClaims(
+            sub="sip-user-123",
+            tenant_id="public",
+            company_id="acme-co",
+            exp=time.time() + 60,
+            jti="jti-caller-new",
+            caller_phone="+2348012345678",
+        )
+        runtime = session_init_runtime(ws_secret="test-secret", token_claims=claims)
         websocket = _FakeWebSocket(
             query_params={
                 "industry": "electronics",
                 "companyId": "Acme-Co",
-                "caller_phone": "+2348012345678",
+                "token": "signed-token",
             }
         )
 
@@ -174,12 +182,24 @@ class TestInitializeSession:
                 "app:company_knowledge": [],
             },
         )
-        runtime = session_init_runtime(existing_session=existing_session)
+        claims = ws_auth.WsTokenClaims(
+            sub="sip-user-123",
+            tenant_id="public",
+            company_id="acme-co",
+            exp=time.time() + 60,
+            jti="jti-caller-resume",
+            caller_phone="+2348012345678",
+        )
+        runtime = session_init_runtime(
+            existing_session=existing_session,
+            ws_secret="test-secret",
+            token_claims=claims,
+        )
         websocket = _FakeWebSocket(
             query_params={
                 "industry": "electronics",
                 "companyId": "Acme-Co",
-                "callerPhone": "+2348012345678",
+                "token": "signed-token",
             }
         )
 
@@ -189,7 +209,10 @@ class TestInitializeSession:
         runtime.session_service.create_session.assert_not_awaited()
         runtime.async_save_session_state.assert_awaited_once()
         save_kwargs = runtime.async_save_session_state.await_args.kwargs
-        assert save_kwargs["state_updates"] == {"user:caller_phone": "+2348012345678"}
+        assert save_kwargs["state_updates"] == {
+            "app:tenant_id": "public",
+            "user:caller_phone": "+2348012345678",
+        }
 
     @pytest.mark.asyncio
     async def test_resumption_token_flows_into_run_config(
@@ -208,6 +231,26 @@ class TestInitializeSession:
 
         assert ctx is not None
         assert ctx.run_config.session_resumption.handle == "resume-123"
+
+    @pytest.mark.asyncio
+    async def test_query_param_caller_phone_is_ignored_without_trusted_claim(
+        self, session_init_runtime
+    ):
+        runtime = session_init_runtime()
+        websocket = _FakeWebSocket(
+            query_params={
+                "industry": "electronics",
+                "companyId": "Acme-Co",
+                "caller_phone": "+2348099999999",
+            }
+        )
+
+        ctx = await session_init.initialize_session(websocket, "sip-user-123", "session-abc")
+
+        assert ctx is not None
+        assert "user:caller_phone" not in ctx.session_state
+        create_kwargs = runtime.session_service.create_session.await_args.kwargs
+        assert "user:caller_phone" not in create_kwargs["state"]
 
     @pytest.mark.asyncio
     async def test_token_claims_override_query_param_tenant_and_company(
@@ -237,6 +280,50 @@ class TestInitializeSession:
         assert ctx.company_id == "company-from-token"
         create_kwargs = runtime.session_service.create_session.await_args.kwargs
         assert create_kwargs["state"]["app:company_id"] == "company-from-token"
+
+    @pytest.mark.asyncio
+    async def test_resumed_session_scope_mismatch_is_rejected_when_token_claims_disagree(
+        self, session_init_runtime
+    ):
+        existing_session = SimpleNamespace(
+            id="session-abc",
+            state={
+                "app:industry": "electronics",
+                "app:industry_config": {"name": "Electronics & Gadgets", "voice": "Aoede"},
+                "app:voice": "Aoede",
+                "app:company_id": "query-company",
+                "app:tenant_id": "other-tenant",
+                "app:company_profile": {"name": "Acme"},
+                "app:company_knowledge": [],
+            },
+        )
+        claims = ws_auth.WsTokenClaims(
+            sub="sip-user-123",
+            tenant_id="tenant-from-token",
+            company_id="company-from-token",
+            exp=time.time() + 60,
+            jti="jti-scope-mismatch",
+        )
+        session_init_runtime(
+            existing_session=existing_session,
+            ws_secret="test-secret",
+            token_claims=claims,
+        )
+        websocket = _FakeWebSocket(
+            query_params={
+                "industry": "electronics",
+                "tenantId": "tenant-from-query",
+                "companyId": "company-from-query",
+                "token": "signed-token",
+            }
+        )
+
+        ctx = await session_init.initialize_session(websocket, "sip-user-123", "session-abc")
+
+        assert ctx is None
+        assert websocket.closed[-1][0] == 1008
+        payload = json.loads(websocket.sent_texts[-1])
+        assert payload["code"] == "SESSION_SCOPE_MISMATCH"
 
 
 class TestOriginPolicy:

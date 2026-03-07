@@ -79,6 +79,8 @@ class WhatsAppBridgeConfig:
         errors: list[str] = []
         if self.gateway_mode and not self.gateway_ws_url:
             errors.append("WA_GATEWAY_WS_URL is required when WA_GATEWAY_MODE is enabled")
+        if self.gateway_mode and not self.gateway_ws_secret:
+            errors.append("WA_GATEWAY_WS_SECRET is required when WA_GATEWAY_MODE is enabled")
         if not self.gateway_mode and not self.gemini_api_key:
             errors.append("GOOGLE_API_KEY is required for Gemini Live")
         if not self.sip_username:

@@ -112,11 +112,18 @@ class SIPServer:
         # Build gateway client if gateway mode enabled
         gateway_client: GatewayClient | None = None
         if self.config.gateway_mode and self.config.gateway_ws_url:
+            if not self.config.gateway_ws_secret:
+                logger.error("Gateway mode enabled without GATEWAY_WS_SECRET")
+                raise ValueError("GATEWAY_WS_SECRET is required when GATEWAY_MODE is enabled")
+            scope_prefix = f"{self.config.tenant_id}:{self.config.company_id}"
             if caller_phone:
-                user_id = f"sip-{hashlib.sha256(caller_phone.encode()).hexdigest()[:16]}"
+                user_seed = f"{scope_prefix}:caller:{caller_phone}"
+                user_id = f"sip-{hashlib.sha256(user_seed.encode()).hexdigest()[:24]}"
             else:
-                user_id = f"sip-anon-{hashlib.sha256(call_id.encode()).hexdigest()[:16]}"
-            session_id = f"sip-{hashlib.sha256(call_id.encode()).hexdigest()[:24]}"
+                anon_seed = f"{scope_prefix}:call:{call_id}"
+                user_id = f"sip-anon-{hashlib.sha256(anon_seed.encode()).hexdigest()[:16]}"
+            session_seed = f"{scope_prefix}:session:{call_id}"
+            session_id = f"sip-{hashlib.sha256(session_seed.encode()).hexdigest()[:24]}"
             gateway_client = GatewayClient(
                 gateway_ws_url=self.config.gateway_ws_url,
                 user_id=user_id,

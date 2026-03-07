@@ -2,10 +2,6 @@
 
 Allows the AI to send account numbers, payment details, etc. to the
 caller's WhatsApp chat during a live voice call via the gateway.
-
-Self-guards via user:caller_phone in session state — returns an error
-if no phone is present (web/text sessions), making it a no-op without
-needing TOOL_CAPABILITY_MAP.
 """
 
 from __future__ import annotations
@@ -49,8 +45,13 @@ async def send_whatsapp_message(text: str, tool_context) -> dict:
     if not secret:
         return {"status": "error", "detail": "WA_SERVICE_SECRET not configured"}
 
-    tenant_id = tool_context.state.get("app:tenant_id", "public")
-    company_id = tool_context.state.get("app:company_id", "ekaette-electronics")
+    tenant_id = str(tool_context.state.get("app:tenant_id", "")).strip()
+    company_id = str(tool_context.state.get("app:company_id", "")).strip()
+    if not tenant_id or not company_id:
+        return {
+            "status": "error",
+            "detail": "Missing tenant/company scope in session state",
+        }
 
     url = f"{base_url}/api/v1/at/whatsapp/send"
     payload = json.dumps({

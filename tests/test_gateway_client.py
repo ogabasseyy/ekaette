@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from urllib.parse import parse_qs, urlparse
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -15,6 +16,7 @@ import pytest
 from sip_bridge.gateway_client import (
     GatewayClient,
     GatewayConnectionError,
+    GatewayDisconnectedError,
 )
 
 
@@ -52,6 +54,7 @@ def client() -> GatewayClient:
         tenant_id="public",
         company_id="ekaette-electronics",
         industry="electronics",
+        ws_secret="test-shared-secret",
     )
 
 
@@ -63,6 +66,7 @@ def client_with_phone() -> GatewayClient:
         user_id="sip-abc123",
         session_id="sip-def456",
         caller_phone="+2348012345678",
+        ws_secret="test-shared-secret",
     )
 
 
@@ -79,15 +83,30 @@ class TestConnectionURL:
         assert "companyId=ekaette-electronics" in url
         assert "industry=electronics" in url
 
-    def test_connect_url_includes_caller_phone(self, client_with_phone: GatewayClient):
-        """caller_phone query param present when set."""
-        url = client_with_phone._build_connect_url()
-        assert "caller_phone=%2B2348012345678" in url
+    def test_connect_url_keeps_caller_phone_out_of_query_params(self, client_with_phone: GatewayClient):
+        """caller_phone stays inside the signed token, not the URL query params."""
+        from app.api.v1.public import ws_auth
 
-    def test_connect_url_omits_empty_caller_phone(self, client: GatewayClient):
-        """caller_phone param absent when empty."""
-        url = client._build_connect_url()
+        ws_auth._WS_TOKEN_SECRET = client_with_phone.ws_secret
+        ws_auth._used_jtis.clear()
+        url = client_with_phone._build_connect_url()
         assert "caller_phone" not in url
+        token = parse_qs(urlparse(url).query)["token"][0]
+        claims = ws_auth.validate_ws_token(token, expected_user_id="sip-abc123")
+        assert claims is not None
+        assert claims.caller_phone == "+2348012345678"
+
+    def test_connect_url_omits_empty_caller_phone_claim(self, client: GatewayClient):
+        """Empty caller_phone does not appear in the signed token payload."""
+        from app.api.v1.public import ws_auth
+
+        ws_auth._WS_TOKEN_SECRET = client.ws_secret
+        ws_auth._used_jtis.clear()
+        url = client._build_connect_url()
+        token = parse_qs(urlparse(url).query)["token"][0]
+        claims = ws_auth.validate_ws_token(token, expected_user_id="sip-abc123")
+        assert claims is not None
+        assert claims.caller_phone == ""
 
     def test_connect_url_includes_minted_token_when_secret_set(self):
         """Token query param present when ws_secret is provided (per-call mint)."""
@@ -102,27 +121,40 @@ class TestConnectionURL:
         # Token should NOT be the raw secret
         assert "test-shared-secret" not in url
 
-    def test_connect_url_omits_token_when_no_secret(self):
-        """No token param when ws_secret is empty."""
+    def test_connect_url_raises_when_secret_missing(self):
+        """A missing ws_secret is a configuration error."""
         c = GatewayClient(
             gateway_ws_url="wss://test.run.app",
             user_id="u1",
             session_id="s1",
         )
-        url = c._build_connect_url()
-        assert "token=" not in url
+        with pytest.raises(ValueError, match="Missing ws_secret"):
+            c._build_connect_url()
 
     def test_minted_tokens_have_unique_jti(self):
-        """Each call to _mint_token produces a unique JTI."""
+        """connect() and reconnect() rotate the on-wire token."""
         c = GatewayClient(
             gateway_ws_url="wss://test.run.app",
             user_id="u1",
             session_id="s1",
             ws_secret="test-secret",
         )
-        t1 = c._mint_token()
-        t2 = c._mint_token()
-        assert t1 != t2  # different JTI each time
+        mock_ws = AsyncMock()
+        mock_ws.close = AsyncMock()
+
+        async def _run() -> tuple[str, str]:
+            with patch("sip_bridge.gateway_client.websockets.connect", new_callable=AsyncMock) as mock_connect:
+                mock_connect.return_value = mock_ws
+                await c.connect()
+                c._canonical_session_id = "canonical-xyz"
+                c._resumption_token = "resume-123"
+                await c.reconnect()
+                return mock_connect.call_args_list[0][0][0], mock_connect.call_args_list[1][0][0]
+
+        url1, url2 = asyncio.run(_run())
+        token1 = parse_qs(urlparse(url1).query)["token"][0]
+        token2 = parse_qs(urlparse(url2).query)["token"][0]
+        assert token1 != token2
 
     def test_minted_token_validates_with_ws_auth(self):
         """Token minted by GatewayClient validates with ws_auth.validate_ws_token."""
@@ -201,6 +233,11 @@ class TestSendAudio:
         await client.send_audio(pcm16)
         mock_ws.send.assert_called_once_with(pcm16)
 
+    @pytest.mark.asyncio
+    async def test_send_audio_raises_when_disconnected(self, client: GatewayClient):
+        with pytest.raises(GatewayDisconnectedError, match="send_audio"):
+            await client.send_audio(b"\x00" * 640)
+
 
 # ---------------------------------------------------------------------------
 # 4. Send text
@@ -215,6 +252,11 @@ class TestSendText:
         msg = json.dumps({"type": "negotiate"})
         await client.send_text(msg)
         mock_ws.send.assert_called_once_with(msg)
+
+    @pytest.mark.asyncio
+    async def test_send_text_raises_when_disconnected(self, client: GatewayClient):
+        with pytest.raises(GatewayDisconnectedError, match="send_text"):
+            await client.send_text(json.dumps({"type": "ping"}))
 
 
 # ---------------------------------------------------------------------------
@@ -247,6 +289,12 @@ class TestReceive:
         assert len(frames) == 1
         assert frames[0].is_audio is False
         assert frames[0].text_data == text_msg
+
+    @pytest.mark.asyncio
+    async def test_receive_raises_when_disconnected(self, client: GatewayClient):
+        with pytest.raises(GatewayDisconnectedError, match="receive"):
+            async for _ in client.receive():
+                pass
 
 
 # ---------------------------------------------------------------------------

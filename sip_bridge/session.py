@@ -556,19 +556,35 @@ class CallSession:
 
             send_task = asyncio.create_task(self._gateway_send_loop())
             recv_task = asyncio.create_task(self._gateway_recv_loop())
+            task_error: Exception | None = None
             try:
-                await asyncio.wait(
+                done, pending = await asyncio.wait(
                     {send_task, recv_task},
                     return_when=asyncio.FIRST_COMPLETED,
                 )
+                for task in done:
+                    try:
+                        await task
+                    except asyncio.CancelledError:
+                        continue
+                    except Exception as exc:
+                        task_error = exc
+                        logger.warning("Gateway loop task failed", exc_info=True)
+                for task in pending:
+                    task.cancel()
+                await asyncio.gather(*pending, return_exceptions=True)
             finally:
                 for t in (send_task, recv_task):
-                    t.cancel()
+                    if not t.done():
+                        t.cancel()
 
             # If shutdown was set (e.g. live_session_ended), don't retry
             if self._shutdown.is_set():
                 return
-            logger.warning("Gateway WebSocket disconnected, will retry")
+            if task_error is not None:
+                logger.warning("Gateway WebSocket disconnected after task error: %s", task_error)
+            else:
+                logger.warning("Gateway WebSocket disconnected, will retry")
 
         # Retries exhausted — tear down the call
         logger.error("Gateway reconnect retries exhausted, shutting down call")

@@ -16,7 +16,8 @@
     "policy_qa",
     "public_search_fallback",
     "catalog_lookup",
-    "device_comparison_support"
+    "device_comparison_support",
+    "outbound_messaging"
   ],
   "enabled_agents": ["support_agent", "catalog_agent"],
   "connectors_supported": [],

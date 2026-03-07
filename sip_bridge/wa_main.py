@@ -13,6 +13,7 @@ import os
 import re
 import socket
 import sys
+import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -309,14 +310,12 @@ class WaSIPServer:
             caller_phone = _extract_caller_phone(invite.headers.get("from", ""))
 
             # Build gateway client if gateway mode enabled
-            import hashlib
             gateway_client = None
             if getattr(self.config, "gateway_mode", False) and getattr(self.config, "gateway_ws_url", ""):
-                if caller_phone:
-                    user_id = f"wa-{hashlib.sha256(caller_phone.encode()).hexdigest()[:16]}"
-                else:
-                    user_id = f"wa-anon-{hashlib.sha256(call_id.encode()).hexdigest()[:16]}"
-                session_id = f"wa-{hashlib.sha256(call_id.encode()).hexdigest()[:24]}"
+                if not getattr(self.config, "gateway_ws_secret", ""):
+                    raise ValueError("WA_GATEWAY_WS_SECRET is required when WA_GATEWAY_MODE is enabled")
+                user_id = f"wa-{uuid.uuid4().hex[:24]}"
+                session_id = f"wa-{uuid.uuid4().hex[:24]}"
                 gateway_client = GatewayClient(
                     gateway_ws_url=self.config.gateway_ws_url,
                     user_id=user_id,

@@ -173,6 +173,7 @@ async def initialize_session(
             tenant_id = _token_claims.tenant_id
         if _token_claims.company_id:
             company_id = _token_claims.company_id
+    caller_phone = _token_claims.caller_phone.strip() if _token_claims and _token_claims.caller_phone else ""
 
     if not tenant_allowed_fn(tenant_id):
         logger.warning(
@@ -191,13 +192,6 @@ async def initialize_session(
         }))
         await websocket.close(code=1008, reason="Tenant not allowed")
         return None
-
-    # SIP bridge caller phone (dual-case, matching tenant/company pattern)
-    caller_phone = (
-        websocket.query_params.get("caller_phone")
-        or websocket.query_params.get("callerPhone")
-        or ""
-    )
 
     # SIP bridge resumption token for reconnects
     resumption_token = (
@@ -224,14 +218,45 @@ async def initialize_session(
             industry = resumed_industry.strip().lower()
 
         resumed_company = session.state.get("app:company_id")
-        if isinstance(resumed_company, str) and resumed_company.strip():
-            company_id = normalize_company_id_fn(resumed_company)
-
         resumed_tenant = session.state.get("app:tenant_id")
-        if isinstance(resumed_tenant, str) and resumed_tenant.strip():
-            tenant_id = normalize_tenant_id_fn(resumed_tenant, default=tenant_id)
+        if _token_claims is not None:
+            resumed_company_norm = (
+                normalize_company_id_fn(resumed_company)
+                if isinstance(resumed_company, str) and resumed_company.strip()
+                else ""
+            )
+            resumed_tenant_norm = (
+                normalize_tenant_id_fn(resumed_tenant, default=tenant_id)
+                if isinstance(resumed_tenant, str) and resumed_tenant.strip()
+                else ""
+            )
+            if resumed_company_norm and resumed_company_norm != company_id:
+                await websocket.send_text(json.dumps({
+                    "type": "error",
+                    "code": "SESSION_SCOPE_MISMATCH",
+                    "message": "Authenticated company does not match resumed session",
+                    "companyId": company_id,
+                }))
+                await websocket.close(code=1008, reason="Session scope mismatch")
+                return None
+            if resumed_tenant_norm and resumed_tenant_norm != tenant_id:
+                await websocket.send_text(json.dumps({
+                    "type": "error",
+                    "code": "SESSION_SCOPE_MISMATCH",
+                    "message": "Authenticated tenant does not match resumed session",
+                    "tenantId": tenant_id,
+                }))
+                await websocket.close(code=1008, reason="Session scope mismatch")
+                return None
+        else:
+            if isinstance(resumed_company, str) and resumed_company.strip():
+                company_id = normalize_company_id_fn(resumed_company)
+            if isinstance(resumed_tenant, str) and resumed_tenant.strip():
+                tenant_id = normalize_tenant_id_fn(resumed_tenant, default=tenant_id)
 
         state_updates: dict[str, object] = {}
+        if "app:tenant_id" not in session.state:
+            state_updates["app:tenant_id"] = tenant_id
         if "app:industry_config" not in session.state:
             industry_config = await load_industry_config_fn(industry_config_client_obj, industry)
             state_updates.update(build_session_state_fn(industry_config, industry))
@@ -425,6 +450,7 @@ async def initialize_session(
         )
         if registry_config is not None:
             initial_state.update(canonical_state_updates_from_registry_fn(registry_config))
+        initial_state.setdefault("app:tenant_id", tenant_id)
 
         # Inject caller phone for SIP bridge connections
         if caller_phone:

@@ -7,6 +7,7 @@ instead of direct Gemini Live when gateway_mode=True.
 from __future__ import annotations
 
 import json
+from unittest.mock import patch
 from unittest.mock import AsyncMock
 
 import pytest
@@ -126,12 +127,20 @@ class TestWaSessionGatewayMode:
     @pytest.mark.asyncio
     async def test_gateway_mode_skips_tool_handling(self):
         """In gateway mode, tool calls are handled by ADK, not locally."""
+        from sip_bridge.gateway_client import GatewayFrame
+
         s = WaSession(call_id="c1", tenant_id="public", company_id="acme")
         mock_client = MockGatewayClient()
+        mock_client._frames_to_yield = [
+            GatewayFrame(
+                is_audio=False,
+                text_data=json.dumps({"type": "tool_call", "name": "send_whatsapp_message"}),
+            ),
+        ]
         s.gateway_client = mock_client
-        # gateway_client set means gateway mode — _handle_tool_call is not called
-        # The recv loop only processes GatewayFrames, not Gemini responses
-        assert s.gateway_client is not None
+        with patch.object(WaSession, "_handle_tool_call", new=AsyncMock()) as mock_tool_call:
+            await s._gateway_recv_loop()
+        mock_tool_call.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------

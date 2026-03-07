@@ -141,6 +141,27 @@ class TestEkaetteRouterAgent:
         }
         assert "send_whatsapp_message" in tool_names
 
+    def test_text_router_omits_send_whatsapp_message_tool(self):
+        from app.agents.ekaette_router.agent import create_ekaette_router
+
+        agent = create_ekaette_router(model="gemini-3-flash-preview", channel="text")
+        tool_names = {
+            getattr(tool, "name", getattr(tool, "__name__", str(tool)))
+            for tool in agent.tools
+        }
+        assert "send_whatsapp_message" not in tool_names
+
+    def test_text_router_sub_agents_omit_send_whatsapp_message_tool(self):
+        from app.agents.ekaette_router.agent import create_ekaette_router
+
+        agent = create_ekaette_router(model="gemini-3-flash-preview", channel="text")
+        for sub_agent in agent.sub_agents:
+            tool_names = {
+                getattr(tool, "name", getattr(tool, "__name__", str(tool)))
+                for tool in getattr(sub_agent, "tools", [])
+            }
+            assert "send_whatsapp_message" not in tool_names
+
     def test_model_reads_from_env(self):
         """Root agent reads LIVE_MODEL_ID from environment at module load time."""
         # Verify the module-level variable matches what os.getenv returns

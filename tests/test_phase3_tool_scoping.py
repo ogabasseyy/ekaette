@@ -197,6 +197,18 @@ class TestCapabilityGuard:
         assert result["required"] == "valuation_tradein"
 
     @pytest.mark.asyncio
+    async def test_blocks_send_whatsapp_message_without_outbound_messaging(self):
+        from app.agents.callbacks import before_tool_capability_guard
+
+        tool = SimpleNamespace(name="send_whatsapp_message")
+        ctx = _make_tool_context(_make_state(
+            capabilities=["catalog_lookup"],
+        ))
+        result = await before_tool_capability_guard(tool, {}, ctx)
+        assert result["error"] == "capability_not_enabled"
+        assert result["required"] == "outbound_messaging"
+
+    @pytest.mark.asyncio
     async def test_aviation_blocks_booking_allows_knowledge(self):
         """Aviation template: booking blocked, knowledge allowed."""
         from app.agents.callbacks import before_tool_capability_guard

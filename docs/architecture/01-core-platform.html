@@ -160,9 +160,11 @@ graph TB
     SIP_SVR --> CALL_SESS
     CALL_SESS --> CODEC
     WA_SESS --> CODEC
-    CALL_SESS --> GW_CLIENT
-    WA_SESS --> GW_CLIENT
-    GW_CLIENT -->|"WSS (PCM16)<br/>Gateway Mode"| SESS_INIT
+    CALL_SESS -.->|"WSS (PCM16)<br/>if GATEWAY_MODE=true"| GW_CLIENT
+    WA_SESS -.->|"WSS (PCM16)<br/>if WA_GATEWAY_MODE=true"| GW_CLIENT
+    GW_CLIENT -->|"Cloud Run WS bridge<br/>(feature-flagged)"| SESS_INIT
+    CALL_SESS -.->|"Direct Gemini (default)"| G25
+    WA_SESS -.->|"Direct Gemini (default)"| G25
 
     ROOT -->|"photo received"| VA
     ROOT -->|"assess/price"| VLA

@@ -175,6 +175,7 @@ class TestBridgeConfigGateway:
         env = {
             "GATEWAY_MODE": "true",
             "GATEWAY_WS_URL": "",
+            "GATEWAY_WS_SECRET": "shared-secret",
             "GOOGLE_API_KEY": "key",
             "SIP_PUBLIC_IP": "203.0.113.1",
             "SIP_USERNAME": "user",
@@ -191,7 +192,7 @@ class TestBridgeConfigGateway:
         env = {
             "GATEWAY_MODE": "true",
             "GATEWAY_WS_URL": "wss://ekaette-test.run.app",
-            "GOOGLE_API_KEY": "key",
+            "GATEWAY_WS_SECRET": "shared-secret",
             "SIP_PUBLIC_IP": "203.0.113.1",
             "SIP_USERNAME": "user",
             "SIP_PASSWORD": "pass",
@@ -200,6 +201,46 @@ class TestBridgeConfigGateway:
             cfg = BridgeConfig.from_env()
         errors = cfg.validate()
         assert not any("GATEWAY_WS_URL" in e for e in errors)
+
+    def test_gateway_ws_secret_from_env(self) -> None:
+        from sip_bridge.config import BridgeConfig
+
+        env = {"GATEWAY_WS_SECRET": "shared-secret"}
+        with patch.dict("os.environ", env, clear=True):
+            cfg = BridgeConfig.from_env()
+        assert cfg.gateway_ws_secret == "shared-secret"
+
+    def test_gateway_mode_requires_secret(self) -> None:
+        from sip_bridge.config import BridgeConfig
+
+        env = {
+            "GATEWAY_MODE": "true",
+            "GATEWAY_WS_URL": "wss://ekaette-test.run.app",
+            "GATEWAY_WS_SECRET": "",
+            "SIP_PUBLIC_IP": "203.0.113.1",
+            "SIP_USERNAME": "user",
+            "SIP_PASSWORD": "pass",
+        }
+        with patch.dict("os.environ", env, clear=True):
+            cfg = BridgeConfig.from_env()
+        errors = cfg.validate()
+        assert any("GATEWAY_WS_SECRET" in e for e in errors)
+
+    def test_gateway_mode_without_google_api_key(self) -> None:
+        from sip_bridge.config import BridgeConfig
+
+        env = {
+            "GATEWAY_MODE": "true",
+            "GATEWAY_WS_URL": "wss://ekaette-test.run.app",
+            "GATEWAY_WS_SECRET": "shared-secret",
+            "SIP_PUBLIC_IP": "203.0.113.1",
+            "SIP_USERNAME": "user",
+            "SIP_PASSWORD": "pass",
+        }
+        with patch.dict("os.environ", env, clear=True):
+            cfg = BridgeConfig.from_env()
+        errors = cfg.validate()
+        assert not any("GOOGLE_API_KEY" in e for e in errors)
 
 
 class TestBridgeConfigImmutability:

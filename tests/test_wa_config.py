@@ -273,9 +273,17 @@ class TestWhatsAppBridgeConfigGateway:
         cfg = WhatsAppBridgeConfig.from_env()
         assert cfg.gateway_ws_url == "wss://ekaette-test.run.app"
 
+    def test_gateway_ws_secret_from_env(self, monkeypatch):
+        monkeypatch.setenv("WA_GATEWAY_WS_SECRET", "shared-secret")
+        from sip_bridge.wa_config import WhatsAppBridgeConfig
+
+        cfg = WhatsAppBridgeConfig.from_env()
+        assert cfg.gateway_ws_secret == "shared-secret"
+
     def test_gateway_mode_requires_url(self, monkeypatch):
         monkeypatch.setenv("WA_GATEWAY_MODE", "true")
         monkeypatch.setenv("WA_GATEWAY_WS_URL", "")
+        monkeypatch.setenv("WA_GATEWAY_WS_SECRET", "shared-secret")
         monkeypatch.setenv("GOOGLE_API_KEY", "key")
         monkeypatch.setenv("WA_SIP_USERNAME", "user")
         monkeypatch.setenv("WA_SIP_PASSWORD", "pass")
@@ -284,6 +292,18 @@ class TestWhatsAppBridgeConfigGateway:
         cfg = WhatsAppBridgeConfig.from_env()
         errors = cfg.validate()
         assert any("WA_GATEWAY_WS_URL" in e for e in errors)
+
+    def test_gateway_mode_requires_secret(self, monkeypatch):
+        monkeypatch.setenv("WA_GATEWAY_MODE", "true")
+        monkeypatch.setenv("WA_GATEWAY_WS_URL", "wss://ekaette-test.run.app")
+        monkeypatch.setenv("WA_GATEWAY_WS_SECRET", "")
+        monkeypatch.setenv("WA_SIP_USERNAME", "user")
+        monkeypatch.setenv("WA_SIP_PASSWORD", "pass")
+        from sip_bridge.wa_config import WhatsAppBridgeConfig
+
+        cfg = WhatsAppBridgeConfig.from_env()
+        errors = cfg.validate()
+        assert any("WA_GATEWAY_WS_SECRET" in e for e in errors)
 
 
 class TestWhatsAppBridgeConfigImmutability:

@@ -239,25 +239,25 @@ class TestServerCallerPhone:
 
         assert _extract_caller_phone("") == ""
 
-    def test_user_id_derivation_from_phone(self):
-        """user_id = sip-{sha256(phone)[:16]}."""
+    def test_user_id_derivation_from_phone_is_namespaced(self):
+        """user_id hash includes tenant/company scope to avoid cross-tenant collisions."""
         phone = "+2348012345678"
-        user_id = f"sip-{hashlib.sha256(phone.encode()).hexdigest()[:16]}"
+        user_id = f"sip-{hashlib.sha256(f'public:ekaette-electronics:caller:{phone}'.encode()).hexdigest()[:24]}"
         assert user_id.startswith("sip-")
-        assert len(user_id) == 4 + 16  # "sip-" + 16 hex chars
+        assert len(user_id) == 4 + 24  # "sip-" + 24 hex chars
 
-    def test_anonymous_fallback_uses_call_id(self):
-        """No caller phone → user_id = sip-anon-{sha256(call_id)[:16]}."""
+    def test_anonymous_fallback_uses_namespaced_call_id(self):
+        """No caller phone still namespaces the call-derived fallback."""
         call_id = "abc123@host"
-        user_id = f"sip-anon-{hashlib.sha256(call_id.encode()).hexdigest()[:16]}"
+        user_id = f"sip-anon-{hashlib.sha256(f'public:ekaette-electronics:call:{call_id}'.encode()).hexdigest()[:16]}"
         assert user_id.startswith("sip-anon-")
         assert len(user_id) == 9 + 16  # "sip-anon-" + 16 hex chars
 
-    def test_session_id_from_call_id_is_safe(self):
-        """session_id from call_id hash is safe for WS path regex."""
+    def test_session_id_from_call_id_is_namespaced_and_safe(self):
+        """session_id from call_id hash remains path-safe and scope-aware."""
         import re
         call_id = "abc123@host.example.com;tag=xyz"
-        session_id = f"sip-{hashlib.sha256(call_id.encode()).hexdigest()[:24]}"
+        session_id = f"sip-{hashlib.sha256(f'public:ekaette-electronics:session:{call_id}'.encode()).hexdigest()[:24]}"
         assert re.match(r"^[A-Za-z0-9._:-]{1,128}$", session_id)
 
 
@@ -304,6 +304,7 @@ class TestServerHandleInviteGateway:
         config = self._make_config(
             gateway_mode=True,
             gateway_ws_url="wss://ekaette.run.app",
+            gateway_ws_secret="shared-hmac-secret",
         )
         server = SIPServer(config=config)
         session = server.handle_invite(
@@ -321,6 +322,7 @@ class TestServerHandleInviteGateway:
         config = self._make_config(
             gateway_mode=True,
             gateway_ws_url="wss://ekaette.run.app",
+            gateway_ws_secret="shared-hmac-secret",
         )
         server = SIPServer(config=config)
         session = server.handle_invite("call-2", ("1.2.3.4", 5060))
@@ -347,18 +349,16 @@ class TestServerHandleInviteGateway:
         # Tokens differ (unique JTI per mint)
         assert url1 != url2
 
-    def test_handle_invite_gateway_no_secret_no_token(self):
-        """Gateway mode without ws_secret produces no token in URL."""
+    def test_handle_invite_gateway_without_secret_raises(self):
+        """Gateway mode must fail closed when the HMAC secret is missing."""
         from sip_bridge.server import SIPServer
         config = self._make_config(
             gateway_mode=True,
             gateway_ws_url="wss://ekaette.run.app",
         )
         server = SIPServer(config=config)
-        session = server.handle_invite("call-4", ("1.2.3.4", 5060))
-        assert session.gateway_client is not None
-        url = session.gateway_client._build_connect_url()
-        assert "token=" not in url
+        with pytest.raises(ValueError, match="GATEWAY_WS_SECRET"):
+            server.handle_invite("call-4", ("1.2.3.4", 5060))
 
 
 # ---------------------------------------------------------------------------
@@ -454,56 +454,92 @@ class TestServerDoneCallback:
         )
 
     @pytest.mark.asyncio
-    async def test_done_callback_removes_session_on_success(self):
+    async def test_done_callback_removes_session_on_success(self, monkeypatch):
         """When session.run() completes, done-callback removes from _active_sessions."""
-        from sip_bridge.server import SIPServer
+        from sip_bridge.server import SIPProtocol, SIPServer
 
         server = SIPServer(config=self._make_config())
-        _session = server.handle_invite("call-done-1", ("1.2.3.4", 5060))
+        protocol = SIPProtocol(server)
+        created_tasks: list[asyncio.Task[None]] = []
+
+        class _DummyTransport:
+            def sendto(self, data, addr):
+                return None
+
+        server._transport = _DummyTransport()
+
+        async def _fake_run(self):
+            return None
+
+        from sip_bridge import server as server_mod
+
+        monkeypatch.setattr(server_mod, "parse_sip_request", lambda message: {
+            "headers": {"Call-ID": "call-done-1", "From": ""},
+            "body": "v=0",
+        })
+        monkeypatch.setattr(server_mod, "parse_sdp_g711", lambda body: {"media_ip": "1.2.3.4", "media_port": 4000})
+        monkeypatch.setattr(server_mod, "build_sdp_answer", lambda public_ip, local_rtp_port: "v=0")
+        monkeypatch.setattr(server_mod, "build_sip_response", lambda code, reason, headers, sdp_body=None, contact_uri="": f"SIP/2.0 {code} {reason}")
+        monkeypatch.setattr(server_mod.random, "randint", lambda start, end: 12000)
+        monkeypatch.setattr("sip_bridge.session.CallSession.run", _fake_run)
+        real_create_task = asyncio.create_task
+
+        def _capture_task(coro):
+            task = real_create_task(coro)
+            created_tasks.append(task)
+            return task
+
+        monkeypatch.setattr(server_mod.asyncio, "create_task", _capture_task)
+
+        protocol._handle_invite("INVITE sip:test SIP/2.0", ("1.2.3.4", 5060))
         assert "call-done-1" in server._active_sessions
-
-        # Simulate what SIPProtocol._handle_invite does: create task + done-callback
-        async def _fake_run():
-            pass  # immediate success
-
-        task = asyncio.create_task(_fake_run())
-
-        call_id = "call-done-1"
-
-        def _on_done(done_task: asyncio.Task) -> None:
-            server._active_sessions.pop(call_id, None)
-
-        task.add_done_callback(_on_done)
-
-        await task
-        # Allow callbacks to fire
+        assert created_tasks
+        await created_tasks[0]
         await asyncio.sleep(0)
-
         assert "call-done-1" not in server._active_sessions
 
     @pytest.mark.asyncio
-    async def test_done_callback_removes_session_on_exception(self):
+    async def test_done_callback_removes_session_on_exception(self, monkeypatch):
         """When session.run() raises, done-callback still removes from _active_sessions."""
-        from sip_bridge.server import SIPServer
+        from sip_bridge.server import SIPProtocol, SIPServer
 
         server = SIPServer(config=self._make_config())
-        _session = server.handle_invite("call-done-2", ("1.2.3.4", 5060))
-        assert "call-done-2" in server._active_sessions
+        protocol = SIPProtocol(server)
+        created_tasks: list[asyncio.Task[None]] = []
 
-        async def _fake_run():
+        class _DummyTransport:
+            def sendto(self, data, addr):
+                return None
+
+        server._transport = _DummyTransport()
+
+        async def _fake_run(self):
             raise RuntimeError("session crashed")
 
-        task = asyncio.create_task(_fake_run())
+        from sip_bridge import server as server_mod
 
-        call_id = "call-done-2"
+        monkeypatch.setattr(server_mod, "parse_sip_request", lambda message: {
+            "headers": {"Call-ID": "call-done-2", "From": ""},
+            "body": "v=0",
+        })
+        monkeypatch.setattr(server_mod, "parse_sdp_g711", lambda body: {"media_ip": "1.2.3.4", "media_port": 4000})
+        monkeypatch.setattr(server_mod, "build_sdp_answer", lambda public_ip, local_rtp_port: "v=0")
+        monkeypatch.setattr(server_mod, "build_sip_response", lambda code, reason, headers, sdp_body=None, contact_uri="": f"SIP/2.0 {code} {reason}")
+        monkeypatch.setattr(server_mod.random, "randint", lambda start, end: 12000)
+        monkeypatch.setattr("sip_bridge.session.CallSession.run", _fake_run)
+        real_create_task = asyncio.create_task
 
-        def _on_done(done_task: asyncio.Task) -> None:
-            server._active_sessions.pop(call_id, None)
+        def _capture_task(coro):
+            task = real_create_task(coro)
+            created_tasks.append(task)
+            return task
 
-        task.add_done_callback(_on_done)
+        monkeypatch.setattr(server_mod.asyncio, "create_task", _capture_task)
 
+        protocol._handle_invite("INVITE sip:test SIP/2.0", ("1.2.3.4", 5060))
+        assert "call-done-2" in server._active_sessions
+        assert created_tasks
         with pytest.raises(RuntimeError, match="session crashed"):
-            await task
+            await created_tasks[0]
         await asyncio.sleep(0)
-
         assert "call-done-2" not in server._active_sessions

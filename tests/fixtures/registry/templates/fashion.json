@@ -12,7 +12,7 @@
     "title": "Fashion Client Studio",
     "hint": "Catalog recommendations and consultation workflows."
   },
-  "capabilities": ["catalog_lookup", "policy_qa"],
+  "capabilities": ["catalog_lookup", "policy_qa", "outbound_messaging"],
   "enabled_agents": ["catalog_agent", "support_agent"],
   "connectors_supported": ["erp"],
   "status": "active"

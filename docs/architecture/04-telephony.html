@@ -137,14 +137,14 @@ sequenceDiagram
     CALLER->>AT: Dial service number
     AT->>SIP: SIP INVITE (SDP: G.711, port X)
     SIP->>AT: 100 Trying
-    SIP->>SIP: Allocate RTP port, extract caller phone
-    SIP->>SIP: Derive user_id=sip-sha256(phone), session_id=sip-sha256(call_id)
+    SIP->>SIP: Allocate RTP port, extract caller phone from From header
+    SIP->>SIP: Derive namespaced gateway IDs from tenant/company + caller/call context
     SIP->>AT: 200 OK (SDP: G.711, port Y)
     AT->>SIP: ACK
 
     Note over SIP,CR: Session Setup (Gateway Mode)
     SIP->>SESS: Create CallSession + GatewayClient
-    SESS->>GW: connect() → WSS /ws/user_id/session_id?caller_phone=...
+    SESS->>GW: connect() → WSS to Cloud Run /ws/{user_id}/{session_id}?token=...
     GW->>CR: WebSocket handshake
     CR-->>GW: session_started {sessionId}
 
@@ -215,8 +215,8 @@ sequenceDiagram
 
     Note over WA,FS: WhatsApp Call Setup
     WA->>WA_SIP: WhatsApp call signaling
-    WA_SIP->>WA_SIP: Negotiate Opus codec, SRTP keys
-    WA_SIP->>WA_SIP: Extract caller phone, derive user_id=wa-sha256(phone)
+    WA_SIP->>WA_SIP: Negotiate Opus codec, SRTP keys (SDES)
+    WA_SIP->>WA_SIP: Extract caller phone, mint opaque gateway user_id/session_id
     WA_SIP->>WA_SESS: Create WaSession + GatewayClient
     WA_SESS->>FS: Write call start record (wa_calls)
     WA_SESS->>GW: connect() → WSS to Cloud Run

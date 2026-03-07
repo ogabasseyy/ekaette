@@ -25,3 +25,21 @@ class TestBookingAgentTools:
         assert "delivery quote + checkout flow" in instruction
         assert "fulfillment preference" in instruction
         assert "booking is optional for completed purchases" in instruction
+
+    def test_text_booking_agent_omits_send_whatsapp_message_tool(self):
+        from app.agents.booking_agent.agent import create_booking_agent
+
+        agent = create_booking_agent("gemini-3-flash-preview", channel="text")
+        tool_names = {
+            getattr(tool, "name", getattr(tool, "__name__", str(tool)))
+            for tool in agent.tools
+        }
+        assert "send_whatsapp_message" not in tool_names
+
+    def test_text_booking_instruction_avoids_out_of_band_followup(self):
+        from app.agents.booking_agent.agent import create_booking_agent
+
+        agent = create_booking_agent("gemini-3-flash-preview", channel="text")
+        instruction = agent.instruction.lower()
+        assert "separate whatsapp follow-up" in instruction
+        assert "do not promise" in instruction

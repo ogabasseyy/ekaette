@@ -379,18 +379,21 @@ def create_ekaette_router(model: str, *, channel: str = "voice") -> Agent:
     if channel not in ("voice", "text"):
         raise ValueError(f"Invalid channel: {channel!r}. Must be 'voice' or 'text'.")
     instruction = _TEXT_INSTRUCTION if channel == "text" else _INSTRUCTION
+    tools = [PreloadMemoryTool()]
+    if channel == "voice":
+        tools.append(send_whatsapp_message)
     return Agent(
         name="ekaette_router",
         model=model,
         instruction=instruction,
         generate_content_config=_THINKING_CONFIG,
-        tools=[PreloadMemoryTool(), send_whatsapp_message],
+        tools=tools,
         sub_agents=[
             create_vision_agent(model),
-            create_valuation_agent(model),
-            create_booking_agent(model),
-            create_catalog_agent(model),
-            create_support_agent(model),
+            create_valuation_agent(model, channel=channel),
+            create_booking_agent(model, channel=channel),
+            create_catalog_agent(model, channel=channel),
+            create_support_agent(model, channel=channel),
         ],
         **_CALLBACKS,
     )

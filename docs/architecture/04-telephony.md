@@ -36,11 +36,10 @@ graph TB
                 AUDIO["audio_codec.py<br/>G.711 μ-law ↔ PCM16,<br/>resample 8k↔16k↔24k"]
                 SRTP_CTX["srtp_context.py<br/>SRTP protect/unprotect"]
             end
-        end
-    end
 
-        subgraph "Gateway Mode"
-            GW_CLIENT["gateway_client.py<br/>GatewayClient WSS → Cloud Run<br/>reconnect + resumption tokens"]
+            subgraph "Gateway Mode"
+                GW_CLIENT["gateway_client.py<br/>GatewayClient WSS → Cloud Run<br/>reconnect + resumption tokens"]
+            end
         end
     end
 
@@ -96,7 +95,7 @@ graph TB
 
 When `GATEWAY_MODE=true`, the SIP bridge becomes a **thin transport adapter** that routes through Cloud Run instead of connecting directly to Gemini Live. This gives phone callers the full ADK agent graph (6 agents, all tools, registry config, persistent sessions, memory bank) — the same AI brain as web and WhatsApp text channels.
 
-```
+```text
 Direct Mode (default):   Phone → SIP Bridge → Gemini Live (4-line prompt, 0 tools)
 Gateway Mode:            Phone → SIP Bridge → Cloud Run WS → ADK → Gemini Live (full agent graph)
 ```
@@ -107,8 +106,8 @@ Gateway Mode:            Phone → SIP Bridge → Cloud Run WS → ADK → Gemin
 Key implementation:
 - `gateway_client.py`: WebSocket client connecting to Cloud Run `/ws/{user_id}/{session_id}`
 - Task 3 replaced: `_gateway_bidi_loop` instead of `_gemini_bidi_loop`
-- `caller_phone` passed via query param → stored as `user:caller_phone` in ADK session state
-- `send_whatsapp_message` ADK tool enables during-call messaging across all agents
+- `caller_phone` travels in the signed WS auth token → stored as `user:caller_phone` in ADK session state
+- `send_whatsapp_message` is exposed only on voice-channel agents for during-call follow-up
 - Rollback: `GATEWAY_MODE=false` reverts to direct Gemini (zero code changes)
 
 ---
@@ -139,13 +138,13 @@ sequenceDiagram
     AT->>SIP: SIP INVITE (SDP: G.711 μ-law, port X)
     SIP->>AT: 100 Trying
     SIP->>SIP: Allocate RTP port, extract caller phone from From header
-    SIP->>SIP: Derive user_id=sip-{sha256(phone)}, session_id=sip-{sha256(call_id)}
+    SIP->>SIP: Derive namespaced gateway IDs from tenant/company + caller/call context
     SIP->>AT: 200 OK (SDP: G.711 μ-law, port Y)
     AT->>SIP: ACK
 
     Note over SIP,CR: Session Setup (Gateway Mode)
     SIP->>SESS: Create CallSession + GatewayClient
-    SESS->>GW: connect() → WSS to Cloud Run /ws/{user_id}/{session_id}?caller_phone=...
+    SESS->>GW: connect() → WSS to Cloud Run /ws/{user_id}/{session_id}?token=...
     GW->>CR: WebSocket handshake
     CR-->>GW: session_started {sessionId}
 
@@ -226,7 +225,7 @@ sequenceDiagram
     Note over WA,FS: WhatsApp Call Setup
     WA->>WA_SIP: WhatsApp call signaling
     WA_SIP->>WA_SIP: Negotiate Opus codec, SRTP keys (SDES)
-    WA_SIP->>WA_SIP: Extract caller phone, derive user_id=wa-{sha256(phone)}
+    WA_SIP->>WA_SIP: Extract caller phone, mint opaque gateway user_id/session_id
     WA_SIP->>WA_SESS: Create WaSession + GatewayClient
     WA_SESS->>FS: Write call start record (wa_calls)
     WA_SESS->>GW: connect() → WSS to Cloud Run

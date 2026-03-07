@@ -36,6 +36,10 @@ class GatewayConnectionError(Exception):
     """Raised when gateway WebSocket connection fails."""
 
 
+class GatewayDisconnectedError(ConnectionError):
+    """Raised when an operation requires an active gateway websocket."""
+
+
 @dataclass
 class GatewayClient:
     """WebSocket client bridging SIP audio to Cloud Run ADK."""
@@ -46,8 +50,11 @@ class GatewayClient:
     tenant_id: str = "public"
     company_id: str = "ekaette-electronics"
     industry: str = "electronics"
-    caller_phone: str = ""
-    ws_secret: str = ""  # Shared HMAC secret (same value as WS_TOKEN_SECRET on Cloud Run)
+    caller_phone: str = field(default="", repr=False)
+    ws_secret: str = field(
+        default="",
+        repr=False,
+    )  # Shared HMAC secret (same value as WS_TOKEN_SECRET on Cloud Run)
 
     # Reconnect state (updated from session_started / session_ending frames)
     _canonical_session_id: str = field(default="", repr=False)
@@ -70,7 +77,7 @@ class GatewayClient:
         can validate it with validate_ws_token(token, expected_user_id).
         """
         if not self.ws_secret:
-            return ""
+            raise ValueError("Missing ws_secret for gateway HMAC token generation")
         secret = self.ws_secret.encode("utf-8")
 
         def _b64url(data: bytes) -> str:
@@ -83,6 +90,7 @@ class GatewayClient:
             "company_id": self.company_id,
             "exp": time.time() + self._TOKEN_TTL,
             "jti": secrets.token_urlsafe(16),
+            "caller_phone": self.caller_phone,
         }
         payload = _b64url(_json.dumps(payload_dict).encode())
 
@@ -110,12 +118,9 @@ class GatewayClient:
             params["companyId"] = self.company_id
         if self.industry:
             params["industry"] = self.industry
-        if self.caller_phone:
-            params["caller_phone"] = self.caller_phone
         # Mint a fresh per-call token (unique JTI, correct user_id)
         token = self._mint_token()
-        if token:
-            params["token"] = token
+        params["token"] = token
         if resumption_token:
             params["resumption_token"] = resumption_token
 
@@ -143,8 +148,8 @@ class GatewayClient:
         if self._ws is not None:
             try:
                 await self._ws.close()
-            except Exception:  # noqa: S110 — best-effort cleanup before reconnect
-                pass
+            except Exception:
+                logger.exception("Gateway reconnect failed to close existing websocket")
             self._ws = None
 
         sid = self._canonical_session_id or self.session_id
@@ -162,18 +167,20 @@ class GatewayClient:
 
     async def send_audio(self, pcm16: bytes) -> None:
         """Send PCM16 16kHz audio as binary WebSocket frame."""
-        if self._ws is not None:
-            await self._ws.send(pcm16)
+        if self._ws is None:
+            raise GatewayDisconnectedError("send_audio called while gateway websocket is disconnected")
+        await self._ws.send(pcm16)
 
     async def send_text(self, json_str: str) -> None:
         """Send JSON control message as text WebSocket frame."""
-        if self._ws is not None:
-            await self._ws.send(json_str)
+        if self._ws is None:
+            raise GatewayDisconnectedError("send_text called while gateway websocket is disconnected")
+        await self._ws.send(json_str)
 
     async def receive(self) -> AsyncIterator[GatewayFrame]:
         """Yield frames from Cloud Run — binary (audio) or text (JSON)."""
         if self._ws is None:
-            return
+            raise GatewayDisconnectedError("receive called while gateway websocket is disconnected")
         async for message in self._ws:
             if isinstance(message, bytes):
                 yield GatewayFrame(is_audio=True, audio_data=message)

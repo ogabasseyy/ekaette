@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import uuid
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -1061,7 +1062,7 @@ class TestAdminV1Endpoints:
         }
         headers = {
             **self._admin_headers(),
-            "Idempotency-Key": "company-create-1",
+            "Idempotency-Key": f"company-create-{uuid.uuid4().hex}",
         }
         first = await client.post(
             "/api/v1/admin/companies?tenantId=public",

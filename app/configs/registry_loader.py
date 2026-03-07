@@ -367,10 +367,10 @@ _LOCAL_INDUSTRY_THEMES: dict[str, dict[str, str]] = {
 }
 
 _LOCAL_INDUSTRY_CAPABILITIES: dict[str, list[str]] = {
-    "electronics": ["catalog_lookup", "valuation_tradein", "booking_reservations"],
-    "hotel": ["booking_reservations", "policy_qa"],
-    "automotive": ["booking_reservations", "valuation_tradein", "catalog_lookup"],
-    "fashion": ["catalog_lookup", "policy_qa"],
+    "electronics": ["catalog_lookup", "valuation_tradein", "booking_reservations", "outbound_messaging"],
+    "hotel": ["booking_reservations", "policy_qa", "outbound_messaging"],
+    "automotive": ["booking_reservations", "valuation_tradein", "catalog_lookup", "outbound_messaging"],
+    "fashion": ["catalog_lookup", "policy_qa", "outbound_messaging"],
 }
 
 # Industry → default company mapping for compat mode

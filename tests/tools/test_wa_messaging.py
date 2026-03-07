@@ -73,6 +73,18 @@ class TestSendWhatsAppMessage:
         assert "SECRET" in result["detail"]
 
     @pytest.mark.asyncio
+    async def test_missing_scope_returns_error(self):
+        """Missing tenant/company scope fails closed."""
+        ctx = MockToolContext(state={"user:caller_phone": "+2348012345678"})
+        with patch.dict(os.environ, {
+            "WA_SERVICE_API_BASE_URL": "https://wa.example.com",
+            "WA_SERVICE_SECRET": "test-secret",
+        }):
+            result = await send_whatsapp_message("Hello", ctx)
+        assert result["status"] == "error"
+        assert "scope" in result["detail"].lower()
+
+    @pytest.mark.asyncio
     async def test_successful_send(self):
         """Successful POST returns sent status with message_id."""
         ctx = MockToolContext(state={

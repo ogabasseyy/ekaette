@@ -35,7 +35,16 @@ from app.tools.shipping_tools import (
 
 LIVE_MODEL_ID = resolve_live_model_id()
 
-_INSTRUCTION = """You handle delivery quotes, purchase finalization, and pickup scheduling.
+_VOICE_DELIVERY_FOLLOWUP = (
+    "6. Offer to send the account details via WhatsApp when helpful and call "
+    "send_whatsapp_message only if the customer wants that follow-up."
+)
+_TEXT_DELIVERY_FOLLOWUP = (
+    "6. Share the account details directly in this chat and do not promise a "
+    "separate WhatsApp follow-up."
+)
+
+_INSTRUCTION_TEMPLATE = """You handle delivery quotes, purchase finalization, and pickup scheduling.
 
     FULFILLMENT PREFERENCE:
     Before starting any fulfillment flow, ask: "Would you like this delivered or would
@@ -49,7 +58,7 @@ _INSTRUCTION = """You handle delivery quotes, purchase finalization, and pickup 
     3. Call get_topship_delivery_quote to estimate delivery fee.
     4. Present subtotal + delivery fee + total clearly.
     5. Call create_virtual_account_payment and read account details clearly.
-    6. Tell the customer account details are also sent via SMS/WhatsApp.
+    {delivery_followup_line}
     7. Call create_order_record once order details are confirmed.
     8. If customer says they paid, call check_payment_status before confirmation.
     9. For tracking requests, call track_order_delivery.
@@ -80,7 +89,7 @@ _INSTRUCTION = """You handle delivery quotes, purchase finalization, and pickup 
     - Be warm and helpful; keep transitions concise.
     """
 
-_TOOLS = [
+_BASE_TOOLS = [
     check_availability,
     create_booking,
     cancel_booking,
@@ -94,7 +103,6 @@ _TOOLS = [
     search_company_knowledge,
     get_company_profile_fact,
     query_company_system,
-    send_whatsapp_message,
 ]
 
 _CALLBACKS = dict(
@@ -106,13 +114,27 @@ _CALLBACKS = dict(
 )
 
 
-def create_booking_agent(model: str) -> Agent:
+def _tools_for_channel(channel: str) -> list[object]:
+    tools = list(_BASE_TOOLS)
+    if channel == "voice":
+        tools.append(send_whatsapp_message)
+    return tools
+
+
+def create_booking_agent(model: str, *, channel: str = "voice") -> Agent:
     """Create a booking agent with the specified model."""
+    if channel not in ("voice", "text"):
+        raise ValueError(f"Invalid channel: {channel!r}. Must be 'voice' or 'text'.")
+    instruction = _INSTRUCTION_TEMPLATE.format(
+        delivery_followup_line=(
+            _VOICE_DELIVERY_FOLLOWUP if channel == "voice" else _TEXT_DELIVERY_FOLLOWUP
+        )
+    )
     return Agent(
         name="booking_agent",
         model=model,
-        instruction=_INSTRUCTION,
-        tools=_TOOLS,
+        instruction=instruction,
+        tools=_tools_for_channel(channel),
         **_CALLBACKS,
     )
 

@@ -32,6 +32,7 @@ class WsTokenClaims(NamedTuple):
     company_id: str
     exp: float  # expiration unix timestamp
     jti: str  # unique token ID
+    caller_phone: str = ""
 
 
 def _get_secret() -> bytes:
@@ -56,6 +57,7 @@ def create_ws_token(
     tenant_id: str,
     company_id: str,
     ttl_seconds: int,
+    caller_phone: str = "",
 ) -> str:
     """Create a signed WS auth token (compact HMAC JWT-like)."""
     secret = _get_secret()
@@ -67,6 +69,7 @@ def create_ws_token(
         "company_id": company_id,
         "exp": time.time() + ttl_seconds,
         "jti": secrets.token_urlsafe(16),
+        "caller_phone": caller_phone,
     }
     payload = _b64url_encode(json.dumps(payload_dict).encode())
 
@@ -136,6 +139,7 @@ def validate_ws_token(token: str, expected_user_id: str) -> WsTokenClaims | None
         company_id=payload.get("company_id", ""),
         exp=exp,
         jti=jti,
+        caller_phone=payload.get("caller_phone", ""),
     )
 
 
