@@ -21,6 +21,9 @@ from app.tools.pii_redaction import redact_pii
 
 logger = logging.getLogger(__name__)
 
+RESPONSE_LATENCY_FILLER_SECONDS = 3.0
+RESPONSE_LATENCY_REASSURE_SECONDS = 15.0
+
 
 def configure_runtime(**kwargs: Any) -> None:
     """Inject runtime dependencies from main module."""
@@ -676,7 +679,10 @@ async def silence_nudge_task(live_request_queue, session_alive: asyncio.Event, s
         # frames and never clears it during router thinking time.
         if silence_state.awaiting_agent_response:
             elapsed = now - silence_state.user_spoke_at
-            if elapsed >= 3.0 and silence_state.response_nudge_count == 0:
+            if (
+                elapsed >= RESPONSE_LATENCY_FILLER_SECONDS
+                and silence_state.response_nudge_count == 0
+            ):
                 silence_state.response_nudge_count = 1
                 try:
                     live_request_queue.send_content(types_mod.Content(parts=[
@@ -689,9 +695,16 @@ async def silence_nudge_task(live_request_queue, session_alive: asyncio.Event, s
                         ))
                     ]))
                 except Exception:
+                    logger.debug(
+                        "silence_nudge_task: failed to send first response-latency nudge",
+                        exc_info=True,
+                    )
                     break
                 continue
-            if elapsed >= 15.0 and silence_state.response_nudge_count == 1:
+            if (
+                elapsed >= RESPONSE_LATENCY_REASSURE_SECONDS
+                and silence_state.response_nudge_count == 1
+            ):
                 silence_state.response_nudge_count = 2
                 try:
                     live_request_queue.send_content(types_mod.Content(parts=[
@@ -702,6 +715,10 @@ async def silence_nudge_task(live_request_queue, session_alive: asyncio.Event, s
                         ))
                     ]))
                 except Exception:
+                    logger.debug(
+                        "silence_nudge_task: failed to send second response-latency nudge",
+                        exc_info=True,
+                    )
                     break
                 continue
 

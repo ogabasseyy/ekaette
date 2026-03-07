@@ -379,7 +379,8 @@ async def before_model_inject_config(
 
     if has_runtime_context:
         channel = _state_get(callback_context.state, "app:channel")
-        if channel == "voice":
+        normalized_channel = channel.strip().lower() if isinstance(channel, str) else ""
+        if normalized_channel == "voice":
             instruction_lines.append(
                 "CRITICAL latency policy: On a phone call, silence feels like a "
                 "dropped connection. You MUST speak a brief filler phrase (e.g., "

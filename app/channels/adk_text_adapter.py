@@ -104,6 +104,7 @@ async def send_text_message(
         session_id=session_id,
         tenant_id=tenant_id,
         company_id=company_id,
+        channel=channel,
     )
 
     content = types.Content(
@@ -130,6 +131,7 @@ async def send_text_message(
                 session_id=fb_session_id,
                 tenant_id=tenant_id,
                 company_id=company_id,
+                channel=channel,
             )
             text = await _run_and_collect_text(
                 runner=fallback_runner,
@@ -201,6 +203,7 @@ async def send_media_message(
         session_id=session_id,
         tenant_id=tenant_id,
         company_id=company_id,
+        channel=channel,
     )
 
     if caption and caption.strip():
@@ -241,6 +244,7 @@ async def send_media_message(
                 session_id=fb_session_id,
                 tenant_id=tenant_id,
                 company_id=company_id,
+                channel=channel,
             )
             text = await _run_and_collect_text(
                 runner=fallback_runner,
@@ -284,6 +288,7 @@ async def _ensure_session(
     session_id: str,
     tenant_id: str,
     company_id: str,
+    channel: str,
 ) -> str:
     """Get existing session or create a new one with bootstrapped state.
 
@@ -300,7 +305,7 @@ async def _ensure_session(
     initial_state: dict[str, Any] = {
         "app:tenant_id": tenant_id,
         "app:company_id": company_id,
-        "app:channel": "text",
+        "app:channel": channel,
     }
 
     # Load registry config if available

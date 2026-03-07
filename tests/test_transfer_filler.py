@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import time
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import WebSocketDisconnect
@@ -74,8 +76,6 @@ class TestChannelGatingInCallbacks:
 
     @pytest.mark.asyncio
     async def test_injects_latency_policy_for_voice_channel(self):
-        from types import SimpleNamespace
-
         from google.adk.models.llm_request import LlmRequest
 
         from app.agents.callbacks import before_model_inject_config
@@ -84,7 +84,7 @@ class TestChannelGatingInCallbacks:
             state={
                 "app:industry_config": {"name": "Electronics", "greeting": "Hi!"},
                 "app:company_profile": {"name": "Test Co"},
-                "app:channel": "voice",
+                "app:channel": " Voice ",
                 "temp:greeted": True,
             },
             agent_name="catalog_agent",
@@ -98,8 +98,6 @@ class TestChannelGatingInCallbacks:
 
     @pytest.mark.asyncio
     async def test_no_latency_policy_for_text_channel(self):
-        from types import SimpleNamespace
-
         from google.adk.models.llm_request import LlmRequest
 
         from app.agents.callbacks import before_model_inject_config
@@ -123,8 +121,6 @@ class TestChannelGatingInCallbacks:
     @pytest.mark.asyncio
     async def test_no_latency_policy_when_channel_absent(self):
         """Pre-existing sessions without app:channel should NOT get filler."""
-        from types import SimpleNamespace
-
         from google.adk.models.llm_request import LlmRequest
 
         from app.agents.callbacks import before_model_inject_config
@@ -171,6 +167,21 @@ def _inject_stream_tasks_globals():
     return st
 
 
+def _configure_downstream_runtime(*events):
+    import app.api.v1.realtime.stream_tasks as st
+
+    st.configure_runtime(
+        runner=_FakeRunner(events),
+        _extract_server_message_from_state_delta=lambda delta: None,
+        _usage_int=lambda *args: 0,
+        TOKEN_PRICE_PROMPT_PER_MILLION=0.0,
+        TOKEN_PRICE_COMPLETION_PER_MILLION=0.0,
+        DEBUG_TELEMETRY=False,
+        _sanitize_log=lambda value: value,
+    )
+    return st
+
+
 class _FakeTypes:
     """Minimal stand-in for google.genai.types used in nudge task."""
 
@@ -210,6 +221,42 @@ class _FakeRequestQueue:
         self.activity_end_calls += 1
 
 
+class _SignalRequestQueue(_FakeRequestQueue):
+    """Records the first emitted nudge so tests can await it explicitly."""
+
+    def __init__(self):
+        super().__init__()
+        self.sent_event = asyncio.Event()
+
+    def send_content(self, content):
+        super().send_content(content)
+        self.sent_event.set()
+
+
+@contextlib.asynccontextmanager
+async def _run_nudge_task(st, silence_state: SilenceState):
+    queue = _SignalRequestQueue()
+    session_alive = asyncio.Event()
+    session_alive.set()
+    original_bind = st.bind_runtime_values
+
+    def fake_bind(*names):
+        if names == ("types",):
+            return (_FakeTypes,)
+        return original_bind(*names)
+
+    st.bind_runtime_values = fake_bind
+    task = asyncio.create_task(st.silence_nudge_task(queue, session_alive, silence_state))
+    try:
+        yield queue
+    finally:
+        session_alive.clear()
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+        st.bind_runtime_values = original_bind
+
+
 class _FakeWebSocket:
     """Simple websocket stand-in for upstream/downstream unit tests."""
 
@@ -241,6 +288,50 @@ class _FakeRunner:
         await asyncio.sleep(0)
 
 
+def _make_live_event(
+    *,
+    content=None,
+    input_transcription=None,
+    output_transcription=None,
+    interrupted: bool = False,
+    actions=None,
+    turn_complete: bool = False,
+    usage_metadata=None,
+    live_session_resumption_update=None,
+    author: str = "ekaette_router",
+):
+    if actions is None:
+        actions = SimpleNamespace(transfer_to_agent=None, state_delta=None)
+    return SimpleNamespace(
+        content=content,
+        input_transcription=input_transcription,
+        output_transcription=output_transcription,
+        interrupted=interrupted,
+        actions=actions,
+        turn_complete=turn_complete,
+        usage_metadata=usage_metadata,
+        live_session_resumption_update=live_session_resumption_update,
+        author=author,
+    )
+
+
+def _make_content_event(
+    *,
+    text: str | None = None,
+    audio_bytes: bytes | None = None,
+    mime_type: str = "audio/pcm",
+    turn_complete: bool = False,
+):
+    inline_data = None
+    if audio_bytes is not None:
+        inline_data = SimpleNamespace(data=audio_bytes, mime_type=mime_type)
+    part = SimpleNamespace(text=text, inline_data=inline_data)
+    return _make_live_event(
+        content=SimpleNamespace(parts=[part]),
+        turn_complete=turn_complete,
+    )
+
+
 def _make_ctx(
     websocket,
     *,
@@ -266,136 +357,218 @@ def _make_ctx(
     )
 
 
+async def _run_downstream_events(
+    *events,
+    ctx: SessionInitContext | None = None,
+    silence_state: SilenceState | None = None,
+):
+    st = _configure_downstream_runtime(*events)
+    if ctx is None:
+        ctx = _make_ctx(_FakeWebSocket())
+    if silence_state is None:
+        silence_state = _make_silence_state()
+    queue = _FakeRequestQueue()
+    session_alive = asyncio.Event()
+    await st.downstream_task(ctx, queue, session_alive, silence_state)
+    return ctx.websocket, queue, silence_state
+
+
 class TestWatchdogArmingInDownstream:
     """Verify watchdog arms on accepted transcription and NOT on suppressed late partials."""
 
-    def test_accepted_partial_arms_watchdog(self):
+    @pytest.mark.asyncio
+    async def test_accepted_partial_arms_watchdog(self):
         """An accepted partial transcription should arm the watchdog."""
-        ss = _make_silence_state()
-        assert ss.awaiting_agent_response is False
-
-        # Simulate what downstream_task does for an accepted partial
-        ss.awaiting_agent_response = True
-        ss.user_spoke_at = time.monotonic()
-        ss.response_nudge_count = 0
+        websocket, _, ss = await _run_downstream_events(
+            _make_live_event(
+                input_transcription=SimpleNamespace(text="I need pricing", finished=False)
+            )
+        )
 
         assert ss.awaiting_agent_response is True
         assert ss.user_spoke_at > 0
+        assert ss.response_nudge_count == 0
+        user_transcripts = [
+            msg for msg in websocket.sent_texts
+            if msg.get("type") == "transcription" and msg.get("role") == "user"
+        ]
+        assert user_transcripts == [{
+            "type": "transcription",
+            "role": "user",
+            "text": "I need pricing",
+            "partial": True,
+        }]
 
-    def test_accepted_finished_arms_watchdog(self):
+    @pytest.mark.asyncio
+    async def test_accepted_finished_arms_watchdog(self):
         """An accepted finished=True transcription should arm the watchdog."""
-        ss = _make_silence_state()
-        ss.awaiting_agent_response = True
-        ss.user_spoke_at = time.monotonic()
-        ss.response_nudge_count = 0
+        websocket, _, ss = await _run_downstream_events(
+            _make_live_event(
+                input_transcription=SimpleNamespace(text="I need pricing", finished=True)
+            )
+        )
+
         assert ss.awaiting_agent_response is True
+        assert ss.user_spoke_at > 0
+        assert ss.response_nudge_count == 0
+        user_transcripts = [
+            msg for msg in websocket.sent_texts
+            if msg.get("type") == "transcription" and msg.get("role") == "user"
+        ]
+        assert user_transcripts == [{
+            "type": "transcription",
+            "role": "user",
+            "text": "I need pricing",
+            "partial": False,
+        }]
 
-    def test_suppressed_late_partial_does_not_arm(self):
+    @pytest.mark.asyncio
+    async def test_suppressed_late_partial_does_not_arm(self):
         """Late partials (input_finalized=True, finished=False) must NOT arm watchdog."""
-        ss = _make_silence_state()
-        input_finalized = True
-        finished = False
+        websocket, _, ss = await _run_downstream_events(
+            _make_live_event(
+                input_transcription=SimpleNamespace(text="I need pricing", finished=True)
+            ),
+            _make_live_event(
+                input_transcription=SimpleNamespace(text="I need", finished=False)
+            ),
+        )
 
-        # Simulate the suppression branch — no watchdog arming
-        if input_finalized and not finished:
-            pass  # suppressed — watchdog NOT armed
-
-        assert ss.awaiting_agent_response is False
+        user_transcripts = [
+            msg for msg in websocket.sent_texts
+            if msg.get("type") == "transcription" and msg.get("role") == "user"
+        ]
+        assert len(user_transcripts) == 1
+        assert user_transcripts[0]["text"] == "I need pricing"
+        assert ss.awaiting_agent_response is True
+        assert ss.response_nudge_count == 0
 
 
 class TestWatchdogClearingInDownstream:
     """Verify watchdog clears on agent output events."""
 
-    def test_audio_output_clears_watchdog(self):
-        ss = _make_silence_state(awaiting_agent_response=True, user_spoke_at=time.monotonic())
-        # Simulate audio output handler
-        ss.agent_busy = True
-        ss.awaiting_agent_response = False
-        assert ss.awaiting_agent_response is False
+    @pytest.mark.asyncio
+    async def test_audio_output_clears_watchdog(self):
+        websocket, _, ss = await _run_downstream_events(
+            _make_content_event(audio_bytes=b"\x00\x01"),
+            silence_state=_make_silence_state(
+                awaiting_agent_response=True,
+                user_spoke_at=time.monotonic(),
+            ),
+        )
 
-    def test_text_output_clears_watchdog(self):
-        ss = _make_silence_state(awaiting_agent_response=True, user_spoke_at=time.monotonic())
-        ss.agent_busy = True
-        ss.awaiting_agent_response = False
         assert ss.awaiting_agent_response is False
+        assert ss.agent_busy is True
+        assert websocket.sent_bytes == [b"\x00\x01"]
 
-    def test_output_transcription_clears_watchdog(self):
-        ss = _make_silence_state(awaiting_agent_response=True, user_spoke_at=time.monotonic())
-        ss.agent_busy = True
-        ss.awaiting_agent_response = False
+    @pytest.mark.asyncio
+    async def test_text_output_clears_watchdog(self):
+        ctx = _make_ctx(_FakeWebSocket(), is_native_audio=False)
+        websocket, _, ss = await _run_downstream_events(
+            _make_content_event(text="Let me help with that"),
+            ctx=ctx,
+            silence_state=_make_silence_state(
+                awaiting_agent_response=True,
+                user_spoke_at=time.monotonic(),
+            ),
+        )
+
         assert ss.awaiting_agent_response is False
+        assert ss.agent_busy is True
+        agent_transcripts = [
+            msg for msg in websocket.sent_texts
+            if msg.get("type") == "transcription" and msg.get("role") == "agent"
+        ]
+        assert agent_transcripts == [{
+            "type": "transcription",
+            "role": "agent",
+            "text": "Let me help with that",
+            "partial": True,
+        }]
 
-    def test_interrupted_clears_watchdog(self):
-        ss = _make_silence_state(awaiting_agent_response=True, user_spoke_at=time.monotonic())
-        ss.agent_busy = False
-        ss.awaiting_agent_response = False
+    @pytest.mark.asyncio
+    async def test_output_transcription_clears_watchdog(self):
+        websocket, _, ss = await _run_downstream_events(
+            _make_live_event(
+                output_transcription=SimpleNamespace(text="Welcome!", finished=True)
+            ),
+            silence_state=_make_silence_state(
+                awaiting_agent_response=True,
+                user_spoke_at=time.monotonic(),
+            ),
+        )
+
         assert ss.awaiting_agent_response is False
+        assert ss.agent_busy is True
+        agent_transcripts = [
+            msg for msg in websocket.sent_texts
+            if msg.get("type") == "transcription" and msg.get("role") == "agent"
+        ]
+        assert agent_transcripts == [{
+            "type": "transcription",
+            "role": "agent",
+            "text": "Welcome!",
+            "partial": False,
+        }]
 
-    def test_turn_complete_does_not_clear_watchdog(self):
+    @pytest.mark.asyncio
+    async def test_interrupted_clears_watchdog(self):
+        websocket, _, ss = await _run_downstream_events(
+            _make_live_event(interrupted=True),
+            silence_state=_make_silence_state(
+                awaiting_agent_response=True,
+                user_spoke_at=time.monotonic(),
+                agent_busy=True,
+            ),
+        )
+
+        assert ss.awaiting_agent_response is False
+        assert ss.agent_busy is False
+        interrupted_messages = [
+            msg for msg in websocket.sent_texts
+            if msg.get("type") == "interrupted"
+        ]
+        assert interrupted_messages == [{
+            "type": "interrupted",
+            "interrupted": True,
+        }]
+
+    @pytest.mark.asyncio
+    async def test_turn_complete_does_not_clear_watchdog(self):
         """turn_complete must NOT clear awaiting_agent_response (critical for transfers)."""
-        ss = _make_silence_state(awaiting_agent_response=True, user_spoke_at=time.monotonic())
-        # Simulate turn_complete — only clears agent_busy, NOT awaiting_agent_response
-        ss.agent_busy = False
-        # awaiting_agent_response is NOT touched
+        websocket, _, ss = await _run_downstream_events(
+            _make_live_event(turn_complete=True),
+            silence_state=_make_silence_state(
+                awaiting_agent_response=True,
+                user_spoke_at=time.monotonic(),
+                agent_busy=True,
+            ),
+        )
+
         assert ss.awaiting_agent_response is True
+        assert ss.agent_busy is False
+        agent_status_messages = [
+            msg for msg in websocket.sent_texts
+            if msg.get("type") == "agent_status"
+        ]
+        assert agent_status_messages == [{
+            "type": "agent_status",
+            "agent": "ekaette_router",
+            "status": "idle",
+        }]
 
     @pytest.mark.asyncio
     async def test_stale_output_partial_does_not_clear_watchdog(self):
-        import app.api.v1.realtime.stream_tasks as st
-
-        st.configure_runtime(
-            runner=_FakeRunner([
-                SimpleNamespace(
-                    content=None,
-                    input_transcription=None,
-                    output_transcription=SimpleNamespace(text="Welcome!", finished=True),
-                    interrupted=False,
-                    actions=None,
-                    turn_complete=False,
-                    usage_metadata=None,
-                    live_session_resumption_update=None,
-                    author="ekaette_router",
-                ),
-                SimpleNamespace(
-                    content=None,
-                    input_transcription=SimpleNamespace(text="I need pricing", finished=True),
-                    output_transcription=None,
-                    interrupted=False,
-                    actions=None,
-                    turn_complete=False,
-                    usage_metadata=None,
-                    live_session_resumption_update=None,
-                    author="ekaette_router",
-                ),
-                SimpleNamespace(
-                    content=None,
-                    input_transcription=None,
-                    output_transcription=SimpleNamespace(text="Welc", finished=False),
-                    interrupted=False,
-                    actions=None,
-                    turn_complete=False,
-                    usage_metadata=None,
-                    live_session_resumption_update=None,
-                    author="ekaette_router",
-                ),
-            ]),
-            _extract_server_message_from_state_delta=lambda delta: None,
-            _usage_int=lambda *args: 0,
-            TOKEN_PRICE_PROMPT_PER_MILLION=0.0,
-            TOKEN_PRICE_COMPLETION_PER_MILLION=0.0,
-            DEBUG_TELEMETRY=False,
-            _sanitize_log=lambda value: value,
-        )
-
-        websocket = _FakeWebSocket()
-        ctx = _make_ctx(websocket)
-        silence_state = _make_silence_state()
-
-        await st.downstream_task(
-            ctx,
-            _FakeRequestQueue(),
-            asyncio.Event(),
-            silence_state,
+        websocket, _, silence_state = await _run_downstream_events(
+            _make_live_event(
+                output_transcription=SimpleNamespace(text="Welcome!", finished=True)
+            ),
+            _make_live_event(
+                input_transcription=SimpleNamespace(text="I need pricing", finished=True)
+            ),
+            _make_live_event(
+                output_transcription=SimpleNamespace(text="Welc", finished=False)
+            ),
         )
 
         assert silence_state.awaiting_agent_response is True
@@ -501,35 +674,9 @@ class TestResponseLatencyNudge:
             awaiting_agent_response=True,
             user_spoke_at=time.monotonic() - 4.0,  # 4s ago
         )
-        queue = _FakeRequestQueue()
-        session_alive = asyncio.Event()
-        session_alive.set()
 
-        # Patch types for the module
-        original_types_bind = st.bind_runtime_values
-
-        def fake_bind(*names):
-            if names == ("types",):
-                return (_FakeTypes,)
-            return original_types_bind(*names)
-
-        st.bind_runtime_values = fake_bind
-
-        try:
-            # Run one iteration of the nudge loop
-            task = asyncio.create_task(
-                st.silence_nudge_task(queue, session_alive, ss)
-            )
-            await asyncio.sleep(1.5)  # Let it run one cycle
-            session_alive.clear()
-            await asyncio.sleep(0.2)
-            task.cancel()
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass  # Expected: we cancel the task after assertions
-        finally:
-            st.bind_runtime_values = original_types_bind
+        async with _run_nudge_task(st, ss) as queue:
+            await asyncio.wait_for(queue.sent_event.wait(), timeout=2.5)
 
         assert ss.response_nudge_count == 1
         assert len(queue.sent) >= 1
@@ -546,27 +693,9 @@ class TestResponseLatencyNudge:
             user_spoke_at=time.monotonic() - 4.0,
             agent_busy=True,  # This must NOT block response nudge
         )
-        queue = _FakeRequestQueue()
-        session_alive = asyncio.Event()
-        session_alive.set()
 
-        original_bind = st.bind_runtime_values
-        st.bind_runtime_values = lambda *names: (_FakeTypes,) if names == ("types",) else original_bind(*names)
-
-        try:
-            task = asyncio.create_task(
-                st.silence_nudge_task(queue, session_alive, ss)
-            )
-            await asyncio.sleep(1.5)
-            session_alive.clear()
-            await asyncio.sleep(0.2)
-            task.cancel()
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass  # Expected: we cancel the task after assertions
-        finally:
-            st.bind_runtime_values = original_bind
+        async with _run_nudge_task(st, ss) as queue:
+            await asyncio.wait_for(queue.sent_event.wait(), timeout=2.5)
 
         assert ss.response_nudge_count == 1
         assert len(queue.sent) >= 1
@@ -582,27 +711,10 @@ class TestResponseLatencyNudge:
             agent_busy=False,
             silence_nudge_due_at=now - 1.0,  # Due in the past -> would fire
         )
-        queue = _FakeRequestQueue()
-        session_alive = asyncio.Event()
-        session_alive.set()
 
-        original_bind = st.bind_runtime_values
-        st.bind_runtime_values = lambda *names: (_FakeTypes,) if names == ("types",) else original_bind(*names)
-
-        try:
-            task = asyncio.create_task(
-                st.silence_nudge_task(queue, session_alive, ss)
-            )
-            await asyncio.sleep(1.5)
-            session_alive.clear()
-            await asyncio.sleep(0.2)
-            task.cancel()
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass  # Expected: we cancel the task after assertions
-        finally:
-            st.bind_runtime_values = original_bind
+        async with _run_nudge_task(st, ss) as queue:
+            with pytest.raises(asyncio.TimeoutError):
+                await asyncio.wait_for(queue.sent_event.wait(), timeout=1.8)
 
         # No customer-silence nudge should have fired (below 3s threshold,
         # and customer-silence path is suppressed by awaiting_agent_response)
@@ -612,12 +724,27 @@ class TestResponseLatencyNudge:
 class TestChannelBootstrap:
     """Verify app:channel is set correctly in session initialization."""
 
-    def test_text_adapter_sets_channel_text(self):
-        """adk_text_adapter._ensure_session sets app:channel to 'text'."""
-        # We verify the source code contains the expected initial_state key
-        import inspect
-
+    @pytest.mark.asyncio
+    async def test_text_adapter_preserves_specific_channel(self):
+        """adk_text_adapter._ensure_session stores the concrete text channel."""
         from app.channels.adk_text_adapter import _ensure_session
 
-        source = inspect.getsource(_ensure_session)
-        assert '"app:channel": "text"' in source or "'app:channel': 'text'" in source
+        created_session = SimpleNamespace(id="session-1")
+        session_service = SimpleNamespace(
+            get_session=AsyncMock(return_value=None),
+            create_session=AsyncMock(return_value=created_session),
+        )
+
+        resolved_id = await _ensure_session(
+            session_service=session_service,
+            app_name="ekaette",
+            user_id="wa_user",
+            session_id="session-1",
+            tenant_id="public",
+            company_id="ekaette-electronics",
+            channel="sms",
+        )
+
+        assert resolved_id == "session-1"
+        create_kwargs = session_service.create_session.await_args.kwargs
+        assert create_kwargs["state"]["app:channel"] == "sms"

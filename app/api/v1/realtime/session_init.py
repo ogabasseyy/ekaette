@@ -174,7 +174,6 @@ async def initialize_session(
         if _token_claims.company_id:
             company_id = _token_claims.company_id
     caller_phone = _token_claims.caller_phone.strip() if _token_claims and _token_claims.caller_phone else ""
-    initial_state: dict[str, object] = {}
     resumed_state_updates: dict[str, object] = {}
 
     if not tenant_allowed_fn(tenant_id):
@@ -455,7 +454,7 @@ async def initialize_session(
         if registry_config is not None:
             initial_state.update(canonical_state_updates_from_registry_fn(registry_config))
         initial_state.setdefault("app:tenant_id", tenant_id)
-        initial_state["app:channel"] = "voice"
+        initial_state.setdefault("app:channel", "voice")
 
         # Inject caller phone for SIP bridge connections
         if caller_phone:

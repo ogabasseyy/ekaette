@@ -650,10 +650,14 @@ class CallSession:
                     # Trigger AI greeting — mirrors direct-mode
                     # send_client_content("[Phone call connected]")
                     self._model_speaking = True
-                    await gateway_client.send_text(json.dumps({
-                        "type": "text",
-                        "text": "[Phone call connected]",
-                    }))
+                    try:
+                        await gateway_client.send_text(json.dumps({
+                            "type": "text",
+                            "text": "[Phone call connected]",
+                        }))
+                    except Exception:
+                        self._model_speaking = False
+                        logger.warning("Failed to send gateway greeting", exc_info=True)
                 elif msg_type == "transcription":
                     logger.debug(
                         "Transcription [%s]: %s",
