@@ -5,6 +5,7 @@ Phase 6 of Single AI Brain — WA messaging tool migrated to ADK.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -17,8 +18,9 @@ from app.tools.wa_messaging import send_whatsapp_message
 class MockToolContext:
     """Minimal mock for ADK tool_context."""
 
-    def __init__(self, state: dict | None = None):
+    def __init__(self, state: dict | None = None, function_call_id: str | None = None):
         self.state = state or {}
+        self.function_call_id = function_call_id
 
 
 class TestSendWhatsAppMessage:
@@ -92,7 +94,7 @@ class TestSendWhatsAppMessage:
             "user:caller_phone": "+2348012345678",
             "app:tenant_id": "public",
             "app:company_id": "ekaette-electronics",
-        })
+        }, function_call_id="fc-123")
 
         mock_response = MagicMock()
         mock_response.status_code = 200
@@ -126,6 +128,10 @@ class TestSendWhatsAppMessage:
         assert payload_json["tenant_id"] == "public"
         assert payload_json["company_id"] == "ekaette-electronics"
         headers = call_kwargs.kwargs.get("headers") or call_kwargs[1].get("headers", {})
+        expected_idempotency_key = hashlib.sha256(
+            "public:ekaette-electronics:send_whatsapp_message:+2348012345678:Your account is 1234567890:fc-123".encode()
+        ).hexdigest()
+        assert headers["X-Idempotency-Key"] == expected_idempotency_key
         assert "X-Service-Auth" in headers
         assert "X-Service-Timestamp" in headers
         assert "X-Service-Nonce" in headers

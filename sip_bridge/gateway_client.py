@@ -68,6 +68,24 @@ class GatewayClient:
     # Token TTL for minted per-call tokens (seconds)
     _TOKEN_TTL: int = 300
 
+    @property
+    def canonical_session_id(self) -> str:
+        """Canonical backend session ID captured after startup or resume."""
+        return self._canonical_session_id
+
+    @property
+    def resumption_token(self) -> str:
+        """Latest backend-issued resumption token."""
+        return self._resumption_token
+
+    def remember_canonical_session_id(self, session_id: str) -> None:
+        """Store the backend-issued canonical session ID."""
+        self._canonical_session_id = session_id
+
+    def remember_resumption_token(self, token: str) -> None:
+        """Store the latest backend-issued resumption token."""
+        self._resumption_token = token
+
     def _mint_token(self) -> str:
         """Mint a per-call HMAC-SHA256 token matching ws_auth.py's format.
 
@@ -155,10 +173,10 @@ class GatewayClient:
                 logger.exception("Gateway reconnect failed to close existing websocket")
             self._ws = None
 
-        sid = self._canonical_session_id or self.session_id
+        sid = self.canonical_session_id or self.session_id
         url = self._build_connect_url(
             session_id_override=sid,
-            resumption_token=self._resumption_token,
+            resumption_token=self.resumption_token,
         )
         try:
             self._ws = await websockets.connect(url)

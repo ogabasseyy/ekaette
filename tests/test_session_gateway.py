@@ -7,7 +7,6 @@ instead of direct Gemini Live when gateway_mode=True.
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
 from unittest.mock import AsyncMock
 
@@ -35,6 +34,20 @@ class MockGatewayClient:
         self._frames_to_yield: list = []
         self._receive_batches: list[list] | None = None
         self._receive_call_count = 0
+
+    @property
+    def canonical_session_id(self) -> str:
+        return self._canonical_session_id
+
+    @property
+    def resumption_token(self) -> str:
+        return self._resumption_token
+
+    def remember_canonical_session_id(self, session_id: str) -> None:
+        self._canonical_session_id = session_id
+
+    def remember_resumption_token(self, token: str) -> None:
+        self._resumption_token = token
 
     async def receive(self):
         if self._receive_batches is not None:
@@ -145,7 +158,7 @@ class TestCallSessionGatewayMode:
         s.gateway_client = mock_client
 
         await s._gateway_recv_loop()
-        assert mock_client._canonical_session_id == "canonical-xyz"
+        assert mock_client.canonical_session_id == "canonical-xyz"
 
     @pytest.mark.asyncio
     async def test_gateway_recv_loop_handles_interrupted(self):
@@ -226,7 +239,7 @@ class TestCallSessionGatewayMode:
         s.gateway_client = mock_client
 
         await s._gateway_recv_loop()
-        assert mock_client._resumption_token == "tok-abc"
+        assert mock_client.resumption_token == "tok-abc"
         assert not s._shutdown.is_set()
 
     @pytest.mark.asyncio
@@ -261,6 +274,30 @@ class TestCallSessionGatewayMode:
 class TestServerCallerPhone:
     """server.py extracts caller phone from SIP From header."""
 
+    def _make_gateway_config(self):
+        from sip_bridge.config import BridgeConfig
+
+        return BridgeConfig(
+            sip_host="0.0.0.0",
+            sip_port=6060,
+            sip_public_ip="34.69.236.219",
+            sip_allowed_peers=frozenset(),
+            gemini_api_key="test-key",
+            live_model_id="gemini-2.5-flash-native-audio-preview-12-2025",
+            system_instruction="Test",
+            gemini_voice="Aoede",
+            company_id="ekaette-electronics",
+            tenant_id="public",
+            health_port=8081,
+            sip_registrar="ng.sip.africastalking.com",
+            sip_username="user@sip.example.com",
+            sip_password="pass",
+            sip_register_interval=300,
+            gateway_mode=True,
+            gateway_ws_url="wss://ekaette.run.app",
+            gateway_ws_secret="shared-hmac-secret",
+        )
+
     def test_extract_caller_phone_valid(self):
         """Valid SIP From header yields phone number."""
         from sip_bridge.wa_main import _extract_caller_phone
@@ -275,23 +312,39 @@ class TestServerCallerPhone:
 
     def test_user_id_derivation_from_phone_is_namespaced(self):
         """user_id hash includes tenant/company scope to avoid cross-tenant collisions."""
-        phone = "+2348012345678"
-        user_id = f"sip-{hashlib.sha256(f'public:ekaette-electronics:caller:{phone}'.encode()).hexdigest()[:24]}"
+        from sip_bridge.server import SIPServer
+
+        server = SIPServer(config=self._make_gateway_config())
+        session = server.handle_invite(
+            "call-1",
+            ("1.2.3.4", 5060),
+            sip_from_header='"User" <sip:+2348012345678@example.com>',
+        )
+        user_id = session.gateway_client.user_id
+        assert user_id == "sip-ff27d4b8902ab31895fee1e8"
         assert user_id.startswith("sip-")
         assert len(user_id) == 4 + 24  # "sip-" + 24 hex chars
 
     def test_anonymous_fallback_uses_namespaced_call_id(self):
         """No caller phone still namespaces the call-derived fallback."""
-        call_id = "abc123@host"
-        user_id = f"sip-anon-{hashlib.sha256(f'public:ekaette-electronics:call:{call_id}'.encode()).hexdigest()[:16]}"
+        from sip_bridge.server import SIPServer
+
+        server = SIPServer(config=self._make_gateway_config())
+        session = server.handle_invite("abc123@host", ("1.2.3.4", 5060))
+        user_id = session.gateway_client.user_id
+        assert user_id == "sip-anon-19f4b8c3a16a8156"
         assert user_id.startswith("sip-anon-")
         assert len(user_id) == 9 + 16  # "sip-anon-" + 16 hex chars
 
     def test_session_id_from_call_id_is_namespaced_and_safe(self):
         """session_id from call_id hash remains path-safe and scope-aware."""
         import re
-        call_id = "abc123@host.example.com;tag=xyz"
-        session_id = f"sip-{hashlib.sha256(f'public:ekaette-electronics:session:{call_id}'.encode()).hexdigest()[:24]}"
+        from sip_bridge.server import SIPServer
+
+        server = SIPServer(config=self._make_gateway_config())
+        session = server.handle_invite("abc123@host.example.com;tag=xyz", ("1.2.3.4", 5060))
+        session_id = session.gateway_client.session_id
+        assert session_id == "sip-0ca1880d6c0c72383b0b4b7f"
         assert re.match(r"^[A-Za-z0-9._:-]{1,128}$", session_id)
 
 
@@ -496,7 +549,7 @@ class TestGatewayBidiReconnect:
 class TestServerDoneCallback:
     """SIPProtocol done-callback cleans up _active_sessions when run() exits."""
 
-    def _make_config(self, gateway_mode=False, gateway_ws_url=""):  # noqa: FBT002
+    def _make_config(self, gateway_mode=False, gateway_ws_url="", gateway_ws_secret=""):  # noqa: FBT002
         from sip_bridge.config import BridgeConfig
         return BridgeConfig(
             sip_host="0.0.0.0",
@@ -516,6 +569,7 @@ class TestServerDoneCallback:
             sip_register_interval=300,
             gateway_mode=gateway_mode,
             gateway_ws_url=gateway_ws_url,
+            gateway_ws_secret=gateway_ws_secret,
         )
 
     @pytest.mark.asyncio

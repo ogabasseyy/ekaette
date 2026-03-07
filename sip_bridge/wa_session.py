@@ -598,7 +598,11 @@ class WaSession:
                 self._model_speaking
                 or (time.time() - self._model_speech_end_time) < ECHO_HOLDOFF_SEC
             )
-            await self.gateway_client.send_audio(SILENCE_FRAME if echo_muted else pcm16)
+            gateway_client = self.gateway_client
+            if gateway_client is None:
+                await asyncio.sleep(0.05)
+                continue
+            await gateway_client.send_audio(SILENCE_FRAME if echo_muted else pcm16)
 
     async def _gateway_recv_loop(self) -> None:
         """Receive from Cloud Run, route audio to outbound, handle JSON protocol."""
@@ -620,7 +624,7 @@ class WaSession:
                     session_ref = ""
                     if self.gateway_client is not None:
                         session_ref = (
-                            self.gateway_client._canonical_session_id
+                            self.gateway_client.canonical_session_id
                             or self.gateway_client.session_id
                         )
                     logger.warning(
@@ -635,7 +639,7 @@ class WaSession:
                 if msg_type == "session_started":
                     canonical_id = msg.get("sessionId", "")
                     if canonical_id:
-                        self.gateway_client._canonical_session_id = canonical_id
+                        self.gateway_client.remember_canonical_session_id(canonical_id)
                     logger.info("Gateway session started: %s", canonical_id)
                 elif msg_type == "session_ending":
                     reason = msg.get("reason", "")
@@ -643,8 +647,8 @@ class WaSession:
                     if reason == "live_session_ended":
                         self._shutdown.set()
                     elif reason == "session_resumption":
-                        self.gateway_client._resumption_token = msg.get(
-                            "resumptionToken", ""
+                        self.gateway_client.remember_resumption_token(
+                            msg.get("resumptionToken", "")
                         )
                 elif msg_type == "ping":
                     pass
@@ -655,6 +659,14 @@ class WaSession:
                     if msg.get("status") == "idle":
                         self._model_speaking = False
                         self._model_speech_end_time = time.time()
+                elif msg_type == "agent_transfer":
+                    logger.info(
+                        "Gateway agent transfer: from=%s to=%s reason=%s details=%s",
+                        msg.get("from", ""),
+                        msg.get("to", ""),
+                        msg.get("reason", ""),
+                        msg.get("details", ""),
+                    )
                 elif msg_type == "error":
                     logger.warning("Gateway error: %s", msg.get("message", ""))
                 elif msg_type == "transcription":

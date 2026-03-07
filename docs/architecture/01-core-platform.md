@@ -9,7 +9,7 @@
 - **Agent-per-capability:** Root orchestrator delegates to specialized sub-agents; each agent owns one domain
 - **Fail-closed config:** Missing registry data returns explicit errors, never silent defaults
 - **Single AI brain (gateway-enabled):** When `GATEWAY_MODE=true` and `WA_GATEWAY_MODE=true`, phone and WA-call traffic converge with web and WhatsApp text on one ADK agent graph on Cloud Run; both flags default to `false`, so this is not the default deployment
-- **Zero-latency voice:** Ephemeral tokens enable direct client-to-API WebSocket; backend handles auth and config only
+- **Zero-latency voice:** For direct web voice, ephemeral tokens enable a direct client-to-API WebSocket and the backend handles auth/config only; SIP and WhatsApp voice use gateway/backend routing when `GATEWAY_MODE=true` or `WA_GATEWAY_MODE=true`
 - **Privacy by design:** AI disclosure at first interaction (EU AI Act), NDPA-compliant consent, PII redaction pipeline across logs/sessions/transcripts, HMAC-signed WebSocket tokens
 
 ### Firestore Data Model

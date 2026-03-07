@@ -27,9 +27,24 @@ class MockGatewayClient:
         self.send_text = AsyncMock()
         self.close = AsyncMock()
         self.connect = AsyncMock()
+        self.session_id = "mock-session"
         self._canonical_session_id = ""
         self._resumption_token = ""
         self._frames_to_yield: list = []
+
+    @property
+    def canonical_session_id(self) -> str:
+        return self._canonical_session_id
+
+    @property
+    def resumption_token(self) -> str:
+        return self._resumption_token
+
+    def remember_canonical_session_id(self, session_id: str) -> None:
+        self._canonical_session_id = session_id
+
+    def remember_resumption_token(self, token: str) -> None:
+        self._resumption_token = token
 
     async def receive(self):
         for frame in self._frames_to_yield:

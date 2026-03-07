@@ -164,8 +164,9 @@ class TestEkaetteRouterAgent:
 
     def test_voice_router_expected_sub_agents_include_send_whatsapp_message_tool(self):
         from app.agents.ekaette_router.agent import create_ekaette_router
+        from app.configs.model_resolver import resolve_live_model_id
 
-        agent = create_ekaette_router(model="gemini-3-flash-preview", channel="voice")
+        agent = create_ekaette_router(model=resolve_live_model_id(), channel="voice")
         tool_names_by_agent = {
             sub_agent.name: {
                 getattr(tool, "name", getattr(tool, "__name__", str(tool)))

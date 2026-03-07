@@ -627,7 +627,7 @@ class CallSession:
                     session_ref = ""
                     if self.gateway_client is not None:
                         session_ref = (
-                            self.gateway_client._canonical_session_id
+                            self.gateway_client.canonical_session_id
                             or self.gateway_client.session_id
                         )
                     logger.warning(
@@ -642,7 +642,7 @@ class CallSession:
                 if msg_type == "session_started":
                     canonical_id = msg.get("sessionId", "")
                     if canonical_id:
-                        self.gateway_client._canonical_session_id = canonical_id
+                        self.gateway_client.remember_canonical_session_id(canonical_id)
                     logger.info("Gateway session started: %s", canonical_id)
                 elif msg_type == "transcription":
                     logger.debug(
@@ -655,8 +655,8 @@ class CallSession:
                     if reason == "live_session_ended":
                         self._shutdown.set()
                     elif reason == "session_resumption":
-                        self.gateway_client._resumption_token = msg.get(
-                            "resumptionToken", ""
+                        self.gateway_client.remember_resumption_token(
+                            msg.get("resumptionToken", "")
                         )
                         logger.info("Resumption token received")
                     elif reason == "go_away":
