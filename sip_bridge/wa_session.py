@@ -134,7 +134,7 @@ class WaSession:
             # Direct mode: connect to Gemini Live
             try:
                 sys_instruct = (
-                    "You are an AI customer service assistant named ehkaitay. "
+                    "You are the virtual assistant named ehkaitay. "
                     "Your name is ehkaitay — always say it exactly like that. "
                     "You are answering a WhatsApp call. Greet the caller warmly and ask how you can help. "
                     "Always speak in English. "
@@ -641,6 +641,12 @@ class WaSession:
                     if canonical_id:
                         self.gateway_client.remember_canonical_session_id(canonical_id)
                     logger.info("Gateway session started: %s", canonical_id)
+                    # Trigger AI greeting — mirrors direct-mode
+                    self._model_speaking = True
+                    await self.gateway_client.send_text(json.dumps({
+                        "type": "text",
+                        "text": "[Phone call connected]",
+                    }))
                 elif msg_type == "session_ending":
                     reason = msg.get("reason", "")
                     logger.info("Gateway session ending: reason=%s", reason)

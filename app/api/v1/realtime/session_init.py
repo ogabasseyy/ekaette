@@ -174,6 +174,8 @@ async def initialize_session(
         if _token_claims.company_id:
             company_id = _token_claims.company_id
     caller_phone = _token_claims.caller_phone.strip() if _token_claims and _token_claims.caller_phone else ""
+    initial_state: dict[str, object] = {}
+    resumed_state_updates: dict[str, object] = {}
 
     if not tenant_allowed_fn(tenant_id):
         logger.warning(
@@ -254,9 +256,11 @@ async def initialize_session(
             if isinstance(resumed_tenant, str) and resumed_tenant.strip():
                 tenant_id = normalize_tenant_id_fn(resumed_tenant, default=tenant_id)
 
-        state_updates: dict[str, object] = {}
+        state_updates = resumed_state_updates
         if "app:tenant_id" not in session.state:
             state_updates["app:tenant_id"] = tenant_id
+        if "app:channel" not in session.state:
+            state_updates["app:channel"] = "voice"
         if "app:industry_config" not in session.state:
             industry_config = await load_industry_config_fn(industry_config_client_obj, industry)
             state_updates.update(build_session_state_fn(industry_config, industry))
@@ -451,6 +455,7 @@ async def initialize_session(
         if registry_config is not None:
             initial_state.update(canonical_state_updates_from_registry_fn(registry_config))
         initial_state.setdefault("app:tenant_id", tenant_id)
+        initial_state["app:channel"] = "voice"
 
         # Inject caller phone for SIP bridge connections
         if caller_phone:
@@ -489,7 +494,11 @@ async def initialize_session(
             resolved_session_id = created_session.id
 
     # Collect the final session state for voice + canonical fields.
-    session_state: dict[str, object] = session.state if session else initial_state
+    if session is not None:
+        session_state = dict(getattr(session, "state", {}) or {})
+        session_state.update(resumed_state_updates)
+    else:
+        session_state = initial_state
 
     # Use locked session aliases when available.
     locked_industry = session_state.get("app:industry") if isinstance(session_state.get("app:industry"), str) else None

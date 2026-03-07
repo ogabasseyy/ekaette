@@ -300,6 +300,7 @@ async def _ensure_session(
     initial_state: dict[str, Any] = {
         "app:tenant_id": tenant_id,
         "app:company_id": company_id,
+        "app:channel": "text",
     }
 
     # Load registry config if available

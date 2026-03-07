@@ -111,11 +111,11 @@ class TestEkaetteRouterAgent:
 
         assert ekaette_router.before_agent_callback is before_agent_isolation_guard_and_dedup
 
-    def test_agent_instruction_includes_ai_disclosure(self):
-        """Root agent instruction must include AI disclosure for transparency (EU AI Act Art. 50)."""
+    def test_agent_instruction_includes_virtual_assistant_disclosure(self):
+        """Root agent instruction should use softer non-human disclosure."""
         from app.agents.ekaette_router.agent import ekaette_router
         instruction = ekaette_router.instruction
-        assert "AI-powered" in instruction, "Instruction should disclose AI nature"
+        assert "virtual assistant" in instruction.lower(), "Instruction should disclose assistant nature"
 
     def test_agent_instruction_includes_human_escalation(self):
         """Root agent instruction must offer human escalation path (EU AI Act best practice)."""

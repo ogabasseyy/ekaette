@@ -38,3 +38,7 @@ class SilenceState:
     agent_busy: bool
     silence_nudge_due_at: float
     silence_nudge_interval: float
+    # Agent response latency tracking (independent from customer-silence)
+    awaiting_agent_response: bool = False
+    user_spoke_at: float = 0.0
+    response_nudge_count: int = 0

@@ -215,8 +215,17 @@ class TestInitializeSession:
         save_kwargs = runtime.async_save_session_state.await_args.kwargs
         assert save_kwargs["state_updates"] == {
             "app:tenant_id": "public",
+            "app:channel": "voice",
             "user:caller_phone": "+2348012345678",
         }
+        assert ctx.session_state["app:tenant_id"] == "public"
+        assert ctx.session_state["app:channel"] == "voice"
+        assert ctx.session_state["user:caller_phone"] == "+2348012345678"
+        payload = json.loads(websocket.sent_texts[-1])
+        assert payload["type"] == "session_started"
+        assert payload["sessionState"]["app:tenant_id"] == "public"
+        assert payload["sessionState"]["app:channel"] == "voice"
+        assert payload["sessionState"]["user:caller_phone"] == "+2348012345678"
 
     @pytest.mark.asyncio
     async def test_resumption_token_flows_into_run_config(
