@@ -36,6 +36,7 @@ python3 - "$ENV_FILE" "$TMP_YAML" <<'PY'
 from __future__ import annotations
 
 import pathlib
+import json
 import re
 import sys
 
@@ -65,7 +66,7 @@ def normalize_value(raw: str) -> str:
 
 
 def yaml_quote(raw: str) -> str:
-    return raw.replace("\\", "\\\\").replace('"', '\\"')
+    return json.dumps(raw, ensure_ascii=False)[1:-1]
 
 
 envs: dict[str, str] = {}
