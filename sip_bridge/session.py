@@ -148,7 +148,7 @@ class CallSession:
             # Direct mode: connect to Gemini Live
             try:
                 sys_instruct = self.gemini_system_instruction or (
-                    "You are an AI customer service assistant named Ekaitay. "
+                    "You are the virtual assistant named Ekaitay. "
                     "Your name is Ekaitay — always say it exactly like that. "
                     "You are answering a phone call. Greet the caller warmly and ask how you can help. "
                     "Be helpful, concise, and professional. Keep responses short for phone conversation."
@@ -647,6 +647,17 @@ class CallSession:
                     if canonical_id:
                         gateway_client.remember_canonical_session_id(canonical_id)
                     logger.info("Gateway session started: %s", canonical_id)
+                    # Trigger AI greeting — mirrors direct-mode
+                    # send_client_content("[Phone call connected]")
+                    self._model_speaking = True
+                    try:
+                        await gateway_client.send_text(json.dumps({
+                            "type": "text",
+                            "text": "[Phone call connected]",
+                        }))
+                    except Exception:
+                        self._model_speaking = False
+                        logger.warning("Failed to send gateway greeting", exc_info=True)
                 elif msg_type == "transcription":
                     logger.debug(
                         "Transcription [%s]: %s",

@@ -7,8 +7,7 @@ instead of direct Gemini Live when gateway_mode=True.
 from __future__ import annotations
 
 import json
-from unittest.mock import patch
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -116,6 +115,109 @@ class TestWaSessionGatewayMode:
         s.gateway_client = mock_client
 
         await s._gateway_recv_loop()
+        assert s._model_speaking is False
+
+    @pytest.mark.asyncio
+    async def test_gateway_recv_loop_sends_virtual_assistant_greeting_once(self):
+        """session_started sends the greeting once and remembers the session."""
+        from sip_bridge.gateway_client import GatewayFrame
+
+        s = WaSession(call_id="c1", tenant_id="public", company_id="acme")
+        mock_client = MockGatewayClient()
+        mock_client._frames_to_yield = [
+            GatewayFrame(
+                is_audio=False,
+                text_data=json.dumps({
+                    "type": "session_started",
+                    "sessionId": "canonical-xyz",
+                }),
+            ),
+        ]
+        s.gateway_client = mock_client
+
+        await s._gateway_recv_loop()
+
+        mock_client.send_text.assert_awaited_once()
+        actual_payload = mock_client.send_text.await_args.args[0]
+        assert json.loads(actual_payload) == {
+            "type": "text",
+            "text": "[Call connected]",
+        }
+        assert mock_client.canonical_session_id == "canonical-xyz"
+        assert s._gateway_greeting_sent is True
+        assert s._model_speaking is True
+
+    @pytest.mark.asyncio
+    async def test_gateway_recv_loop_skips_duplicate_greeting_on_resume(self):
+        """A resumed gateway session does not re-trigger the call greeting."""
+        from sip_bridge.gateway_client import GatewayFrame
+
+        s = WaSession(call_id="c1", tenant_id="public", company_id="acme")
+        mock_client = MockGatewayClient()
+        mock_client._frames_to_yield = [
+            GatewayFrame(
+                is_audio=False,
+                text_data=json.dumps({
+                    "type": "session_started",
+                    "sessionId": "canonical-1",
+                }),
+            ),
+            GatewayFrame(
+                is_audio=False,
+                text_data=json.dumps({"type": "interrupted"}),
+            ),
+            GatewayFrame(
+                is_audio=False,
+                text_data=json.dumps({
+                    "type": "session_started",
+                    "sessionId": "canonical-2",
+                }),
+            ),
+        ]
+        s.gateway_client = mock_client
+
+        await s._gateway_recv_loop()
+
+        assert mock_client.send_text.await_count == 1
+        assert mock_client.canonical_session_id == "canonical-2"
+        assert s._gateway_greeting_sent is True
+        assert s._model_speaking is False
+
+    @pytest.mark.asyncio
+    async def test_gateway_recv_loop_marks_failed_greeting_as_sent(self):
+        """A failed initial greeting should not be retried on later resumes."""
+        from sip_bridge.gateway_client import GatewayFrame
+
+        s = WaSession(call_id="c1", tenant_id="public", company_id="acme")
+        mock_client = MockGatewayClient()
+        mock_client.send_text = AsyncMock(side_effect=RuntimeError("boom"))
+        mock_client._frames_to_yield = [
+            GatewayFrame(
+                is_audio=False,
+                text_data=json.dumps({
+                    "type": "session_started",
+                    "sessionId": "canonical-xyz",
+                }),
+            ),
+            GatewayFrame(
+                is_audio=False,
+                text_data=json.dumps({"type": "interrupted"}),
+            ),
+            GatewayFrame(
+                is_audio=False,
+                text_data=json.dumps({
+                    "type": "session_started",
+                    "sessionId": "canonical-resumed",
+                }),
+            ),
+        ]
+        s.gateway_client = mock_client
+
+        await s._gateway_recv_loop()
+
+        mock_client.send_text.assert_awaited_once()
+        assert mock_client.canonical_session_id == "canonical-resumed"
+        assert s._gateway_greeting_sent is True
         assert s._model_speaking is False
 
     @pytest.mark.asyncio

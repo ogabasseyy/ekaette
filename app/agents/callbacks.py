@@ -378,10 +378,19 @@ async def before_model_inject_config(
             has_runtime_context = True
 
     if has_runtime_context:
-        instruction_lines.append(
-            "Latency policy: Before any tool call or agent transfer, first send one brief "
-            "acknowledgement (for example 'Checking that now.'), then proceed."
-        )
+        channel = _state_get(callback_context.state, "app:channel")
+        normalized_channel = channel.strip().lower() if isinstance(channel, str) else ""
+        if normalized_channel == "voice":
+            # This intentionally overlaps with the router's static voice supplement:
+            # the router carries the base voice playbook, while this runtime check
+            # reinforces the low-latency filler rule for any voice-session agent.
+            instruction_lines.append(
+                "CRITICAL latency policy: On a phone call, silence feels like a "
+                "dropped connection. You MUST speak a brief filler phrase (e.g., "
+                "'Let me check that for you') BEFORE any tool call or agent "
+                "transfer. Generate spoken text FIRST, then the tool call, in "
+                "the same turn. Never leave more than 2 seconds of silence."
+            )
 
     if not instruction_lines:
         return None

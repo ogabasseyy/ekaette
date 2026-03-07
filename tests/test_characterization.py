@@ -418,6 +418,7 @@ class TestSessionStartedMessageShape:
             "sessionId",
             "industry",
             "companyId",
+            "tenantId",
             "voice",
             "manualVadActive",
             "vadMode",

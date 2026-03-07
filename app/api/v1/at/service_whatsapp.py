@@ -267,7 +267,7 @@ async def _legacy_media_analysis(
             ],
             config=types.GenerateContentConfig(
                 system_instruction=(
-                    f"You are Ekaette, AI assistant for {company_id}. "
+                    f"You are Ekaette, virtual assistant for {company_id}. "
                     "Analyze the media and respond helpfully. Focus on concrete "
                     "business tasks like product identification, trade-in valuation, "
                     "or customer support."

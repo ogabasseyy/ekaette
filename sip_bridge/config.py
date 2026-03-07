@@ -65,7 +65,7 @@ class BridgeConfig:
             ),
             system_instruction=os.getenv(
                 "SIP_SYSTEM_INSTRUCTION",
-                "You are an AI customer service assistant named ehkaitay. "
+                "You are the virtual assistant named ehkaitay. "
                 "Your name is ehkaitay — always say it exactly like that. "
                 "You are answering a phone call. Greet the caller warmly and ask how you can help. "
                 "Always speak in English. "

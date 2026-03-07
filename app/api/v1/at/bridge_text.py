@@ -69,7 +69,7 @@ async def query_text(
         contents=[user_message],
         config=types.GenerateContentConfig(
             system_instruction=(
-                f"You are Ekaette, AI assistant for {company_id}. "
+                f"You are Ekaette, virtual assistant for {company_id}. "
                 f"{cfg['system_suffix']}"
             ),
             max_output_tokens=cfg["max_tokens"],

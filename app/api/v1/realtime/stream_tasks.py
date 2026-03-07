@@ -21,6 +21,9 @@ from app.tools.pii_redaction import redact_pii
 
 logger = logging.getLogger(__name__)
 
+RESPONSE_LATENCY_FILLER_SECONDS = 3.0
+RESPONSE_LATENCY_REASSURE_SECONDS = 15.0
+
 
 def configure_runtime(**kwargs: Any) -> None:
     """Inject runtime dependencies from main module."""
@@ -114,6 +117,9 @@ async def upstream_task(
             silence_state.last_client_activity = now
             silence_state.silence_nudge_count = 0
             silence_state.agent_busy = True
+            # New caller audio supersedes any pending response-latency watchdog.
+            silence_state.awaiting_agent_response = False
+            silence_state.response_nudge_count = 0
             (
                 silence_state.silence_nudge_due_at,
                 silence_state.silence_nudge_interval,
@@ -143,6 +149,8 @@ async def upstream_task(
                 now = time.monotonic()
                 silence_state.last_client_activity = now
                 silence_state.silence_nudge_count = 0
+                silence_state.awaiting_agent_response = False
+                silence_state.response_nudge_count = 0
                 if msg_type in ("text", "image", "negotiate"):
                     silence_state.agent_busy = True
                 (
@@ -426,6 +434,7 @@ async def downstream_task(
                         and "audio" in part.inline_data.mime_type
                     ):
                         silence_state.agent_busy = True
+                        silence_state.awaiting_agent_response = False
                         audio_bytes = part.inline_data.data
                         if isinstance(audio_bytes, str):
                             audio_bytes = base64.b64decode(audio_bytes)
@@ -434,6 +443,7 @@ async def downstream_task(
                     # Text -> transcription (text-mode fallback only)
                     elif part.text and not ctx.is_native_audio:
                         silence_state.agent_busy = True
+                        silence_state.awaiting_agent_response = False
                         await websocket.send_text(json.dumps({
                             "type": "transcription",
                             "role": "agent",
@@ -467,6 +477,11 @@ async def downstream_task(
                             receiving_input = False
                             input_finalized = True
 
+                        # Arm/reset response latency watchdog
+                        silence_state.awaiting_agent_response = True
+                        silence_state.user_spoke_at = time.monotonic()
+                        silence_state.response_nudge_count = 0
+
             # Output transcription (agent's speech -> text)
             if event.output_transcription:
                 text = getattr(event.output_transcription, "text", None)
@@ -477,6 +492,7 @@ async def downstream_task(
                         # Suppress late partials after output was already finalized
                         pass
                     else:
+                        silence_state.awaiting_agent_response = False
                         if output_finalized:
                             output_finalized = False
                         # Agent started responding -> finalize user's input
@@ -499,6 +515,7 @@ async def downstream_task(
                 await _finalize_input()
                 await _finalize_output()
                 silence_state.agent_busy = False
+                silence_state.awaiting_agent_response = False
                 await websocket.send_text(json.dumps({
                     "type": "interrupted",
                     "interrupted": True,
@@ -656,9 +673,62 @@ async def silence_nudge_task(live_request_queue, session_alive: asyncio.Event, s
         if not session_alive.is_set():
             break
         now = time.monotonic()
+
+        # ── Fast-path: agent response latency (3s / 15s) ──
+        # NOT gated on agent_busy — upstream sets that on user audio
+        # frames and never clears it during router thinking time.
+        if silence_state.awaiting_agent_response:
+            elapsed = now - silence_state.user_spoke_at
+            if (
+                elapsed >= RESPONSE_LATENCY_FILLER_SECONDS
+                and silence_state.response_nudge_count == 0
+            ):
+                silence_state.response_nudge_count = 1
+                try:
+                    live_request_queue.send_content(types_mod.Content(parts=[
+                        types_mod.Part(text=(
+                            "[System: The customer said something several seconds ago "
+                            "and is waiting for a response on a phone call. Silence on "
+                            "a phone call feels like a dropped connection. Say a brief "
+                            "filler phrase NOW, like 'Let me check that for you', then "
+                            "proceed with your task.]"
+                        ))
+                    ]))
+                except Exception:
+                    logger.debug(
+                        "silence_nudge_task: failed to send first response-latency nudge",
+                        exc_info=True,
+                    )
+                    break
+                continue
+            if (
+                elapsed >= RESPONSE_LATENCY_REASSURE_SECONDS
+                and silence_state.response_nudge_count == 1
+            ):
+                silence_state.response_nudge_count = 2
+                try:
+                    live_request_queue.send_content(types_mod.Content(parts=[
+                        types_mod.Part(text=(
+                            "[System: Over 15 seconds have passed since the customer "
+                            "spoke. Say 'I'm still with you, just a moment longer' "
+                            "to reassure them you haven't disconnected.]"
+                        ))
+                    ]))
+                except Exception:
+                    logger.debug(
+                        "silence_nudge_task: failed to send second response-latency nudge",
+                        exc_info=True,
+                    )
+                    break
+                continue
+
         if now < silence_state.silence_nudge_due_at:
             continue
         if silence_state.agent_busy:
+            continue
+        # Skip customer-silence nudge when agent is slow to respond
+        # (the response-latency fast-path handles this case with the right message)
+        if silence_state.awaiting_agent_response:
             continue
         if silence_state.silence_nudge_count >= SILENCE_NUDGE_MAX:
             continue
