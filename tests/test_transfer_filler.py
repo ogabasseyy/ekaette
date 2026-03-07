@@ -6,7 +6,6 @@ import asyncio
 import json
 import time
 from types import SimpleNamespace
-from unittest.mock import MagicMock
 
 import pytest
 from fastapi import WebSocketDisconnect
@@ -528,7 +527,7 @@ class TestResponseLatencyNudge:
             try:
                 await task
             except asyncio.CancelledError:
-                pass
+                pass  # Expected: we cancel the task after assertions
         finally:
             st.bind_runtime_values = original_types_bind
 
@@ -565,7 +564,7 @@ class TestResponseLatencyNudge:
             try:
                 await task
             except asyncio.CancelledError:
-                pass
+                pass  # Expected: we cancel the task after assertions
         finally:
             st.bind_runtime_values = original_bind
 
@@ -601,7 +600,7 @@ class TestResponseLatencyNudge:
             try:
                 await task
             except asyncio.CancelledError:
-                pass
+                pass  # Expected: we cancel the task after assertions
         finally:
             st.bind_runtime_values = original_bind
 
