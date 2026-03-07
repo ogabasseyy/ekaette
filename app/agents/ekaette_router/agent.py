@@ -24,6 +24,7 @@ from app.agents.callbacks import (
 )
 from app.agents.dedup import telemetry_after_agent
 from app.tools.global_lessons import classify_lesson_scope, submit_global_lesson
+from app.tools.wa_messaging import send_whatsapp_message
 from app.configs.model_resolver import resolve_live_model_id
 from app.agents.vision_agent.agent import create_vision_agent
 from app.agents.valuation_agent.agent import create_valuation_agent
@@ -383,7 +384,7 @@ def create_ekaette_router(model: str, *, channel: str = "voice") -> Agent:
         model=model,
         instruction=instruction,
         generate_content_config=_THINKING_CONFIG,
-        tools=[PreloadMemoryTool()],
+        tools=[PreloadMemoryTool(), send_whatsapp_message],
         sub_agents=[
             create_vision_agent(model),
             create_valuation_agent(model),

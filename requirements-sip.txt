@@ -1,5 +1,5 @@
 opuslib-next==1.1.4           # Opus codec — pinned, tested. Maintained fork, Python 3.13.
 pylibsrtp==1.0.0              # SRTP — pinned, tested. aiortc team, wraps libsrtp2.
 google-cloud-firestore==2.23.0  # Firestore — ALIGNED with main backend requirements.txt
-google-genai==1.64.0          # Gemini Live API — ALIGNED with main backend requirements.txt
+google-genai==1.65.0          # Gemini Live API — ALIGNED with main backend requirements.txt
 websockets==15.0.1            # WebSocket — ALIGNED with main backend requirements.txt

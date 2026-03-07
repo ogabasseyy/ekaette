@@ -143,6 +143,65 @@ class TestBridgeConfigValidation:
         assert cfg.validate() == []
 
 
+class TestBridgeConfigGateway:
+    """Gateway mode config fields."""
+
+    def test_gateway_mode_default_false(self) -> None:
+        from sip_bridge.config import BridgeConfig
+
+        with patch.dict("os.environ", {}, clear=True):
+            cfg = BridgeConfig.from_env()
+        assert cfg.gateway_mode is False
+
+    def test_gateway_mode_from_env(self) -> None:
+        from sip_bridge.config import BridgeConfig
+
+        env = {"GATEWAY_MODE": "true"}
+        with patch.dict("os.environ", env, clear=True):
+            cfg = BridgeConfig.from_env()
+        assert cfg.gateway_mode is True
+
+    def test_gateway_ws_url_from_env(self) -> None:
+        from sip_bridge.config import BridgeConfig
+
+        env = {"GATEWAY_WS_URL": "wss://ekaette-test.run.app"}
+        with patch.dict("os.environ", env, clear=True):
+            cfg = BridgeConfig.from_env()
+        assert cfg.gateway_ws_url == "wss://ekaette-test.run.app"
+
+    def test_gateway_mode_requires_url(self) -> None:
+        from sip_bridge.config import BridgeConfig
+
+        env = {
+            "GATEWAY_MODE": "true",
+            "GATEWAY_WS_URL": "",
+            "GOOGLE_API_KEY": "key",
+            "SIP_PUBLIC_IP": "203.0.113.1",
+            "SIP_USERNAME": "user",
+            "SIP_PASSWORD": "pass",
+        }
+        with patch.dict("os.environ", env, clear=True):
+            cfg = BridgeConfig.from_env()
+        errors = cfg.validate()
+        assert any("GATEWAY_WS_URL" in e for e in errors)
+
+    def test_gateway_mode_with_url_no_error(self) -> None:
+        from sip_bridge.config import BridgeConfig
+
+        env = {
+            "GATEWAY_MODE": "true",
+            "GATEWAY_WS_URL": "wss://ekaette-test.run.app",
+            "GOOGLE_API_KEY": "key",
+            "SIP_PUBLIC_IP": "203.0.113.1",
+            "SIP_USERNAME": "user",
+            "SIP_PASSWORD": "pass",
+        }
+        with patch.dict("os.environ", env, clear=True):
+            cfg = BridgeConfig.from_env()
+        errors = cfg.validate()
+        assert not any("GATEWAY_WS_URL" in e for e in errors)
+
+
 class TestBridgeConfigImmutability:
     """Frozen dataclass cannot be mutated after creation."""
 

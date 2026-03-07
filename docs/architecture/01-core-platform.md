@@ -8,6 +8,7 @@
 - **Modular backend:** Three isolated API packages (admin, public, realtime) with enforced architectural boundaries — no circular dependencies
 - **Agent-per-capability:** Root orchestrator delegates to specialized sub-agents; each agent owns one domain
 - **Fail-closed config:** Missing registry data returns explicit errors, never silent defaults
+- **Single AI brain:** All channels (web, WhatsApp text, phone, WA call) converge to one ADK agent graph on Cloud Run — behavior tuning propagates uniformly
 - **Zero-latency voice:** Ephemeral tokens enable direct client-to-API WebSocket; backend handles auth and config only
 - **Privacy by design:** AI disclosure at first interaction (EU AI Act), NDPA-compliant consent, PII redaction pipeline across logs/sessions/transcripts, HMAC-signed WebSocket tokens
 
@@ -110,8 +111,9 @@ graph TB
 
     subgraph "GCE VM — SIP Bridge (<reserved-static-ip>)"
         SIP_SVR["SIPServer<br/>UDP :6060, SIP REGISTER,<br/>INVITE/ACK/BYE handling"]
-        CALL_SESS["CallSession<br/>4-task pipeline:<br/>recv → decode → Gemini → encode"]
-        WA_SESS["WaSession<br/>4-task pipeline:<br/>SRTP → Opus decode → Gemini → Opus encode"]
+        CALL_SESS["CallSession<br/>4-task pipeline:<br/>recv → decode → Gateway WS → encode"]
+        WA_SESS["WaSession<br/>4-task pipeline:<br/>SRTP → Opus decode → Gateway WS → encode"]
+        GW_CLIENT["GatewayClient<br/>WSS → Cloud Run<br/>(PCM16 bridge)"]
         CODEC["CodecBridge<br/>G.711 μ-law ↔ PCM16 (AT)<br/>Opus ↔ PCM16 (WhatsApp)"]
     end
 
@@ -161,8 +163,9 @@ graph TB
     SIP_SVR --> CALL_SESS
     CALL_SESS --> CODEC
     WA_SESS --> CODEC
-    CALL_SESS -.->|"Gemini Live<br/>(direct, no ADK)"| G25
-    WA_SESS -.->|"Gemini Live<br/>(direct, no ADK)"| G25
+    CALL_SESS --> GW_CLIENT
+    WA_SESS --> GW_CLIENT
+    GW_CLIENT -->|"WSS (PCM16)<br/>Gateway Mode"| SESS_INIT
 
     ROOT -->|"photo received"| VA
     ROOT -->|"assess/price"| VLA

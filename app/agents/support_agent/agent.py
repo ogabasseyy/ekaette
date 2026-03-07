@@ -15,6 +15,7 @@ from app.agents.callbacks import (
     on_tool_error_emit,
 )
 from app.configs.model_resolver import resolve_live_model_id
+from app.tools.wa_messaging import send_whatsapp_message
 from app.tools.knowledge_tools import (
     get_company_profile_fact,
     query_company_system,
@@ -96,6 +97,7 @@ _TOOLS = [
     track_order_delivery,
     send_order_review_followup,
     google_search,
+    send_whatsapp_message,
 ]
 
 _CALLBACKS = dict(

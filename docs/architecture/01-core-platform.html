@@ -108,8 +108,9 @@ graph TB
 
     subgraph "GCE VM — SIP Bridge (&lt;reserved-static-ip&gt;)"
         SIP_SVR["SIPServer<br/>UDP :6060, SIP REGISTER,<br/>INVITE/ACK/BYE handling"]
-        CALL_SESS["CallSession<br/>4-task pipeline:<br/>recv → decode → Gemini → encode"]
-        WA_SESS["WaSession<br/>4-task pipeline:<br/>SRTP → Opus decode → Gemini → Opus encode"]
+        CALL_SESS["CallSession<br/>4-task pipeline:<br/>recv → decode → Gateway WS → encode"]
+        WA_SESS["WaSession<br/>4-task pipeline:<br/>SRTP → Opus decode → Gateway WS → encode"]
+        GW_CLIENT["GatewayClient<br/>WSS → Cloud Run<br/>(PCM16 bridge)"]
         CODEC["CodecBridge<br/>G.711 μ-law ↔ PCM16 (AT)<br/>Opus ↔ PCM16 (WhatsApp)"]
     end
 
@@ -159,8 +160,9 @@ graph TB
     SIP_SVR --> CALL_SESS
     CALL_SESS --> CODEC
     WA_SESS --> CODEC
-    CALL_SESS -.->|"Gemini Live<br/>(direct, no ADK)"| G25
-    WA_SESS -.->|"Gemini Live<br/>(direct, no ADK)"| G25
+    CALL_SESS --> GW_CLIENT
+    WA_SESS --> GW_CLIENT
+    GW_CLIENT -->|"WSS (PCM16)<br/>Gateway Mode"| SESS_INIT
 
     ROOT -->|"photo received"| VA
     ROOT -->|"assess/price"| VLA

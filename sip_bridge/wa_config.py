@@ -31,6 +31,10 @@ class WhatsAppBridgeConfig:
     health_port: int
     wa_service_api_base_url: str
     wa_service_secret: str
+    # Gateway mode — route via Cloud Run instead of direct Gemini
+    gateway_mode: bool = False
+    gateway_ws_url: str = ""
+    gateway_ws_secret: str = ""
 
     @classmethod
     def from_env(cls) -> WhatsAppBridgeConfig:
@@ -63,6 +67,9 @@ class WhatsAppBridgeConfig:
             company_id=os.getenv("WA_COMPANY_ID", "ekaette-electronics"),
             tenant_id=os.getenv("WA_TENANT_ID", "public"),
             health_port=int(os.getenv("WA_HEALTH_PORT", "8082")),
+            gateway_mode=os.getenv("WA_GATEWAY_MODE", "false").lower() in ("true", "1", "yes"),
+            gateway_ws_url=os.getenv("WA_GATEWAY_WS_URL", ""),
+            gateway_ws_secret=os.getenv("WA_GATEWAY_WS_SECRET", ""),
             wa_service_api_base_url=os.getenv("WA_SERVICE_API_BASE_URL", "").rstrip("/"),
             wa_service_secret=os.getenv("WA_SERVICE_SECRET", ""),
         )
@@ -70,7 +77,9 @@ class WhatsAppBridgeConfig:
     def validate(self) -> list[str]:
         """Return list of config validation errors."""
         errors: list[str] = []
-        if not self.gemini_api_key:
+        if self.gateway_mode and not self.gateway_ws_url:
+            errors.append("WA_GATEWAY_WS_URL is required when WA_GATEWAY_MODE is enabled")
+        if not self.gateway_mode and not self.gemini_api_key:
             errors.append("GOOGLE_API_KEY is required for Gemini Live")
         if not self.sip_username:
             errors.append("WA_SIP_USERNAME is required (business phone number)")

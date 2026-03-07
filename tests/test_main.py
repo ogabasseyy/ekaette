@@ -232,6 +232,82 @@ class TestWebSocketEndpoint:
 
         assert "WebSocket accepted without Origin header by policy" in caplog.text
 
+    def test_ws_missing_token_rejected_when_secret_configured(
+        self, app, main_module, monkeypatch
+    ):
+        from app.api.v1.public import ws_auth
+
+        secret = "test-ws-secret-route"
+        monkeypatch.setattr(main_module, "WS_TOKEN_SECRET", secret)
+        monkeypatch.setattr(ws_auth, "_WS_TOKEN_SECRET", secret)
+        ws_auth._used_jtis.clear()
+
+        with TestClient(app) as tc:
+            with pytest.raises(Exception) as excinfo:
+                with tc.websocket_connect(
+                    "/ws/user_123/session_abc?industry=electronics&companyId=ekaette-electronics",
+                    headers={"origin": "http://localhost:5173"},
+                ):
+                    pass
+
+        assert getattr(excinfo.value, "code", None) == 4401
+
+    def test_ws_token_claims_override_query_context_end_to_end(
+        self, app, main_module, monkeypatch
+    ):
+        from app.api.v1.public import ws_auth
+
+        secret = "test-ws-secret-route"
+        monkeypatch.setattr(main_module, "WS_TOKEN_SECRET", secret)
+        monkeypatch.setattr(ws_auth, "_WS_TOKEN_SECRET", secret)
+        ws_auth._used_jtis.clear()
+
+        async def _fake_run_live(*args, **kwargs):
+            yield SimpleNamespace(
+                content=None,
+                input_transcription=None,
+                output_transcription=None,
+                interrupted=False,
+                actions=None,
+                turn_complete=False,
+                usage_metadata=None,
+                live_session_resumption_update=None,
+                author="ekaette_router",
+            )
+            await asyncio.sleep(0)
+
+        monkeypatch.setattr(main_module, "_tenant_allowed", lambda tenant_id: tenant_id == "tenant-from-token")
+        monkeypatch.setattr(main_module, "session_service", _NewSessionService())
+        monkeypatch.setattr(type(main_module.runner), "run_live", _fake_run_live)
+        monkeypatch.setattr(main_module, "_registry_enabled", lambda: False)
+        monkeypatch.setattr(main_module, "load_industry_config", _stub_industry_config_loader)
+        monkeypatch.setattr(main_module, "load_company_profile", _stub_company_profile_loader)
+        monkeypatch.setattr(main_module, "load_company_knowledge", _stub_company_knowledge_loader)
+
+        token = ws_auth.create_ws_token(
+            "user_123",
+            "tenant-from-token",
+            "company-from-token",
+            300,
+        )
+
+        with TestClient(app) as tc:
+            with tc.websocket_connect(
+                (
+                    "/ws/user_123/session_abc"
+                    "?industry=electronics"
+                    "&tenantId=blocked"
+                    "&companyId=query-company"
+                    f"&token={token}"
+                ),
+                headers={"origin": "http://localhost:5173"},
+            ) as ws:
+                payload = json.loads(ws.receive_text())
+                assert payload["type"] == "session_started"
+                assert payload["companyId"] == "company-from-token"
+                assert payload["sessionState"]["app:company_id"] == "company-from-token"
+                ws.close(code=1000)
+
 
 class TestSecurityHelpers:
     """Test allowlist parsing and origin validation helpers."""

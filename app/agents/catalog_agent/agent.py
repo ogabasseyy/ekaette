@@ -15,6 +15,7 @@ from app.agents.callbacks import (
 )
 from app.configs.model_resolver import resolve_live_model_id
 from app.tools.catalog_tools import search_catalog
+from app.tools.wa_messaging import send_whatsapp_message
 from app.tools.knowledge_tools import (
     get_company_profile_fact,
     query_company_system,
@@ -62,6 +63,7 @@ _TOOLS = [
     search_company_knowledge,
     get_company_profile_fact,
     query_company_system,
+    send_whatsapp_message,
 ]
 
 _CALLBACKS = dict(

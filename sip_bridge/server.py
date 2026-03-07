@@ -7,12 +7,15 @@ Minimal SIP/UDP implementation for single-line bridge.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import random
+import re
 from dataclasses import dataclass, field
 
 from .codec_bridge import G711CodecBridge
 from .config import BridgeConfig
+from .gateway_client import GatewayClient
 from .session import CallSession
 from .sip_dialog import (
     build_sdp_answer,
@@ -21,6 +24,9 @@ from .sip_dialog import (
     parse_sip_request,
 )
 from .sip_register import SIPRegistrar
+
+# Same regex pattern used in wa_main.py:41 for caller phone extraction
+_PHONE_RE = re.compile(r"[\+]?[\d]{7,15}")
 
 logger = logging.getLogger(__name__)
 
@@ -93,8 +99,35 @@ class SIPServer:
         remote_addr: tuple[str, int],
         remote_rtp_addr: tuple[str, int] | None = None,
         local_rtp_port: int = 0,
+        sip_from_header: str = "",
     ) -> CallSession:
         """Create a new call session for an INVITE."""
+        # Extract caller phone from SIP From header
+        caller_phone = ""
+        if sip_from_header:
+            m = _PHONE_RE.search(sip_from_header)
+            if m:
+                caller_phone = m.group(0)
+
+        # Build gateway client if gateway mode enabled
+        gateway_client: GatewayClient | None = None
+        if self.config.gateway_mode and self.config.gateway_ws_url:
+            if caller_phone:
+                user_id = f"sip-{hashlib.sha256(caller_phone.encode()).hexdigest()[:16]}"
+            else:
+                user_id = f"sip-anon-{hashlib.sha256(call_id.encode()).hexdigest()[:16]}"
+            session_id = f"sip-{hashlib.sha256(call_id.encode()).hexdigest()[:24]}"
+            gateway_client = GatewayClient(
+                gateway_ws_url=self.config.gateway_ws_url,
+                user_id=user_id,
+                session_id=session_id,
+                tenant_id=self.config.tenant_id,
+                company_id=self.config.company_id,
+                industry="",  # omit — session_init resolves from registry
+                caller_phone=caller_phone,
+                ws_secret=self.config.gateway_ws_secret,
+            )
+
         session = CallSession(
             call_id=call_id,
             tenant_id=self.config.tenant_id,
@@ -102,10 +135,12 @@ class SIPServer:
             codec_bridge=G711CodecBridge(),
             remote_rtp_addr=remote_rtp_addr,
             local_rtp_port=local_rtp_port,
+            _caller_phone=caller_phone,
             gemini_api_key=self.config.gemini_api_key,
             gemini_model_id=self.config.live_model_id,
             gemini_system_instruction=self.config.system_instruction,
             gemini_voice=self.config.gemini_voice,
+            gateway_client=gateway_client,
         )
         self._active_sessions[call_id] = session
         logger.info(
@@ -115,6 +150,7 @@ class SIPServer:
                 "remote": remote_addr,
                 "remote_rtp": remote_rtp_addr,
                 "local_rtp_port": local_rtp_port,
+                "gateway_mode": gateway_client is not None,
             },
         )
         return session
@@ -224,8 +260,18 @@ class SIPProtocol(asyncio.DatagramProtocol):
             call_id, addr,
             remote_rtp_addr=remote_rtp_addr,
             local_rtp_port=local_rtp_port,
+            sip_from_header=headers.get("From", ""),
         )
-        asyncio.create_task(session.run())
+        task = asyncio.create_task(session.run())
+
+        def _on_done(done_task: asyncio.Task) -> None:
+            self.server._active_sessions.pop(call_id, None)
+            if not done_task.cancelled():
+                exc = done_task.exception()
+                if exc is not None:
+                    logger.error("Call session task failed", exc_info=exc, extra={"call_id": call_id})
+
+        task.add_done_callback(_on_done)
 
     def _contact_uri(self) -> str:
         """Build local Contact URI for SIP responses."""

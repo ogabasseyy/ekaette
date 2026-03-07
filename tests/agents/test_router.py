@@ -126,8 +126,20 @@ class TestEkaetteRouterAgent:
     def test_agent_has_preload_memory_tool(self):
         """Root agent includes PreloadMemoryTool in tool list."""
         from app.agents.ekaette_router.agent import ekaette_router
-        tool_names = {tool.name for tool in ekaette_router.tools}
+        tool_names = {
+            getattr(tool, "name", getattr(tool, "__name__", str(tool)))
+            for tool in ekaette_router.tools
+        }
         assert "preload_memory" in tool_names
+
+    def test_agent_has_send_whatsapp_message_tool(self):
+        """Root agent includes send_whatsapp_message for SIP bridge calls."""
+        from app.agents.ekaette_router.agent import ekaette_router
+        tool_names = {
+            getattr(tool, "name", getattr(tool, "__name__", str(tool)))
+            for tool in ekaette_router.tools
+        }
+        assert "send_whatsapp_message" in tool_names
 
     def test_model_reads_from_env(self):
         """Root agent reads LIVE_MODEL_ID from environment at module load time."""

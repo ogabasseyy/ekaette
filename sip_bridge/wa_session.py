@@ -14,6 +14,7 @@ State boundaries (from plan):
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import socket
@@ -25,6 +26,7 @@ from google import genai
 
 if TYPE_CHECKING:
     from .codec_bridge import CodecBridge
+    from .gateway_client import GatewayClient
     from .srtp_context import SRTPContext
 
 logger = logging.getLogger(__name__)
@@ -64,6 +66,8 @@ class WaSession:
     gemini_system_instruction: str = ""
     gemini_voice: str = "Aoede"
     gemini_session: Any = None
+    # Gateway mode (Cloud Run WebSocket)
+    gateway_client: GatewayClient | None = None
     media_transport: Any = None
     remote_media_addr: tuple[str, int] | None = None
     _caller_phone: str = ""
@@ -113,9 +117,21 @@ class WaSession:
             self.media_transport.setblocking(False)
             self._owns_transport = True
 
-        # Connect to Gemini Live if config is provided and no session injected
+        # Gateway mode: connect via Cloud Run WebSocket
+        use_gateway = self.gateway_client is not None
         gemini_ctx = None
-        if self.gemini_session is None and self.gemini_api_key:
+
+        if use_gateway:
+            try:
+                await self.gateway_client.connect()
+                logger.info("Gateway mode: WA connected to Cloud Run")
+            except Exception:
+                logger.exception("Failed to connect to gateway")
+                self._cleanup_transport()
+                self._write_call_end(time.time() - self.started_at)
+                return
+        elif self.gemini_session is None and self.gemini_api_key:
+            # Direct mode: connect to Gemini Live
             try:
                 sys_instruct = (
                     "You are an AI customer service assistant named ehkaitay. "
@@ -129,7 +145,7 @@ class WaSession:
                     sys_instruct = parts[0].get("text", sys_instruct)
 
                 from google.genai import types
-                
+
                 speech_config = types.SpeechConfig(
                     voice_config=types.VoiceConfig(
                         prebuilt_voice_config=types.PrebuiltVoiceConfig(
@@ -201,17 +217,24 @@ class WaSession:
                 logger.exception("Failed to connect to Gemini Live")
                 gemini_ctx = None
 
+        bidi_loop = self._gateway_bidi_loop if use_gateway else self._gemini_bidi_loop
+
         try:
             async with asyncio.TaskGroup() as tg:
                 tg.create_task(self._media_recv_loop())
                 tg.create_task(self._media_inbound_loop())
-                tg.create_task(self._gemini_bidi_loop())
+                tg.create_task(bidi_loop())
                 tg.create_task(self._media_outbound_loop())
         except* Exception as eg:
             for exc in eg.exceptions:
                 logger.error("WA session task failed", exc_info=exc)
         finally:
-            # Clean up Gemini session
+            # Clean up connections
+            if use_gateway and self.gateway_client is not None:
+                try:
+                    await self.gateway_client.close()
+                except Exception:
+                    logger.debug("Gateway cleanup failed", exc_info=True)
             if gemini_ctx is not None:
                 try:
                     await gemini_ctx.__aexit__(None, None, None)
@@ -219,13 +242,7 @@ class WaSession:
                     # Best-effort cleanup; connection may already be closed.
                     pass
             # Clean up UDP socket only if we created it
-            if self._owns_transport and self.media_transport is not None:
-                try:
-                    self.media_transport.close()
-                except Exception:
-                    # Best-effort cleanup; socket may already be closed.
-                    pass
-                self.media_transport = None
+            self._cleanup_transport()
 
             duration = time.time() - self.started_at
             self._write_call_end(duration)
@@ -240,6 +257,15 @@ class WaSession:
                     "outbound_drops": self.outbound_drops,
                 },
             )
+
+    def _cleanup_transport(self) -> None:
+        """Close owned UDP transport if still open."""
+        if self._owns_transport and self.media_transport is not None:
+            try:
+                self.media_transport.close()
+            except Exception:
+                pass
+            self.media_transport = None
 
     def shutdown(self) -> None:
         """Signal graceful shutdown."""
@@ -485,6 +511,118 @@ class WaSession:
                 )
             except Exception:
                 logger.warning("Failed to send tool response for %s", fn_name, exc_info=True)
+
+    # ------------------------------------------------------------------
+    # Gateway mode loops (Cloud Run WebSocket)
+    # ------------------------------------------------------------------
+
+    async def _gateway_bidi_loop(self) -> None:
+        """Bridge audio between codec pipeline and Cloud Run WebSocket.
+
+        Reconnects on WebSocket disconnect unless shutdown is signalled
+        or `live_session_ended` was received.
+        """
+        max_retries = 5
+        retry_delay = 1.0
+        for attempt in range(max_retries + 1):
+            if self._shutdown.is_set():
+                return
+            if attempt > 0:
+                delay = min(retry_delay * (2 ** (attempt - 1)), 5.0)
+                logger.info("Gateway reconnect attempt %d in %.1fs", attempt, delay)
+                await asyncio.sleep(delay)
+                if self._shutdown.is_set():
+                    return
+                try:
+                    await self.gateway_client.reconnect()
+                except Exception:
+                    logger.warning("Gateway reconnect failed", exc_info=True)
+                    continue
+
+            send_task = asyncio.create_task(self._gateway_send_loop())
+            recv_task = asyncio.create_task(self._gateway_recv_loop())
+            try:
+                await asyncio.wait(
+                    {send_task, recv_task},
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+            finally:
+                for t in (send_task, recv_task):
+                    t.cancel()
+
+            if self._shutdown.is_set():
+                return
+            logger.warning("Gateway WebSocket disconnected, will retry")
+
+        # Retries exhausted — tear down the call
+        logger.error("Gateway reconnect retries exhausted, shutting down call")
+        self._shutdown.set()
+
+    async def _gateway_send_loop(self) -> None:
+        """Read PCM16 from inbound pipeline, send to Cloud Run."""
+        while not self._shutdown.is_set():
+            try:
+                pcm16 = await asyncio.wait_for(
+                    self._gemini_in_queue.get(), timeout=1.0
+                )
+            except TimeoutError:
+                continue
+
+            echo_muted = (
+                self._model_speaking
+                or (time.time() - self._model_speech_end_time) < ECHO_HOLDOFF_SEC
+            )
+            await self.gateway_client.send_audio(SILENCE_FRAME if echo_muted else pcm16)
+
+    async def _gateway_recv_loop(self) -> None:
+        """Receive from Cloud Run, route audio to outbound, handle JSON protocol."""
+        if self.gateway_client is None:
+            return
+        async for frame in self.gateway_client.receive():
+            if self._shutdown.is_set():
+                break
+            if frame.is_audio:
+                self._model_speaking = True
+                try:
+                    self.outbound_queue.put_nowait(frame.audio_data)
+                except asyncio.QueueFull:
+                    self.outbound_drops += 1
+            else:
+                msg = json.loads(frame.text_data)
+                msg_type = msg.get("type", "")
+                if msg_type == "session_started":
+                    canonical_id = msg.get("sessionId", "")
+                    if canonical_id:
+                        self.gateway_client._canonical_session_id = canonical_id
+                    logger.info("Gateway session started: %s", canonical_id)
+                elif msg_type == "session_ending":
+                    reason = msg.get("reason", "")
+                    logger.info("Gateway session ending: reason=%s", reason)
+                    if reason == "live_session_ended":
+                        self._shutdown.set()
+                    elif reason == "session_resumption":
+                        self.gateway_client._resumption_token = msg.get(
+                            "resumptionToken", ""
+                        )
+                elif msg_type == "ping":
+                    pass
+                elif msg_type == "interrupted":
+                    self._model_speaking = False
+                    self._model_speech_end_time = time.time()
+                elif msg_type == "agent_status":
+                    if msg.get("status") == "idle":
+                        self._model_speaking = False
+                        self._model_speech_end_time = time.time()
+                elif msg_type == "error":
+                    logger.warning("Gateway error: %s", msg.get("message", ""))
+                elif msg_type == "transcription":
+                    logger.debug(
+                        "Transcription [%s]: %s",
+                        msg.get("role"), msg.get("text", "")[:100],
+                    )
+                    if msg.get("role") == "agent" and not msg.get("partial"):
+                        self._model_speech_end_time = time.time()
+                        self._model_speaking = False
 
     async def _media_outbound_loop(self) -> None:
         """Read AI response audio, encode, SRTP protect, send."""

@@ -249,6 +249,43 @@ class TestWhatsAppServiceApiUrl:
         assert not any("WA_SERVICE_SECRET" in e for e in errors)
 
 
+class TestWhatsAppBridgeConfigGateway:
+    """Gateway mode config fields for WA bridge."""
+
+    def test_gateway_mode_default_false(self, monkeypatch):
+        monkeypatch.delenv("WA_GATEWAY_MODE", raising=False)
+        from sip_bridge.wa_config import WhatsAppBridgeConfig
+
+        cfg = WhatsAppBridgeConfig.from_env()
+        assert cfg.gateway_mode is False
+
+    def test_gateway_mode_from_env(self, monkeypatch):
+        monkeypatch.setenv("WA_GATEWAY_MODE", "true")
+        from sip_bridge.wa_config import WhatsAppBridgeConfig
+
+        cfg = WhatsAppBridgeConfig.from_env()
+        assert cfg.gateway_mode is True
+
+    def test_gateway_ws_url_from_env(self, monkeypatch):
+        monkeypatch.setenv("WA_GATEWAY_WS_URL", "wss://ekaette-test.run.app")
+        from sip_bridge.wa_config import WhatsAppBridgeConfig
+
+        cfg = WhatsAppBridgeConfig.from_env()
+        assert cfg.gateway_ws_url == "wss://ekaette-test.run.app"
+
+    def test_gateway_mode_requires_url(self, monkeypatch):
+        monkeypatch.setenv("WA_GATEWAY_MODE", "true")
+        monkeypatch.setenv("WA_GATEWAY_WS_URL", "")
+        monkeypatch.setenv("GOOGLE_API_KEY", "key")
+        monkeypatch.setenv("WA_SIP_USERNAME", "user")
+        monkeypatch.setenv("WA_SIP_PASSWORD", "pass")
+        from sip_bridge.wa_config import WhatsAppBridgeConfig
+
+        cfg = WhatsAppBridgeConfig.from_env()
+        errors = cfg.validate()
+        assert any("WA_GATEWAY_WS_URL" in e for e in errors)
+
+
 class TestWhatsAppBridgeConfigImmutability:
     """Config is frozen — cannot be modified after creation."""
 
