@@ -9,6 +9,20 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
+_DEFAULT_LIVE_MODEL_ID = "gemini-2.5-flash-native-audio-preview-12-2025"
+_DISALLOWED_LIVE_MODEL_IDS = frozenset({"gemini-3-flash-preview"})
+
+
+def _is_text_only_model_id(model_id: str) -> bool:
+    normalized = model_id.strip().lower()
+    if normalized in _DISALLOWED_LIVE_MODEL_IDS:
+        return True
+    return (
+        normalized.endswith("-preview")
+        and "native-audio" not in normalized
+        and "live" not in normalized
+    )
+
 
 @dataclass(slots=True, frozen=True)
 class WhatsAppBridgeConfig:
@@ -56,7 +70,7 @@ class WhatsAppBridgeConfig:
             gemini_api_key=os.getenv("GOOGLE_API_KEY", ""),
             live_model_id=os.getenv(
                 "LIVE_MODEL_ID",
-                "gemini-2.5-flash-native-audio-preview-12-2025",
+                _DEFAULT_LIVE_MODEL_ID,
             ),
             system_instruction=os.getenv(
                 "WA_SYSTEM_INSTRUCTION",
@@ -83,6 +97,18 @@ class WhatsAppBridgeConfig:
             errors.append("WA_GATEWAY_WS_SECRET is required when WA_GATEWAY_MODE is enabled")
         if not self.gateway_mode and not self.gemini_api_key:
             errors.append("GOOGLE_API_KEY is required for Gemini Live")
+        if not self.gateway_mode:
+            normalized_live_model = self.live_model_id.strip().lower()
+            if normalized_live_model == "":
+                errors.append(
+                    "LIVE_MODEL_ID is required; set it to a Gemini Live-capable model "
+                    f"(default: {_DEFAULT_LIVE_MODEL_ID!r})"
+                )
+            elif _is_text_only_model_id(normalized_live_model):
+                errors.append(
+                    "LIVE_MODEL_ID does not support Gemini Live bidirectional audio; "
+                    f"use {_DEFAULT_LIVE_MODEL_ID!r} or another native-audio model"
+                )
         if not self.sip_username:
             errors.append("WA_SIP_USERNAME is required (business phone number)")
         if not self.sip_password:

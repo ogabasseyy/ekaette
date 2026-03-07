@@ -290,7 +290,7 @@ class TestRegistrySchemaValidation:
         """Capability overrides must reference capabilities the template knows about."""
         from app.configs.registry_schema import validate_capability_overrides
 
-        template_capabilities = ["catalog_lookup", "valuation_tradein", "booking_reservations", "outbound_messaging"]
+        template_capabilities = ELECTRONICS_TEMPLATE["capabilities"]
         overrides = {
             "add": ["custom_tool"],  # OK — adding new is always valid
             "remove": ["nonexistent_capability"],  # BAD — not in template

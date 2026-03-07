@@ -305,6 +305,18 @@ class TestWhatsAppBridgeConfigGateway:
         errors = cfg.validate()
         assert any("WA_GATEWAY_WS_SECRET" in e for e in errors)
 
+    def test_direct_mode_rejects_text_only_live_model(self, monkeypatch):
+        monkeypatch.setenv("WA_GATEWAY_MODE", "false")
+        monkeypatch.setenv("GOOGLE_API_KEY", "key")
+        monkeypatch.setenv("LIVE_MODEL_ID", "gemini-3-flash-preview")
+        monkeypatch.setenv("WA_SIP_USERNAME", "user")
+        monkeypatch.setenv("WA_SIP_PASSWORD", "pass")
+        from sip_bridge.wa_config import WhatsAppBridgeConfig
+
+        cfg = WhatsAppBridgeConfig.from_env()
+        errors = cfg.validate()
+        assert any("LIVE_MODEL_ID" in e for e in errors)
+
 
 class TestWhatsAppBridgeConfigImmutability:
     """Config is frozen — cannot be modified after creation."""

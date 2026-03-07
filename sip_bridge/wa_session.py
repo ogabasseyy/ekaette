@@ -215,7 +215,17 @@ class WaSession:
 
             except Exception:
                 logger.exception("Failed to connect to Gemini Live")
+                self._model_speaking = False
+                self.gemini_session = None
+                if gemini_ctx is not None:
+                    try:
+                        await gemini_ctx.__aexit__(None, None, None)
+                    except Exception:
+                        logger.debug("Gemini cleanup failed after connect error", exc_info=True)
                 gemini_ctx = None
+                self._cleanup_transport()
+                self._write_call_end(time.time() - self.started_at)
+                return
 
         bidi_loop = self._gateway_bidi_loop if use_gateway else self._gemini_bidi_loop
 
@@ -604,7 +614,23 @@ class WaSession:
                 except asyncio.QueueFull:
                     self.outbound_drops += 1
             else:
-                msg = json.loads(frame.text_data)
+                try:
+                    msg = json.loads(frame.text_data)
+                except json.JSONDecodeError:
+                    session_ref = ""
+                    if self.gateway_client is not None:
+                        session_ref = (
+                            self.gateway_client._canonical_session_id
+                            or self.gateway_client.session_id
+                        )
+                    logger.warning(
+                        "Ignoring malformed gateway JSON call_id=%s session_id=%s payload=%r",
+                        self.call_id,
+                        session_ref,
+                        frame.text_data[:200],
+                        exc_info=True,
+                    )
+                    continue
                 msg_type = msg.get("type", "")
                 if msg_type == "session_started":
                     canonical_id = msg.get("sessionId", "")

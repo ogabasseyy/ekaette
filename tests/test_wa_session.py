@@ -722,6 +722,45 @@ class TestWaSessionRunSetup:
         assert transport_existed
         assert s.media_transport is None
 
+    async def test_run_returns_early_on_gemini_connect_failure(self):
+        """Gemini setup failure should clean up and skip the media task group."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from sip_bridge.wa_session import WaSession
+
+        s = WaSession(
+            call_id="wa-call-gemini-fail",
+            tenant_id="public",
+            company_id="acme",
+            gemini_api_key="fake-key",
+            gemini_model_id="gemini-test",
+            remote_media_addr=("127.0.0.1", 30000),
+        )
+        recv_called = False
+
+        mock_ctx = AsyncMock()
+        mock_ctx.__aenter__ = AsyncMock(side_effect=RuntimeError("boom"))
+        mock_ctx.__aexit__ = AsyncMock(return_value=False)
+
+        mock_client = MagicMock()
+        mock_client.aio.live.connect.return_value = mock_ctx
+
+        async def _trap_recv(_self):
+            nonlocal recv_called
+            recv_called = True
+
+        with patch("sip_bridge.wa_session.genai") as mock_genai, \
+             patch.object(WaSession, "_write_call_start"), \
+             patch.object(WaSession, "_write_call_end") as mock_end, \
+             patch.object(WaSession, "_media_recv_loop", _trap_recv):
+            mock_genai.Client.return_value = mock_client
+            await s.run()
+
+        mock_end.assert_called_once()
+        assert recv_called is False
+        assert s.gemini_session is None
+        assert s.media_transport is None
+
 
 class TestWaSessionUDPRecvLoop:
     """Finding 1: run() must have a UDP receive loop calling feed_inbound()."""

@@ -28,12 +28,22 @@ class MockGatewayClient:
         self.send_text = AsyncMock()
         self.close = AsyncMock()
         self.connect = AsyncMock()
+        self.reconnect = AsyncMock()
+        self.session_id = "mock-session"
         self._canonical_session_id = ""
         self._resumption_token = ""
         self._frames_to_yield: list = []
+        self._receive_batches: list[list] | None = None
+        self._receive_call_count = 0
 
     async def receive(self):
-        for frame in self._frames_to_yield:
+        if self._receive_batches is not None:
+            batch_index = min(self._receive_call_count, len(self._receive_batches) - 1)
+            frames = self._receive_batches[batch_index]
+            self._receive_call_count += 1
+        else:
+            frames = self._frames_to_yield
+        for frame in frames:
             yield frame
 
 
@@ -218,6 +228,30 @@ class TestCallSessionGatewayMode:
         await s._gateway_recv_loop()
         assert mock_client._resumption_token == "tok-abc"
         assert not s._shutdown.is_set()
+
+    @pytest.mark.asyncio
+    async def test_gateway_recv_loop_ignores_malformed_json_and_continues(self, caplog):
+        """Malformed JSON should be logged and skipped without aborting the loop."""
+        from sip_bridge.gateway_client import GatewayFrame
+
+        s = CallSession(call_id="c1", tenant_id="public", company_id="acme")
+        mock_client = MockGatewayClient()
+        mock_client._frames_to_yield = [
+            GatewayFrame(is_audio=False, text_data="{not-json"),
+            GatewayFrame(
+                is_audio=False,
+                text_data=json.dumps({
+                    "type": "session_ending",
+                    "reason": "live_session_ended",
+                }),
+            ),
+        ]
+        s.gateway_client = mock_client
+
+        await s._gateway_recv_loop()
+
+        assert "Ignoring malformed gateway JSON" in caplog.text
+        assert s._shutdown.is_set()
 
 
 # ---------------------------------------------------------------------------
@@ -423,6 +457,37 @@ class TestGatewayBidiReconnect:
         await s._gateway_bidi_loop()
         assert s._shutdown.is_set()
 
+    @pytest.mark.asyncio
+    async def test_bidi_loop_reconnects_after_disconnect(self, monkeypatch):
+        """Loop retries once and calls reconnect before the next receive batch."""
+        from sip_bridge.gateway_client import GatewayFrame
+
+        s = CallSession(call_id="c1", tenant_id="public", company_id="acme")
+        mock_client = MockGatewayClient()
+        mock_client._receive_batches = [
+            [],
+            [
+                GatewayFrame(
+                    is_audio=False,
+                    text_data=json.dumps({
+                        "type": "session_ending",
+                        "reason": "live_session_ended",
+                    }),
+                ),
+            ],
+        ]
+        s.gateway_client = mock_client
+
+        async def _no_sleep(_delay: float) -> None:
+            return None
+
+        monkeypatch.setattr("sip_bridge.session.asyncio.sleep", _no_sleep)
+
+        await s._gateway_bidi_loop()
+
+        mock_client.reconnect.assert_awaited_once()
+        assert s._shutdown.is_set()
+
 
 # ---------------------------------------------------------------------------
 # Server — done-callback session cleanup
@@ -494,7 +559,11 @@ class TestServerDoneCallback:
         protocol._handle_invite("INVITE sip:test SIP/2.0", ("1.2.3.4", 5060))
         assert "call-done-1" in server._active_sessions
         assert created_tasks
-        await created_tasks[0]
+        results = await asyncio.wait_for(
+            asyncio.gather(*created_tasks, return_exceptions=True),
+            timeout=0.1,
+        )
+        assert results == [None]
         await asyncio.sleep(0)
         assert "call-done-1" not in server._active_sessions
 
@@ -539,7 +608,12 @@ class TestServerDoneCallback:
         protocol._handle_invite("INVITE sip:test SIP/2.0", ("1.2.3.4", 5060))
         assert "call-done-2" in server._active_sessions
         assert created_tasks
-        with pytest.raises(RuntimeError, match="session crashed"):
-            await created_tasks[0]
+        results = await asyncio.wait_for(
+            asyncio.gather(*created_tasks, return_exceptions=True),
+            timeout=0.1,
+        )
+        assert len(results) == 1
+        assert isinstance(results[0], RuntimeError)
+        assert str(results[0]) == "session crashed"
         await asyncio.sleep(0)
         assert "call-done-2" not in server._active_sessions

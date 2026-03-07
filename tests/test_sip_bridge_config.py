@@ -200,7 +200,7 @@ class TestBridgeConfigGateway:
         with patch.dict("os.environ", env, clear=True):
             cfg = BridgeConfig.from_env()
         errors = cfg.validate()
-        assert not any("GATEWAY_WS_URL" in e for e in errors)
+        assert errors == []
 
     def test_gateway_ws_secret_from_env(self) -> None:
         from sip_bridge.config import BridgeConfig

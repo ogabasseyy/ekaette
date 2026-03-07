@@ -8,7 +8,7 @@
 - **Modular backend:** Three isolated API packages (admin, public, realtime) with enforced architectural boundaries — no circular dependencies
 - **Agent-per-capability:** Root orchestrator delegates to specialized sub-agents; each agent owns one domain
 - **Fail-closed config:** Missing registry data returns explicit errors, never silent defaults
-- **Single AI brain:** All channels (web, WhatsApp text, phone, WA call) converge to one ADK agent graph on Cloud Run — behavior tuning propagates uniformly
+- **Single AI brain (gateway-enabled):** When `GATEWAY_MODE=true` and `WA_GATEWAY_MODE=true`, phone and WA-call traffic converge with web and WhatsApp text on one ADK agent graph on Cloud Run; both flags default to `false`, so this is not the default deployment
 - **Zero-latency voice:** Ephemeral tokens enable direct client-to-API WebSocket; backend handles auth and config only
 - **Privacy by design:** AI disclosure at first interaction (EU AI Act), NDPA-compliant consent, PII redaction pipeline across logs/sessions/transcripts, HMAC-signed WebSocket tokens
 

@@ -134,9 +134,12 @@ class GatewayClient:
             self._ws = await websockets.connect(url)
             logger.info("Gateway connected: %s", url.split("?")[0])
         except Exception as exc:
-            raise GatewayConnectionError(
-                f"Failed to connect to gateway: {exc}"
-            ) from exc
+            logger.error(
+                "Gateway connect failed: %s (%s)",
+                url.split("?")[0],
+                exc.__class__.__name__,
+            )
+            raise GatewayConnectionError("Failed to connect to gateway") from None
 
     async def reconnect(self) -> None:
         """Reconnect using canonical session ID + resumption token.
@@ -161,9 +164,12 @@ class GatewayClient:
             self._ws = await websockets.connect(url)
             logger.info("Gateway reconnected: %s", url.split("?")[0])
         except Exception as exc:
-            raise GatewayConnectionError(
-                f"Failed to reconnect to gateway: {exc}"
-            ) from exc
+            logger.error(
+                "Gateway reconnect failed: %s (%s)",
+                url.split("?")[0],
+                exc.__class__.__name__,
+            )
+            raise GatewayConnectionError("Failed to connect to gateway") from None
 
     async def send_audio(self, pcm16: bytes) -> None:
         """Send PCM16 16kHz audio as binary WebSocket frame."""

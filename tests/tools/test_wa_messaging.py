@@ -5,6 +5,7 @@ Phase 6 of Single AI Brain — WA messaging tool migrated to ADK.
 
 from __future__ import annotations
 
+import json
 import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -116,6 +117,14 @@ class TestSendWhatsAppMessage:
         assert result["message_id"] == "msg-123"
         # Verify HMAC headers were sent
         call_kwargs = mock_client.post.call_args
+        assert call_kwargs.args[0] == "https://wa.example.com/api/v1/at/whatsapp/send"
+        payload = call_kwargs.kwargs["content"].decode()
+        payload_json = json.loads(payload)
+        assert payload_json["to"] == "+2348012345678"
+        assert payload_json["text"] == "Your account is 1234567890"
+        assert payload_json["type"] == "text"
+        assert payload_json["tenant_id"] == "public"
+        assert payload_json["company_id"] == "ekaette-electronics"
         headers = call_kwargs.kwargs.get("headers") or call_kwargs[1].get("headers", {})
         assert "X-Service-Auth" in headers
         assert "X-Service-Timestamp" in headers

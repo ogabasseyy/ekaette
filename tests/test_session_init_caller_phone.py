@@ -121,7 +121,11 @@ def session_init_runtime(monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setattr(
             ws_auth,
             "validate_ws_token",
-            lambda token, expected_user_id: token_claims,
+            lambda token, expected_user_id: (
+                token_claims
+                if token_claims is not None and expected_user_id == token_claims.sub
+                else None
+            ),
         )
 
         return SimpleNamespace(
@@ -279,6 +283,7 @@ class TestInitializeSession:
         assert ctx.tenant_id == "tenant-from-token"
         assert ctx.company_id == "company-from-token"
         create_kwargs = runtime.session_service.create_session.await_args.kwargs
+        assert create_kwargs["state"]["app:tenant_id"] == "tenant-from-token"
         assert create_kwargs["state"]["app:company_id"] == "company-from-token"
 
     @pytest.mark.asyncio

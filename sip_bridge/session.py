@@ -621,7 +621,23 @@ class CallSession:
                 except asyncio.QueueFull:
                     self.outbound_drops += 1
             else:
-                msg = json.loads(frame.text_data)
+                try:
+                    msg = json.loads(frame.text_data)
+                except json.JSONDecodeError:
+                    session_ref = ""
+                    if self.gateway_client is not None:
+                        session_ref = (
+                            self.gateway_client._canonical_session_id
+                            or self.gateway_client.session_id
+                        )
+                    logger.warning(
+                        "Ignoring malformed gateway JSON call_id=%s session_id=%s payload=%r",
+                        self.call_id,
+                        session_ref,
+                        frame.text_data[:200],
+                        exc_info=True,
+                    )
+                    continue
                 msg_type = msg.get("type", "")
                 if msg_type == "session_started":
                     canonical_id = msg.get("sessionId", "")
