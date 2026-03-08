@@ -76,8 +76,11 @@ class WhatsAppBridgeConfig:
             ),
             system_instruction=os.getenv(
                 "WA_SYSTEM_INSTRUCTION",
-                "You are Ekaette, the virtual assistant. "
-                "Be helpful, concise, and professional.",
+                "You are the virtual assistant named ehkaitay. "
+                "Your name is ehkaitay — always say it exactly like that. "
+                "You are answering a phone call. Greet the caller warmly and ask how you can help. "
+                "Always speak in English. "
+                "Be helpful, concise, and professional. Keep responses short for phone conversation.",
             ),
             gemini_voice=os.getenv("WA_GEMINI_VOICE", "Aoede"),
             company_id=os.getenv("WA_COMPANY_ID", "ekaette-electronics"),
