@@ -12,7 +12,11 @@ import phonenumbers
 logger = logging.getLogger(__name__)
 
 _FALLBACK_REGION = "NG"
-_HMAC_KEY = os.environ.get("PHONE_ID_HMAC_KEY", "ekaette-phone-id-dev-key").encode()
+_HMAC_KEY_RAW = os.environ.get("PHONE_ID_HMAC_KEY")
+if not _HMAC_KEY_RAW:
+    logger.warning("PHONE_ID_HMAC_KEY not set; using insecure default key")
+    _HMAC_KEY_RAW = "ekaette-phone-id-dev-key"
+_HMAC_KEY = _HMAC_KEY_RAW.encode()
 
 
 def mask_phone(raw: str) -> str:
@@ -62,6 +66,7 @@ def canonical_phone_user_id(
     Uses HMAC to prevent brute-force reversal of phone from user_id.
     """
     if not tenant_id or not company_id:
+        logger.debug("Missing tenant_id or company_id for phone identity")
         return None
     phone = normalize_phone(raw_phone, default_region=default_region)
     if phone is None:

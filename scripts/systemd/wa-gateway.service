@@ -23,6 +23,10 @@ SyslogIdentifier=wa-gateway
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
+ProtectHome=read-only
+ProtectKernelTunables=true
+ProtectControlGroups=true
+PrivateDevices=true
 ReadWritePaths=/home/mac
 
 [Install]

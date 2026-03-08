@@ -58,7 +58,7 @@ gcloud compute ssh "$VM" --zone="$ZONE" --project="$PROJECT" \
     for envfile in /home/mac/sip_bridge.env /home/mac/wa_bridge.env; do
       [ -f \"\$envfile\" ] || { echo \"FATAL: \$envfile not found — create it before deploying\"; fail=1; continue; }
       grep -q '^PHONE_ID_HMAC_KEY=' \"\$envfile\" || { echo \"FATAL: \$envfile missing PHONE_ID_HMAC_KEY\"; fail=1; continue; }
-      grep -q '^PHONE_ID_HMAC_KEY=ekaette-phone-id-dev-key' \"\$envfile\" && { echo \"FATAL: \$envfile still using dev-key for PHONE_ID_HMAC_KEY — generate a secure key\"; fail=1; }
+      grep -qE '^PHONE_ID_HMAC_KEY=[\"'"'"'"]?ekaette-phone-id-dev-key[\"'"'"'"]?$' \"\$envfile\" && { echo \"FATAL: \$envfile still using dev-key for PHONE_ID_HMAC_KEY — generate a secure key\"; fail=1; }
     done
     exit \$fail
   "

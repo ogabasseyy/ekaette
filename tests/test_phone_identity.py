@@ -153,11 +153,11 @@ class TestCanonicalPhoneUserId:
         assert uid_gb.startswith("phone-")
 
     def test_hash_matches_expected_formula(self):
-        import hmac as _hmac
+        import hmac
         from shared.phone_identity import _HMAC_KEY
         phone = "+2348001234567"
         seed = f"{self.TENANT}:{self.COMPANY}:caller:{phone}"
-        expected = f"phone-{_hmac.new(_HMAC_KEY, seed.encode(), hashlib.sha256).hexdigest()[:24]}"
+        expected = f"phone-{hmac.new(_HMAC_KEY, seed.encode(), hashlib.sha256).hexdigest()[:24]}"
         actual = canonical_phone_user_id(self.TENANT, self.COMPANY, phone)
         assert actual == expected
 
