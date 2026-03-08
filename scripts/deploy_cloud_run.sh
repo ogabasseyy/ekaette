@@ -109,6 +109,11 @@ def normalize_value(raw: str) -> str:
     value = raw.strip()
     if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
         value = value[1:-1]
+    else:
+        # Strip inline comments (only for unquoted values)
+        comment_match = re.search(r'\s+#\s', value)
+        if comment_match:
+            value = value[:comment_match.start()]
     return value
 
 
