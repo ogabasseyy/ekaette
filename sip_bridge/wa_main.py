@@ -325,9 +325,15 @@ class WaSIPServer:
                     anon_seed = f"{self.config.tenant_id}:{self.config.company_id}:call:{call_id}"
                     user_id = f"wa-anon-{hashlib.sha256(anon_seed.encode()).hexdigest()[:16]}"
                     if caller_phone:
-                        logger.warning("Phone normalization failed for WA caller, using anonymous user_id")
+                        logger.warning(
+                            "Phone normalization failed for WA caller, using anonymous user_id",
+                            extra={"call_id": call_id},
+                        )
                     else:
-                        logger.warning("No caller phone in WA SIP From header, using anonymous user_id")
+                        logger.warning(
+                            "No caller phone in WA SIP From header, using anonymous user_id",
+                            extra={"call_id": call_id},
+                        )
                 session_id = f"wa-{uuid.uuid4().hex[:24]}"
                 gateway_client = GatewayClient(
                     gateway_ws_url=self.config.gateway_ws_url,

@@ -125,9 +125,15 @@ class SIPServer:
                 anon_seed = f"{self.config.tenant_id}:{self.config.company_id}:call:{call_id}"
                 user_id = f"sip-anon-{hashlib.sha256(anon_seed.encode()).hexdigest()[:16]}"
                 if caller_phone:
-                    logger.warning("Phone normalization failed for SIP caller, using anonymous user_id")
+                    logger.warning(
+                        "Phone normalization failed for SIP caller, using anonymous user_id",
+                        extra={"call_id": call_id},
+                    )
                 else:
-                    logger.warning("No caller phone in SIP From header, using anonymous user_id")
+                    logger.warning(
+                        "No caller phone in SIP From header, using anonymous user_id",
+                        extra={"call_id": call_id},
+                    )
             session_seed = f"{self.config.tenant_id}:{self.config.company_id}:session:{call_id}"
             session_id = f"sip-{hashlib.sha256(session_seed.encode()).hexdigest()[:24]}"
             gateway_client = GatewayClient(
