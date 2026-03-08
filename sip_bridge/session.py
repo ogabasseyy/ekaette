@@ -94,6 +94,8 @@ class CallSession:
     # Echo suppression: shared between recv loop (writer) and send loop (reader)
     _model_speaking: bool = False
     _model_speech_end_time: float = 0.0
+    # Guard against re-greeting on gateway reconnect
+    _gateway_greeting_sent: bool = False
 
     # Metrics
     frames_received: int = 0
@@ -647,17 +649,20 @@ class CallSession:
                     if canonical_id:
                         gateway_client.remember_canonical_session_id(canonical_id)
                     logger.info("Gateway session started: %s", canonical_id)
-                    # Trigger AI greeting — mirrors direct-mode
-                    # send_client_content("[Phone call connected]")
-                    self._model_speaking = True
-                    try:
-                        await gateway_client.send_text(json.dumps({
-                            "type": "text",
-                            "text": "[Phone call connected]",
-                        }))
-                    except Exception:
-                        self._model_speaking = False
-                        logger.warning("Failed to send gateway greeting", exc_info=True)
+                    # Trigger AI greeting only on first connect, not on reconnect
+                    if not self._gateway_greeting_sent:
+                        self._gateway_greeting_sent = True
+                        self._model_speaking = True
+                        try:
+                            await gateway_client.send_text(json.dumps({
+                                "type": "text",
+                                "text": "[Phone call connected]",
+                            }))
+                        except Exception:
+                            self._model_speaking = False
+                            logger.warning("Failed to send gateway greeting", exc_info=True)
+                    else:
+                        logger.info("Gateway reconnected — skipping duplicate greeting")
                 elif msg_type == "transcription":
                     logger.debug(
                         "Transcription [%s]: %s",
