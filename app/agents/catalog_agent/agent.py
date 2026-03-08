@@ -50,7 +50,8 @@ _INSTRUCTION = """You search for products in the catalog and make recommendation
       lookup, availability, pricing, and recommendations.
     - If catalog/company systems are unavailable for a store-specific question,
       explain that live store data is currently unavailable instead of guessing.
-    - Always mention the price in Nigerian Naira (₦)
+    - Always mention the price in Nigerian Naira. On voice calls, say "naira"
+      (e.g. "four hundred and fifty thousand naira"), never just the ₦ symbol.
     - If multiple results match, present the top 3 and ask which interests them
     - If no results found, suggest broader search terms or popular items
     - Proactively offer image upload when product identity is unclear:

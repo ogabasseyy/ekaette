@@ -386,10 +386,13 @@ async def before_model_inject_config(
             # reinforces the low-latency filler rule for any voice-session agent.
             instruction_lines.append(
                 "CRITICAL latency policy: On a phone call, silence feels like a "
-                "dropped connection. You MUST speak a brief filler phrase (e.g., "
-                "'Let me check that for you') BEFORE any tool call or agent "
-                "transfer. Generate spoken text FIRST, then the tool call, in "
-                "the same turn. Never leave more than 2 seconds of silence."
+                "dropped connection. You MUST speak a conversational filler "
+                "BEFORE any tool call or agent transfer — ask an engaging "
+                "follow-up question (e.g., 'Let me look that up — do you have "
+                "a colour preference?') rather than a short statement. Generate "
+                "spoken text FIRST, then the tool call, in the same turn. "
+                "Never leave more than 2 seconds of silence. "
+                "When saying prices, always say 'naira' after the number."
             )
 
     if not instruction_lines:
