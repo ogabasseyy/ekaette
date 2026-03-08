@@ -48,8 +48,24 @@ class TestBridgeConfigDefaults:
         assert cfg.tenant_id == "public"
 
 
+    def test_default_phone_region(self) -> None:
+        from sip_bridge.config import BridgeConfig
+
+        with patch.dict("os.environ", {}, clear=True):
+            cfg = BridgeConfig.from_env()
+        assert cfg.default_phone_region == "NG"
+
+
 class TestBridgeConfigFromEnv:
     """BridgeConfig.from_env() reads env vars correctly."""
+
+    def test_custom_phone_region(self) -> None:
+        from sip_bridge.config import BridgeConfig
+
+        env = {"SIP_DEFAULT_PHONE_REGION": "GB"}
+        with patch.dict("os.environ", env, clear=True):
+            cfg = BridgeConfig.from_env()
+        assert cfg.default_phone_region == "GB"
 
     def test_custom_host_and_port(self) -> None:
         from sip_bridge.config import BridgeConfig

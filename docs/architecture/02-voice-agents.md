@@ -43,8 +43,9 @@ sequenceDiagram
         WS->>C: Play audio via AudioWorklet
     and keepalive_task: Connection health
         RT->>C: Periodic ping (25s interval)
-    and silence_nudge_task: Engagement
-        RT->>RUN: Nudge prompt after silence timeout
+    and silence_nudge_task: Engagement & Filler
+        RT->>RUN: Customer silence nudge (30s timeout)
+        RT->>RUN: Response latency nudge (3s/15s filler during transfers)
     end
 
     Note over C,API: Customer interrupts (barge-in)
@@ -139,6 +140,12 @@ sequenceDiagram
     ROOT->>MB: after_agent_callback
     MB->>GEMINI: Consolidation check
     GEMINI->>MB: UPDATE memory:<br/>Lekki -> Victoria Island<br/>(contradiction resolved)
+
+    Note over C,GEMINI: Session 4: Cross-Channel Continuity (Phone → WhatsApp)
+    C->>ROOT: [WhatsApp text: photos + "Here are the photos"]
+    ROOT->>MB: PreloadMemoryTool.search_memory(user_id=phone-{hash})
+    MB-->>ROOT: Memories from phone call:<br/>Chidi wants iPhone 14 Pro swap
+    ROOT->>C: "Hi Chidi! I can see your iPhone photos.<br/>Let me analyze them for the trade-in we discussed."
 ```
 
 ---
@@ -157,7 +164,7 @@ graph TB
     end
 
     subgraph "Mitigations"
-        M1["Voice Filler UX<br/>Baked into root agent instructions"]
+        M1["Response Latency Watchdog<br/>Server-side: 3s nudge + 15s follow-up<br/>Model-side: mandatory filler instructions<br/>Channel-aware: voice only, not text"]
         M2["NON_BLOCKING Functions<br/>behavior: NON_BLOCKING<br/>scheduling: WHEN_IDLE"]
         M3["Context Compression<br/>trigger: 80k tokens<br/>target: 40k sliding window"]
         M4["Ephemeral Tokens<br/>Direct client-to-API WebSocket<br/>Backend handles auth only"]

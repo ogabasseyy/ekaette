@@ -1,0 +1,19 @@
+[Unit]
+Description=Ekaette WhatsApp SIP Gateway
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=mac
+WorkingDirectory=/home/mac
+Environment=PYTHONPATH=/home/mac
+EnvironmentFile=/home/mac/wa_bridge.env
+ExecStart=/home/mac/sip_venv/bin/python -m sip_bridge.wa_main
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

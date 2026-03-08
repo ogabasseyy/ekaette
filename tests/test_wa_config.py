@@ -39,9 +39,23 @@ class TestWhatsAppBridgeConfigDefaults:
         cfg = WhatsAppBridgeConfig.from_env()
         assert cfg.sandbox_mode is False
 
+    def test_default_phone_region(self, monkeypatch):
+        monkeypatch.delenv("WA_DEFAULT_PHONE_REGION", raising=False)
+        from sip_bridge.wa_config import WhatsAppBridgeConfig
+
+        cfg = WhatsAppBridgeConfig.from_env()
+        assert cfg.default_phone_region == "NG"
+
 
 class TestWhatsAppBridgeConfigFromEnv:
     """Config from env vars with WA_* prefix."""
+
+    def test_custom_phone_region(self, monkeypatch):
+        monkeypatch.setenv("WA_DEFAULT_PHONE_REGION", "GB")
+        from sip_bridge.wa_config import WhatsAppBridgeConfig
+
+        cfg = WhatsAppBridgeConfig.from_env()
+        assert cfg.default_phone_region == "GB"
 
     def test_custom_host_and_port(self, monkeypatch):
         monkeypatch.setenv("WA_SIP_HOST", "10.0.0.1")

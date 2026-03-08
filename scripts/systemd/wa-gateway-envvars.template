@@ -1,0 +1,41 @@
+# Ekaette WhatsApp Gateway — Environment Variables
+# Copy to /home/mac/wa_bridge.env and fill in secrets.
+
+# Google API
+GOOGLE_API_KEY=<your-gemini-api-key>
+
+# SIP server (WhatsApp Business Calling)
+WA_SIP_HOST=0.0.0.0
+WA_SIP_PORT=5061
+WA_SIP_USERNAME=<business-phone-number>
+WA_SIP_PASSWORD=<meta-generated-password>
+WA_SIP_ALLOWED_CIDRS=<meta-cidr-ranges>
+WA_HEALTH_PORT=8082
+
+# TLS (required in production)
+WA_TLS_CERTFILE=/home/mac/certs/letsencrypt/live/sip.ogabassey.com/fullchain.pem
+WA_TLS_KEYFILE=/home/mac/certs/letsencrypt/live/sip.ogabassey.com/privkey.pem
+
+# Gemini Live model
+LIVE_MODEL_ID=gemini-2.5-flash-native-audio-preview-12-2025
+WA_GEMINI_VOICE=Aoede
+WA_SYSTEM_INSTRUCTION=You are Ekaette, the virtual assistant. Be helpful, concise, and professional.
+
+# Tenant/company
+WA_TENANT_ID=public
+WA_COMPANY_ID=ekaette-electronics
+
+# Phone identity
+WA_DEFAULT_PHONE_REGION=NG
+
+# Sandbox mode (disable TLS/CIDR checks for local dev)
+WA_SANDBOX_MODE=false
+
+# WhatsApp service API (for during-call messaging)
+WA_SERVICE_API_BASE_URL=<cloud-run-url>
+WA_SERVICE_SECRET=<shared-secret>
+
+# Gateway mode (optional — route via Cloud Run instead of direct Gemini)
+# WA_GATEWAY_MODE=true
+# WA_GATEWAY_WS_URL=wss://ekaette-xxx.run.app/ws
+# WA_GATEWAY_WS_SECRET=<shared-secret>

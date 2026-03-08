@@ -365,9 +365,9 @@ class TestServerCallerPhone:
             sip_from_header='"User" <sip:+2348012345678@example.com>',
         )
         user_id = session.gateway_client.user_id
-        assert user_id == "sip-ff27d4b8902ab31895fee1e8"
-        assert user_id.startswith("sip-")
-        assert len(user_id) == 4 + 24  # "sip-" + 24 hex chars
+        assert user_id == "phone-ff27d4b8902ab31895fee1e8"
+        assert user_id.startswith("phone-")
+        assert len(user_id) == 6 + 24  # "phone-" + 24 hex chars
 
     def test_anonymous_fallback_uses_namespaced_call_id(self):
         """No caller phone still namespaces the call-derived fallback."""
@@ -445,7 +445,7 @@ class TestServerHandleInviteGateway:
         assert session.gateway_client is not None
         assert session._caller_phone == "+2348012345678"
         assert session.gateway_client.caller_phone == "+2348012345678"
-        assert session.gateway_client.user_id.startswith("sip-")
+        assert session.gateway_client.user_id.startswith("phone-")
 
     def test_handle_invite_gateway_no_phone_uses_anon(self):
         """Gateway mode without From header → sip-anon user_id."""

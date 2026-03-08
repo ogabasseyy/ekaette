@@ -41,6 +41,8 @@ class BridgeConfig:
     sip_username: str
     sip_password: str
     sip_register_interval: int
+    # Phone identity
+    default_phone_region: str = "NG"
     # Gateway mode — route via Cloud Run instead of direct Gemini
     gateway_mode: bool = False
     gateway_ws_url: str = ""
@@ -75,6 +77,7 @@ class BridgeConfig:
             company_id=os.getenv("SIP_COMPANY_ID", "ekaette-electronics"),
             tenant_id=os.getenv("SIP_TENANT_ID", "public"),
             health_port=_read_int_env("SIP_HEALTH_PORT", "8081"),
+            default_phone_region=os.getenv("SIP_DEFAULT_PHONE_REGION", "NG"),
             gateway_mode=os.getenv("GATEWAY_MODE", "false").lower() in ("true", "1", "yes"),
             gateway_ws_url=os.getenv("GATEWAY_WS_URL", ""),
             gateway_ws_secret=os.getenv("GATEWAY_WS_SECRET", ""),
