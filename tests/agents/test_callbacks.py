@@ -113,7 +113,7 @@ class TestBeforeModelInjectConfig:
                     "greeting": "Welcome! I can help with trade-ins and purchases.",
                 },
                 "app:company_profile": {
-                    "name": "Ekaette Devices Hub",
+                    "name": "Ogabassey Gadgets",
                 },
             }
         )
@@ -122,7 +122,7 @@ class TestBeforeModelInjectConfig:
         await before_model_inject_config(callback_context, llm_request)
 
         system_instruction = str(llm_request.config.system_instruction)
-        assert "Welcome back, Ada, to Ekaette Devices Hub." in system_instruction
+        assert "Welcome back, Ada, to Ogabassey Gadgets." in system_instruction
 
     @pytest.mark.asyncio
     async def test_first_turn_greeting_falls_back_when_company_missing(self):
@@ -196,7 +196,7 @@ class TestCompanyInstructionBuilder:
         text = _company_instruction(
             company_id="ekaette-electronics",
             company_profile={
-                "name": "Ekaette Devices Hub",
+                "name": "Ogabassey Gadgets",
                 "overview": "Trade-in focused electronics store serving Lagos and Abuja.",
                 "facts": {"support_hours": "09:00-19:00", "pickup_window": "10:00-18:00"},
             },

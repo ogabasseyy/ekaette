@@ -36,7 +36,7 @@ DEFAULT_COMPANY_PROFILE: dict[str, Any] = {
 
 LOCAL_COMPANY_PROFILES: dict[str, dict[str, Any]] = {
     "ekaette-electronics": {
-        "name": "Ekaette Devices Hub",
+        "name": "Ogabassey Gadgets",
         "overview": "Trade-in focused electronics store serving Lagos and Abuja.",
         "facts": {
             "primary_location": "Lagos - Ikeja",

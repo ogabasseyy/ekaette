@@ -435,7 +435,7 @@ class TestSessionStartedCanonicalFields:
         async def _fake_load_company_profile(_db, company_id, **kwargs):
             return {
                 "company_id": company_id,
-                "name": "Ekaette Devices Hub",
+                "name": "Ogabassey Gadgets",
                 "overview": "",
                 "facts": {},
                 "links": [],

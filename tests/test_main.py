@@ -702,7 +702,7 @@ class TestRuntimeBootstrapEndpoint:
                     {
                         "id": "ekaette-electronics",
                         "templateId": "electronics",
-                        "displayName": "Ekaette Devices Hub",
+                        "displayName": "Ogabassey Gadgets",
                     },
                     {
                         "id": "ekaette-hotel",

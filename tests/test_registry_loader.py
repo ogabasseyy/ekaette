@@ -116,7 +116,7 @@ EKAETTE_ELECTRONICS_COMPANY = {
     "company_id": "ekaette-electronics",
     "tenant_id": "public",
     "industry_template_id": "electronics",
-    "display_name": "Ekaette Devices Hub",
+    "display_name": "Ogabassey Gadgets",
     "overview": "Trade-in focused electronics store serving Lagos and Abuja.",
     "facts": {"primary_location": "Lagos - Ikeja"},
     "links": [],

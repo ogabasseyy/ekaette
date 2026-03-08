@@ -24,7 +24,7 @@ class TestLoadCompanyProfile:
 
         profile = await load_company_profile(None, "ekaette-electronics")
         assert profile["company_id"] == "ekaette-electronics"
-        assert profile["name"] == "Ekaette Devices Hub"
+        assert profile["name"] == "Ogabassey Gadgets"
         assert profile["facts"]["support_hours"] == "09:00-19:00"
 
     @pytest.mark.asyncio

@@ -64,7 +64,7 @@ def _seed_registry(db: FakeFirestoreDB) -> None:
         "company_id": "ekaette-electronics",
         "tenant_id": "public",
         "industry_template_id": "electronics",
-        "display_name": "Ekaette Devices Hub",
+        "display_name": "Ogabassey Gadgets",
         "overview": "Trade-in focused electronics store.",
         "facts": {"primary_location": "Lagos"},
         "links": [],
@@ -158,7 +158,7 @@ class TestRegistryFirstNoFallback:
 
         assert profile["company_id"] == "ekaette-electronics"
         # Registry name comes from display_name field
-        assert "Ekaette Devices Hub" in profile.get("name", "")
+        assert "Ogabassey Gadgets" in profile.get("name", "")
 
     @pytest.mark.asyncio
     async def test_load_company_knowledge_returns_registry_data(
@@ -510,7 +510,7 @@ class TestLocalFallbackTestOnly:
             )
             assert profile["name"] != "SENTINEL_COMPANY"
         finally:
-            LOCAL_COMPANY_PROFILES["ekaette-electronics"]["name"] = "Ekaette Devices Hub"
+            LOCAL_COMPANY_PROFILES["ekaette-electronics"]["name"] = "Ogabassey Gadgets"
 
     def test_seed_data_has_deprecation_notice(self) -> None:
         """seed_data.py should have a deprecation notice pointing to registry CLI."""

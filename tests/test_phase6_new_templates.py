@@ -424,7 +424,7 @@ class TestOnboardingConfigWithNewTemplates:
                 "company_id": "ekaette-electronics",
                 "tenant_id": "public",
                 "industry_template_id": "electronics",
-                "display_name": "Ekaette Devices Hub",
+                "display_name": "Ogabassey Gadgets",
             },
             "tenants/public/companies/ekaette-telecom": EKAETTE_TELECOM_COMPANY,
             "tenants/public/companies/ekaette-aviation": EKAETTE_AVIATION_COMPANY,
