@@ -69,6 +69,6 @@ gcloud compute ssh "$VM" --zone="$ZONE" --project="$PROJECT" \
 
 echo "Checking status..."
 gcloud compute ssh "$VM" --zone="$ZONE" --project="$PROJECT" \
-  --command="systemctl is-active sip-bridge.service wa-gateway.service"
+  --command="systemctl is-active sip-bridge.service wa-gateway.service || { journalctl -u sip-bridge -u wa-gateway -n 20 --no-pager; exit 1; }"
 
 echo "SIP bridge deploy complete."
