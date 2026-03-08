@@ -29,6 +29,9 @@ SIP_COMPANY_ID=ekaette-electronics
 
 # Phone identity
 SIP_DEFAULT_PHONE_REGION=NG
+# HMAC key for phone-based user_id — generate a secure random key for production:
+#   python3 -c "import secrets; print(secrets.token_urlsafe(32))"
+PHONE_ID_HMAC_KEY=<generate-secure-key>
 
 # Gateway mode (optional — route via Cloud Run instead of direct Gemini)
 # GATEWAY_MODE=true

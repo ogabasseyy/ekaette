@@ -54,9 +54,11 @@ gcloud compute ssh "$VM" --zone="$ZONE" --project="$PROJECT" \
       grep -q 'PYTHONPATH=/home/mac' /etc/systemd/system/\$unit || { echo \"FATAL: \$unit missing PYTHONPATH=/home/mac\"; fail=1; }
       grep -q 'WorkingDirectory=/home/mac' /etc/systemd/system/\$unit || { echo \"FATAL: \$unit missing WorkingDirectory=/home/mac\"; fail=1; }
     done
-    # Verify env files referenced by units exist
+    # Verify env files referenced by units exist and contain PHONE_ID_HMAC_KEY
     for envfile in /home/mac/sip_bridge.env /home/mac/wa_bridge.env; do
-      [ -f \"\$envfile\" ] || { echo \"FATAL: \$envfile not found — create it before deploying\"; fail=1; }
+      [ -f \"\$envfile\" ] || { echo \"FATAL: \$envfile not found — create it before deploying\"; fail=1; continue; }
+      grep -q '^PHONE_ID_HMAC_KEY=' \"\$envfile\" || { echo \"FATAL: \$envfile missing PHONE_ID_HMAC_KEY\"; fail=1; continue; }
+      grep -q '^PHONE_ID_HMAC_KEY=ekaette-phone-id-dev-key' \"\$envfile\" && { echo \"FATAL: \$envfile still using dev-key for PHONE_ID_HMAC_KEY — generate a secure key\"; fail=1; }
     done
     exit \$fail
   "

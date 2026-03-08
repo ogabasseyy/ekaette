@@ -77,7 +77,7 @@ class BridgeConfig:
             company_id=os.getenv("SIP_COMPANY_ID", "ekaette-electronics"),
             tenant_id=os.getenv("SIP_TENANT_ID", "public"),
             health_port=_read_int_env("SIP_HEALTH_PORT", "8081"),
-            default_phone_region=os.getenv("SIP_DEFAULT_PHONE_REGION", "NG"),
+            default_phone_region=os.getenv("SIP_DEFAULT_PHONE_REGION", "NG").upper(),
             gateway_mode=os.getenv("GATEWAY_MODE", "false").lower() in ("true", "1", "yes"),
             gateway_ws_url=os.getenv("GATEWAY_WS_URL", ""),
             gateway_ws_secret=os.getenv("GATEWAY_WS_SECRET", ""),

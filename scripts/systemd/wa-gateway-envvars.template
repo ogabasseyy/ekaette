@@ -28,6 +28,9 @@ WA_COMPANY_ID=ekaette-electronics
 
 # Phone identity
 WA_DEFAULT_PHONE_REGION=NG
+# HMAC key for phone-based user_id — generate a secure random key for production:
+#   python3 -c "import secrets; print(secrets.token_urlsafe(32))"
+PHONE_ID_HMAC_KEY=<generate-secure-key>
 
 # Sandbox mode (disable TLS/CIDR checks for local dev)
 WA_SANDBOX_MODE=false

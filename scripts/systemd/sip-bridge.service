@@ -12,6 +12,9 @@ WorkingDirectory=/home/mac
 Environment=PYTHONPATH=/home/mac
 EnvironmentFile=/home/mac/sip_bridge.env
 ExecStart=/home/mac/sip_venv/bin/python -m sip_bridge.main
+StopSignal=SIGINT
+TimeoutStopSec=30
+KillMode=mixed
 Restart=on-failure
 RestartSec=5
 StandardOutput=journal

@@ -83,7 +83,7 @@ class WhatsAppBridgeConfig:
             company_id=os.getenv("WA_COMPANY_ID", "ekaette-electronics"),
             tenant_id=os.getenv("WA_TENANT_ID", "public"),
             health_port=int(os.getenv("WA_HEALTH_PORT", "8082")),
-            default_phone_region=os.getenv("WA_DEFAULT_PHONE_REGION", "NG"),
+            default_phone_region=os.getenv("WA_DEFAULT_PHONE_REGION", "NG").upper(),
             gateway_mode=os.getenv("WA_GATEWAY_MODE", "false").lower() in ("true", "1", "yes"),
             gateway_ws_url=os.getenv("WA_GATEWAY_WS_URL", ""),
             gateway_ws_secret=os.getenv("WA_GATEWAY_WS_SECRET", ""),

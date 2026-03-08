@@ -521,7 +521,7 @@ def main() -> None:
     try:
         loop.run_until_complete(main_task)
     except asyncio.CancelledError:
-        pass
+        pass  # Expected during normal shutdown (SIGINT/SIGTERM)
     finally:
         loop.close()
 
