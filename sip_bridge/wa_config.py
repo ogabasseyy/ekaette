@@ -136,4 +136,8 @@ class WhatsAppBridgeConfig:
                 "WA_SERVICE_SECRET is required in production "
                 "(non-sandbox) mode — needed for during-call messaging auth"
             )
+        if not self.default_phone_region or len(self.default_phone_region) != 2 or not self.default_phone_region.isalpha():
+            errors.append(
+                "WA_DEFAULT_PHONE_REGION must be a valid 2-letter ISO 3166-1 alpha-2 country code"
+            )
         return errors

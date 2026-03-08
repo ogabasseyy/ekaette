@@ -2,6 +2,8 @@
 Description=Ekaette SIP Bridge (Africa's Talking)
 After=network-online.target
 Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 [Service]
 Type=simple
@@ -14,6 +16,11 @@ Restart=on-failure
 RestartSec=5
 StandardOutput=journal
 StandardError=journal
+SyslogIdentifier=sip-bridge
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=/home/mac
 
 [Install]
 WantedBy=multi-user.target

@@ -127,6 +127,17 @@ class TestWhatsAppBridgeConfigValidation:
         errors = cfg.validate()
         assert any("username" in e.lower() or "password" in e.lower() for e in errors)
 
+    def test_invalid_phone_region_flagged(self, monkeypatch):
+        monkeypatch.setenv("GOOGLE_API_KEY", "key")
+        monkeypatch.setenv("WA_SIP_USERNAME", "user")
+        monkeypatch.setenv("WA_SIP_PASSWORD", "pass")
+        monkeypatch.setenv("WA_DEFAULT_PHONE_REGION", "123")
+        from sip_bridge.wa_config import WhatsAppBridgeConfig
+
+        cfg = WhatsAppBridgeConfig.from_env()
+        errors = cfg.validate()
+        assert any("PHONE_REGION" in e for e in errors)
+
     def test_production_refuses_empty_cidrs(self, monkeypatch):
         """Non-sandbox mode with empty CIDRs is a validation error."""
         monkeypatch.setenv("WA_SANDBOX_MODE", "false")

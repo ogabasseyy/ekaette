@@ -324,10 +324,13 @@ class WaSIPServer:
                 if user_id is None:
                     anon_seed = f"{self.config.tenant_id}:{self.config.company_id}:call:{call_id}"
                     user_id = f"wa-anon-{hashlib.sha256(anon_seed.encode()).hexdigest()[:16]}"
-                    logger.warning(
-                        "Phone normalization failed for WA caller: %s",
-                        mask_phone(caller_phone or ""),
-                    )
+                    if caller_phone:
+                        logger.warning(
+                            "Phone normalization failed for WA caller: %s",
+                            mask_phone(caller_phone),
+                        )
+                    else:
+                        logger.warning("No caller phone in WA SIP From header, using anonymous user_id")
                 session_id = f"wa-{uuid.uuid4().hex[:24]}"
                 gateway_client = GatewayClient(
                     gateway_ws_url=self.config.gateway_ws_url,
@@ -496,13 +499,31 @@ async def _run(config: WhatsAppBridgeConfig) -> None:
 
 def main() -> None:
     """Entry point for `python -m sip_bridge.wa_main`."""
+    import signal
+
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
     config = WhatsAppBridgeConfig.from_env()
     _check_production_guards(config)
-    asyncio.run(_run(config))
+
+    loop = asyncio.new_event_loop()
+    main_task = loop.create_task(_run(config))
+
+    def _shutdown(sig: int, _frame: object) -> None:
+        logger.info("Received signal %s, shutting down", signal.Signals(sig).name)
+        loop.call_soon_threadsafe(main_task.cancel)
+
+    signal.signal(signal.SIGTERM, _shutdown)
+    signal.signal(signal.SIGINT, _shutdown)
+
+    try:
+        loop.run_until_complete(main_task)
+    except asyncio.CancelledError:
+        pass
+    finally:
+        loop.close()
 
 
 if __name__ == "__main__":

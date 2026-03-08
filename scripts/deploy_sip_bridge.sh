@@ -32,7 +32,7 @@ gcloud compute scp "$ROOT_DIR/requirements.txt" \
 
 echo "Installing pinned dependencies from requirements.txt..."
 gcloud compute ssh "$VM" --zone="$ZONE" --project="$PROJECT" \
-  --command="/home/mac/sip_venv/bin/pip install -q -r /home/mac/requirements.txt"
+  --command="/home/mac/sip_venv/bin/pip install -q --upgrade -r /home/mac/requirements.txt"
 
 echo "Installing systemd unit files from tracked templates..."
 gcloud compute scp \
@@ -41,6 +41,10 @@ gcloud compute scp \
   "$VM:/tmp/" --zone="$ZONE" --project="$PROJECT"
 gcloud compute ssh "$VM" --zone="$ZONE" --project="$PROJECT" \
   --command="sudo cp /tmp/sip-bridge.service /tmp/wa-gateway.service /etc/systemd/system/ && sudo systemctl daemon-reload"
+
+echo "Enabling services for boot persistence..."
+gcloud compute ssh "$VM" --zone="$ZONE" --project="$PROJECT" \
+  --command="sudo systemctl enable sip-bridge.service wa-gateway.service"
 
 echo "Verifying systemd runtime contract (fail-closed)..."
 gcloud compute ssh "$VM" --zone="$ZONE" --project="$PROJECT" \

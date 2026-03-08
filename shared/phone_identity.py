@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import logging
+import os
 
 import phonenumbers
 
 logger = logging.getLogger(__name__)
 
 _FALLBACK_REGION = "NG"
+_HMAC_KEY = os.environ.get("PHONE_ID_HMAC_KEY", "ekaette-phone-id-dev-key").encode()
 
 
 def mask_phone(raw: str) -> str:
@@ -54,11 +57,14 @@ def canonical_phone_user_id(
 ) -> str | None:
     """Canonical user_id for any phone-bearing channel.
 
-    Returns phone-{sha256[:24]} or None if phone is invalid.
+    Returns phone-{hmac-sha256[:24]} or None if phone is invalid.
     Scoped by tenant+company to prevent cross-tenant memory leaks.
+    Uses HMAC to prevent brute-force reversal of phone from user_id.
     """
+    if not tenant_id or not company_id:
+        return None
     phone = normalize_phone(raw_phone, default_region=default_region)
     if phone is None:
         return None
     seed = f"{tenant_id}:{company_id}:caller:{phone}"
-    return f"phone-{hashlib.sha256(seed.encode()).hexdigest()[:24]}"
+    return f"phone-{hmac.new(_HMAC_KEY, seed.encode(), hashlib.sha256).hexdigest()[:24]}"

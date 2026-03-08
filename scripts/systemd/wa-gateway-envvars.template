@@ -1,5 +1,6 @@
 # Ekaette WhatsApp Gateway — Environment Variables
 # Copy to /home/mac/wa_bridge.env and fill in secrets.
+# IMPORTANT: Set owner-only permissions — chmod 600 /home/mac/wa_bridge.env
 
 # Google API
 GOOGLE_API_KEY=<your-gemini-api-key>
@@ -13,8 +14,8 @@ WA_SIP_ALLOWED_CIDRS=<meta-cidr-ranges>
 WA_HEALTH_PORT=8082
 
 # TLS (required in production)
-WA_TLS_CERTFILE=/home/mac/certs/letsencrypt/live/sip.ogabassey.com/fullchain.pem
-WA_TLS_KEYFILE=/home/mac/certs/letsencrypt/live/sip.ogabassey.com/privkey.pem
+WA_TLS_CERTFILE=<path-to-fullchain.pem>
+WA_TLS_KEYFILE=<path-to-privkey.pem>
 
 # Gemini Live model
 LIVE_MODEL_ID=gemini-2.5-flash-native-audio-preview-12-2025

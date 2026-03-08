@@ -365,7 +365,6 @@ class TestServerCallerPhone:
             sip_from_header='"User" <sip:+2348012345678@example.com>',
         )
         user_id = session.gateway_client.user_id
-        assert user_id == "phone-ff27d4b8902ab31895fee1e8"
         assert user_id.startswith("phone-")
         assert len(user_id) == 6 + 24  # "phone-" + 24 hex chars
 

@@ -153,9 +153,11 @@ class TestCanonicalPhoneUserId:
         assert uid_gb.startswith("phone-")
 
     def test_hash_matches_expected_formula(self):
+        import hmac as _hmac
+        from shared.phone_identity import _HMAC_KEY
         phone = "+2348001234567"
         seed = f"{self.TENANT}:{self.COMPANY}:caller:{phone}"
-        expected = f"phone-{hashlib.sha256(seed.encode()).hexdigest()[:24]}"
+        expected = f"phone-{_hmac.new(_HMAC_KEY, seed.encode(), hashlib.sha256).hexdigest()[:24]}"
         actual = canonical_phone_user_id(self.TENANT, self.COMPANY, phone)
         assert actual == expected
 
@@ -178,7 +180,7 @@ class TestCrossChannelEquivalence:
         """SIP call, WA text, and WA call from the same phone → identical user_id."""
         uid_sip = canonical_phone_user_id(self.TENANT, self.COMPANY, self.PHONE_E164)
         uid_wa_text = canonical_phone_user_id(self.TENANT, self.COMPANY, self.PHONE_NO_PLUS)
-        uid_wa_call = canonical_phone_user_id(self.TENANT, self.COMPANY, self.PHONE_E164)
+        uid_wa_call = canonical_phone_user_id(self.TENANT, self.COMPANY, self.PHONE_LOCAL)
 
         assert uid_sip is not None
         assert uid_sip == uid_wa_text

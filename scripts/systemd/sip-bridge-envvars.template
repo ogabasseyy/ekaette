@@ -1,5 +1,6 @@
 # Ekaette SIP Bridge — Environment Variables
 # Copy to /home/mac/sip_bridge.env and fill in secrets.
+# IMPORTANT: Set owner-only permissions — chmod 600 /home/mac/sip_bridge.env
 
 # Google API
 GOOGLE_API_KEY=<your-gemini-api-key>

@@ -11,6 +11,7 @@ from unittest.mock import patch, AsyncMock
 from app.api.v1.at.service_whatsapp import (
     WA_MAX_CHARS,
     check_service_window,
+    handle_image_message,
     handle_text_message,
     handle_unsupported_message_type,
     record_inbound_timestamp,
@@ -294,8 +295,6 @@ class TestCanonicalPhoneIdentity:
     @patch("app.api.v1.at.service_whatsapp.providers.whatsapp_download_media", new_callable=AsyncMock)
     async def test_image_message_uses_canonical_phone_user_id(self, mock_download, mock_send_media):
         """handle_image_message passes phone-{hash} user_id to adk_text_adapter."""
-        from app.api.v1.at.service_whatsapp import handle_image_message
-
         mock_download.return_value = (b"\x89PNG", "image/png")
         mock_send_media.return_value = {"text": "Nice photo"}
 
@@ -326,9 +325,14 @@ class TestCanonicalPhoneIdentity:
             return_value=(AsyncMock(), AsyncMock(), "app", None, ""),
         ):
             await handle_text_message(from_="invalid", text="hi")
+            uid1 = mock_send_text.call_args[1]["user_id"]
+            mock_send_text.reset_mock()
 
-        uid = mock_send_text.call_args[1]["user_id"]
-        assert uid.startswith("wa-anon-"), f"Expected wa-anon-* fallback, got: {uid}"
+            await handle_text_message(from_="invalid", text="hello")
+            uid2 = mock_send_text.call_args[1]["user_id"]
+
+        assert uid1.startswith("wa-anon-"), f"Expected wa-anon-* fallback, got: {uid1}"
+        assert uid1 == uid2, f"Anon fallback not deterministic: {uid1} != {uid2}"
 
 
 class TestInteractiveButtons:

@@ -145,6 +145,21 @@ class TestBridgeConfigValidation:
         errors = cfg.validate()
         assert any("SIP_PASSWORD" in e for e in errors)
 
+    def test_invalid_phone_region_flagged(self) -> None:
+        from sip_bridge.config import BridgeConfig
+
+        env = {
+            "GOOGLE_API_KEY": "test-key-123",
+            "SIP_PUBLIC_IP": "203.0.113.1",
+            "SIP_USERNAME": "user",
+            "SIP_PASSWORD": "pass",
+            "SIP_DEFAULT_PHONE_REGION": "NGG",
+        }
+        with patch.dict("os.environ", env, clear=True):
+            cfg = BridgeConfig.from_env()
+        errors = cfg.validate()
+        assert any("PHONE_REGION" in e for e in errors)
+
     def test_valid_config_no_errors(self) -> None:
         from sip_bridge.config import BridgeConfig
 

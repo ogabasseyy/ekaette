@@ -71,6 +71,15 @@ def _get_adk_runner_and_service() -> tuple[Any, Any, Any, Any, str]:
     return None, None, None, None, ""
 
 
+def _resolve_whatsapp_user_id(tenant_id: str, company_id: str, from_: str, context: str) -> str:
+    """Resolve canonical user ID from phone, falling back to anonymous hash."""
+    user_id = canonical_phone_user_id(tenant_id, company_id, from_)
+    if user_id is None:
+        user_id = f"wa-anon-{hashlib.sha256(f'{tenant_id}:{company_id}:{from_}'.encode()).hexdigest()[:16]}"
+        logger.warning("Phone normalization failed for WA %s: %s", context, sanitize_log(mask_phone(from_ or "")))
+    return user_id
+
+
 # ── Text Message Handling ──
 
 
@@ -87,10 +96,7 @@ async def handle_text_message(
     """
     runner, session_service, app_name, fallback_runner, fb_app = _get_adk_runner_and_service()
 
-    _user_id = canonical_phone_user_id(tenant_id, company_id, from_)
-    if _user_id is None:
-        _user_id = f"wa-anon-{hashlib.sha256(f'{tenant_id}:{company_id}:{from_}'.encode()).hexdigest()[:16]}"
-        logger.warning("Phone normalization failed for WA text: %s", sanitize_log(mask_phone(from_ or "")))
+    _user_id = _resolve_whatsapp_user_id(tenant_id, company_id, from_, "text")
 
     if runner is not None:
         result = await adk_text_adapter.send_text_message(
@@ -219,10 +225,7 @@ async def _handle_media_message(
     resolved_mime = content_type or mime_type or default_mime
     runner, session_service, app_name, fallback_runner, fb_app = _get_adk_runner_and_service()
 
-    _user_id = canonical_phone_user_id(tenant_id, company_id, from_)
-    if _user_id is None:
-        _user_id = f"wa-anon-{hashlib.sha256(f'{tenant_id}:{company_id}:{from_}'.encode()).hexdigest()[:16]}"
-        logger.warning("Phone normalization failed for WA media: %s", sanitize_log(mask_phone(from_ or "")))
+    _user_id = _resolve_whatsapp_user_id(tenant_id, company_id, from_, "media")
 
     if runner is not None:
         result = await adk_text_adapter.send_media_message(

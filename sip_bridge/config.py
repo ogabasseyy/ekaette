@@ -115,6 +115,9 @@ class BridgeConfig:
         if self.gateway_mode and not self.gateway_ws_secret:
             errors.append("GATEWAY_WS_SECRET is required when GATEWAY_MODE is enabled")
 
+        if not self.default_phone_region or len(self.default_phone_region) != 2 or not self.default_phone_region.isalpha():
+            errors.append("SIP_DEFAULT_PHONE_REGION must be a valid 2-letter ISO 3166-1 alpha-2 country code")
+
         normalized_live_model = self.live_model_id.strip().lower()
         if normalized_live_model == "":
             errors.append(
