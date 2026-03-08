@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import hashlib
 
-import pytest
-
 from shared.phone_identity import (
     canonical_phone_user_id,
     mask_phone,

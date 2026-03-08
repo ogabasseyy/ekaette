@@ -42,7 +42,7 @@ def normalize_phone(raw: str, default_region: str | None = None) -> str | None:
                 parsed, phonenumbers.PhoneNumberFormat.E164
             )
     except phonenumbers.NumberParseException:
-        pass
+        logger.debug("Failed to parse phone number %s (region=%s)", mask_phone(raw), region)
     return None
 
 

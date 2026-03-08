@@ -90,7 +90,7 @@ async def handle_text_message(
     _user_id = canonical_phone_user_id(tenant_id, company_id, from_)
     if _user_id is None:
         _user_id = f"wa-anon-{hashlib.sha256(f'{tenant_id}:{company_id}:{from_}'.encode()).hexdigest()[:16]}"
-        logger.warning("Phone normalization failed for WA text: %s", mask_phone(from_ or ""))
+        logger.warning("Phone normalization failed for WA text: %s", sanitize_log(mask_phone(from_ or "")))
 
     if runner is not None:
         result = await adk_text_adapter.send_text_message(
@@ -222,7 +222,7 @@ async def _handle_media_message(
     _user_id = canonical_phone_user_id(tenant_id, company_id, from_)
     if _user_id is None:
         _user_id = f"wa-anon-{hashlib.sha256(f'{tenant_id}:{company_id}:{from_}'.encode()).hexdigest()[:16]}"
-        logger.warning("Phone normalization failed for WA media: %s", mask_phone(from_ or ""))
+        logger.warning("Phone normalization failed for WA media: %s", sanitize_log(mask_phone(from_ or "")))
 
     if runner is not None:
         result = await adk_text_adapter.send_media_message(
