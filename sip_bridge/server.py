@@ -13,7 +13,7 @@ import random
 import re
 from dataclasses import dataclass, field
 
-from shared.phone_identity import canonical_phone_user_id, mask_phone
+from shared.phone_identity import canonical_phone_user_id
 
 from .codec_bridge import G711CodecBridge
 from .config import BridgeConfig
@@ -125,10 +125,7 @@ class SIPServer:
                 anon_seed = f"{self.config.tenant_id}:{self.config.company_id}:call:{call_id}"
                 user_id = f"sip-anon-{hashlib.sha256(anon_seed.encode()).hexdigest()[:16]}"
                 if caller_phone:
-                    logger.warning(
-                        "Phone normalization failed for SIP caller: %s",
-                        mask_phone(caller_phone),
-                    )
+                    logger.warning("Phone normalization failed for SIP caller, using anonymous user_id")
                 else:
                     logger.warning("No caller phone in SIP From header, using anonymous user_id")
             session_seed = f"{self.config.tenant_id}:{self.config.company_id}:session:{call_id}"

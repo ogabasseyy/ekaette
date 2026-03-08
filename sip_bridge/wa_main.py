@@ -20,7 +20,7 @@ from typing import Any
 
 _NONCE_RE = re.compile(r'nonce="([^"]+)"')
 
-from shared.phone_identity import canonical_phone_user_id, mask_phone
+from shared.phone_identity import canonical_phone_user_id
 
 from .gateway_client import GatewayClient
 from .sip_auth import verify_digest
@@ -325,10 +325,7 @@ class WaSIPServer:
                     anon_seed = f"{self.config.tenant_id}:{self.config.company_id}:call:{call_id}"
                     user_id = f"wa-anon-{hashlib.sha256(anon_seed.encode()).hexdigest()[:16]}"
                     if caller_phone:
-                        logger.warning(
-                            "Phone normalization failed for WA caller: %s",
-                            mask_phone(caller_phone),
-                        )
+                        logger.warning("Phone normalization failed for WA caller, using anonymous user_id")
                     else:
                         logger.warning("No caller phone in WA SIP From header, using anonymous user_id")
                 session_id = f"wa-{uuid.uuid4().hex[:24]}"
@@ -521,7 +518,7 @@ def main() -> None:
     try:
         loop.run_until_complete(main_task)
     except asyncio.CancelledError:
-        pass  # Expected during normal shutdown (SIGINT/SIGTERM)
+        logger.info("Main task cancelled, exiting normally")
     finally:
         loop.close()
 

@@ -23,7 +23,7 @@ from typing import Any
 
 from app.channels import adk_text_adapter
 from app.configs import sanitize_log
-from shared.phone_identity import canonical_phone_user_id, mask_phone
+from shared.phone_identity import canonical_phone_user_id
 
 from . import bridge_text
 from . import providers
@@ -76,7 +76,7 @@ def _resolve_whatsapp_user_id(tenant_id: str, company_id: str, from_: str, conte
     user_id = canonical_phone_user_id(tenant_id, company_id, from_)
     if user_id is None:
         user_id = f"wa-anon-{hashlib.sha256(f'{tenant_id}:{company_id}:{from_}'.encode()).hexdigest()[:16]}"
-        logger.warning("Phone normalization failed for WA %s: %s", context, sanitize_log(mask_phone(from_ or "")))
+        logger.warning("Phone normalization failed for WA %s, using anonymous fallback", context)
     return user_id
 
 
