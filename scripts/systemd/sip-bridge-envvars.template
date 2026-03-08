@@ -1,0 +1,39 @@
+# Ekaette SIP Bridge — Environment Variables
+# Copy to /home/mac/sip_bridge.env and fill in secrets.
+# IMPORTANT: Set owner-only permissions — chmod 600 /home/mac/sip_bridge.env
+
+# Google API
+GOOGLE_API_KEY=<your-gemini-api-key>
+
+# SIP server
+SIP_BRIDGE_HOST=0.0.0.0
+SIP_BRIDGE_PORT=6060
+SIP_PUBLIC_IP=<vm-external-ip>
+SIP_ALLOWED_PEERS=<comma-separated-ips>
+SIP_HEALTH_PORT=8081
+
+# AT SIP registration
+SIP_REGISTRAR=ng.sip.africastalking.com
+SIP_USERNAME=<at-sip-username>
+SIP_PASSWORD=<at-sip-password>
+SIP_REGISTER_INTERVAL=300
+
+# Gemini Live model
+LIVE_MODEL_ID=gemini-2.5-flash-native-audio-preview-12-2025
+SIP_GEMINI_VOICE=Aoede
+SIP_SYSTEM_INSTRUCTION=You are the virtual assistant named ehkaitay.
+
+# Tenant/company
+SIP_TENANT_ID=public
+SIP_COMPANY_ID=ekaette-electronics
+
+# Phone identity
+SIP_DEFAULT_PHONE_REGION=NG
+# HMAC key for phone-based user_id — generate a secure random key for production:
+#   python3 -c "import secrets; print(secrets.token_urlsafe(32))"
+PHONE_ID_HMAC_KEY=<generate-secure-key>
+
+# Gateway mode (optional — route via Cloud Run instead of direct Gemini)
+# GATEWAY_MODE=true
+# GATEWAY_WS_URL=wss://ekaette-xxx.run.app/ws
+# GATEWAY_WS_SECRET=<shared-secret>

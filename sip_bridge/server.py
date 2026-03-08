@@ -13,6 +13,8 @@ import random
 import re
 from dataclasses import dataclass, field
 
+from shared.phone_identity import canonical_phone_user_id
+
 from .codec_bridge import G711CodecBridge
 from .config import BridgeConfig
 from .gateway_client import GatewayClient
@@ -115,14 +117,24 @@ class SIPServer:
             if not self.config.gateway_ws_secret:
                 logger.error("Gateway mode enabled without GATEWAY_WS_SECRET")
                 raise ValueError("GATEWAY_WS_SECRET is required when GATEWAY_MODE is enabled")
-            scope_prefix = f"{self.config.tenant_id}:{self.config.company_id}"
-            if caller_phone:
-                user_seed = f"{scope_prefix}:caller:{caller_phone}"
-                user_id = f"sip-{hashlib.sha256(user_seed.encode()).hexdigest()[:24]}"
-            else:
-                anon_seed = f"{scope_prefix}:call:{call_id}"
+            user_id = canonical_phone_user_id(
+                self.config.tenant_id, self.config.company_id, caller_phone,
+                default_region=self.config.default_phone_region,
+            )
+            if user_id is None:
+                anon_seed = f"{self.config.tenant_id}:{self.config.company_id}:call:{call_id}"
                 user_id = f"sip-anon-{hashlib.sha256(anon_seed.encode()).hexdigest()[:16]}"
-            session_seed = f"{scope_prefix}:session:{call_id}"
+                if caller_phone:
+                    logger.warning(
+                        "Phone normalization failed for SIP caller, using anonymous user_id",
+                        extra={"call_id": call_id},
+                    )
+                else:
+                    logger.warning(
+                        "No caller phone in SIP From header, using anonymous user_id",
+                        extra={"call_id": call_id},
+                    )
+            session_seed = f"{self.config.tenant_id}:{self.config.company_id}:session:{call_id}"
             session_id = f"sip-{hashlib.sha256(session_seed.encode()).hexdigest()[:24]}"
             gateway_client = GatewayClient(
                 gateway_ws_url=self.config.gateway_ws_url,

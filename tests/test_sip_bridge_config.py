@@ -48,8 +48,32 @@ class TestBridgeConfigDefaults:
         assert cfg.tenant_id == "public"
 
 
+    def test_default_phone_region(self) -> None:
+        from sip_bridge.config import BridgeConfig
+
+        with patch.dict("os.environ", {}, clear=True):
+            cfg = BridgeConfig.from_env()
+        assert cfg.default_phone_region == "NG"
+
+
 class TestBridgeConfigFromEnv:
     """BridgeConfig.from_env() reads env vars correctly."""
+
+    def test_custom_phone_region(self) -> None:
+        from sip_bridge.config import BridgeConfig
+
+        env = {"SIP_DEFAULT_PHONE_REGION": "GB"}
+        with patch.dict("os.environ", env, clear=True):
+            cfg = BridgeConfig.from_env()
+        assert cfg.default_phone_region == "GB"
+
+    def test_lowercase_phone_region_normalized_to_upper(self) -> None:
+        from sip_bridge.config import BridgeConfig
+
+        env = {"SIP_DEFAULT_PHONE_REGION": "ng"}
+        with patch.dict("os.environ", env, clear=True):
+            cfg = BridgeConfig.from_env()
+        assert cfg.default_phone_region == "NG"
 
     def test_custom_host_and_port(self) -> None:
         from sip_bridge.config import BridgeConfig
@@ -128,6 +152,21 @@ class TestBridgeConfigValidation:
             cfg = BridgeConfig.from_env()
         errors = cfg.validate()
         assert any("SIP_PASSWORD" in e for e in errors)
+
+    def test_invalid_phone_region_flagged(self) -> None:
+        from sip_bridge.config import BridgeConfig
+
+        env = {
+            "GOOGLE_API_KEY": "test-key-123",
+            "SIP_PUBLIC_IP": "203.0.113.1",
+            "SIP_USERNAME": "user",
+            "SIP_PASSWORD": "pass",
+            "SIP_DEFAULT_PHONE_REGION": "NGG",
+        }
+        with patch.dict("os.environ", env, clear=True):
+            cfg = BridgeConfig.from_env()
+        errors = cfg.validate()
+        assert any("PHONE_REGION" in e for e in errors)
 
     def test_valid_config_no_errors(self) -> None:
         from sip_bridge.config import BridgeConfig

@@ -219,7 +219,7 @@ class TestModelOverloadedFallback:
                 runner=MagicMock(),
                 session_service=MagicMock(),
                 app_name="ekaette_text",
-                user_id="wa_2348001234567",
+                user_id="phone-abc123def456abc123def456",
                 message_text="Hello",
                 fallback_runner=MagicMock(),
                 fallback_app_name="ekaette_text_fallback",
@@ -249,7 +249,7 @@ class TestModelOverloadedFallback:
                 runner=MagicMock(),
                 session_service=MagicMock(),
                 app_name="ekaette_text",
-                user_id="wa_2348001234567",
+                user_id="phone-abc123def456abc123def456",
                 message_text="Hello",
             )
 

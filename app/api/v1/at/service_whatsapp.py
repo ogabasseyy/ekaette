@@ -23,6 +23,7 @@ from typing import Any
 
 from app.channels import adk_text_adapter
 from app.configs import sanitize_log
+from shared.phone_identity import canonical_phone_user_id
 
 from . import bridge_text
 from . import providers
@@ -70,6 +71,15 @@ def _get_adk_runner_and_service() -> tuple[Any, Any, Any, Any, str]:
     return None, None, None, None, ""
 
 
+def _resolve_whatsapp_user_id(tenant_id: str, company_id: str, from_: str, context: str) -> str:
+    """Resolve canonical user ID from phone, falling back to anonymous hash."""
+    user_id = canonical_phone_user_id(tenant_id, company_id, from_)
+    if user_id is None:
+        user_id = f"wa-anon-{hashlib.sha256(f'{tenant_id}:{company_id}:{from_}'.encode()).hexdigest()[:16]}"
+        logger.warning("Phone normalization failed for WA %s, using anonymous fallback", context)
+    return user_id
+
+
 # ── Text Message Handling ──
 
 
@@ -86,12 +96,14 @@ async def handle_text_message(
     """
     runner, session_service, app_name, fallback_runner, fb_app = _get_adk_runner_and_service()
 
+    _user_id = _resolve_whatsapp_user_id(tenant_id, company_id, from_, "text")
+
     if runner is not None:
         result = await adk_text_adapter.send_text_message(
             runner=runner,
             session_service=session_service,
             app_name=app_name,
-            user_id=f"wa_{from_}",
+            user_id=_user_id,
             message_text=text,
             channel="whatsapp",
             tenant_id=tenant_id,
@@ -213,12 +225,14 @@ async def _handle_media_message(
     resolved_mime = content_type or mime_type or default_mime
     runner, session_service, app_name, fallback_runner, fb_app = _get_adk_runner_and_service()
 
+    _user_id = _resolve_whatsapp_user_id(tenant_id, company_id, from_, "media")
+
     if runner is not None:
         result = await adk_text_adapter.send_media_message(
             runner=runner,
             session_service=session_service,
             app_name=app_name,
-            user_id=f"wa_{from_}",
+            user_id=_user_id,
             media_bytes=media_bytes,
             mime_type=resolved_mime,
             caption=caption,

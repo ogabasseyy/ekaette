@@ -41,6 +41,8 @@ class BridgeConfig:
     sip_username: str
     sip_password: str
     sip_register_interval: int
+    # Phone identity
+    default_phone_region: str = "NG"
     # Gateway mode — route via Cloud Run instead of direct Gemini
     gateway_mode: bool = False
     gateway_ws_url: str = ""
@@ -75,6 +77,7 @@ class BridgeConfig:
             company_id=os.getenv("SIP_COMPANY_ID", "ekaette-electronics"),
             tenant_id=os.getenv("SIP_TENANT_ID", "public"),
             health_port=_read_int_env("SIP_HEALTH_PORT", "8081"),
+            default_phone_region=os.getenv("SIP_DEFAULT_PHONE_REGION", "NG").strip().upper(),
             gateway_mode=os.getenv("GATEWAY_MODE", "false").lower() in ("true", "1", "yes"),
             gateway_ws_url=os.getenv("GATEWAY_WS_URL", ""),
             gateway_ws_secret=os.getenv("GATEWAY_WS_SECRET", ""),
@@ -111,6 +114,9 @@ class BridgeConfig:
             errors.append("GATEWAY_WS_URL is required when GATEWAY_MODE is enabled")
         if self.gateway_mode and not self.gateway_ws_secret:
             errors.append("GATEWAY_WS_SECRET is required when GATEWAY_MODE is enabled")
+
+        if not self.default_phone_region or len(self.default_phone_region) != 2 or not self.default_phone_region.isalpha():
+            errors.append("SIP_DEFAULT_PHONE_REGION must be a valid 2-letter ISO 3166-1 alpha-2 country code")
 
         normalized_live_model = self.live_model_id.strip().lower()
         if normalized_live_model == "":

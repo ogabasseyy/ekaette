@@ -39,9 +39,23 @@ class TestWhatsAppBridgeConfigDefaults:
         cfg = WhatsAppBridgeConfig.from_env()
         assert cfg.sandbox_mode is False
 
+    def test_default_phone_region(self, monkeypatch):
+        monkeypatch.delenv("WA_DEFAULT_PHONE_REGION", raising=False)
+        from sip_bridge.wa_config import WhatsAppBridgeConfig
+
+        cfg = WhatsAppBridgeConfig.from_env()
+        assert cfg.default_phone_region == "NG"
+
 
 class TestWhatsAppBridgeConfigFromEnv:
     """Config from env vars with WA_* prefix."""
+
+    def test_custom_phone_region(self, monkeypatch):
+        monkeypatch.setenv("WA_DEFAULT_PHONE_REGION", "GB")
+        from sip_bridge.wa_config import WhatsAppBridgeConfig
+
+        cfg = WhatsAppBridgeConfig.from_env()
+        assert cfg.default_phone_region == "GB"
 
     def test_custom_host_and_port(self, monkeypatch):
         monkeypatch.setenv("WA_SIP_HOST", "10.0.0.1")
@@ -112,6 +126,24 @@ class TestWhatsAppBridgeConfigValidation:
         cfg = WhatsAppBridgeConfig.from_env()
         errors = cfg.validate()
         assert any("username" in e.lower() or "password" in e.lower() for e in errors)
+
+    def test_lowercase_phone_region_normalized_to_upper(self, monkeypatch):
+        monkeypatch.setenv("WA_DEFAULT_PHONE_REGION", "ng")
+        from sip_bridge.wa_config import WhatsAppBridgeConfig
+
+        cfg = WhatsAppBridgeConfig.from_env()
+        assert cfg.default_phone_region == "NG"
+
+    def test_invalid_phone_region_flagged(self, monkeypatch):
+        monkeypatch.setenv("GOOGLE_API_KEY", "key")
+        monkeypatch.setenv("WA_SIP_USERNAME", "user")
+        monkeypatch.setenv("WA_SIP_PASSWORD", "pass")
+        monkeypatch.setenv("WA_DEFAULT_PHONE_REGION", "123")
+        from sip_bridge.wa_config import WhatsAppBridgeConfig
+
+        cfg = WhatsAppBridgeConfig.from_env()
+        errors = cfg.validate()
+        assert any("PHONE_REGION" in e for e in errors)
 
     def test_production_refuses_empty_cidrs(self, monkeypatch):
         """Non-sandbox mode with empty CIDRs is a validation error."""

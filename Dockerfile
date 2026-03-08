@@ -41,6 +41,7 @@ WORKDIR /app
 
 # Copy backend code
 COPY main.py seed_data.py ./
+COPY shared/ shared/
 COPY app/ app/
 
 # Copy built frontend

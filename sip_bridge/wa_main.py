@@ -7,6 +7,7 @@ Starts a TLS SIP server for WhatsApp Business Calling (Opus/SRTP).
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import ipaddress
 import logging
 import os
@@ -18,6 +19,8 @@ from dataclasses import dataclass, field
 from typing import Any
 
 _NONCE_RE = re.compile(r'nonce="([^"]+)"')
+
+from shared.phone_identity import canonical_phone_user_id
 
 from .gateway_client import GatewayClient
 from .sip_auth import verify_digest
@@ -314,7 +317,23 @@ class WaSIPServer:
             if getattr(self.config, "gateway_mode", False) and getattr(self.config, "gateway_ws_url", ""):
                 if not getattr(self.config, "gateway_ws_secret", ""):
                     raise ValueError("WA_GATEWAY_WS_SECRET is required when WA_GATEWAY_MODE is enabled")
-                user_id = f"wa-{uuid.uuid4().hex[:24]}"
+                user_id = canonical_phone_user_id(
+                    self.config.tenant_id, self.config.company_id, caller_phone,
+                    default_region=self.config.default_phone_region,
+                )
+                if user_id is None:
+                    anon_seed = f"{self.config.tenant_id}:{self.config.company_id}:call:{call_id}"
+                    user_id = f"wa-anon-{hashlib.sha256(anon_seed.encode()).hexdigest()[:16]}"
+                    if caller_phone:
+                        logger.warning(
+                            "Phone normalization failed for WA caller, using anonymous user_id",
+                            extra={"call_id": call_id},
+                        )
+                    else:
+                        logger.warning(
+                            "No caller phone in WA SIP From header, using anonymous user_id",
+                            extra={"call_id": call_id},
+                        )
                 session_id = f"wa-{uuid.uuid4().hex[:24]}"
                 gateway_client = GatewayClient(
                     gateway_ws_url=self.config.gateway_ws_url,
@@ -483,13 +502,31 @@ async def _run(config: WhatsAppBridgeConfig) -> None:
 
 def main() -> None:
     """Entry point for `python -m sip_bridge.wa_main`."""
+    import signal
+
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
     config = WhatsAppBridgeConfig.from_env()
     _check_production_guards(config)
-    asyncio.run(_run(config))
+
+    loop = asyncio.new_event_loop()
+    main_task = loop.create_task(_run(config))
+
+    def _shutdown(sig: int, _frame: object) -> None:
+        logger.info("Received signal %s, shutting down", signal.Signals(sig).name)
+        loop.call_soon_threadsafe(main_task.cancel)
+
+    signal.signal(signal.SIGTERM, _shutdown)
+    signal.signal(signal.SIGINT, _shutdown)
+
+    try:
+        loop.run_until_complete(main_task)
+    except asyncio.CancelledError:
+        logger.info("Main task cancelled, exiting normally")
+    finally:
+        loop.close()
 
 
 if __name__ == "__main__":
