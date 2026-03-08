@@ -19,12 +19,16 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 
 echo "Syncing shared/ to VM..."
-gcloud compute scp --recurse "$ROOT_DIR/shared/" \
-  "$VM:/home/mac/shared/" --zone="$ZONE" --project="$PROJECT"
+gcloud compute ssh "$VM" --zone="$ZONE" --project="$PROJECT" \
+  --command="rm -rf /home/mac/shared"
+gcloud compute scp --recurse "$ROOT_DIR/shared" \
+  "$VM:/home/mac/shared" --zone="$ZONE" --project="$PROJECT"
 
 echo "Syncing sip_bridge/ to VM..."
-gcloud compute scp --recurse "$ROOT_DIR/sip_bridge/" \
-  "$VM:/home/mac/sip_bridge/" --zone="$ZONE" --project="$PROJECT"
+gcloud compute ssh "$VM" --zone="$ZONE" --project="$PROJECT" \
+  --command="rm -rf /home/mac/sip_bridge"
+gcloud compute scp --recurse "$ROOT_DIR/sip_bridge" \
+  "$VM:/home/mac/sip_bridge" --zone="$ZONE" --project="$PROJECT"
 
 echo "Syncing requirements.txt to VM..."
 gcloud compute scp "$ROOT_DIR/requirements.txt" \
