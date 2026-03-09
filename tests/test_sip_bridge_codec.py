@@ -155,6 +155,18 @@ class TestRTPPacket:
         raw = struct.pack("!BBHII", 0x80, 200, 1, 0, 12345) + b"\x00" * 8
         assert is_rtcp_packet(raw) is True
 
+    def test_is_rtcp_packet_boundary_low(self) -> None:
+        raw = struct.pack("!BBHII", 0x80, 192, 1, 0, 12345) + b"\x00" * 8
+        assert is_rtcp_packet(raw) is True
+
+    def test_is_rtcp_packet_boundary_high(self) -> None:
+        raw = struct.pack("!BBHII", 0x80, 223, 1, 0, 12345) + b"\x00" * 8
+        assert is_rtcp_packet(raw) is True
+
+    def test_is_rtcp_packet_just_below_range(self) -> None:
+        raw = struct.pack("!BBHII", 0x80, 191, 1, 0, 12345) + b"\x00" * 8
+        assert is_rtcp_packet(raw) is False
+
     def test_is_rtcp_packet_does_not_misclassify_opus_rtp(self) -> None:
         raw = self._make_rtp(pt=111, payload=b"\x00" * 20)
         assert is_rtcp_packet(raw) is False

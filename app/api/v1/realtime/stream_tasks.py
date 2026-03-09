@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import binascii
+import errno
 import json
 import logging
 import os
@@ -83,7 +84,17 @@ def _is_retryable_live_error(exc: Exception) -> bool:
 
 
 def _is_connection_error(exc: Exception) -> bool:
-    return isinstance(exc, (WebSocketDisconnect, ConnectionError, OSError))
+    if isinstance(exc, (WebSocketDisconnect, ConnectionError, TimeoutError)):
+        return True
+    if isinstance(exc, OSError):
+        return getattr(exc, "errno", None) in {
+            errno.EPIPE,
+            errno.ECONNABORTED,
+            errno.ECONNRESET,
+            errno.ENOTCONN,
+            errno.ETIMEDOUT,
+        }
+    return False
 
 
 def create_initial_silence_state() -> SilenceState:

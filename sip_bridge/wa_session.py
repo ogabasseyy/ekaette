@@ -384,10 +384,13 @@ class WaSession:
 
         opus_silence = b"\xf8\xff\xfe"  # Fallback comfort-noise payload.
         codec_bridge = self.codec_bridge
+        frame_duration_ms = getattr(codec_bridge, "frame_duration_ms", 20) if codec_bridge else 20
+        if not isinstance(frame_duration_ms, int):
+            frame_duration_ms = 20
+        clock_rate = getattr(codec_bridge, "rtp_clock_rate", 48000) if codec_bridge else 48000
+        if not isinstance(clock_rate, int):
+            clock_rate = 48000
         if codec_bridge is not None:
-            frame_duration_ms = getattr(codec_bridge, "frame_duration_ms", 20)
-            if not isinstance(frame_duration_ms, int):
-                frame_duration_ms = 20
             silence_frame = b"\x00" * (24000 * frame_duration_ms // 1000 * 2)
             try:
                 opus_silence = codec_bridge.encode_from_pcm16_24k(silence_frame)
@@ -409,21 +412,16 @@ class WaSession:
         try:
             maiden_srtp = self.srtp_sender.protect(maiden_rtp)
             self.media_transport.sendto(maiden_srtp, self.remote_media_addr)
-            clock_rate = getattr(self.codec_bridge, "rtp_clock_rate", 48000)
-            if not isinstance(clock_rate, int):
-                clock_rate = 48000
-            frame_duration_ms = getattr(self.codec_bridge, "frame_duration_ms", 20)
-            if not isinstance(frame_duration_ms, int):
-                frame_duration_ms = 20
+            timestamp_increment = compute_rtp_timestamp_increment(clock_rate, frame_duration_ms)
             self.rtp_sequence += 1
-            self.rtp_timestamp += compute_rtp_timestamp_increment(clock_rate, frame_duration_ms)
+            self.rtp_timestamp += timestamp_increment
             logger.info(
                 "Maiden SRTP sent to %s (%d bytes, SSRC=%08x seq=%d ts=%d)",
                 self.remote_media_addr,
                 len(maiden_srtp),
                 self.rtp_ssrc,
                 self.rtp_sequence - 1,
-                self.rtp_timestamp - compute_rtp_timestamp_increment(clock_rate, frame_duration_ms),
+                self.rtp_timestamp - timestamp_increment,
             )
         except Exception:
             logger.warning(
@@ -1059,13 +1057,15 @@ class WaSession:
                             self.call_id,
                             msg.get("text", "")[:100],
                         )
-                    if msg.get("role") == "agent" and not msg.get("partial"):
+                    is_final_agent_transcript = (
+                        msg.get("role") == "agent" and not msg.get("partial")
+                    )
+                    if is_final_agent_transcript:
                         logger.info(
                             "Gateway agent transcription final call_id=%s text=%s",
                             self.call_id,
                             msg.get("text", "")[:100],
                         )
-                    if msg.get("role") == "agent" and not msg.get("partial"):
                         self._model_speech_end_time = time.time()
                         self._model_speaking = False
 

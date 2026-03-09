@@ -178,8 +178,10 @@ class TestSDPGeneration:
             local_port=30000,
             payload_type=111,
         )
+        expected_inline = base64.b64encode(key_material).decode("ascii")
+        assert isinstance(key_material, bytes)
         assert len(key_material) == 30
-        assert "inline:" in sdp
+        assert f"inline:{expected_inline}" in sdp
 
     def test_sdp_uses_provided_key_material(self):
         from sip_bridge.wa_sip_client import generate_sdp_answer
@@ -238,7 +240,7 @@ class TestSDPParsing:
         assert result["encode_rate"] == 16000
         assert result["opus_channels"] == 2
 
-    def test_parse_opus_channel_count_defaults_to_one_when_signaled(self):
+    def test_parse_opus_single_channel_when_signaled(self):
         from sip_bridge.wa_sip_client import parse_remote_sdp
 
         sdp = (

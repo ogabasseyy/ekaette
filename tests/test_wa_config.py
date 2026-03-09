@@ -216,6 +216,28 @@ class TestWhatsAppBridgeConfigValidation:
         errors = cfg.validate()
         assert any("reachable public IPv4" in e for e in errors)
 
+    @pytest.mark.parametrize(
+        "invalid_public_ip",
+        ["10.128.0.2", "192.168.1.10", "172.16.10.5", "127.0.0.1"],
+    )
+    def test_rejects_private_or_loopback_public_ip_ranges(self, monkeypatch, invalid_public_ip):
+        monkeypatch.setenv("WA_SANDBOX_MODE", "false")
+        monkeypatch.setenv("GOOGLE_API_KEY", "key")
+        monkeypatch.setenv("WA_SIP_HOST", "0.0.0.0")
+        monkeypatch.setenv("WA_SIP_PUBLIC_IP", invalid_public_ip)
+        monkeypatch.setenv("WA_SIP_USERNAME", "user")
+        monkeypatch.setenv("WA_SIP_PASSWORD", "pass")
+        monkeypatch.setenv("WA_SIP_ALLOWED_CIDRS", "10.0.0.0/8")
+        monkeypatch.setenv("WA_TLS_CERTFILE", "/cert.pem")
+        monkeypatch.setenv("WA_TLS_KEYFILE", "/key.pem")
+        monkeypatch.setenv("WA_SERVICE_API_BASE_URL", "https://wa-service.example.com")
+        monkeypatch.setenv("WA_SERVICE_SECRET", "secret")
+        from sip_bridge.wa_config import WhatsAppBridgeConfig
+
+        cfg = WhatsAppBridgeConfig.from_env()
+        errors = cfg.validate()
+        assert any("reachable public IPv4" in e for e in errors)
+
     def test_sandbox_allows_empty_cidrs(self, monkeypatch):
         """Sandbox mode with empty CIDRs is NOT an error."""
         monkeypatch.setenv("WA_SANDBOX_MODE", "true")

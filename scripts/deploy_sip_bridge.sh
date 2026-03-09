@@ -23,31 +23,44 @@ atomic_sync_dir() {
   local dest_dir="$2"
   local base_name
   local temp_dir
+  local staged_dir
   local old_dir
   base_name="$(basename "$dest_dir")"
   temp_dir="${dest_dir}.new"
+  staged_dir="${dest_dir}.staged"
   old_dir="${dest_dir}.old"
 
   gcloud compute ssh "$VM" --zone="$ZONE" --project="$PROJECT" \
-    --command="rm -rf \"$temp_dir\" \"$old_dir\""
-  gcloud compute scp --recurse "$src_dir" \
-    "$VM:$temp_dir" --zone="$ZONE" --project="$PROJECT"
+    --command="rm -rf \"$temp_dir\" \"$staged_dir\""
+  if ! gcloud compute scp --recurse "$src_dir" \
+    "$VM:$temp_dir" --zone="$ZONE" --project="$PROJECT"; then
+    gcloud compute ssh "$VM" --zone="$ZONE" --project="$PROJECT" \
+      --command="rm -rf \"$temp_dir\" \"$staged_dir\"" >/dev/null 2>&1 || true
+    return 1
+  fi
   gcloud compute ssh "$VM" --zone="$ZONE" --project="$PROJECT" \
     --command="
       set -e
       synced_path=\"$temp_dir\"
+      previous_exists=0
       if [ -d \"$temp_dir/$base_name\" ]; then
         synced_path=\"$temp_dir/$base_name\"
       fi
-      rm -rf \"$old_dir\"
+      mv \"\$synced_path\" \"$staged_dir\"
       if [ -e \"$dest_dir\" ]; then
+        rm -rf \"$old_dir\"
         mv \"$dest_dir\" \"$old_dir\"
+        previous_exists=1
       fi
-      mv \"\$synced_path\" \"$dest_dir\"
-      if [ -d \"$temp_dir\" ] && [ \"$temp_dir\" != \"$dest_dir\" ]; then
+      if ! mv \"$staged_dir\" \"$dest_dir\"; then
+        if [ \"\$previous_exists\" -eq 1 ] && [ -e \"$old_dir\" ]; then
+          mv \"$old_dir\" \"$dest_dir\"
+        fi
+        exit 1
+      fi
+      if [ -d \"$temp_dir\" ]; then
         rm -rf \"$temp_dir\"
       fi
-      rm -rf \"$old_dir\"
     "
 }
 

@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import importlib.util
 import struct
+import sys
+import types
 
 import pytest
 
@@ -258,6 +260,54 @@ class TestOpusCodecBridge:
         pcm16_24k = bytes(960)
         encoded = bridge.encode_from_pcm16_24k(pcm16_24k)
         assert len(encoded) > 0
+
+
+class TestOpusCodecBridgeChannelBehavior:
+    """Channel count should affect wire-side PCM width sent to the encoder."""
+
+    def test_channel_count_changes_encoder_input_width(self, monkeypatch):
+        from sip_bridge.codec_bridge import OpusCodecBridge
+
+        encoded_inputs: list[tuple[int, int, int]] = []
+
+        class FakeEncoder:
+            def __init__(self, fs: int, channels: int, application: int):
+                self.fs = fs
+                self.channels = channels
+                self.application = application
+
+            def encode(self, pcm_input: bytes, frame_samples: int) -> bytes:
+                encoded_inputs.append((self.channels, len(pcm_input), frame_samples))
+                return b"opus"
+
+        class FakeDecoder:
+            def __init__(self, fs: int, channels: int):
+                self.fs = fs
+                self.channels = channels
+
+            def decode(self, encoded: bytes, frame_samples: int) -> bytes:
+                return bytes(frame_samples * self.channels * 2)
+
+        monkeypatch.setitem(
+            sys.modules,
+            "opuslib_next",
+            types.SimpleNamespace(
+                APPLICATION_VOIP=2048,
+                Encoder=FakeEncoder,
+                Decoder=FakeDecoder,
+            ),
+        )
+
+        mono_bridge = OpusCodecBridge(channels=1)
+        stereo_bridge = OpusCodecBridge(channels=2)
+
+        mono_bridge.encode_from_pcm16_24k(bytes(960))
+        stereo_bridge.encode_from_pcm16_24k(bytes(960))
+
+        assert encoded_inputs == [
+            (1, 640, 320),
+            (2, 1280, 320),
+        ]
 
 
 # --- Resample helper tests ---

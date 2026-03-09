@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 import importlib
 import json
+import os
 import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -501,12 +502,25 @@ class TestDownstreamRetry:
     def test_parse_env_helpers_fallback_to_defaults(self, monkeypatch):
         import app.api.v1.realtime.stream_tasks as st
 
+        original_retry_max = os.environ.get("LIVE_STREAM_MAX_RETRIES")
+        original_retry_base = os.environ.get("LIVE_STREAM_RETRY_BASE_SECONDS")
         monkeypatch.setenv("LIVE_STREAM_MAX_RETRIES", "oops")
         monkeypatch.setenv("LIVE_STREAM_RETRY_BASE_SECONDS", "bad")
         importlib.reload(st)
 
-        assert st.LIVE_STREAM_MAX_RETRIES == 2
-        assert st.LIVE_STREAM_RETRY_BASE_SECONDS == 0.5
+        try:
+            assert st.LIVE_STREAM_MAX_RETRIES == 2
+            assert st.LIVE_STREAM_RETRY_BASE_SECONDS == 0.5
+        finally:
+            if original_retry_max is None:
+                monkeypatch.delenv("LIVE_STREAM_MAX_RETRIES", raising=False)
+            else:
+                monkeypatch.setenv("LIVE_STREAM_MAX_RETRIES", original_retry_max)
+            if original_retry_base is None:
+                monkeypatch.delenv("LIVE_STREAM_RETRY_BASE_SECONDS", raising=False)
+            else:
+                monkeypatch.setenv("LIVE_STREAM_RETRY_BASE_SECONDS", original_retry_base)
+            importlib.reload(st)
 
     @pytest.mark.asyncio
     async def test_retryable_live_error_retries_stream(self, monkeypatch):
@@ -575,7 +589,7 @@ class TestDownstreamRetry:
 
         class _FailingSendWebSocket(_FakeWebSocket):
             async def send_bytes(self, payload: bytes):
-                raise OSError("socket closed")
+                raise BrokenPipeError("socket closed")
 
         st.configure_runtime(
             runner=_FakeRunner([_make_content_event(audio_bytes=b"\x00\x01")]),
@@ -594,7 +608,7 @@ class TestDownstreamRetry:
         session_alive.set()
         silence_state = _make_silence_state()
 
-        with pytest.raises(OSError, match="socket closed"):
+        with pytest.raises(BrokenPipeError, match="socket closed"):
             await st.downstream_task(ctx, queue, session_alive, silence_state)
 
 

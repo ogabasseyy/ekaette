@@ -164,9 +164,9 @@ def verify_digest(
         return False
 
     provided_username = params.get("username")
-    normalized_expected = (expected_username or "").lstrip("+")
+    normalized_expected = (expected_username or "").removeprefix("+")
     normalized_provided = (
-        provided_username.lstrip("+")
+        provided_username.removeprefix("+")
         if isinstance(provided_username, str)
         else ""
     )

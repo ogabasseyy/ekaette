@@ -409,6 +409,57 @@ class TestSerializeMessage:
         assert raw.count(b"Via: ") == 2
         assert b"Via: \r\n" not in raw
 
+    def test_serialize_filters_leading_empty_via(self):
+        from sip_bridge.sip_tls import SipMessage, serialize_message
+
+        msg = SipMessage(
+            first_line="SIP/2.0 200 OK",
+            headers={
+                "via": "\nSIP/2.0/TLS edge1.example.com:5061;branch=z9hG4bK-1",
+                "call-id": "abc123",
+            },
+            body="",
+        )
+
+        raw = serialize_message(msg)
+        assert raw.count(b"Via: ") == 1
+        assert b"Via: \r\n" not in raw
+
+    def test_serialize_filters_trailing_empty_via(self):
+        from sip_bridge.sip_tls import SipMessage, serialize_message
+
+        msg = SipMessage(
+            first_line="SIP/2.0 200 OK",
+            headers={
+                "via": "SIP/2.0/TLS edge1.example.com:5061;branch=z9hG4bK-1\n",
+                "call-id": "abc123",
+            },
+            body="",
+        )
+
+        raw = serialize_message(msg)
+        assert raw.count(b"Via: ") == 1
+        assert b"Via: \r\n" not in raw
+
+    def test_serialize_filters_multiple_consecutive_empty_via(self):
+        from sip_bridge.sip_tls import SipMessage, serialize_message
+
+        msg = SipMessage(
+            first_line="SIP/2.0 200 OK",
+            headers={
+                "via": (
+                    "SIP/2.0/TLS edge1.example.com:5061;branch=z9hG4bK-1\n\n\n"
+                    "SIP/2.0/TLS edge2.example.com:5061;branch=z9hG4bK-2"
+                ),
+                "call-id": "abc123",
+            },
+            body="",
+        )
+
+        raw = serialize_message(msg)
+        assert raw.count(b"Via: ") == 2
+        assert b"Via: \r\n" not in raw
+
     def test_serialize_response_with_body(self):
         from sip_bridge.sip_tls import SipMessage, serialize_message
 

@@ -112,7 +112,13 @@ def generate_sdp_answer_with_key(
     key_material: bytes | None = None,
     ssrc: int | None = None,
 ) -> tuple[str, bytes]:
-    """Generate an SDP answer and return the key material used."""
+    """Generate an SDP answer and return the SRTP key material used.
+
+    Returns:
+        tuple[str, bytes]: The SDP body string and the local SRTP key material
+        embedded in its crypto line. The returned key material is either the
+        caller-provided ``key_material`` or a freshly generated value.
+    """
     local_key_material = key_material or generate_key_material()
     crypto_line = format_crypto_line(tag=1, key_material=local_key_material)
 

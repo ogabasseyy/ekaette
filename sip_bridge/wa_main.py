@@ -302,7 +302,6 @@ class WaSIPServer:
         elif method == "BYE":
             return self._handle_bye(msg)
         elif method == "ACK":
-            call_id = resolve_call_id(msg.headers) or msg.headers.get("call-id", "")
             logger.info("WA ACK", extra={"call_id": call_id})
             # Notify session that ACK arrived — maiden SRTP can now be sent
             session = self.active_sessions.get(call_id)
@@ -375,7 +374,7 @@ class WaSIPServer:
             resp = build_407_response(invite, realm=realm)
             # Debug: log full 407 response
             resp_407_bytes = serialize_message(resp)
-            logger.info(
+            logger.debug(
                 "WA 407 response (%d bytes):\n%s",
                 len(resp_407_bytes),
                 resp_407_bytes.decode("utf-8", errors="replace"),
@@ -430,7 +429,7 @@ class WaSIPServer:
         self._pending_challenges.pop(call_id, None)
         # Debug: log full authenticated INVITE headers
         invite_debug = serialize_message(invite)
-        logger.info(
+        logger.debug(
             "WA authenticated INVITE (%d bytes):\n%s",
             len(invite_debug),
             invite_debug.decode("utf-8", errors="replace")[:2000],
@@ -439,7 +438,7 @@ class WaSIPServer:
         remote_sdp = parse_remote_sdp(invite.body) if invite.body else {}
         # Log remote SDP for debugging media issues
         if invite.body:
-            logger.info(
+            logger.debug(
                 "WA remote SDP:\n%s",
                 invite.body[:500],
                 extra={"call_id": call_id},
@@ -500,7 +499,7 @@ class WaSIPServer:
             resp = build_200_ok(invite, sdp_body=sdp_body, local_contact=local_contact)
             # Debug: log the full 200 OK we're sending (headers + SDP)
             resp_bytes = serialize_message(resp)
-            logger.info(
+            logger.debug(
                 "WA 200 OK response (%d bytes):\n%s",
                 len(resp_bytes),
                 resp_bytes.decode("utf-8", errors="replace"),

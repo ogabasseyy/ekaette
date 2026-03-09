@@ -194,6 +194,7 @@ class TestWaSessionOutbound:
 
         assert s.frames_sent == 2
         assert mock_codec.encode_from_pcm16_24k.call_count == 2
+        assert mock_srtp.protect.call_count == 2
 
     async def test_outbound_uses_configured_rtp_stream_state(self):
         from unittest.mock import MagicMock
@@ -939,6 +940,7 @@ class TestWaSessionUDPRecvLoop:
             tg.create_task(send_and_stop())
 
         send_sock.close()
+        recv_sock.close()
         # The inbound queue should have received the packet
         assert s.frames_received >= 1
 
@@ -981,6 +983,7 @@ class TestWaSessionUDPRecvLoop:
             tg.create_task(send_and_stop())
 
         send_sock.close()
+        recv_sock.close()
         assert s.frames_received == 0
 
     async def test_no_recv_loop_without_transport(self):
