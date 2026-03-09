@@ -100,7 +100,9 @@ class TestBeforeModelInjectConfig:
 
         system_instruction = str(llm_request.config.system_instruction)
         assert "First-turn greeting policy" in system_instruction
-        assert "Welcome to Acme Grand Hotel." in system_instruction
+        assert "assistant name is exactly 'ehkaitay'" in system_instruction
+        assert "business name for this session is exactly 'Acme Grand Hotel'" in system_instruction
+        assert "This is ehkaitay from Acme Grand Hotel." in system_instruction
         assert "end with exactly one actionable question" in system_instruction
 
     @pytest.mark.asyncio
@@ -122,7 +124,7 @@ class TestBeforeModelInjectConfig:
         await before_model_inject_config(callback_context, llm_request)
 
         system_instruction = str(llm_request.config.system_instruction)
-        assert "Welcome back, Ada, to Ogabassey Gadgets." in system_instruction
+        assert "Welcome back, Ada. This is ehkaitay from Ogabassey Gadgets." in system_instruction
 
     @pytest.mark.asyncio
     async def test_first_turn_greeting_falls_back_when_company_missing(self):
@@ -140,7 +142,7 @@ class TestBeforeModelInjectConfig:
         await before_model_inject_config(callback_context, llm_request)
 
         system_instruction = str(llm_request.config.system_instruction)
-        assert "Welcome to our service desk." in system_instruction
+        assert "This is ehkaitay from our service desk." in system_instruction
 
     @pytest.mark.asyncio
     async def test_does_not_emit_first_turn_greeting_when_already_greeted(self):
@@ -186,6 +188,7 @@ class TestCompanyInstructionBuilder:
         )
         assert "Company context" in text
         assert "name='Acme Grand Hotel'" in text
+        assert "Use this exact company name" in text
         assert "rooms=120" in text
         assert "Late checkout policy" in text
 

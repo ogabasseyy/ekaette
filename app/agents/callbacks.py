@@ -239,12 +239,16 @@ def _first_turn_greeting_instruction(
             break
 
     if customer_name:
-        template = f"Welcome back, {customer_name}, to {company_name}. {greeting}"
+        template = f"Welcome back, {customer_name}. This is ehkaitay from {company_name}. {greeting}"
     else:
-        template = f"Welcome to {company_name}. {greeting}"
+        template = f"This is ehkaitay from {company_name}. {greeting}"
 
     return (
         "First-turn greeting policy: This is the first spoken response in the session. "
+        "Identity lock: Your assistant name is exactly 'ehkaitay'. "
+        f"The business name for this session is exactly '{company_name}'. "
+        "Never substitute, paraphrase, or invent another assistant or company name. "
+        "Never use the business name as your personal name. "
         f"Use this greeting template intent: '{template}'. "
         "Keep it short and end with exactly one actionable question."
     )
@@ -292,7 +296,9 @@ def _company_instruction(
     parts = [
         (
             "Company context: "
-            f"id='{company_id or 'default'}', name='{company_name}'."
+            f"id='{company_id or 'default'}', name='{company_name}'. "
+            "Use this exact company name in customer-facing replies when needed. "
+            "Do not invent alternate business or brand names."
         )
     ]
     if overview:
