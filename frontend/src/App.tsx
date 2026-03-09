@@ -37,6 +37,7 @@ import {
   sanitizeTranscriptForDisplay,
   type TranscriptMessage,
 } from './lib/transcript'
+import { withStableKeys } from './lib/utils'
 import type {
   AgentStatusMessage,
   BookingConfirmation,
@@ -1159,9 +1160,15 @@ function App() {
                   ) : null}
 
                   {derived.products
-                    ? derived.products.products.map((product, idx) => (
+                    ? withStableKeys(
+                        derived.products.products,
+                        product =>
+                          `${product.name}:${product.currency}:${product.price}:${
+                            product.available ? '1' : '0'
+                          }:${product.description}`,
+                      ).map(({ item: product, key }) => (
                         <ProductCard
-                          key={`${product.name}-${idx}`}
+                          key={key}
                           name={product.name}
                           price={product.price}
                           currency={product.currency}
@@ -1315,8 +1322,11 @@ function App() {
                   {rawTranscriptTail.length === 0 ? (
                     <p className="text-muted-foreground">No transcript events yet.</p>
                   ) : (
-                    rawTranscriptTail.map((msg, idx) => (
-                      <p key={`${idx}-${msg.role}-${msg.partial ? 'p' : 'f'}`}>
+                    withStableKeys(
+                      rawTranscriptTail,
+                      msg => `${msg.role}:${msg.partial ? 'p' : 'f'}:${msg.text}`,
+                    ).map(({ item: msg, key }) => (
+                      <p key={key}>
                         <span className="text-muted-foreground">
                           {msg.role[0].toUpperCase()}:{msg.partial ? 'P' : 'F'}
                         </span>{' '}
