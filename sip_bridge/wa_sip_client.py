@@ -88,25 +88,40 @@ def generate_sdp_answer(
     local_ip: str,
     local_port: int,
     payload_type: int = 111,
+    key_material: bytes | None = None,
+    ssrc: int | None = None,
 ) -> str:
     """Generate an SDP answer with Opus codec and SDES crypto.
 
     Returns the SDP body string. Key material is embedded in the crypto line.
     """
-    key_material = generate_key_material()
-    crypto_line = format_crypto_line(tag=1, key_material=key_material)
+    local_key_material = key_material or generate_key_material()
+    crypto_line = format_crypto_line(tag=1, key_material=local_key_material)
 
+    # Meta's offer includes a=group:BUNDLE audio and a=mid:audio.
+    # Per RFC 8843 §7.4 the answerer SHOULD echo BUNDLE when accepting.
+    # Working Asterisk configs and the research agent both confirm this
+    # is needed for Meta's relay to accept the session reliably.
+    ssrc_line = ""
+    if ssrc is not None:
+        ssrc_line = f"a=ssrc:{ssrc} cname:EkaetteAudioStream\r\n"
     sdp = (
         "v=0\r\n"
-        f"o=ekaette 0 0 IN IP4 {local_ip}\r\n"
+        f"o=ekaette 1 1 IN IP4 {local_ip}\r\n"
         "s=Ekaette SIP Bridge\r\n"
         f"c=IN IP4 {local_ip}\r\n"
         "t=0 0\r\n"
+        "a=group:BUNDLE audio\r\n"
         f"m=audio {local_port} RTP/SAVP {payload_type} 126\r\n"
-        f"{crypto_line}\r\n"
+        "a=mid:audio\r\n"
         f"a=rtpmap:{payload_type} opus/48000/2\r\n"
-        f"a=fmtp:{payload_type} maxplaybackrate=16000;useinbandfec=1\r\n"
+        f"a=fmtp:{payload_type} maxplaybackrate=16000;sprop-maxcapturerate=16000;"
+        "maxaveragebitrate=20000;useinbandfec=1\r\n"
         "a=rtpmap:126 telephone-event/8000\r\n"
+        "a=fmtp:126 0-16\r\n"
+        f"{crypto_line}\r\n"
+        f"{ssrc_line}"
+        "a=rtcp-mux\r\n"
         "a=ptime:20\r\n"
         "a=maxptime:20\r\n"
         "a=sendrecv\r\n"
@@ -128,13 +143,14 @@ def parse_remote_sdp(sdp: str) -> dict[str, Any]:
     """Parse remote SDP to extract media parameters.
 
     Returns dict with: media_ip, media_port, opus_payload_type,
-    encode_rate, dtmf_payload_type.
+    encode_rate, opus_channels, dtmf_payload_type.
     """
     result: dict[str, Any] = {
         "media_ip": "",
         "media_port": 0,
         "opus_payload_type": None,
         "encode_rate": 16000,  # Default per plan
+        "opus_channels": 2,
         "dtmf_payload_type": None,
     }
 
@@ -154,6 +170,12 @@ def parse_remote_sdp(sdp: str) -> dict[str, Any]:
         codec = match.group(2).lower()
         if codec.startswith("opus/"):
             result["opus_payload_type"] = pt
+            codec_parts = codec.split("/")
+            if len(codec_parts) >= 3:
+                try:
+                    result["opus_channels"] = max(1, int(codec_parts[2]))
+                except ValueError:
+                    pass
         elif codec.startswith("telephone-event/"):
             result["dtmf_payload_type"] = pt
 
@@ -232,9 +254,15 @@ def build_200_ok(
         "call-id": invite.headers.get("call-id", ""),
         "cseq": invite.headers.get("cseq", ""),
         "contact": local_contact,
+        "allow": "INVITE, ACK, CANCEL, OPTIONS, BYE, NOTIFY",
         "content-type": "application/sdp",
         "content-length": str(len(sdp_body)),
     }
+    # RFC 3261 §13.2.2.4: Copy Record-Route from INVITE into 200 OK
+    # so that subsequent requests (ACK, BYE) route through the proxy chain.
+    record_route = invite.headers.get("record-route", "")
+    if record_route:
+        headers["record-route"] = record_route
 
     return SipMessage(
         first_line="SIP/2.0 200 OK",

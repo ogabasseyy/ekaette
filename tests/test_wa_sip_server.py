@@ -11,6 +11,7 @@ Covers:
 
 from __future__ import annotations
 
+import base64
 from unittest.mock import MagicMock
 
 import pytest
@@ -37,6 +38,26 @@ class TestWaSIPServerLifecycle:
         await server.stop()
         mock_session.shutdown.assert_called_once()
         assert len(server.active_sessions) == 0
+
+    def test_media_socket_binding_rotates_ports_between_calls(self, monkeypatch):
+        from sip_bridge import wa_main
+
+        monkeypatch.setattr(wa_main, "_WA_RTP_PORT_MIN", 18000)
+        monkeypatch.setattr(wa_main, "_WA_RTP_PORT_MAX", 18002)
+
+        server = wa_main.WaSIPServer(config=_make_config())
+        server._next_media_port = 18001
+
+        sock1 = server._bind_media_socket("127.0.0.1")
+        port1 = sock1.getsockname()[1]
+        sock1.close()
+
+        sock2 = server._bind_media_socket("127.0.0.1")
+        port2 = sock2.getsockname()[1]
+        sock2.close()
+
+        assert port1 == 18001
+        assert port2 == 18002
 
 
 class TestInboundCallHandler:
@@ -99,7 +120,7 @@ class TestInboundCallHandler:
             password="test-pass",
             nonce=params["nonce"],
             method="INVITE",
-            uri="sip:+2348001234567@example.com",
+            uri="sip:+2348001234567@sip.ogabassey.com",
             algorithm=params.get("algorithm", "MD5"),
             qop=params.get("qop"),
         )
@@ -134,6 +155,146 @@ class TestInboundCallHandler:
         resp2 = await server.handle_sip_message(invite2, ("10.0.0.1", 5061))
         assert resp2.status_code == 200
         assert "call-auth-1" in server.active_sessions
+
+    async def test_authenticated_invite_advertises_sender_srtp_key(self, monkeypatch):
+        """200 OK SDP must advertise the same local SRTP key used for outbound media."""
+        from sip_bridge import srtp_context
+        from sip_bridge.sip_auth import build_auth_header, parse_challenge
+        from sip_bridge.sip_tls import SipMessage
+        from sip_bridge.wa_main import WaSIPServer
+
+        deterministic_key = bytes(range(30))
+        monkeypatch.setattr(srtp_context, "generate_key_material", lambda: deterministic_key)
+
+        config = _make_config(
+            sandbox_mode=True,
+            sip_username="+2348001234567",
+            sip_password="test-pass",
+        )
+        server = WaSIPServer(config=config)
+
+        invite1 = _make_invite("call-srtp-key")
+        resp1 = await server.handle_sip_message(invite1, ("10.0.0.1", 5061))
+        assert resp1.status_code == 407
+
+        params = parse_challenge(f"Proxy-Authenticate: {resp1.headers['proxy-authenticate']}")
+        auth_header = build_auth_header(
+            status_code=407,
+            username="+2348001234567",
+            realm=params["realm"],
+            password="test-pass",
+            nonce=params["nonce"],
+            method="INVITE",
+            uri="sip:+2348001234567@sip.ogabassey.com",
+            algorithm=params.get("algorithm", "MD5"),
+            qop=params.get("qop"),
+        )
+
+        sdp = (
+            "v=0\r\n"
+            "m=audio 3480 RTP/SAVP 111 126\r\n"
+            "c=IN IP4 157.240.19.130\r\n"
+            "a=crypto:1 AES_CM_128_HMAC_SHA1_80 "
+            "inline:QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFB\r\n"
+            "a=rtpmap:111 opus/48000/2\r\n"
+            "a=fmtp:111 maxplaybackrate=16000;useinbandfec=1\r\n"
+            "a=rtpmap:126 telephone-event/8000\r\n"
+            "a=ptime:20\r\n"
+        )
+        invite2 = SipMessage(
+            first_line="INVITE sip:+2348001234567@example.com SIP/2.0",
+            headers={
+                "call-id": "call-srtp-key",
+                "from": "<sip:+1234@wa.meta.vc>;tag=from1",
+                "to": "<sip:+5678@example.com>",
+                "via": "SIP/2.0/TLS 10.0.0.1:5061",
+                "cseq": "2 INVITE",
+                "proxy-authorization": auth_header.split(": ", 1)[1],
+                "content-type": "application/sdp",
+                "content-length": str(len(sdp)),
+            },
+            body=sdp,
+        )
+
+        resp2 = await server.handle_sip_message(invite2, ("10.0.0.1", 5061))
+
+        assert resp2.status_code == 200
+        expected_inline = base64.b64encode(deterministic_key).decode("ascii")
+        assert f"inline:{expected_inline}" in (resp2.body or "")
+
+    async def test_authenticated_invite_uses_request_host_in_contact_and_public_ip_in_sdp(self):
+        """200 OK must keep dialog Contact on the public SIP host and media SDP on the public IP."""
+        from sip_bridge.sip_auth import build_auth_header, parse_challenge
+        from sip_bridge.sip_tls import SipMessage
+        from sip_bridge.wa_main import WaSIPServer
+
+        config = _make_config(
+            sandbox_mode=False,
+            sip_allowed_cidrs=frozenset({"10.0.0.0/8"}),
+            sip_username="+2348001234567",
+            sip_password="test-pass",
+        )
+        config.sip_public_ip = "34.69.236.219"
+        server = WaSIPServer(config=config)
+
+        invite1 = SipMessage(
+            first_line="INVITE sip:+2348001234567@sip.ogabassey.com SIP/2.0",
+            headers={
+                "call-id": "call-public-ip",
+                "from": "<sip:+1234@wa.meta.vc>;tag=from1",
+                "to": "<sip:+5678@sip.ogabassey.com>",
+                "via": "SIP/2.0/TLS 10.0.0.1:5061",
+                "cseq": "1 INVITE",
+                "content-length": "0",
+            },
+            body="",
+        )
+        resp1 = await server.handle_sip_message(invite1, ("10.0.0.1", 5061))
+        challenge_value = resp1.headers["proxy-authenticate"]
+        params = parse_challenge(f"Proxy-Authenticate: {challenge_value}")
+        auth_header = build_auth_header(
+            status_code=407,
+            username="+2348001234567",
+            realm=params["realm"],
+            password="test-pass",
+            nonce=params["nonce"],
+            method="INVITE",
+            uri="sip:+2348001234567@example.com",
+            algorithm=params.get("algorithm", "MD5"),
+            qop=params.get("qop"),
+        )
+        auth_value = auth_header.split(": ", 1)[1]
+        sdp = (
+            "v=0\r\n"
+            "m=audio 3480 RTP/SAVP 111 126\r\n"
+            "c=IN IP4 157.240.19.130\r\n"
+            "a=crypto:1 AES_CM_128_HMAC_SHA1_80 "
+            "inline:QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFB\r\n"
+            "a=rtpmap:111 opus/48000/2\r\n"
+            "a=fmtp:111 maxplaybackrate=16000;useinbandfec=1\r\n"
+            "a=rtpmap:126 telephone-event/8000\r\n"
+            "a=ptime:20\r\n"
+        )
+        invite2 = SipMessage(
+            first_line="INVITE sip:+2348001234567@sip.ogabassey.com SIP/2.0",
+            headers={
+                "call-id": "call-public-ip",
+                "from": "<sip:+1234@wa.meta.vc>;tag=from1",
+                "to": "<sip:+5678@sip.ogabassey.com>",
+                "via": "SIP/2.0/TLS 10.0.0.1:5061",
+                "cseq": "2 INVITE",
+                "proxy-authorization": auth_value,
+                "content-type": "application/sdp",
+                "content-length": str(len(sdp)),
+            },
+            body=sdp,
+        )
+
+        resp2 = await server.handle_sip_message(invite2, ("10.0.0.1", 5061))
+        assert resp2.status_code == 200
+        assert resp2.headers["contact"] == "<sip:ekaette@sip.ogabassey.com:5061;transport=tls>"
+        assert "c=IN IP4 34.69.236.219" in resp2.body
+        assert "o=ekaette 1 1 IN IP4 34.69.236.219" in resp2.body
 
     async def test_bye_terminates_session(self):
         """BYE message should terminate the active session."""
@@ -353,6 +514,7 @@ class TestSDPAnswerPort:
         # Local port must NOT be the remote port (3480)
         assert local_port != 3480
         assert local_port > 0
+        assert 10000 <= local_port <= 20000
 
         # Clean up
         session.shutdown()
@@ -879,6 +1041,55 @@ class TestHealthEndpoint:
             await server.stop()
 
 
+class TestMaidenSRTPPacket:
+    """Meta requires the business to send the first SRTP packet before media flows."""
+
+    def test_send_maiden_srtp_sends_packet(self):
+        """_send_maiden_srtp should send an SRTP-protected RTP packet to remote."""
+        from unittest.mock import patch
+
+        from sip_bridge.wa_main import _send_maiden_srtp
+
+        mock_sock = MagicMock()
+        mock_srtp = MagicMock()
+        mock_srtp.protect.return_value = b"\x00" * 30
+
+        _send_maiden_srtp(mock_sock, ("157.240.19.130", 3480), mock_srtp, "call-maiden")
+
+        # SRTP protect was called with a valid RTP packet
+        mock_srtp.protect.assert_called_once()
+        rtp_bytes = mock_srtp.protect.call_args[0][0]
+        assert len(rtp_bytes) >= 12 + 3  # RTP header + Opus silence payload
+        assert rtp_bytes[0] == 0x80  # RTP V=2
+
+        # Packet was sent to the remote media address
+        mock_sock.sendto.assert_called_once_with(b"\x00" * 30, ("157.240.19.130", 3480))
+
+    def test_send_maiden_srtp_logs_on_failure(self):
+        """Maiden send failure should log warning, not crash the call."""
+        from sip_bridge.wa_main import _send_maiden_srtp
+
+        mock_sock = MagicMock()
+        mock_srtp = MagicMock()
+        mock_srtp.protect.side_effect = RuntimeError("crypto fail")
+
+        # Should not raise
+        _send_maiden_srtp(mock_sock, ("157.240.19.130", 3480), mock_srtp, "call-fail")
+
+    async def test_session_has_maiden_srtp_method(self):
+        """Session created by 407→200 OK flow must have _send_maiden_srtp method
+        with correct SSRC and remote_media_addr for maiden packet."""
+        _server, session = await _create_authenticated_session()
+
+        # Session should have the maiden SRTP method
+        assert hasattr(session, "_send_maiden_srtp")
+        assert callable(session._send_maiden_srtp)
+        # Session should have SRTP sender and remote addr for maiden send
+        assert session.srtp_sender is not None
+        assert session.remote_media_addr == ("157.240.19.130", 3480)
+        assert session.rtp_ssrc > 0
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -894,6 +1105,7 @@ def _make_config(
     config = MagicMock()
     config.sip_host = "0.0.0.0"
     config.sip_port = 5061
+    config.sip_public_ip = ""
     config.sip_username = sip_username
     config.sip_password = sip_password
     config.sip_allowed_cidrs = sip_allowed_cidrs or frozenset()

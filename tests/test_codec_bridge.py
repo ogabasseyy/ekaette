@@ -139,13 +139,14 @@ class TestG711CodecBridge:
 class TestOpusCodecBridge:
     """OpusCodecBridge uses opuslib_next for Opus encode/decode."""
 
-    def _make_bridge(self, encode_rate: int = 16000):
+    def _make_bridge(self, encode_rate: int = 16000, channels: int = 2):
         from sip_bridge.codec_bridge import OpusCodecBridge
 
         return OpusCodecBridge(
             rtp_payload_type=111,
             rtp_clock_rate=48000,
             encode_rate=encode_rate,
+            channels=channels,
         )
 
     def test_opus_default_attributes(self):
@@ -154,6 +155,7 @@ class TestOpusCodecBridge:
         assert bridge.rtp_clock_rate == 48000
         assert bridge.frame_duration_ms == 20
         assert bridge.encode_rate == 16000
+        assert bridge.channels == 2
 
     def test_opus_decode_returns_bytes(self):
         bridge = self._make_bridge()
@@ -192,6 +194,13 @@ class TestOpusCodecBridge:
 
         bridge_24k = self._make_bridge(encode_rate=24000)
         assert bridge_24k.encode_rate == 24000
+
+    def test_opus_channel_count_is_configurable(self):
+        bridge_mono = self._make_bridge(channels=1)
+        assert bridge_mono.channels == 1
+
+        bridge_stereo = self._make_bridge(channels=2)
+        assert bridge_stereo.channels == 2
 
     def test_opus_roundtrip_preserves_frame_duration(self):
         """Encode then decode preserves 20ms frame duration."""

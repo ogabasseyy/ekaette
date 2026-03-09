@@ -18,6 +18,7 @@ import json
 import logging
 import os
 import socket
+import struct
 import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -35,6 +36,15 @@ logger = logging.getLogger(__name__)
 INBOUND_QUEUE_SIZE = 500
 OUTBOUND_QUEUE_SIZE = 10000
 UDP_TIMEOUT_SEC = 600
+MODEL_OUTPUT_SAMPLE_RATE = max(
+    8000,
+    int(os.getenv("WA_MODEL_OUTPUT_SAMPLE_RATE", "24000")),
+)
+MODEL_OUTPUT_CHANNELS = max(
+    1,
+    int(os.getenv("WA_MODEL_OUTPUT_CHANNELS", "1")),
+)
+GATEWAY_AUDIO_STALL_UNMUTE_SEC = 1.0
 
 # Echo suppression: send silence while model speaks + holdoff
 SILENCE_FRAME = b"\x00" * 640  # 20ms of silence at 16kHz
@@ -48,6 +58,24 @@ def compute_rtp_timestamp_increment(clock_rate: int, frame_duration_ms: int) -> 
     G.711 at 8kHz with 20ms frames = 160.
     """
     return clock_rate * frame_duration_ms // 1000
+
+
+def downmix_pcm16_to_mono(pcm16: bytes, channels: int) -> bytes:
+    """Downmix interleaved PCM16 audio to mono."""
+    if channels <= 1 or not pcm16:
+        return pcm16
+    sample_count = len(pcm16) // 2
+    if sample_count == 0:
+        return b""
+    truncated_samples = sample_count - (sample_count % channels)
+    if truncated_samples <= 0:
+        return b""
+    samples = struct.unpack(f"<{truncated_samples}h", pcm16[: truncated_samples * 2])
+    mono = []
+    for i in range(0, truncated_samples, channels):
+        frame = samples[i : i + channels]
+        mono.append(sum(frame) // channels)
+    return struct.pack(f"<{len(mono)}h", *mono)
 
 
 @dataclass(slots=True)
@@ -91,12 +119,27 @@ class WaSession:
     _model_speaking: bool = False
     _model_speech_end_time: float = 0.0
     _gateway_greeting_sent: bool = False
+    _last_model_audio_at: float = 0.0
+    _gateway_audio_frames_received: int = 0
+    _gateway_audio_bytes_received: int = 0
+    _gateway_send_frames: int = 0
+    rtp_ssrc: int = field(default_factory=lambda: int.from_bytes(os.urandom(4), "big"))
+    rtp_sequence: int = 0
+    rtp_timestamp: int = 0
 
     # Metrics
     frames_received: int = 0
     frames_sent: int = 0
     inbound_drops: int = 0
     outbound_drops: int = 0
+    _no_inbound_warned: bool = False
+
+    # ACK synchronization: maiden SRTP waits until Meta ACKs our 200 OK
+    _ack_event: asyncio.Event = field(default_factory=asyncio.Event)
+
+    def notify_ack(self) -> None:
+        """Called by SIP server when ACK is received for this call."""
+        self._ack_event.set()
 
     async def run(self) -> None:
         """Run the three concurrent tasks. Cancels all on first failure."""
@@ -229,8 +272,16 @@ class WaSession:
 
         bidi_loop = self._gateway_bidi_loop if use_gateway else self._gemini_bidi_loop
 
+        # Send maiden SRTP packet AFTER 200 OK has been written to TLS.
+        # session.run() is scheduled via create_task, which only starts
+        # after _handle_invite returns resp to handle_sip_connection.
+        # Small delay ensures Meta has processed our SDP answer (with
+        # crypto key and media port) before receiving SRTP packets.
+        await self._send_maiden_srtp()
+
         try:
             async with asyncio.TaskGroup() as tg:
+                tg.create_task(self._silence_keepalive_loop())
                 tg.create_task(self._media_recv_loop())
                 tg.create_task(self._media_inbound_loop())
                 tg.create_task(bidi_loop())
@@ -281,11 +332,191 @@ class WaSession:
         """Signal graceful shutdown."""
         self._shutdown.set()
 
+    async def _send_maiden_srtp(self) -> None:
+        """Send the first SRTP packet to Meta after ACK confirms 200 OK receipt.
+
+        Meta requires the business to send the first media packet before
+        it starts flowing RTP back.  We wait for the ACK (which proves
+        Meta has processed our 200 OK/SDP) before sending, to avoid a
+        race where our SRTP arrives before Meta's relay has our crypto key.
+        """
+        if self.media_transport is None or self.remote_media_addr is None:
+            return
+        if self.srtp_sender is None:
+            return
+
+        # Wait for ACK from Meta (up to 5 seconds, then proceed anyway).
+        # Meta's relay has a ~700ms timeout for receiving the first SRTP
+        # packet after ACK, so we must send maiden SRTP immediately after
+        # ACK — no additional delay.
+        try:
+            await asyncio.wait_for(self._ack_event.wait(), timeout=5.0)
+            logger.info(
+                "ACK received, sending maiden SRTP now",
+                extra={"call_id": self.call_id},
+            )
+        except TimeoutError:
+            logger.warning(
+                "ACK timeout after 5s, sending maiden SRTP anyway",
+                extra={"call_id": self.call_id},
+            )
+
+        # Send a single STUN binding request to help Meta's relay create
+        # a reverse-path entry.  Minimal 20-byte per RFC 5389 §6.
+        try:
+            stun_txn_id = os.urandom(12)
+            stun_request = (
+                b"\x00\x01"   # Type: Binding Request
+                b"\x00\x00"   # Length: 0 (no attributes)
+                b"\x21\x12\xa4\x42"  # Magic Cookie
+                + stun_txn_id
+            )
+            self.media_transport.sendto(stun_request, self.remote_media_addr)
+        except Exception:
+            pass
+        logger.info(
+            "STUN binding request sent to %s",
+            self.remote_media_addr,
+            extra={"call_id": self.call_id},
+        )
+
+        from .rtp import RTPPacket
+
+        opus_silence = b"\xf8\xff\xfe"  # Fallback comfort-noise payload.
+        codec_bridge = self.codec_bridge
+        if codec_bridge is not None:
+            frame_duration_ms = getattr(codec_bridge, "frame_duration_ms", 20)
+            if not isinstance(frame_duration_ms, int):
+                frame_duration_ms = 20
+            silence_frame = b"\x00" * (24000 * frame_duration_ms // 1000 * 2)
+            try:
+                opus_silence = codec_bridge.encode_from_pcm16_24k(silence_frame)
+            except Exception:
+                logger.warning(
+                    "Failed to encode maiden Opus silence, using fallback comfort noise",
+                    exc_info=True,
+                    extra={"call_id": self.call_id},
+                )
+        maiden_rtp = RTPPacket(
+            version=2,
+            payload_type=getattr(self.codec_bridge, "rtp_payload_type", 111),
+            sequence=self.rtp_sequence & 0xFFFF,
+            timestamp=self.rtp_timestamp & 0xFFFFFFFF,
+            ssrc=self.rtp_ssrc,
+            marker=True,
+            payload=opus_silence,
+        ).serialize()
+        try:
+            maiden_srtp = self.srtp_sender.protect(maiden_rtp)
+            self.media_transport.sendto(maiden_srtp, self.remote_media_addr)
+            clock_rate = getattr(self.codec_bridge, "rtp_clock_rate", 48000)
+            if not isinstance(clock_rate, int):
+                clock_rate = 48000
+            frame_duration_ms = getattr(self.codec_bridge, "frame_duration_ms", 20)
+            if not isinstance(frame_duration_ms, int):
+                frame_duration_ms = 20
+            self.rtp_sequence += 1
+            self.rtp_timestamp += compute_rtp_timestamp_increment(clock_rate, frame_duration_ms)
+            logger.info(
+                "Maiden SRTP sent to %s (%d bytes, SSRC=%08x seq=%d ts=%d)",
+                self.remote_media_addr,
+                len(maiden_srtp),
+                self.rtp_ssrc,
+                self.rtp_sequence - 1,
+                self.rtp_timestamp - compute_rtp_timestamp_increment(clock_rate, frame_duration_ms),
+            )
+        except Exception:
+            logger.warning(
+                "Failed to send maiden SRTP packet",
+                exc_info=True,
+                extra={"call_id": self.call_id},
+            )
+
+    async def _silence_keepalive_loop(self) -> None:
+        """Send Opus silence at 20ms intervals until real audio starts flowing.
+
+        Meta tears down the call if it doesn't see continuous RTP within ~1s
+        of the 200 OK.  This fills the gap between the maiden SRTP packet
+        and the first real audio frame from Gemini/gateway.
+        """
+        if self.media_transport is None or self.remote_media_addr is None:
+            return
+        if self.srtp_sender is None:
+            return
+
+        from .rtp import RTPPacket
+
+        opus_silence = b"\xf8\xff\xfe"
+        codec_bridge = self.codec_bridge
+        if codec_bridge is not None:
+            frame_duration_ms = getattr(codec_bridge, "frame_duration_ms", 20)
+            if not isinstance(frame_duration_ms, int):
+                frame_duration_ms = 20
+            silence_pcm = b"\x00" * (24000 * frame_duration_ms // 1000 * 2)
+            try:
+                opus_silence = codec_bridge.encode_from_pcm16_24k(silence_pcm)
+            except Exception:
+                pass
+
+        payload_type = getattr(self.codec_bridge, "rtp_payload_type", 111)
+        if not isinstance(payload_type, int):
+            payload_type = 111
+        clock_rate = getattr(self.codec_bridge, "rtp_clock_rate", 48000)
+        if not isinstance(clock_rate, int):
+            clock_rate = 48000
+        frame_duration_ms = getattr(self.codec_bridge, "frame_duration_ms", 20)
+        if not isinstance(frame_duration_ms, int):
+            frame_duration_ms = 20
+        ts_step = compute_rtp_timestamp_increment(clock_rate, frame_duration_ms)
+
+        keepalive_sent = 0
+
+        while not self._shutdown.is_set():
+            # Stop once the real outbound loop has sent frames
+            if self.frames_sent > 0:
+                logger.info(
+                    "Silence keepalive stopping: real audio started after %d keepalive frames",
+                    keepalive_sent,
+                )
+                return
+
+            rtp = RTPPacket(
+                version=2,
+                payload_type=payload_type,
+                sequence=self.rtp_sequence & 0xFFFF,
+                timestamp=self.rtp_timestamp & 0xFFFFFFFF,
+                ssrc=self.rtp_ssrc,
+                payload=opus_silence,
+            ).serialize()
+            try:
+                protected = self.srtp_sender.protect(rtp)
+                self.media_transport.sendto(protected, self.remote_media_addr)
+                keepalive_sent += 1
+                # Advance shared RTP state so outbound loop continues seamlessly
+                self.rtp_sequence += 1
+                self.rtp_timestamp += ts_step
+            except Exception:
+                if keepalive_sent == 0:
+                    logger.warning(
+                        "Silence keepalive failed on first packet",
+                        exc_info=True,
+                        extra={"call_id": self.call_id},
+                    )
+                return
+
+            await asyncio.sleep(0.02)  # 20ms pacing
+
     async def feed_inbound(self, frame: bytes) -> None:
         """Feed an SRTP audio frame from the network side."""
         try:
             self.inbound_queue.put_nowait(frame)
             self.frames_received += 1
+            if self.frames_received % 50 == 1:
+                logger.info(
+                    "WA RTP frames received count=%d call_id=%s",
+                    self.frames_received,
+                    self.call_id,
+                )
         except asyncio.QueueFull:
             self.inbound_drops += 1
 
@@ -337,6 +568,11 @@ class WaSession:
     async def _media_recv_loop(self) -> None:
         """Read SRTP packets from UDP socket and feed into inbound queue."""
         loop = asyncio.get_running_loop()
+        use_symmetric_rtp = (
+            os.getenv("WA_SIP_SYMMETRIC_RTP", "")
+            or os.getenv("SIP_SYMMETRIC_RTP", "0")
+        ).strip().lower() in {"1", "true", "yes", "on"}
+        first_inbound_logged = False
         if self.media_transport is None:
             # No transport — idle until shutdown (test/sandbox mode)
             while not self._shutdown.is_set():
@@ -349,8 +585,43 @@ class WaSession:
                     loop.sock_recvfrom(self.media_transport, 2048),
                     timeout=1.0,
                 )
-                # Validate source IP+port matches negotiated remote endpoint
-                if self.remote_media_addr is not None and addr[:2] != self.remote_media_addr:
+                if not first_inbound_logged:
+                    first_inbound_logged = True
+                    logger.info(
+                        "WA RTP inbound first source=%s configured_remote=%s symmetric=%s",
+                        addr,
+                        self.remote_media_addr,
+                        use_symmetric_rtp,
+                    )
+                    if (
+                        self.remote_media_addr is not None
+                        and self.remote_media_addr != addr
+                        and not use_symmetric_rtp
+                    ):
+                        logger.warning(
+                            "WA RTP source differs from SDP remote (source=%s, sdp=%s). "
+                            "If caller audio is missing, enable WA_SIP_SYMMETRIC_RTP=1.",
+                            addr,
+                            self.remote_media_addr,
+                        )
+                if self.remote_media_addr is None:
+                    self.remote_media_addr = (addr[0], addr[1])
+                    logger.info("WA RTP remote set from first inbound source remote=%s", self.remote_media_addr)
+                elif use_symmetric_rtp and self.remote_media_addr != addr:
+                    logger.info(
+                        "WA RTP remote updated by symmetric latching old=%s new=%s",
+                        self.remote_media_addr,
+                        addr,
+                    )
+                    self.remote_media_addr = (addr[0], addr[1])
+                elif self.remote_media_addr != addr:
+                    continue
+                # Filter out non-RTP packets (STUN, DTLS) per RFC 5764 §5.1.2
+                if len(data) < 2:
+                    continue
+                first_byte = data[0]
+                if first_byte < 128 or first_byte > 191:
+                    # Not RTP (version 2): likely STUN (0-3) or DTLS (20-63)
                     continue
                 await self.feed_inbound(data)
             except TimeoutError:
@@ -361,6 +632,11 @@ class WaSession:
 
     async def _media_inbound_loop(self) -> None:
         """Read inbound SRTP frames, unprotect, decode, forward to Gemini."""
+        from .rtp import RTPPacket
+
+        decode_count = 0
+        pcm_log_count = 0
+        decode_error_count = 0
         while not self._shutdown.is_set():
             try:
                 frame = await asyncio.wait_for(
@@ -376,21 +652,53 @@ class WaSession:
                 else:
                     rtp_packet = frame
 
+                rtp = RTPPacket.parse(rtp_packet)
+                if rtp is None:
+                    continue
+
+                decode_count += 1
+                if decode_count <= 3:
+                    logger.info(
+                        "WA RTP packet parsed pt=%d seq=%d payload_len=%d",
+                        rtp.payload_type,
+                        rtp.sequence,
+                        len(rtp.payload),
+                    )
+
                 if self.codec_bridge is not None:
-                    payload = rtp_packet[12:] if len(rtp_packet) > 12 else rtp_packet
+                    expected_payload_type = getattr(self.codec_bridge, "rtp_payload_type", None)
+                    if isinstance(expected_payload_type, int) and rtp.payload_type != expected_payload_type:
+                        continue
+                    payload = rtp.payload
                     pcm16 = self.codec_bridge.decode_to_pcm16_16k(payload)
                 else:
-                    pcm16 = rtp_packet
+                    pcm16 = rtp.payload
 
                 # Forward decoded PCM16 to Gemini via internal queue
                 if pcm16:
+                    pcm_log_count += 1
+                    if pcm_log_count <= 3:
+                        logger.info(
+                            "WA RTP decoded pcm_bytes=%d nonzero=%s call_id=%s",
+                            len(pcm16),
+                            any(pcm16),
+                            self.call_id,
+                        )
                     try:
                         self._gemini_in_queue.put_nowait(pcm16)
                     except asyncio.QueueFull:
                         # Drop frame when backpressure queue is saturated.
                         pass
             except Exception:
-                logger.debug("Inbound frame processing error", exc_info=True)
+                decode_error_count += 1
+                if decode_error_count <= 3:
+                    logger.warning(
+                        "Inbound frame processing error call_id=%s",
+                        self.call_id,
+                        exc_info=True,
+                    )
+                else:
+                    logger.debug("Inbound frame processing error", exc_info=True)
 
     async def _gemini_bidi_loop(self) -> None:
         """Bidirectional Gemini Live session."""
@@ -594,6 +902,18 @@ class WaSession:
             except TimeoutError:
                 continue
 
+            if (
+                self._model_speaking
+                and self._last_model_audio_at > 0.0
+                and (time.time() - self._last_model_audio_at) > GATEWAY_AUDIO_STALL_UNMUTE_SEC
+            ):
+                self._model_speaking = False
+                self._model_speech_end_time = time.time()
+                logger.info(
+                    "Gateway audio stalled; clearing model_speaking mute call_id=%s",
+                    self.call_id,
+                )
+
             echo_muted = (
                 self._model_speaking
                 or (time.time() - self._model_speech_end_time) < ECHO_HOLDOFF_SEC
@@ -602,6 +922,15 @@ class WaSession:
             if gateway_client is None:
                 await asyncio.sleep(0.05)
                 continue
+            self._gateway_send_frames += 1
+            if self._gateway_send_frames <= 3:
+                logger.info(
+                    "Gateway send frame=%d muted=%s bytes=%d call_id=%s",
+                    self._gateway_send_frames,
+                    echo_muted,
+                    len(pcm16),
+                    self.call_id,
+                )
             await gateway_client.send_audio(SILENCE_FRAME if echo_muted else pcm16)
 
     async def _gateway_recv_loop(self) -> None:
@@ -613,8 +942,33 @@ class WaSession:
                 break
             if frame.is_audio:
                 self._model_speaking = True
+                self._last_model_audio_at = time.time()
+                self._gateway_audio_frames_received += 1
+                input_audio = frame.audio_data
+                self._gateway_audio_bytes_received += len(input_audio)
+                output_audio = input_audio
+                if MODEL_OUTPUT_CHANNELS > 1:
+                    output_audio = downmix_pcm16_to_mono(input_audio, MODEL_OUTPUT_CHANNELS)
+                if self._gateway_audio_frames_received <= 5:
+                    logger.info(
+                        "Gateway audio frame=%d bytes=%d total_bytes=%d call_id=%s",
+                        self._gateway_audio_frames_received,
+                        len(input_audio),
+                        self._gateway_audio_bytes_received,
+                        self.call_id,
+                    )
+                    if MODEL_OUTPUT_CHANNELS > 1:
+                        logger.info(
+                            "Gateway audio downmix channels=%d input_bytes=%d mono_bytes=%d call_id=%s",
+                            MODEL_OUTPUT_CHANNELS,
+                            len(input_audio),
+                            len(output_audio),
+                            self.call_id,
+                        )
+                if not output_audio:
+                    continue
                 try:
-                    self.outbound_queue.put_nowait(frame.audio_data)
+                    self.outbound_queue.put_nowait(output_audio)
                 except asyncio.QueueFull:
                     self.outbound_drops += 1
             else:
@@ -643,11 +997,9 @@ class WaSession:
                     logger.info("Gateway session started: %s", canonical_id)
                     if not self._gateway_greeting_sent:
                         # Trigger the virtual assistant greeting once per call.
-                        # self._model_speaking is cleared later by interrupted,
-                        # agent_status=idle, or final agent transcription messages,
-                        # and reset below if sending the greeting itself fails.
+                        # Do not pre-emptively mute caller audio here. We only
+                        # enable echo suppression once gateway audio actually starts.
                         self._gateway_greeting_sent = True
-                        self._model_speaking = True
                         try:
                             await self.gateway_client.send_text(json.dumps({
                                 "type": "text",
@@ -671,9 +1023,15 @@ class WaSession:
                 elif msg_type == "ping":
                     pass
                 elif msg_type == "interrupted":
+                    logger.info("Gateway interrupted call_id=%s", self.call_id)
                     self._model_speaking = False
                     self._model_speech_end_time = time.time()
                 elif msg_type == "agent_status":
+                    logger.info(
+                        "Gateway agent_status=%s call_id=%s",
+                        msg.get("status", ""),
+                        self.call_id,
+                    )
                     if msg.get("status") == "idle":
                         self._model_speaking = False
                         self._model_speech_end_time = time.time()
@@ -688,43 +1046,135 @@ class WaSession:
                 elif msg_type == "error":
                     logger.warning("Gateway error: %s", msg.get("message", ""))
                 elif msg_type == "transcription":
-                    logger.debug(
-                        "Transcription [%s]: %s",
-                        msg.get("role"), msg.get("text", "")[:100],
-                    )
+                    if msg.get("role") == "user":
+                        logger.info(
+                            "Gateway user transcription partial=%s call_id=%s text=%s",
+                            bool(msg.get("partial")),
+                            self.call_id,
+                            msg.get("text", "")[:100],
+                        )
+                    if msg.get("role") == "agent" and not msg.get("partial"):
+                        logger.info(
+                            "Gateway agent transcription final call_id=%s text=%s",
+                            self.call_id,
+                            msg.get("text", "")[:100],
+                        )
                     if msg.get("role") == "agent" and not msg.get("partial"):
                         self._model_speech_end_time = time.time()
                         self._model_speaking = False
 
     async def _media_outbound_loop(self) -> None:
         """Read AI response audio, encode, SRTP protect, send."""
+        from .rtp import RTPPacket, RTPTimer
+
+        ssrc = self.rtp_ssrc
+        # seq/timestamp read lazily on first send so the silence keepalive
+        # can advance them in the meantime.
+        seq: int | None = None
+        timestamp: int | None = None
+        target_logged = False
+        timer: RTPTimer | None = None
+        pcm_buffer = bytearray()
+        payload_type = getattr(self.codec_bridge, "rtp_payload_type", 111)
+        if not isinstance(payload_type, int):
+            payload_type = 111
+        clock_rate = getattr(self.codec_bridge, "rtp_clock_rate", 48000)
+        if not isinstance(clock_rate, int):
+            clock_rate = 48000
+        frame_duration_ms = getattr(self.codec_bridge, "frame_duration_ms", 20)
+        if not isinstance(frame_duration_ms, int):
+            frame_duration_ms = 20
+        timestamp_step = compute_rtp_timestamp_increment(clock_rate, frame_duration_ms)
+        pcm_frame_bytes = MODEL_OUTPUT_SAMPLE_RATE * frame_duration_ms // 1000 * 2
+
         while not self._shutdown.is_set():
-            try:
-                pcm_frame = await asyncio.wait_for(
-                    self.outbound_queue.get(), timeout=1.0
-                )
-            except TimeoutError:
-                continue
+            if len(pcm_buffer) < pcm_frame_bytes:
+                try:
+                    pcm_chunk = await asyncio.wait_for(
+                        self.outbound_queue.get(), timeout=1.0
+                    )
+                except TimeoutError:
+                    continue
+                pcm_buffer.extend(pcm_chunk)
 
-            try:
-                self.frames_sent += 1
+            while len(pcm_buffer) >= pcm_frame_bytes and not self._shutdown.is_set():
+                if timer is None:
+                    timer = RTPTimer()
 
-                # Codec encode → SRTP protect
-                if self.codec_bridge is not None:
-                    encoded = self.codec_bridge.encode_from_pcm16_24k(pcm_frame)
-                else:
-                    encoded = pcm_frame
+                pcm_frame = bytes(pcm_buffer[:pcm_frame_bytes])
+                del pcm_buffer[:pcm_frame_bytes]
 
-                if self.srtp_sender is not None:
-                    protected = self.srtp_sender.protect(encoded)
-                else:
-                    protected = encoded
+                try:
+                    # Lazy init: pick up RTP state from keepalive
+                    if seq is None:
+                        seq = self.rtp_sequence
+                        timestamp = self.rtp_timestamp
 
-                # Send via UDP transport
-                if self.media_transport is not None and self.remote_media_addr is not None:
-                    self.media_transport.sendto(protected, self.remote_media_addr)
-            except Exception:
-                logger.debug("Outbound frame processing error", exc_info=True)
+                    self.frames_sent += 1
+                    if self.codec_bridge is not None:
+                        encoded = self.codec_bridge.encode_from_pcm16_24k(pcm_frame)
+                    else:
+                        encoded = pcm_frame
+
+                    marker = self.frames_sent == 1
+                    rtp = RTPPacket(
+                        version=2,
+                        payload_type=payload_type,
+                        sequence=seq & 0xFFFF,
+                        timestamp=timestamp & 0xFFFFFFFF,
+                        ssrc=ssrc,
+                        marker=marker,
+                        payload=encoded,
+                    ).serialize()
+
+                    if self.srtp_sender is not None:
+                        protected = self.srtp_sender.protect(rtp)
+                    else:
+                        protected = rtp
+
+                    if self.media_transport is not None and self.remote_media_addr is not None:
+                        if not target_logged:
+                            local_port = "?"
+                            try:
+                                local_port = self.media_transport.getsockname()[1]
+                            except Exception:
+                                pass
+                            logger.info(
+                                "WA RTP outbound target local_port=%s remote=%s ssrc=%08x seq=%d timestamp=%d",
+                                local_port,
+                                self.remote_media_addr,
+                                ssrc,
+                                seq,
+                                timestamp,
+                            )
+                            target_logged = True
+                        self.media_transport.sendto(protected, self.remote_media_addr)
+                    if self.frames_sent % 50 == 1:
+                        logger.info(
+                            "WA RTP frames sent count=%d call_id=%s",
+                            self.frames_sent,
+                            self.call_id,
+                        )
+                    if (
+                        not self._no_inbound_warned
+                        and self.frames_sent >= 100
+                        and self.frames_received == 0
+                    ):
+                        self._no_inbound_warned = True
+                        logger.warning(
+                            "No inbound WA RTP received while outbound audio is active. "
+                            "Verify WA_SIP_PUBLIC_IP, UDP firewall rules, and consider WA_SIP_SYMMETRIC_RTP=1.",
+                        )
+                    seq += 1
+                    timestamp += timestamp_step
+                    self.rtp_sequence = seq
+                    self.rtp_timestamp = timestamp
+                    await timer.wait_next_frame()
+                except Exception:
+                    if self.frames_sent <= 5:
+                        logger.warning("Outbound frame processing error", exc_info=True)
+                    else:
+                        logger.debug("Outbound frame processing error", exc_info=True)
 
 
 # ---------------------------------------------------------------------------

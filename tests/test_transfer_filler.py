@@ -292,6 +292,24 @@ class _FakeRunner:
         await asyncio.sleep(0)
 
 
+class _RetryableFailureRunner:
+    def __init__(self, events):
+        self._events = list(events)
+        self.call_count = 0
+
+    async def run_live(self, **kwargs):
+        self.call_count += 1
+        if self.call_count == 1:
+            inner = RuntimeError(
+                "received 1011 (internal error) The service is currently unavailable.; "
+                "then sent 1011 (internal error) The service is currently unavailable."
+            )
+            raise RuntimeError("1011 None. The service is currently unavailable.") from inner
+        for event in self._events:
+            yield event
+        await asyncio.sleep(0)
+
+
 def _make_live_event(
     *,
     content=None,
@@ -446,6 +464,39 @@ class TestWatchdogArmingInDownstream:
         assert user_transcripts[0]["text"] == "I need pricing"
         assert ss.awaiting_agent_response is True
         assert ss.response_nudge_count == 0
+
+
+class TestDownstreamRetry:
+    """Transient Live API errors should be retried in-process."""
+
+    @pytest.mark.asyncio
+    async def test_retryable_live_error_retries_stream(self, monkeypatch):
+        import app.api.v1.realtime.stream_tasks as st
+
+        runner = _RetryableFailureRunner([_make_content_event(audio_bytes=b"\x00\x01")])
+        st.configure_runtime(
+            runner=runner,
+            _extract_server_message_from_state_delta=lambda delta: None,
+            _usage_int=lambda *args: 0,
+            TOKEN_PRICE_PROMPT_PER_MILLION=0.0,
+            TOKEN_PRICE_COMPLETION_PER_MILLION=0.0,
+            DEBUG_TELEMETRY=False,
+            _sanitize_log=lambda value: value,
+        )
+        monkeypatch.setattr(st, "LIVE_STREAM_MAX_RETRIES", 1)
+        monkeypatch.setattr(st, "LIVE_STREAM_RETRY_BASE_SECONDS", 0.01)
+
+        websocket = _FakeWebSocket()
+        ctx = _make_ctx(websocket)
+        queue = _FakeRequestQueue()
+        session_alive = asyncio.Event()
+        session_alive.set()
+        silence_state = _make_silence_state()
+
+        await st.downstream_task(ctx, queue, session_alive, silence_state)
+
+        assert runner.call_count == 2
+        assert websocket.sent_bytes == [b"\x00\x01"]
 
 
 class TestWatchdogClearingInDownstream:

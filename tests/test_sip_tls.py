@@ -215,6 +215,25 @@ class TestParseMessageFromStream:
         assert m1 is not None and m1.headers["call-id"] == "call-1"
         assert m2 is not None and m2.headers["call-id"] == "call-2"
 
+    async def test_parse_repeated_via_headers_preserves_all_hops(self):
+        from sip_bridge.sip_tls import parse_message
+
+        raw = (
+            b"INVITE sip:test@example.com SIP/2.0\r\n"
+            b"Via: SIP/2.0/TLS edge1.example.com:5061;branch=z9hG4bK-1\r\n"
+            b"Via: SIP/2.0/TLS edge2.example.com:5061;branch=z9hG4bK-2\r\n"
+            b"Call-ID: call-1\r\n"
+            b"Content-Length: 0\r\n"
+            b"\r\n"
+        )
+        reader = self._make_reader(raw)
+        msg = await parse_message(reader)
+        assert msg is not None
+        assert msg.headers["via"] == (
+            "SIP/2.0/TLS edge1.example.com:5061;branch=z9hG4bK-1\n"
+            "SIP/2.0/TLS edge2.example.com:5061;branch=z9hG4bK-2"
+        )
+
 
 # --- Security limits tests ---
 
@@ -349,7 +368,27 @@ class TestSerializeMessage:
         raw = serialize_message(msg)
         assert raw.startswith(b"INVITE sip:test@example.com SIP/2.0\r\n")
         assert b"\r\n\r\n" in raw
-        assert b"Call-Id: abc123\r\n" in raw
+        assert b"Call-ID: abc123\r\n" in raw
+
+    def test_serialize_multivalue_via_headers(self):
+        from sip_bridge.sip_tls import SipMessage, serialize_message
+
+        msg = SipMessage(
+            first_line="SIP/2.0 407 Proxy Authentication Required",
+            headers={
+                "via": (
+                    "SIP/2.0/TLS edge1.example.com:5061;branch=z9hG4bK-1\n"
+                    "SIP/2.0/TLS edge2.example.com:5061;branch=z9hG4bK-2"
+                ),
+                "call-id": "abc123",
+                "cseq": "1 INVITE",
+            },
+            body="",
+        )
+        raw = serialize_message(msg)
+        assert b"Via: SIP/2.0/TLS edge1.example.com:5061;branch=z9hG4bK-1\r\n" in raw
+        assert b"Via: SIP/2.0/TLS edge2.example.com:5061;branch=z9hG4bK-2\r\n" in raw
+        assert b"CSeq: 1 INVITE\r\n" in raw
 
     def test_serialize_response_with_body(self):
         from sip_bridge.sip_tls import SipMessage, serialize_message

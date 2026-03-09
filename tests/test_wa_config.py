@@ -66,6 +66,13 @@ class TestWhatsAppBridgeConfigFromEnv:
         assert cfg.sip_host == "10.0.0.1"
         assert cfg.sip_port == 5062
 
+    def test_public_ip_loaded_from_env(self, monkeypatch):
+        monkeypatch.setenv("WA_SIP_PUBLIC_IP", "34.69.236.219")
+        from sip_bridge.wa_config import WhatsAppBridgeConfig
+
+        cfg = WhatsAppBridgeConfig.from_env()
+        assert cfg.sip_public_ip == "34.69.236.219"
+
     def test_sip_credentials(self, monkeypatch):
         monkeypatch.setenv("WA_SIP_USERNAME", "+2348001234567")
         monkeypatch.setenv("WA_SIP_PASSWORD", "meta-secret")
@@ -154,6 +161,60 @@ class TestWhatsAppBridgeConfigValidation:
         cfg = WhatsAppBridgeConfig.from_env()
         errors = cfg.validate()
         assert any("cidr" in e.lower() or "allowlist" in e.lower() for e in errors)
+
+    def test_production_requires_public_ip_for_wildcard_bind(self, monkeypatch):
+        monkeypatch.setenv("WA_SANDBOX_MODE", "false")
+        monkeypatch.setenv("GOOGLE_API_KEY", "key")
+        monkeypatch.setenv("WA_SIP_HOST", "0.0.0.0")
+        monkeypatch.setenv("WA_SIP_PUBLIC_IP", "")
+        monkeypatch.setenv("WA_SIP_USERNAME", "user")
+        monkeypatch.setenv("WA_SIP_PASSWORD", "pass")
+        monkeypatch.setenv("WA_SIP_ALLOWED_CIDRS", "10.0.0.0/8")
+        monkeypatch.setenv("WA_TLS_CERTFILE", "/cert.pem")
+        monkeypatch.setenv("WA_TLS_KEYFILE", "/key.pem")
+        monkeypatch.setenv("WA_SERVICE_API_BASE_URL", "https://wa-service.example.com")
+        monkeypatch.setenv("WA_SERVICE_SECRET", "secret")
+        from sip_bridge.wa_config import WhatsAppBridgeConfig
+
+        cfg = WhatsAppBridgeConfig.from_env()
+        errors = cfg.validate()
+        assert any("WA_SIP_PUBLIC_IP" in e for e in errors)
+
+    def test_production_accepts_public_ip_for_wildcard_bind(self, monkeypatch):
+        monkeypatch.setenv("WA_SANDBOX_MODE", "false")
+        monkeypatch.setenv("GOOGLE_API_KEY", "key")
+        monkeypatch.setenv("WA_SIP_HOST", "0.0.0.0")
+        monkeypatch.setenv("WA_SIP_PUBLIC_IP", "34.69.236.219")
+        monkeypatch.setenv("WA_SIP_USERNAME", "user")
+        monkeypatch.setenv("WA_SIP_PASSWORD", "pass")
+        monkeypatch.setenv("WA_SIP_ALLOWED_CIDRS", "10.0.0.0/8")
+        monkeypatch.setenv("WA_TLS_CERTFILE", "/cert.pem")
+        monkeypatch.setenv("WA_TLS_KEYFILE", "/key.pem")
+        monkeypatch.setenv("WA_SERVICE_API_BASE_URL", "https://wa-service.example.com")
+        monkeypatch.setenv("WA_SERVICE_SECRET", "secret")
+        from sip_bridge.wa_config import WhatsAppBridgeConfig
+
+        cfg = WhatsAppBridgeConfig.from_env()
+        errors = cfg.validate()
+        assert not any("WA_SIP_PUBLIC_IP" in e for e in errors)
+
+    def test_rejects_private_public_ip_value(self, monkeypatch):
+        monkeypatch.setenv("WA_SANDBOX_MODE", "false")
+        monkeypatch.setenv("GOOGLE_API_KEY", "key")
+        monkeypatch.setenv("WA_SIP_HOST", "0.0.0.0")
+        monkeypatch.setenv("WA_SIP_PUBLIC_IP", "10.128.0.2")
+        monkeypatch.setenv("WA_SIP_USERNAME", "user")
+        monkeypatch.setenv("WA_SIP_PASSWORD", "pass")
+        monkeypatch.setenv("WA_SIP_ALLOWED_CIDRS", "10.0.0.0/8")
+        monkeypatch.setenv("WA_TLS_CERTFILE", "/cert.pem")
+        monkeypatch.setenv("WA_TLS_KEYFILE", "/key.pem")
+        monkeypatch.setenv("WA_SERVICE_API_BASE_URL", "https://wa-service.example.com")
+        monkeypatch.setenv("WA_SERVICE_SECRET", "secret")
+        from sip_bridge.wa_config import WhatsAppBridgeConfig
+
+        cfg = WhatsAppBridgeConfig.from_env()
+        errors = cfg.validate()
+        assert any("reachable public IPv4" in e for e in errors)
 
     def test_sandbox_allows_empty_cidrs(self, monkeypatch):
         """Sandbox mode with empty CIDRs is NOT an error."""

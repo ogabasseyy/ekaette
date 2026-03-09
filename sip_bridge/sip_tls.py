@@ -38,6 +38,16 @@ _COMPACT_FORMS: dict[str, str] = {
     "s": "subject",
 }
 
+_CANONICAL_WIRE_NAMES: dict[str, str] = {
+    "call-id": "Call-ID",
+    "cseq": "CSeq",
+    "www-authenticate": "WWW-Authenticate",
+    "x-wa-meta-call-duration": "X-WA-Meta-Call-Duration",
+    "x-wa-meta-cta-payload": "X-WA-Meta-CTA-Payload",
+    "x-wa-meta-deeplink-payload": "X-WA-Meta-Deeplink-Payload",
+    "x-wa-meta-wacid": "X-WA-Meta-WACID",
+}
+
 
 def normalize_header_name(name: str) -> str:
     """Normalize a SIP header name to lowercase, expanding compact forms."""
@@ -143,7 +153,13 @@ async def parse_message(reader: asyncio.StreamReader) -> SipMessage | None:
 
         name, _, value = line.partition(":")
         normalized = normalize_header_name(name)
-        headers[normalized] = value.strip()
+        # SIP multi-valued headers (Via, Record-Route, etc.) appear on
+        # separate lines.  Join with \n so all values survive in the dict;
+        # the serializer splits them back to separate header lines.
+        if normalized in headers:
+            headers[normalized] = headers[normalized] + "\n" + value.strip()
+        else:
+            headers[normalized] = value.strip()
         header_count += 1
 
         if header_count > _MAX_HEADER_COUNT:
@@ -191,7 +207,7 @@ async def parse_message(reader: asyncio.StreamReader) -> SipMessage | None:
 def serialize_message(msg: SipMessage) -> bytes:
     """Serialize a SipMessage to bytes for sending over TLS.
 
-    Header names are title-cased for wire compatibility.
+    Header names are emitted with canonical SIP casing where needed.
     """
     body_bytes = msg.body.encode("utf-8")
     headers = {
@@ -204,9 +220,14 @@ def serialize_message(msg: SipMessage) -> bytes:
     lines: list[str] = [msg.first_line]
 
     for name, value in headers.items():
-        # Title-case header name for wire format (e.g., call-id -> Call-Id)
-        wire_name = "-".join(part.capitalize() for part in name.split("-"))
-        lines.append(f"{wire_name}: {value}")
+        wire_name = _CANONICAL_WIRE_NAMES.get(
+            name,
+            "-".join(part.capitalize() for part in name.split("-")),
+        )
+        # Multi-valued headers (Via, Record-Route) are stored joined by \n;
+        # emit each value as a separate header line on the wire.
+        for single_value in value.split("\n"):
+            lines.append(f"{wire_name}: {single_value}")
 
     header_block = "\r\n".join(lines) + "\r\n\r\n"
     return header_block.encode("utf-8") + body_bytes

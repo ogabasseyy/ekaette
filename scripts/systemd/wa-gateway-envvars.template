@@ -8,6 +8,9 @@ GOOGLE_API_KEY=<your-gemini-api-key>
 # SIP server (WhatsApp Business Calling)
 WA_SIP_HOST=0.0.0.0
 WA_SIP_PORT=5061
+# Public IPv4 reachable by Meta for SIP Contact and SDP c= lines.
+# Required in production when WA_SIP_HOST is 0.0.0.0, localhost, or a private IP.
+WA_SIP_PUBLIC_IP=
 WA_SIP_USERNAME=<business-phone-number>
 WA_SIP_PASSWORD=<meta-generated-password>
 WA_SIP_ALLOWED_CIDRS=<meta-cidr-ranges>

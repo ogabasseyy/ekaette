@@ -35,6 +35,38 @@ class CodecBridge(abc.ABC):
 # ---------------------------------------------------------------------------
 
 
+def downmix_interleaved_pcm16_to_mono(pcm16: bytes, channels: int) -> bytes:
+    """Downmix interleaved PCM16 audio to mono."""
+    if channels <= 1 or not pcm16:
+        return pcm16
+    sample_count = len(pcm16) // 2
+    if sample_count == 0:
+        return b""
+    truncated = sample_count - (sample_count % channels)
+    if truncated <= 0:
+        return b""
+    samples = struct.unpack(f"<{truncated}h", pcm16[: truncated * 2])
+    mono = []
+    for i in range(0, truncated, channels):
+        frame = samples[i : i + channels]
+        mono.append(sum(frame) // channels)
+    return struct.pack(f"<{len(mono)}h", *mono)
+
+
+def upmix_mono_pcm16(pcm16: bytes, channels: int) -> bytes:
+    """Duplicate mono PCM16 samples across the requested channel count."""
+    if channels <= 1 or not pcm16:
+        return pcm16
+    sample_count = len(pcm16) // 2
+    if sample_count == 0:
+        return b""
+    samples = struct.unpack(f"<{sample_count}h", pcm16)
+    interleaved: list[int] = []
+    for sample in samples:
+        interleaved.extend([sample] * channels)
+    return struct.pack(f"<{len(interleaved)}h", *interleaved)
+
+
 def resample_24k_to_16k(pcm16_24k: bytes) -> bytes:
     """Downsample PCM16 from 24kHz to 16kHz (linear interpolation).
 
@@ -133,17 +165,23 @@ class OpusCodecBridge(CodecBridge):
         rtp_payload_type: int = 111,
         rtp_clock_rate: int = 48000,
         encode_rate: int = 16000,
+        channels: int = 2,
     ) -> None:
         self.rtp_payload_type = rtp_payload_type
         self.rtp_clock_rate = rtp_clock_rate
         self.encode_rate = encode_rate
+        self.channels = max(1, channels)
 
         from opuslib_next import APPLICATION_VOIP, Decoder, Encoder
 
-        # Decoder at 16kHz — Gemini input rate
-        self._decoder = Decoder(fs=16000, channels=1)
-        # Encoder at SDP-negotiated rate, VOIP application for speech
-        self._encoder = Encoder(fs=encode_rate, channels=1, application=APPLICATION_VOIP)
+        # Decoder outputs the negotiated wire channel count at Gemini's 16kHz input rate.
+        self._decoder = Decoder(fs=16000, channels=self.channels)
+        # Encoder uses the negotiated wire channel count and sample rate.
+        self._encoder = Encoder(
+            fs=encode_rate,
+            channels=self.channels,
+            application=APPLICATION_VOIP,
+        )
 
         # Frame size in samples at the encoder rate for 20ms
         self._encode_frame_samples = encode_rate * self.frame_duration_ms // 1000
@@ -152,7 +190,8 @@ class OpusCodecBridge(CodecBridge):
 
     def decode_to_pcm16_16k(self, encoded: bytes) -> bytes:
         """Opus -> PCM16 16kHz (libopus handles rate conversion natively)."""
-        return self._decoder.decode(encoded, self._decode_frame_samples)
+        pcm16 = self._decoder.decode(encoded, self._decode_frame_samples)
+        return downmix_interleaved_pcm16_to_mono(pcm16, self.channels)
 
     def encode_from_pcm16_24k(self, pcm16_24k: bytes) -> bytes:
         """PCM16 24kHz -> resample to encode_rate -> Opus encode."""
@@ -164,6 +203,7 @@ class OpusCodecBridge(CodecBridge):
             # Generic resample path (not expected for Meta, but safe)
             pcm_input = self._resample_24k_to_rate(pcm16_24k, self.encode_rate)
 
+        pcm_input = upmix_mono_pcm16(pcm_input, self.channels)
         return self._encoder.encode(pcm_input, self._encode_frame_samples)
 
     def _resample_24k_to_rate(self, pcm16_24k: bytes, target_rate: int) -> bytes:

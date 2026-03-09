@@ -50,13 +50,18 @@ def build_transaction_response(
     )
 
 
-def resolve_advertised_ip(bind_host: str, *, logger: logging.Logger) -> str:
+def resolve_advertised_ip(
+    bind_host: str,
+    *,
+    public_ip: str = "",
+    logger: logging.Logger,
+) -> str:
     """Resolve a non-loopback IP to advertise in SDP when bound to wildcard."""
     candidate = (bind_host or "").strip()
     if candidate and candidate not in {"0.0.0.0", "::"} and not candidate.startswith("127."):
         return candidate
 
-    configured_public_ip = os.getenv("WA_SIP_PUBLIC_IP", "").strip()
+    configured_public_ip = public_ip.strip() or os.getenv("WA_SIP_PUBLIC_IP", "").strip()
     if configured_public_ip and not configured_public_ip.startswith("127."):
         return configured_public_ip
 

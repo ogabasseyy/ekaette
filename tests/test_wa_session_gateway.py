@@ -7,6 +7,7 @@ instead of direct Gemini Live when gateway_mode=True.
 from __future__ import annotations
 
 import json
+import struct
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -99,6 +100,24 @@ class TestWaSessionGatewayMode:
         assert s.outbound_queue.get_nowait() == audio
 
     @pytest.mark.asyncio
+    async def test_gateway_recv_loop_downmixes_audio_when_configured(self, monkeypatch):
+        """Gateway audio is downmixed before entering the outbound queue when configured."""
+        from sip_bridge.gateway_client import GatewayFrame
+        import sip_bridge.wa_session as wa_session
+
+        monkeypatch.setattr(wa_session, "MODEL_OUTPUT_CHANNELS", 2)
+        s = wa_session.WaSession(call_id="c1", tenant_id="public", company_id="acme")
+        stereo = struct.pack("<4h", 1000, 3000, -1000, 1000)
+        mock_client = MockGatewayClient()
+        mock_client._frames_to_yield = [
+            GatewayFrame(is_audio=True, audio_data=stereo),
+        ]
+        s.gateway_client = mock_client
+
+        await s._gateway_recv_loop()
+        assert s.outbound_queue.get_nowait() == struct.pack("<2h", 2000, 0)
+
+    @pytest.mark.asyncio
     async def test_gateway_recv_loop_handles_interrupted(self):
         """interrupted clears model speaking state."""
         from sip_bridge.gateway_client import GatewayFrame
@@ -145,7 +164,7 @@ class TestWaSessionGatewayMode:
         }
         assert mock_client.canonical_session_id == "canonical-xyz"
         assert s._gateway_greeting_sent is True
-        assert s._model_speaking is True
+        assert s._model_speaking is False
 
     @pytest.mark.asyncio
     async def test_gateway_recv_loop_skips_duplicate_greeting_on_resume(self):

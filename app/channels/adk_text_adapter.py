@@ -336,9 +336,9 @@ async def _ensure_session(
 
             # Load global lessons (Tier 2 learning)
             try:
-                from app.tools.global_lessons import load_global_lessons
+                from app.tools.global_lessons import aload_global_lessons
 
-                global_lessons = load_global_lessons(
+                global_lessons = await aload_global_lessons(
                     db, tenant_id=tenant_id, company_id=company_id,
                 )
                 if global_lessons:

@@ -7,6 +7,7 @@ import base64
 import binascii
 import json
 import logging
+import os
 import time
 from typing import Any
 
@@ -23,6 +24,11 @@ logger = logging.getLogger(__name__)
 
 RESPONSE_LATENCY_FILLER_SECONDS = 3.0
 RESPONSE_LATENCY_REASSURE_SECONDS = 15.0
+LIVE_STREAM_MAX_RETRIES = max(0, int(os.getenv("LIVE_STREAM_MAX_RETRIES", "2")))
+LIVE_STREAM_RETRY_BASE_SECONDS = max(
+    0.1,
+    float(os.getenv("LIVE_STREAM_RETRY_BASE_SECONDS", "0.5")),
+)
 
 
 def configure_runtime(**kwargs: Any) -> None:
@@ -41,6 +47,23 @@ def _next_silence_nudge_interval(current_interval: float) -> float:
     grown = max(current_interval + 1.0, current_interval * multiplier)
     max_interval = max(1.0, float(SILENCE_NUDGE_MAX_INTERVAL_SECONDS))
     return min(grown, max_interval)
+
+
+def _is_retryable_live_error(exc: Exception) -> bool:
+    """Classify transient provider/live-stream failures that merit a retry."""
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        message = f"{current.__class__.__name__}: {current}".lower()
+        if (
+            "service is currently unavailable" in message
+            or "received 1011" in message
+            or "then sent 1011" in message
+        ):
+            return True
+        current = getattr(current, "__cause__", None) or getattr(current, "__context__", None)
+    return False
 
 
 def create_initial_silence_state() -> SilenceState:
@@ -388,6 +411,7 @@ async def downstream_task(
     session_completion_tokens = 0
     session_total_tokens = 0
     session_cost_usd = 0.0
+    retry_attempt = 0
 
     async def _finalize_input() -> None:
         """Send a non-partial input transcription to close the user's turn."""
@@ -416,251 +440,279 @@ async def downstream_task(
         last_output_text = ""
         output_finalized = True
 
-    async for event in runner_obj.run_live(
-        user_id=ctx.user_id,
-        session_id=ctx.resolved_session_id,
-        live_request_queue=live_request_queue,
-        run_config=ctx.run_config,
-    ):
+    while session_alive.is_set():
         try:
-            # Audio + Text content
-            if event.content and event.content.parts:
-                for part in event.content.parts:
-                    # Audio -> binary WebSocket frame (lowest latency)
-                    if (
-                        part.inline_data
-                        and part.inline_data.data
-                        and part.inline_data.mime_type
-                        and "audio" in part.inline_data.mime_type
-                    ):
-                        silence_state.agent_busy = True
-                        silence_state.awaiting_agent_response = False
-                        audio_bytes = part.inline_data.data
-                        if isinstance(audio_bytes, str):
-                            audio_bytes = base64.b64decode(audio_bytes)
-                        await websocket.send_bytes(audio_bytes)
-
-                    # Text -> transcription (text-mode fallback only)
-                    elif part.text and not ctx.is_native_audio:
-                        silence_state.agent_busy = True
-                        silence_state.awaiting_agent_response = False
-                        await websocket.send_text(json.dumps({
-                            "type": "transcription",
-                            "role": "agent",
-                            "text": part.text,
-                            "partial": not bool(event.turn_complete),
-                        }))
-
-            # Input transcription (user's speech -> text)
-            if event.input_transcription:
-                text = getattr(event.input_transcription, "text", None)
-                finished = getattr(event.input_transcription, "finished", False)
-                if text:
-                    if input_finalized and not finished:
-                        # Suppress late partials after input was already finalized
-                        pass
-                    else:
-                        if input_finalized:
-                            # New final after prior finalization -> new utterance
-                            input_finalized = False
-                        last_input_text = text
-                        receiving_input = True
-                        is_partial = not finished
-                        await websocket.send_text(json.dumps({
-                            "type": "transcription",
-                            "role": "user",
-                            "text": redact_pii(text),
-                            "partial": is_partial,
-                        }))
-                        if finished:
-                            last_input_text = ""
-                            receiving_input = False
-                            input_finalized = True
-
-                        # Arm/reset response latency watchdog
-                        silence_state.awaiting_agent_response = True
-                        silence_state.user_spoke_at = time.monotonic()
-                        silence_state.response_nudge_count = 0
-
-            # Output transcription (agent's speech -> text)
-            if event.output_transcription:
-                text = getattr(event.output_transcription, "text", None)
-                finished = getattr(event.output_transcription, "finished", False)
-                if text:
-                    silence_state.agent_busy = True
-                    if output_finalized and not finished:
-                        # Suppress late partials after output was already finalized
-                        pass
-                    else:
-                        silence_state.awaiting_agent_response = False
-                        if output_finalized:
-                            output_finalized = False
-                        # Agent started responding -> finalize user's input
-                        if receiving_input:
-                            await _finalize_input()
-                        last_output_text = text
-                        is_partial = not finished
-                        await websocket.send_text(json.dumps({
-                            "type": "transcription",
-                            "role": "agent",
-                            "text": text,
-                            "partial": is_partial,
-                        }))
-                        if finished:
-                            last_output_text = ""
-                            output_finalized = True
-
-            # Interrupted -> finalize + clear playback
-            if event.interrupted:
-                await _finalize_input()
-                await _finalize_output()
-                silence_state.agent_busy = False
-                silence_state.awaiting_agent_response = False
-                await websocket.send_text(json.dumps({
-                    "type": "interrupted",
-                    "interrupted": True,
-                }))
-
-            # Agent transfer
-            if event.actions and event.actions.transfer_to_agent:
-                new_agent = event.actions.transfer_to_agent
-                if not isinstance(new_agent, str) or not new_agent.strip():
-                    logger.debug("Ignoring invalid transfer target: %r", new_agent)
-                elif new_agent == current_agent:
-                    logger.debug("Suppressing no-op agent_transfer (already on %s)", new_agent)
-                else:
-                    await websocket.send_text(json.dumps({
-                        "type": "agent_transfer",
-                        "from": current_agent,
-                        "to": new_agent,
-                    }))
-                    current_agent = new_agent
-                    await websocket.send_text(json.dumps({
-                        "type": "agent_status",
-                        "agent": new_agent,
-                        "status": "active",
-                    }))
-
-            # Structured ServerMessages from callbacks/state delta
-            state_delta = event.actions.state_delta if event.actions else None
-            structured = extract_server_message_from_state_delta_fn(state_delta)
-            if structured:
-                raw_id = structured.get("id", 0)
+            async for event in runner_obj.run_live(
+                user_id=ctx.user_id,
+                session_id=ctx.resolved_session_id,
+                live_request_queue=live_request_queue,
+                run_config=ctx.run_config,
+            ):
                 try:
-                    structured_id = int(raw_id)
-                except (TypeError, ValueError):
-                    structured_id = 0
+                    # Audio + Text content
+                    if event.content and event.content.parts:
+                        for part in event.content.parts:
+                            # Audio -> binary WebSocket frame (lowest latency)
+                            if (
+                                part.inline_data
+                                and part.inline_data.data
+                                and part.inline_data.mime_type
+                                and "audio" in part.inline_data.mime_type
+                            ):
+                                silence_state.agent_busy = True
+                                silence_state.awaiting_agent_response = False
+                                audio_bytes = part.inline_data.data
+                                if isinstance(audio_bytes, str):
+                                    audio_bytes = base64.b64decode(audio_bytes)
+                                await websocket.send_bytes(audio_bytes)
 
-                if structured_id > last_structured_message_id:
-                    payload = {k: v for k, v in structured.items() if k != "id"}
-                    await websocket.send_text(json.dumps(payload))
-                    last_structured_message_id = structured_id
+                            # Text -> transcription (text-mode fallback only)
+                            elif part.text and not ctx.is_native_audio:
+                                silence_state.agent_busy = True
+                                silence_state.awaiting_agent_response = False
+                                await websocket.send_text(json.dumps({
+                                    "type": "transcription",
+                                    "role": "agent",
+                                    "text": part.text,
+                                    "partial": not bool(event.turn_complete),
+                                }))
 
-            # Turn complete -> finalize output + status
-            if event.turn_complete:
-                await _finalize_input()
-                await _finalize_output()
-                # Anchor silence nudges to when the agent actually finishes,
-                # not when the user last spoke. This avoids check-in nudges
-                # racing right after a long agent response.
-                now = time.monotonic()
-                silence_state.agent_busy = False
-                if now >= silence_state.last_client_activity:
-                    silence_state.silence_nudge_due_at = now + max(
-                        1.0, float(silence_state.silence_nudge_interval)
-                    )
-                # Reset suppression flags for the next turn
-                input_finalized = False
-                output_finalized = False
-                await websocket.send_text(json.dumps({
-                    "type": "agent_status",
-                    "agent": event.author or current_agent,
-                    "status": "idle",
-                }))
+                    # Input transcription (user's speech -> text)
+                    if event.input_transcription:
+                        text = getattr(event.input_transcription, "text", None)
+                        finished = getattr(event.input_transcription, "finished", False)
+                        if text:
+                            if input_finalized and not finished:
+                                # Suppress late partials after input was already finalized
+                                pass
+                            else:
+                                if input_finalized:
+                                    # New final after prior finalization -> new utterance
+                                    input_finalized = False
+                                last_input_text = text
+                                receiving_input = True
+                                is_partial = not finished
+                                await websocket.send_text(json.dumps({
+                                    "type": "transcription",
+                                    "role": "user",
+                                    "text": redact_pii(text),
+                                    "partial": is_partial,
+                                }))
+                                if finished:
+                                    last_input_text = ""
+                                    receiving_input = False
+                                    input_finalized = True
 
-            # Usage metadata
-            if event.usage_metadata:
-                logger.debug("Token usage: %s", event.usage_metadata)
-                prompt_tokens = usage_int_fn(
-                    event.usage_metadata, "prompt_token_count", "prompt_tokens"
-                )
-                completion_tokens = usage_int_fn(
-                    event.usage_metadata,
-                    "candidates_token_count",
-                    "completion_token_count",
-                    "completion_tokens",
-                )
-                total_tokens = usage_int_fn(
-                    event.usage_metadata, "total_token_count", "total_tokens"
-                )
-                if total_tokens <= 0:
-                    total_tokens = prompt_tokens + completion_tokens
+                                # Arm/reset response latency watchdog
+                                silence_state.awaiting_agent_response = True
+                                silence_state.user_spoke_at = time.monotonic()
+                                silence_state.response_nudge_count = 0
 
-                if total_tokens > 0:
-                    session_prompt_tokens += prompt_tokens
-                    session_completion_tokens += completion_tokens
-                    session_total_tokens += total_tokens
-                    session_cost_usd += (
-                        (prompt_tokens / 1_000_000) * token_price_prompt_per_million
-                        + (completion_tokens / 1_000_000) * token_price_completion_per_million
-                    )
+                    # Output transcription (agent's speech -> text)
+                    if event.output_transcription:
+                        text = getattr(event.output_transcription, "text", None)
+                        finished = getattr(event.output_transcription, "finished", False)
+                        if text:
+                            silence_state.agent_busy = True
+                            if output_finalized and not finished:
+                                # Suppress late partials after output was already finalized
+                                pass
+                            else:
+                                silence_state.awaiting_agent_response = False
+                                if output_finalized:
+                                    output_finalized = False
+                                # Agent started responding -> finalize user's input
+                                if receiving_input:
+                                    await _finalize_input()
+                                last_output_text = text
+                                is_partial = not finished
+                                await websocket.send_text(json.dumps({
+                                    "type": "transcription",
+                                    "role": "agent",
+                                    "text": text,
+                                    "partial": is_partial,
+                                }))
+                                if finished:
+                                    last_output_text = ""
+                                    output_finalized = True
 
-                    if debug_telemetry:
-                        await websocket.send_text(
-                            json.dumps(
-                                {
-                                    "type": "telemetry",
-                                    "promptTokens": prompt_tokens,
-                                    "completionTokens": completion_tokens,
-                                    "totalTokens": total_tokens,
-                                    "sessionPromptTokens": session_prompt_tokens,
-                                    "sessionCompletionTokens": session_completion_tokens,
-                                    "sessionTotalTokens": session_total_tokens,
-                                    "sessionCostUsd": round(session_cost_usd, 6),
-                                }
+                    # Interrupted -> finalize + clear playback
+                    if event.interrupted:
+                        await _finalize_input()
+                        await _finalize_output()
+                        silence_state.agent_busy = False
+                        silence_state.awaiting_agent_response = False
+                        await websocket.send_text(json.dumps({
+                            "type": "interrupted",
+                            "interrupted": True,
+                        }))
+
+                    # Agent transfer
+                    if event.actions and event.actions.transfer_to_agent:
+                        new_agent = event.actions.transfer_to_agent
+                        if not isinstance(new_agent, str) or not new_agent.strip():
+                            logger.debug("Ignoring invalid transfer target: %r", new_agent)
+                        elif new_agent == current_agent:
+                            logger.debug("Suppressing no-op agent_transfer (already on %s)", new_agent)
+                        else:
+                            await websocket.send_text(json.dumps({
+                                "type": "agent_transfer",
+                                "from": current_agent,
+                                "to": new_agent,
+                            }))
+                            current_agent = new_agent
+                            await websocket.send_text(json.dumps({
+                                "type": "agent_status",
+                                "agent": new_agent,
+                                "status": "active",
+                            }))
+
+                    # Structured ServerMessages from callbacks/state delta
+                    state_delta = event.actions.state_delta if event.actions else None
+                    structured = extract_server_message_from_state_delta_fn(state_delta)
+                    if structured:
+                        raw_id = structured.get("id", 0)
+                        try:
+                            structured_id = int(raw_id)
+                        except (TypeError, ValueError):
+                            structured_id = 0
+
+                        if structured_id > last_structured_message_id:
+                            payload = {k: v for k, v in structured.items() if k != "id"}
+                            await websocket.send_text(json.dumps(payload))
+                            last_structured_message_id = structured_id
+
+                    # Turn complete -> finalize output + status
+                    if event.turn_complete:
+                        await _finalize_input()
+                        await _finalize_output()
+                        # Anchor silence nudges to when the agent actually finishes,
+                        # not when the user last spoke. This avoids check-in nudges
+                        # racing right after a long agent response.
+                        now = time.monotonic()
+                        silence_state.agent_busy = False
+                        if now >= silence_state.last_client_activity:
+                            silence_state.silence_nudge_due_at = now + max(
+                                1.0, float(silence_state.silence_nudge_interval)
                             )
+                        # Reset suppression flags for the next turn
+                        input_finalized = False
+                        output_finalized = False
+                        await websocket.send_text(json.dumps({
+                            "type": "agent_status",
+                            "agent": event.author or current_agent,
+                            "status": "idle",
+                        }))
+
+                    # Usage metadata
+                    if event.usage_metadata:
+                        logger.debug("Token usage: %s", event.usage_metadata)
+                        prompt_tokens = usage_int_fn(
+                            event.usage_metadata, "prompt_token_count", "prompt_tokens"
                         )
+                        completion_tokens = usage_int_fn(
+                            event.usage_metadata,
+                            "candidates_token_count",
+                            "completion_token_count",
+                            "completion_tokens",
+                        )
+                        total_tokens = usage_int_fn(
+                            event.usage_metadata, "total_token_count", "total_tokens"
+                        )
+                        if total_tokens <= 0:
+                            total_tokens = prompt_tokens + completion_tokens
 
-            # Session resumption token
-            if event.live_session_resumption_update:
-                logger.debug("Session resumption token received")
-                token_val = getattr(event.live_session_resumption_update, "token", None)
-                if isinstance(token_val, str) and token_val:
-                    await websocket.send_text(json.dumps({
-                        "type": "session_ending",
-                        "reason": "session_resumption",
-                        "resumptionToken": token_val,
-                    }))
+                        if total_tokens > 0:
+                            session_prompt_tokens += prompt_tokens
+                            session_completion_tokens += completion_tokens
+                            session_total_tokens += total_tokens
+                            session_cost_usd += (
+                                (prompt_tokens / 1_000_000) * token_price_prompt_per_million
+                                + (completion_tokens / 1_000_000) * token_price_completion_per_million
+                            )
 
-            # GoAway
-            go_away = getattr(event, "go_away", None)
-            if go_away is not None:
-                time_left = getattr(go_away, "time_left", None)
-                logger.warning("GoAway received, timeLeft=%s", time_left)
+                            if debug_telemetry:
+                                await websocket.send_text(
+                                    json.dumps(
+                                        {
+                                            "type": "telemetry",
+                                            "promptTokens": prompt_tokens,
+                                            "completionTokens": completion_tokens,
+                                            "totalTokens": total_tokens,
+                                            "sessionPromptTokens": session_prompt_tokens,
+                                            "sessionCompletionTokens": session_completion_tokens,
+                                            "sessionTotalTokens": session_total_tokens,
+                                            "sessionCostUsd": round(session_cost_usd, 6),
+                                        }
+                                    )
+                                )
+
+                    # Session resumption token
+                    if event.live_session_resumption_update:
+                        logger.debug("Session resumption token received")
+                        token_val = getattr(event.live_session_resumption_update, "token", None)
+                        if isinstance(token_val, str) and token_val:
+                            session_resumption = getattr(ctx.run_config, "session_resumption", None)
+                            if session_resumption is not None:
+                                try:
+                                    setattr(session_resumption, "handle", token_val)
+                                except Exception:
+                                    logger.debug("Failed to update in-process resumption handle", exc_info=True)
+                            await websocket.send_text(json.dumps({
+                                "type": "session_ending",
+                                "reason": "session_resumption",
+                                "resumptionToken": token_val,
+                            }))
+
+                    # GoAway
+                    go_away = getattr(event, "go_away", None)
+                    if go_away is not None:
+                        time_left = getattr(go_away, "time_left", None)
+                        logger.warning("GoAway received, timeLeft=%s", time_left)
+                        await websocket.send_text(json.dumps({
+                            "type": "session_ending",
+                            "reason": "go_away",
+                            "timeLeftMs": int(time_left.total_seconds() * 1000)
+                            if time_left is not None
+                            else None,
+                        }))
+
+                except Exception as e:
+                    logger.error("Error processing downstream event: %s", e, exc_info=True)
+
+            # Live API session ended naturally (timeout / GoAway completion).
+            # Notify client so it can decide to reconnect gracefully.
+            logger.info(
+                "downstream_task: run_live loop ended for session %s",
+                sanitize_log_fn(ctx.resolved_session_id),
+            )
+            try:
                 await websocket.send_text(json.dumps({
                     "type": "session_ending",
-                    "reason": "go_away",
-                    "timeLeftMs": int(time_left.total_seconds() * 1000)
-                    if time_left is not None
-                    else None,
+                    "reason": "live_session_ended",
                 }))
-
-        except Exception as e:
-            logger.error("Error processing downstream event: %s", e, exc_info=True)
-
-    # Live API session ended naturally (timeout / GoAway completion).
-    # Notify client so it can decide to reconnect gracefully.
-    logger.info(
-        "downstream_task: run_live loop ended for session %s",
-        sanitize_log_fn(ctx.resolved_session_id),
-    )
-    try:
-        await websocket.send_text(json.dumps({
-            "type": "session_ending",
-            "reason": "live_session_ended",
-        }))
-    except Exception:
-        pass  # Client already disconnected; safe to ignore
+            except Exception:
+                pass  # Client already disconnected; safe to ignore
+            return
+        except Exception as exc:
+            if (
+                session_alive.is_set()
+                and retry_attempt < LIVE_STREAM_MAX_RETRIES
+                and _is_retryable_live_error(exc)
+            ):
+                retry_attempt += 1
+                delay = min(LIVE_STREAM_RETRY_BASE_SECONDS * (2 ** (retry_attempt - 1)), 5.0)
+                logger.warning(
+                    "Retrying transient live stream failure attempt=%d/%d delay=%.2fs session=%s",
+                    retry_attempt,
+                    LIVE_STREAM_MAX_RETRIES,
+                    delay,
+                    sanitize_log_fn(ctx.resolved_session_id),
+                    exc_info=True,
+                )
+                await asyncio.sleep(delay)
+                continue
+            raise
 
 
 async def silence_nudge_task(live_request_queue, session_alive: asyncio.Event, silence_state: SilenceState) -> None:

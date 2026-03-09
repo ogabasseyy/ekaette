@@ -401,6 +401,38 @@ class TestVerifyDigest:
             method="INVITE",
         ) is False
 
+    def test_verify_accepts_normalized_username_without_plus(self):
+        """Meta examples use digest usernames without the leading plus."""
+        from sip_bridge.sip_auth import (
+            build_auth_header,
+            build_challenge_header,
+            parse_challenge,
+            verify_digest,
+        )
+
+        challenge = build_challenge_header(status_code=407, realm="test.com")
+        params = parse_challenge(challenge)
+
+        auth_header = build_auth_header(
+            status_code=407,
+            username="2348001234567",
+            realm=params["realm"],
+            password="secret-pass",
+            nonce=params["nonce"],
+            method="INVITE",
+            uri="sip:+2348001234567@test.com",
+            algorithm=params.get("algorithm", "MD5"),
+            qop=params.get("qop"),
+        )
+
+        auth_value = auth_header.split(": ", 1)[1]
+        assert verify_digest(
+            auth_value=auth_value,
+            expected_username="+2348001234567",
+            expected_password="secret-pass",
+            method="INVITE",
+        ) is True
+
     def test_verify_malformed_header_returns_false(self):
         """Malformed auth header should return False, not raise."""
         from sip_bridge.sip_auth import verify_digest

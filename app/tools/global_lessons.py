@@ -10,6 +10,8 @@ Firestore path: tenants/{tenant_id}/companies/{company_id}/global_lessons/{id}
 
 from __future__ import annotations
 
+import asyncio
+import inspect
 import logging
 import re
 import uuid
@@ -87,6 +89,47 @@ def validate_global_lesson(data: Any) -> list[str]:
 # ═══ Load from Firestore ═══
 
 
+def _global_lessons_query(
+    db: Any,
+    *,
+    tenant_id: str,
+    company_id: str,
+) -> Any:
+    return (
+        db.collection("tenants")
+        .document(tenant_id)
+        .collection("companies")
+        .document(company_id)
+        .collection("global_lessons")
+        .where("status", "==", "active")
+        .limit(50)
+    )
+
+
+def _validated_lessons_from_docs(docs: list[Any]) -> list[dict[str, Any]]:
+    lessons: list[dict[str, Any]] = []
+    for doc in docs:
+        data = doc.to_dict()
+        if not isinstance(data, dict):
+            continue
+        validation_errors = validate_global_lesson(data)
+        if validation_errors:
+            logger.debug("Skipping invalid global lesson: %s", doc.id)
+            continue
+        lessons.append(data)
+    return lessons
+
+
+async def _collect_query_docs(query: Any) -> list[Any]:
+    """Collect Firestore query stream results from sync or async clients."""
+    stream_result = query.stream()
+    if inspect.isawaitable(stream_result):
+        stream_result = await stream_result
+    if hasattr(stream_result, "__aiter__"):
+        return [doc async for doc in stream_result]
+    return await asyncio.to_thread(lambda: list(stream_result))
+
+
 def load_global_lessons(
     db: Any,
     *,
@@ -103,27 +146,36 @@ def load_global_lessons(
         return []
 
     try:
-        col = (
-            db.collection("tenants")
-            .document(tenant_id)
-            .collection("companies")
-            .document(company_id)
-            .collection("global_lessons")
+        docs = _global_lessons_query(
+            db, tenant_id=tenant_id, company_id=company_id,
+        ).stream()
+        if inspect.isawaitable(docs) or hasattr(docs, "__aiter__"):
+            logger.warning(
+                "Failed to load global lessons: async Firestore client requires "
+                "aload_global_lessons()"
+            )
+            return []
+        return _validated_lessons_from_docs(list(docs))
+    except Exception as exc:
+        logger.warning("Failed to load global lessons: %s", exc)
+        return []
+
+
+async def aload_global_lessons(
+    db: Any,
+    *,
+    tenant_id: str,
+    company_id: str,
+) -> list[dict[str, Any]]:
+    """Load active global lessons from sync or async Firestore clients."""
+    if db is None:
+        return []
+
+    try:
+        docs = await _collect_query_docs(
+            _global_lessons_query(db, tenant_id=tenant_id, company_id=company_id)
         )
-        docs = col.where("status", "==", "active").limit(50).stream()
-
-        lessons: list[dict[str, Any]] = []
-        for doc in docs:
-            data = doc.to_dict()
-            if not isinstance(data, dict):
-                continue
-            validation_errors = validate_global_lesson(data)
-            if validation_errors:
-                logger.debug("Skipping invalid global lesson: %s", doc.id)
-                continue
-            lessons.append(data)
-
-        return lessons
+        return _validated_lessons_from_docs(docs)
     except Exception as exc:
         logger.warning("Failed to load global lessons: %s", exc)
         return []

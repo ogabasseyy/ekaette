@@ -11,6 +11,8 @@ Covers:
 
 from __future__ import annotations
 
+import base64
+
 # --- Dialog state machine tests ---
 
 
@@ -157,6 +159,17 @@ class TestSDPGeneration:
         )
         assert "c=IN IP4 203.0.113.1" in sdp
 
+    def test_sdp_omits_bundle_and_mid_for_single_audio_answer(self):
+        from sip_bridge.wa_sip_client import generate_sdp_answer
+
+        sdp = generate_sdp_answer(
+            local_ip="203.0.113.1",
+            local_port=30000,
+            payload_type=111,
+        )
+        assert "a=group:BUNDLE" not in sdp
+        assert "a=mid:audio" not in sdp
+
     def test_sdp_returns_key_material(self):
         from sip_bridge.wa_sip_client import generate_sdp_answer
 
@@ -167,6 +180,21 @@ class TestSDPGeneration:
         )
         # SDP string returned — key material is in the crypto line
         assert "inline:" in sdp
+
+    def test_sdp_uses_provided_key_material(self):
+        from sip_bridge.wa_sip_client import generate_sdp_answer
+
+        key_material = bytes(range(30))
+        expected_inline = base64.b64encode(key_material).decode("ascii")
+
+        sdp = generate_sdp_answer(
+            local_ip="10.0.0.1",
+            local_port=30000,
+            payload_type=111,
+            key_material=key_material,
+        )
+
+        assert f"inline:{expected_inline}" in sdp
 
 
 # --- SDP parsing tests ---
@@ -193,6 +221,7 @@ class TestSDPParsing:
         assert result["media_port"] == 3480
         assert result["opus_payload_type"] == 111
         assert result["encode_rate"] == 16000
+        assert result["opus_channels"] == 2
 
     def test_parse_default_encode_rate(self):
         """No maxplaybackrate → default 16000."""
@@ -207,6 +236,21 @@ class TestSDPParsing:
         )
         result = parse_remote_sdp(sdp)
         assert result["encode_rate"] == 16000
+        assert result["opus_channels"] == 2
+
+    def test_parse_opus_channel_count_defaults_to_one_when_signaled(self):
+        from sip_bridge.wa_sip_client import parse_remote_sdp
+
+        sdp = (
+            "v=0\r\n"
+            "m=audio 3480 RTP/SAVP 111\r\n"
+            "c=IN IP4 10.0.0.1\r\n"
+            "a=rtpmap:111 opus/48000/1\r\n"
+            "a=fmtp:111 maxplaybackrate=16000;useinbandfec=1\r\n"
+            "a=crypto:1 AES_CM_128_HMAC_SHA1_80 inline:dGVzdGtleW1hdGVyaWFsMTIzNDU2Nzg5MDEyMzQ=\r\n"
+        )
+        result = parse_remote_sdp(sdp)
+        assert result["opus_channels"] == 1
 
     def test_parse_dtmf_payload_type(self):
         from sip_bridge.wa_sip_client import parse_remote_sdp

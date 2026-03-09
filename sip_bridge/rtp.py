@@ -32,7 +32,11 @@ class RTPPacket:
 
     @classmethod
     def parse(cls, data: bytes) -> RTPPacket | None:
-        """Parse an RTP packet from raw UDP bytes."""
+        """Parse an RTP packet from raw UDP bytes.
+
+        Handles CSRC entries (CC field) and header extensions (X bit)
+        per RFC 3550 §5.1 so the payload starts at the correct offset.
+        """
         if len(data) < RTP_HEADER_SIZE:
             return None
         byte0, byte1, seq, ts, ssrc = struct.unpack("!BBHII", data[:RTP_HEADER_SIZE])
@@ -41,6 +45,33 @@ class RTPPacket:
             return None
         pt = byte1 & 0x7F
         marker = bool(byte1 & 0x80)
+
+        # Skip CSRC entries (CC field, lower 4 bits of byte0)
+        cc = byte0 & 0x0F
+        offset = RTP_HEADER_SIZE + cc * 4
+        if offset > len(data):
+            return None
+
+        # Skip header extension if X bit is set (bit 4 of byte0)
+        has_extension = bool(byte0 & 0x10)
+        if has_extension:
+            # Extension header: 2-byte profile + 2-byte length (in 32-bit words)
+            if offset + 4 > len(data):
+                return None
+            ext_length_words = struct.unpack("!HH", data[offset:offset + 4])[1]
+            offset += 4 + ext_length_words * 4
+            if offset > len(data):
+                return None
+
+        # Handle padding if P bit is set (bit 5 of byte0)
+        padding = 0
+        if byte0 & 0x20 and len(data) > offset:
+            padding = data[-1]
+
+        payload_end = len(data) - padding
+        if payload_end < offset:
+            return None
+
         return cls(
             version=version,
             payload_type=pt,
@@ -48,7 +79,7 @@ class RTPPacket:
             timestamp=ts,
             ssrc=ssrc,
             marker=marker,
-            payload=data[RTP_HEADER_SIZE:],
+            payload=data[offset:payload_end],
         )
 
     def serialize(self) -> bytes:

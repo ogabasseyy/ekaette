@@ -6,6 +6,7 @@ Same frozen-dataclass pattern as BridgeConfig.
 
 from __future__ import annotations
 
+import ipaddress
 import os
 from dataclasses import dataclass
 
@@ -30,6 +31,7 @@ class WhatsAppBridgeConfig:
 
     sip_host: str
     sip_port: int
+    sip_public_ip: str
     sip_username: str
     sip_password: str
     sip_allowed_cidrs: frozenset[str]
@@ -63,6 +65,7 @@ class WhatsAppBridgeConfig:
         return cls(
             sip_host=os.getenv("WA_SIP_HOST", "0.0.0.0"),
             sip_port=int(os.getenv("WA_SIP_PORT", "5061")),
+            sip_public_ip=os.getenv("WA_SIP_PUBLIC_IP", "").strip(),
             sip_username=os.getenv("WA_SIP_USERNAME", ""),
             sip_password=os.getenv("WA_SIP_PASSWORD", ""),
             sip_allowed_cidrs=cidrs,
@@ -119,6 +122,25 @@ class WhatsAppBridgeConfig:
             errors.append("WA_SIP_USERNAME is required (business phone number)")
         if not self.sip_password:
             errors.append("WA_SIP_PASSWORD is required (Meta-generated)")
+        if not self.sandbox_mode and self._requires_public_ip_override() and not self.sip_public_ip:
+            errors.append(
+                "WA_SIP_PUBLIC_IP is required in production when WA_SIP_HOST is wildcard, "
+                "loopback, or private so SIP Contact/SDP advertise a reachable public IPv4"
+            )
+        if self.sip_public_ip:
+            try:
+                advertised_ip = ipaddress.ip_address(self.sip_public_ip)
+                if advertised_ip.version != 4:
+                    errors.append("WA_SIP_PUBLIC_IP must be an IPv4 address")
+                elif (
+                    advertised_ip.is_loopback
+                    or advertised_ip.is_private
+                    or advertised_ip.is_link_local
+                    or advertised_ip.is_unspecified
+                ):
+                    errors.append("WA_SIP_PUBLIC_IP must be a reachable public IPv4 address")
+            except ValueError:
+                errors.append("WA_SIP_PUBLIC_IP must be a valid IPv4 address")
         if not self.sandbox_mode and not self.sip_allowed_cidrs:
             errors.append(
                 "WA_SIP_ALLOWED_CIDRS must be set in production "
@@ -144,3 +166,20 @@ class WhatsAppBridgeConfig:
                 "WA_DEFAULT_PHONE_REGION must be a valid 2-letter ISO 3166-1 alpha-2 country code"
             )
         return errors
+
+    def _requires_public_ip_override(self) -> bool:
+        """True when the bind host is not a routable public IP for SIP signaling."""
+        candidate = self.sip_host.strip()
+        if candidate in {"", "0.0.0.0", "::"}:
+            return True
+        try:
+            bind_ip = ipaddress.ip_address(candidate)
+        except ValueError:
+            return True
+        return (
+            bind_ip.version != 4
+            or bind_ip.is_loopback
+            or bind_ip.is_private
+            or bind_ip.is_link_local
+            or bind_ip.is_unspecified
+        )

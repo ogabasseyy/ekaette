@@ -164,15 +164,21 @@ def verify_digest(
         return False
 
     provided_username = params.get("username")
+    normalized_expected = (expected_username or "").lstrip("+")
+    normalized_provided = (
+        provided_username.lstrip("+")
+        if isinstance(provided_username, str)
+        else ""
+    )
     if (
         not isinstance(provided_username, str)
-        or not hmac.compare_digest(provided_username, expected_username)
+        or not hmac.compare_digest(normalized_provided, normalized_expected)
     ):
         return False
 
     try:
         expected_response = compute_digest_response(
-            username=expected_username,
+            username=provided_username,
             realm=params.get("realm", ""),
             password=expected_password,
             nonce=params.get("nonce", ""),
@@ -266,14 +272,17 @@ def build_challenge_header(
 ) -> str:
     """Build a Proxy-Authenticate (407) or WWW-Authenticate (401) challenge.
 
-    Generates a unique nonce per call.
+    Generates a unique nonce and opaque per call.
+    Meta's SIP gateway requires opaque for 407→re-INVITE correlation.
     """
     nonce = _generate_nonce()
+    opaque = os.urandom(16).hex()
     header_name = "Proxy-Authenticate" if status_code == 407 else "WWW-Authenticate"
 
     return (
         f'{header_name}: Digest realm="{realm}", '
         f'nonce="{nonce}", '
+        f'opaque="{opaque}", '
         f"algorithm={algorithm}, "
         f'qop="{qop}"'
     )

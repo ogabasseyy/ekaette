@@ -9,6 +9,7 @@ import pytest
 
 from app.tools.global_lessons import (
     LESSON_CATEGORIES,
+    aload_global_lessons,
     classify_lesson_scope,
     format_lessons_for_instruction,
     load_global_lessons,
@@ -244,6 +245,56 @@ class TestLoadGlobalLessons:
         mock_db.collection.side_effect = Exception("Firestore down")
         result = load_global_lessons(mock_db, tenant_id="public", company_id="ekaette-electronics")
         assert result == []
+
+    @pytest.mark.asyncio
+    async def test_aload_global_lessons_supports_async_stream(self, mock_db):
+        lessons = [
+            {
+                "id": "lesson-1",
+                "lesson": "Use async query streams safely.",
+                "category": "general",
+                "status": "active",
+            },
+        ]
+
+        mock_docs = []
+        for doc in lessons:
+            mock_doc = MagicMock()
+            mock_doc.to_dict.return_value = doc
+            mock_doc.id = doc["id"]
+            mock_docs.append(mock_doc)
+
+        async def stream_docs():
+            for doc in mock_docs:
+                yield doc
+
+        mock_limited = MagicMock()
+        mock_limited.stream.return_value = stream_docs()
+
+        mock_stream = MagicMock()
+        mock_stream.limit.return_value = mock_limited
+
+        mock_lessons_col = MagicMock()
+        mock_lessons_col.where.return_value = mock_stream
+
+        mock_company_doc = MagicMock()
+        mock_company_doc.collection.return_value = mock_lessons_col
+
+        mock_companies_col = MagicMock()
+        mock_companies_col.document.return_value = mock_company_doc
+
+        mock_tenant_doc = MagicMock()
+        mock_tenant_doc.collection.return_value = mock_companies_col
+
+        mock_tenants_col = MagicMock()
+        mock_tenants_col.document.return_value = mock_tenant_doc
+
+        mock_db.collection.return_value = mock_tenants_col
+
+        result = await aload_global_lessons(
+            mock_db, tenant_id="public", company_id="ekaette-electronics"
+        )
+        assert result == lessons
 
 
 # ═══ Format Lessons for Instruction Injection ═══

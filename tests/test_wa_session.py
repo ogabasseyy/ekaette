@@ -149,7 +149,7 @@ class TestWaSessionOutbound:
         s = WaSession(call_id="wa-call-1", tenant_id="public", company_id="acme")
 
         for _ in range(3):
-            await s.outbound_queue.put(b"\x00" * 200)
+            await s.outbound_queue.put(b"\x00" * 960)
 
         async def run_briefly():
             await asyncio.sleep(0.1)
@@ -160,6 +160,132 @@ class TestWaSessionOutbound:
             tg.create_task(run_briefly())
 
         assert s.frames_sent == 3
+
+    async def test_outbound_buffers_large_pcm_chunk_into_multiple_rtp_frames(self):
+        from unittest.mock import MagicMock
+
+        from sip_bridge.wa_session import WaSession
+
+        mock_srtp = MagicMock()
+        mock_srtp.protect.return_value = b"\x00" * 200
+        mock_codec = MagicMock()
+        mock_codec.encode_from_pcm16_24k.return_value = b"\x00" * 80
+        mock_codec.rtp_payload_type = 111
+        mock_codec.rtp_clock_rate = 48000
+        mock_codec.frame_duration_ms = 20
+
+        s = WaSession(
+            call_id="wa-call-buffered",
+            tenant_id="public",
+            company_id="acme",
+            codec_bridge=mock_codec,
+            srtp_sender=mock_srtp,
+        )
+        await s.outbound_queue.put(b"\x00" * 1920)
+
+        async def run_briefly():
+            await asyncio.sleep(0.1)
+            s.shutdown()
+
+        async with asyncio.TaskGroup() as tg:
+            tg.create_task(s.run())
+            tg.create_task(run_briefly())
+
+        assert s.frames_sent == 2
+        assert mock_codec.encode_from_pcm16_24k.call_count == 2
+
+    async def test_outbound_uses_configured_rtp_stream_state(self):
+        from unittest.mock import MagicMock
+
+        from sip_bridge.rtp import RTPPacket
+        from sip_bridge.wa_session import WaSession
+
+        mock_codec = MagicMock()
+        mock_codec.encode_from_pcm16_24k.return_value = b"\x11" * 80
+        mock_codec.rtp_payload_type = 111
+        mock_codec.rtp_clock_rate = 48000
+        mock_codec.frame_duration_ms = 20
+
+        mock_transport = MagicMock()
+        mock_transport.getsockname.return_value = ("0.0.0.0", 10000)
+
+        s = WaSession(
+            call_id="wa-call-rtp-state",
+            tenant_id="public",
+            company_id="acme",
+            codec_bridge=mock_codec,
+            media_transport=mock_transport,
+            remote_media_addr=("157.240.19.130", 3480),
+            rtp_ssrc=0x11223344,
+            rtp_sequence=1,
+            rtp_timestamp=960,
+        )
+        await s.outbound_queue.put(b"\x00" * 960)
+
+        async def run_briefly():
+            await asyncio.sleep(0.05)
+            s.shutdown()
+
+        async with asyncio.TaskGroup() as tg:
+            tg.create_task(s.run())
+            tg.create_task(run_briefly())
+
+        sent_rtp = mock_transport.sendto.call_args[0][0]
+        pkt = RTPPacket.parse(sent_rtp)
+        assert pkt is not None
+        assert pkt.ssrc == 0x11223344
+        assert pkt.sequence == 1
+        assert pkt.timestamp == 960
+
+    async def test_maiden_srtp_uses_codec_encoder_and_negotiated_payload_type(self, monkeypatch):
+        from unittest.mock import MagicMock
+
+        from sip_bridge.rtp import RTPPacket
+        from sip_bridge.wa_session import WaSession
+
+        async def _no_sleep(_delay: float) -> None:
+            return None
+
+        monkeypatch.setattr("sip_bridge.wa_session.asyncio.sleep", _no_sleep)
+
+        encoded_silence = b"\xaa" * 9
+        mock_codec = MagicMock()
+        mock_codec.rtp_payload_type = 109
+        mock_codec.frame_duration_ms = 20
+        mock_codec.encode_from_pcm16_24k.return_value = encoded_silence
+
+        mock_srtp = MagicMock()
+        mock_srtp.protect.side_effect = lambda rtp: rtp
+
+        mock_transport = MagicMock()
+
+        s = WaSession(
+            call_id="wa-call-maiden",
+            tenant_id="public",
+            company_id="acme",
+            codec_bridge=mock_codec,
+            srtp_sender=mock_srtp,
+            media_transport=mock_transport,
+            remote_media_addr=("157.240.19.130", 3480),
+            rtp_ssrc=0x55667788,
+            rtp_sequence=7,
+            rtp_timestamp=2880,
+        )
+
+        await s._send_maiden_srtp()
+
+        mock_codec.encode_from_pcm16_24k.assert_called_once()
+        maiden_rtp = mock_srtp.protect.call_args[0][0]
+        pkt = RTPPacket.parse(maiden_rtp)
+        assert pkt is not None
+        assert pkt.payload_type == 109
+        assert pkt.payload == encoded_silence
+        assert pkt.ssrc == 0x55667788
+        assert pkt.sequence == 7
+        assert pkt.timestamp == 2880
+        assert pkt.marker is True
+        assert s.rtp_sequence == 8
+        assert s.rtp_timestamp == 3840
 
 
 class TestWaSessionMediaPipeline:
@@ -261,12 +387,16 @@ class TestWaSessionMediaPipeline:
         """_media_outbound_loop must SRTP-protect encoded frames."""
         from unittest.mock import MagicMock
 
+        from sip_bridge.rtp import RTPPacket
         from sip_bridge.wa_session import WaSession
 
         mock_srtp = MagicMock()
         mock_srtp.protect.return_value = b"\x00" * 200
         mock_codec = MagicMock()
         mock_codec.encode_from_pcm16_24k.return_value = b"\x00" * 80
+        mock_codec.rtp_payload_type = 111
+        mock_codec.rtp_clock_rate = 48000
+        mock_codec.frame_duration_ms = 20
 
         s = WaSession(
             call_id="wa-call-1",
@@ -286,6 +416,11 @@ class TestWaSessionMediaPipeline:
             tg.create_task(stop_soon())
 
         mock_srtp.protect.assert_called()
+        protected_arg = mock_srtp.protect.call_args[0][0]
+        parsed = RTPPacket.parse(protected_arg)
+        assert parsed is not None
+        assert parsed.payload_type == 111
+        assert parsed.payload == b"\x00" * 80
 
 
 class TestWaSessionFirestorePersistence:
