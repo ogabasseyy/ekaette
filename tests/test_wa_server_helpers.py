@@ -16,7 +16,7 @@ def test_resolve_advertised_ip_handles_none_public_ip(monkeypatch):
     )
 
     assert isinstance(advertised_ip, str)
-    assert ipaddress.ip_address(advertised_ip)
+    ipaddress.ip_address(advertised_ip)
 
 
 def test_resolve_advertised_ip_prefers_configured_public_ip(monkeypatch):

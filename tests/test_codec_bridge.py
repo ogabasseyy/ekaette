@@ -297,11 +297,8 @@ class TestOpusCodecBridgeChannelBehavior:
         )
         import importlib
 
-        codec_bridge = sys.modules.get("sip_bridge.codec_bridge")
-        if codec_bridge is None:
-            codec_bridge = importlib.import_module("sip_bridge.codec_bridge")
-        else:
-            codec_bridge = importlib.reload(codec_bridge)
+        codec_bridge = importlib.import_module("sip_bridge.codec_bridge")
+        codec_bridge = importlib.reload(codec_bridge)
         OpusCodecBridge = codec_bridge.OpusCodecBridge
 
         mono_bridge = OpusCodecBridge(channels=1)
