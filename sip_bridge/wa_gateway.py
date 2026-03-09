@@ -43,7 +43,7 @@ async def gateway_bidi_loop(session: WaSession) -> None:
 
         send_task = asyncio.create_task(_gateway_send_loop(session))
         recv_task = asyncio.create_task(_gateway_recv_loop(session))
-        task_error: Exception | None = None
+        task_errors: list[Exception] = []
         try:
             done, pending = await asyncio.wait(
                 {send_task, recv_task},
@@ -55,7 +55,7 @@ async def gateway_bidi_loop(session: WaSession) -> None:
                 except asyncio.CancelledError:
                     continue
                 except Exception as exc:
-                    task_error = exc
+                    task_errors.append(exc)
                     logger.warning("Gateway loop task failed", exc_info=True)
             for task in pending:
                 task.cancel()
@@ -67,8 +67,8 @@ async def gateway_bidi_loop(session: WaSession) -> None:
 
         if session._shutdown.is_set():
             return
-        if task_error is not None:
-            logger.warning("Gateway WebSocket disconnected after task error: %s", task_error)
+        if task_errors:
+            logger.warning("Gateway WebSocket disconnected after task errors: %s", task_errors)
         else:
             logger.warning("Gateway WebSocket disconnected, will retry")
 
@@ -184,9 +184,10 @@ async def _handle_gateway_json(session: WaSession, frame) -> None:
         if reason == "live_session_ended":
             session._shutdown.set()
         elif reason == "session_resumption":
-            session.gateway_client.remember_resumption_token(
-                msg.get("resumptionToken", "")
-            )
+            if session.gateway_client is not None:
+                session.gateway_client.remember_resumption_token(
+                    msg.get("resumptionToken", "")
+                )
     elif msg_type == "ping":
         pass
     elif msg_type == "interrupted":
@@ -239,7 +240,7 @@ async def _handle_gateway_json(session: WaSession, frame) -> None:
 async def _on_session_started(session: WaSession, msg: dict) -> None:
     """Handle gateway session_started message."""
     canonical_id = msg.get("sessionId", "")
-    if canonical_id:
+    if canonical_id and session.gateway_client is not None:
         session.gateway_client.remember_canonical_session_id(canonical_id)
     logger.info("Gateway session started: %s", canonical_id)
     if not session._gateway_greeting_sent:
@@ -252,6 +253,7 @@ async def _on_session_started(session: WaSession, msg: dict) -> None:
             }))
         except Exception:
             session._model_speaking = False
+            session._greeting_lock_active = False
             logger.warning(
                 "Failed to send virtual assistant greeting",
                 exc_info=True,

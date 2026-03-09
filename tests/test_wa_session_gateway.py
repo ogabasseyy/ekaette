@@ -14,7 +14,7 @@ import pytest
 
 from sip_bridge.wa_session import SILENCE_FRAME
 from sip_bridge.wa_session import WaSession
-from sip_bridge.wa_gateway import gateway_bidi_loop, _gateway_send_loop, _gateway_recv_loop
+from sip_bridge.wa_gateway import _gateway_send_loop, _gateway_recv_loop
 
 
 # ---------------------------------------------------------------------------
@@ -288,6 +288,93 @@ class TestWaSessionGatewayMode:
         assert s._gateway_greeting_sent is True
         assert s._model_speaking is False
         assert s._greeting_lock_active is False
+
+    @pytest.mark.asyncio
+    async def test_gateway_recv_loop_failed_greeting_resets_lock(self):
+        """A failed greeting send must reset _greeting_lock_active to avoid permanent muting."""
+        from sip_bridge.gateway_client import GatewayFrame
+
+        s = WaSession(call_id="c1", tenant_id="public", company_id="acme")
+        mock_client = MockGatewayClient()
+        mock_client.send_text = AsyncMock(side_effect=RuntimeError("boom"))
+        # Only session_started, no interrupted frame to rescue
+        mock_client._frames_to_yield = [
+            GatewayFrame(
+                is_audio=False,
+                text_data=json.dumps({
+                    "type": "session_started",
+                    "sessionId": "canonical-xyz",
+                }),
+            ),
+        ]
+        s.gateway_client = mock_client
+
+        await _gateway_recv_loop(s)
+
+        assert s._gateway_greeting_sent is True
+        assert s._greeting_lock_active is False, (
+            "_greeting_lock_active must be reset on failed greeting to avoid permanent muting"
+        )
+
+    @pytest.mark.asyncio
+    async def test_gateway_recv_loop_session_started_none_client(self):
+        """session_started with None gateway_client should not raise."""
+        from sip_bridge.gateway_client import GatewayFrame
+
+        s = WaSession(call_id="c1", tenant_id="public", company_id="acme")
+        mock_client = MockGatewayClient()
+        mock_client._frames_to_yield = [
+            GatewayFrame(
+                is_audio=False,
+                text_data=json.dumps({
+                    "type": "session_started",
+                    "sessionId": "canonical-abc",
+                }),
+            ),
+        ]
+        s.gateway_client = mock_client
+
+        # Simulate gateway_client becoming None mid-stream by replacing
+        # the actual client's remember method to set gateway_client to None
+        original_remember = mock_client.remember_canonical_session_id
+        def remember_and_clear(sid):
+            original_remember(sid)
+            s.gateway_client = None
+        mock_client.remember_canonical_session_id = remember_and_clear
+
+        # Should not raise AttributeError
+        await _gateway_recv_loop(s)
+
+    @pytest.mark.asyncio
+    async def test_gateway_recv_loop_session_resumption_none_client(self):
+        """session_resumption with None gateway_client should not raise."""
+        from sip_bridge.gateway_client import GatewayFrame
+
+        s = WaSession(call_id="c1", tenant_id="public", company_id="acme")
+        mock_client = MockGatewayClient()
+        mock_client._frames_to_yield = [
+            GatewayFrame(
+                is_audio=False,
+                text_data=json.dumps({
+                    "type": "session_ending",
+                    "reason": "session_resumption",
+                    "resumptionToken": "tok-123",
+                }),
+            ),
+        ]
+        # Set gateway_client to None to trigger the bug
+        s.gateway_client = mock_client
+
+        # Patch receive to use our mock but gateway_client is None for the method call
+        original_receive = mock_client.receive
+        async def receive_then_clear():
+            async for frame in original_receive():
+                s.gateway_client = None
+                yield frame
+        mock_client.receive = receive_then_clear
+
+        # Should not raise AttributeError
+        await _gateway_recv_loop(s)
 
     @pytest.mark.asyncio
     async def test_gateway_recv_loop_session_ending_shuts_down(self):

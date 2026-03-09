@@ -279,6 +279,16 @@ async def _create_session(
         # Wire media dependencies from SDP (may raise on bad crypto)
         codec_bridge = create_codec_bridge(remote_sdp)
         srtp_sender, srtp_receiver, local_srtp_key = create_srtp_contexts(invite.body or "")
+        if srtp_sender is None or srtp_receiver is None:
+            media_sock.close()
+            logger.warning("WA remote SDP missing SRTP crypto", extra={"call_id": call_id})
+            return build_transaction_response(
+                invite,
+                status_code=488,
+                reason="Not Acceptable Here",
+                call_id=call_id,
+                add_local_to_tag=True,
+            )
         rtp_ssrc = int.from_bytes(os.urandom(4), "big")
         rtp_frame_duration_ms = getattr(codec_bridge, "frame_duration_ms", 20)
         if not isinstance(rtp_frame_duration_ms, int):
@@ -417,5 +427,5 @@ def _build_gateway_client(
         company_id=server.config.company_id,
         industry="",  # omit -- session_init resolves from registry
         caller_phone=caller_phone,
-        ws_secret=getattr(server.config, "gateway_ws_secret", ""),
+        ws_secret=server.config.gateway_ws_secret,
     )

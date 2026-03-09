@@ -907,6 +907,72 @@ class TestSDPErrorHandling:
             assert sock.fileno() == -1, "UDP socket was leaked (not closed after SDP error)"
 
 
+class TestMissingSRTPCrypto:
+    """INVITE with valid media but no SRTP crypto must be rejected."""
+
+    async def test_invite_without_crypto_returns_488(self):
+        """If SDP has no a=crypto line, must reject with 488."""
+        from sip_bridge.sip_auth import build_auth_header, parse_challenge
+        from sip_bridge.sip_tls import SipMessage
+        from sip_bridge.wa_main import WaSIPServer
+
+        config = _make_config(
+            sandbox_mode=True,
+            sip_username="+2348001234567",
+            sip_password="test-pass",
+        )
+        config.gateway_mode = False
+        server = WaSIPServer(config=config)
+
+        # Step 1: INVITE → 407
+        invite1 = _make_invite("call-no-crypto")
+        resp1 = await server.handle_sip_message(invite1, ("10.0.0.1", 5061))
+        assert resp1.status_code == 407
+
+        # Build valid auth
+        challenge_value = resp1.headers["proxy-authenticate"]
+        params = parse_challenge(f"Proxy-Authenticate: {challenge_value}")
+        auth_header = build_auth_header(
+            status_code=407,
+            username="+2348001234567",
+            realm=params["realm"],
+            password="test-pass",
+            nonce=params["nonce"],
+            method="INVITE",
+            uri="sip:+2348001234567@example.com",
+            algorithm=params.get("algorithm", "MD5"),
+            qop=params.get("qop"),
+        )
+        auth_value = auth_header.split(": ", 1)[1]
+
+        # SDP with valid media endpoint but NO a=crypto line
+        no_crypto_sdp = (
+            "v=0\r\n"
+            "m=audio 3480 RTP/SAVP 111\r\n"
+            "c=IN IP4 157.240.19.130\r\n"
+            "a=rtpmap:111 opus/48000/2\r\n"
+            "a=fmtp:111 maxplaybackrate=16000;useinbandfec=1\r\n"
+            "a=ptime:20\r\n"
+        )
+        invite2 = SipMessage(
+            first_line="INVITE sip:+2348001234567@example.com SIP/2.0",
+            headers={
+                "call-id": "call-no-crypto",
+                "from": "<sip:+1234@wa.meta.vc>;tag=from1",
+                "to": "<sip:+5678@example.com>",
+                "via": "SIP/2.0/TLS 10.0.0.1:5061",
+                "cseq": "2 INVITE",
+                "proxy-authorization": auth_value,
+                "content-type": "application/sdp",
+                "content-length": str(len(no_crypto_sdp)),
+            },
+            body=no_crypto_sdp,
+        )
+        resp2 = await server.handle_sip_message(invite2, ("10.0.0.1", 5061))
+        assert resp2.status_code == 488
+        assert "call-no-crypto" not in server.active_sessions
+
+
 class TestMissingRemoteMedia:
     """Finding: INVITE with missing remote media endpoint must be rejected."""
 
