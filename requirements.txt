@@ -20,7 +20,7 @@ africastalking==2.0.2
 httpx>=0.28.1,<0.29
 
 # Document parsing
-kreuzberg==4.4.1
+kreuzberg==4.4.4
 
 # Environment
 python-dotenv==1.2.2
