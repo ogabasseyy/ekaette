@@ -27,7 +27,7 @@
     "vitest": "^4.0.18"
   },
   "dependencies": {
-    "@google/genai": "^1.43.0",
+    "@google/genai": "^1.44.0",
     "@tailwindcss/vite": "^4.2.1",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
