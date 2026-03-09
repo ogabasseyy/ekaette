@@ -1209,6 +1209,7 @@ class TestWaSessionSourceAddrValidation:
             tg.create_task(send_and_stop())
 
         send_sock.close()
+        recv_sock.close()
         assert s.frames_received == 0
 
     async def test_packets_from_wrong_port_are_dropped(self):
@@ -1250,6 +1251,7 @@ class TestWaSessionSourceAddrValidation:
             tg.create_task(send_and_stop())
 
         send_sock.close()
+        recv_sock.close()
         # Packet from wrong source port must NOT reach inbound queue
         assert s.frames_received == 0
 
@@ -1290,6 +1292,7 @@ class TestWaSessionSourceAddrValidation:
             tg.create_task(send_and_stop())
 
         send_sock.close()
+        recv_sock.close()
         assert s.frames_received >= 1
 
 

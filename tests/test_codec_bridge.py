@@ -266,8 +266,6 @@ class TestOpusCodecBridgeChannelBehavior:
     """Channel count should affect wire-side PCM width sent to the encoder."""
 
     def test_channel_count_changes_encoder_input_width(self, monkeypatch):
-        from sip_bridge.codec_bridge import OpusCodecBridge
-
         encoded_inputs: list[tuple[int, int, int]] = []
 
         class FakeEncoder:
@@ -297,6 +295,10 @@ class TestOpusCodecBridgeChannelBehavior:
                 Decoder=FakeDecoder,
             ),
         )
+        import importlib
+
+        codec_bridge = importlib.import_module("sip_bridge.codec_bridge")
+        OpusCodecBridge = codec_bridge.OpusCodecBridge
 
         mono_bridge = OpusCodecBridge(channels=1)
         stereo_bridge = OpusCodecBridge(channels=2)

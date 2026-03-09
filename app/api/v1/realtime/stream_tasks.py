@@ -46,6 +46,14 @@ LIVE_STREAM_RETRY_BASE_SECONDS = max(
     0.1,
     _parse_float_env("LIVE_STREAM_RETRY_BASE_SECONDS", 0.5),
 )
+_CONNECTION_ERRNOS = frozenset({
+    errno.EPIPE,
+    errno.ECONNABORTED,
+    errno.ECONNRESET,
+    errno.ENOTCONN,
+    errno.ETIMEDOUT,
+    errno.ESHUTDOWN,
+})
 
 
 def configure_runtime(**kwargs: Any) -> None:
@@ -87,13 +95,7 @@ def _is_connection_error(exc: Exception) -> bool:
     if isinstance(exc, (WebSocketDisconnect, ConnectionError, TimeoutError)):
         return True
     if isinstance(exc, OSError):
-        return getattr(exc, "errno", None) in {
-            errno.EPIPE,
-            errno.ECONNABORTED,
-            errno.ECONNRESET,
-            errno.ENOTCONN,
-            errno.ETIMEDOUT,
-        }
+        return getattr(exc, "errno", None) in _CONNECTION_ERRNOS
     return False
 
 

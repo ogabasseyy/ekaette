@@ -41,6 +41,11 @@ atomic_sync_dir() {
   gcloud compute ssh "$VM" --zone="$ZONE" --project="$PROJECT" \
     --command="
       set -e
+      cleanup_paths() {
+        rm -rf \"$temp_dir\" 2>/dev/null || true
+        rm -rf \"$staged_dir\" 2>/dev/null || true
+      }
+      trap cleanup_paths EXIT
       synced_path=\"$temp_dir\"
       previous_exists=0
       if [ -d \"$temp_dir/$base_name\" ]; then
@@ -56,10 +61,8 @@ atomic_sync_dir() {
         if [ \"\$previous_exists\" -eq 1 ] && [ -e \"$old_dir\" ]; then
           mv \"$old_dir\" \"$dest_dir\"
         fi
+        rm -rf \"$staged_dir\" 2>/dev/null || true
         exit 1
-      fi
-      if [ -d \"$temp_dir\" ]; then
-        rm -rf \"$temp_dir\"
       fi
     "
 }
