@@ -64,6 +64,8 @@ atomic_sync_dir() {
         rm -rf \"$staged_dir\" 2>/dev/null || true
         exit 1
       fi
+      # Keep a single rollback copy at ${dest_dir}.old.
+      # The next deploy replaces it via the rm -rf/mv above.
     "
 }
 
