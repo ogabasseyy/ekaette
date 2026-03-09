@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import struct
 
 
 class TestWaSessionCreation:
@@ -940,6 +941,47 @@ class TestWaSessionUDPRecvLoop:
         send_sock.close()
         # The inbound queue should have received the packet
         assert s.frames_received >= 1
+
+    async def test_udp_recv_ignores_muxed_rtcp_packets(self):
+        """Muxed RTCP on the RTP port must not enter the audio inbound queue."""
+        import socket as _socket
+
+        from sip_bridge.wa_session import WaSession
+
+        recv_sock = _socket.socket(_socket.AF_INET, _socket.SOCK_DGRAM)
+        recv_sock.bind(("127.0.0.1", 0))
+        recv_sock.setblocking(False)
+        local_port = recv_sock.getsockname()[1]
+
+        send_sock = _socket.socket(_socket.AF_INET, _socket.SOCK_DGRAM)
+        send_sock.bind(("127.0.0.1", 0))
+        send_sock.setblocking(False)
+        sender_port = send_sock.getsockname()[1]
+
+        s = WaSession(
+            call_id="wa-rtcp-ignore-test",
+            tenant_id="public",
+            company_id="acme",
+            media_transport=recv_sock,
+            remote_media_addr=("127.0.0.1", sender_port),
+        )
+
+        async def send_and_stop():
+            await asyncio.sleep(0.05)
+            # RTCP Sender Report packet type 200 on the muxed RTP port.
+            send_sock.sendto(
+                struct.pack("!BBHII", 0x80, 200, 1, 0, 12345) + b"\x00" * 8,
+                ("127.0.0.1", local_port),
+            )
+            await asyncio.sleep(0.15)
+            s.shutdown()
+
+        async with asyncio.TaskGroup() as tg:
+            tg.create_task(s.run())
+            tg.create_task(send_and_stop())
+
+        send_sock.close()
+        assert s.frames_received == 0
 
     async def test_no_recv_loop_without_transport(self):
         """If no media_transport, session should still run without error."""

@@ -1,4 +1,4 @@
-"""RTP packet handling — G.711 μ-law, 20ms frame timing.
+"""RTP packet handling and RTP/RTCP demultiplex helpers.
 
 Adapted from sip-to-ai (Apache 2.0).
 """
@@ -16,6 +16,24 @@ PCMU_PAYLOAD_TYPE = 0
 PCMA_PAYLOAD_TYPE = 8
 FRAME_DURATION_MS = 20
 SAMPLES_PER_FRAME = 160  # 8kHz * 20ms
+RTCP_PACKET_TYPE_MIN = 192
+RTCP_PACKET_TYPE_MAX = 223
+
+
+def is_rtcp_packet(data: bytes) -> bool:
+    """Return True when a muxed packet is RTCP/SRTCP, not RTP/SRTP.
+
+    With RTP/RTCP mux (RFC 5761), RTCP packet types occupy the second-octet
+    range 192-223. Valid muxed RTP payload types avoid colliding with that
+    range, so this is safe for demultiplexing before SRTP unprotect.
+    """
+    if len(data) < RTP_HEADER_SIZE:
+        return False
+    version = (data[0] >> 6) & 0x03
+    if version != 2:
+        return False
+    packet_type = data[1]
+    return RTCP_PACKET_TYPE_MIN <= packet_type <= RTCP_PACKET_TYPE_MAX
 
 
 @dataclass(slots=True)

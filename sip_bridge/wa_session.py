@@ -567,6 +567,8 @@ class WaSession:
 
     async def _media_recv_loop(self) -> None:
         """Read SRTP packets from UDP socket and feed into inbound queue."""
+        from .rtp import is_rtcp_packet
+
         loop = asyncio.get_running_loop()
         use_symmetric_rtp = (
             os.getenv("WA_SIP_SYMMETRIC_RTP", "")
@@ -622,6 +624,10 @@ class WaSession:
                 first_byte = data[0]
                 if first_byte < 128 or first_byte > 191:
                     # Not RTP (version 2): likely STUN (0-3) or DTLS (20-63)
+                    continue
+                if is_rtcp_packet(data):
+                    # a=rtcp-mux means RTCP shares the RTP port; this audio path
+                    # only forwards SRTP voice packets to the decoder.
                     continue
                 await self.feed_inbound(data)
             except TimeoutError:

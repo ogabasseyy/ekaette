@@ -20,6 +20,7 @@ from sip_bridge.rtp import (
     PCMU_PAYLOAD_TYPE,
     RTPPacket,
     RTPTimer,
+    is_rtcp_packet,
 )
 
 
@@ -149,6 +150,14 @@ class TestRTPPacket:
         pkt = RTPPacket.parse(raw)
         assert pkt is not None
         assert pkt.payload == payload
+
+    def test_is_rtcp_packet_detects_muxed_rtcp(self) -> None:
+        raw = struct.pack("!BBHII", 0x80, 200, 1, 0, 12345) + b"\x00" * 8
+        assert is_rtcp_packet(raw) is True
+
+    def test_is_rtcp_packet_does_not_misclassify_opus_rtp(self) -> None:
+        raw = self._make_rtp(pt=111, payload=b"\x00" * 20)
+        assert is_rtcp_packet(raw) is False
 
 
 # ── RTP Timer ──
