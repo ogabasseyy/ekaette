@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
 import type { TranscriptMessage } from '../../lib/transcript'
-import { cn } from '../../lib/utils'
+import { cn, withStableKeys } from '../../lib/utils'
 
 interface TranscriptionOverlayProps {
   messages: TranscriptMessage[]
@@ -52,9 +52,12 @@ export function TranscriptionOverlay({ messages }: TranscriptionOverlayProps) {
           </div>
         )}
 
-        {messages.map((message, index) => (
+        {withStableKeys(
+          messages,
+          message => `${message.role}:${message.partial ? '1' : '0'}:${message.text}`,
+        ).map(({ item: message, key }) => (
           <article
-            key={`${index}-${message.role}-${message.partial ? '1' : '0'}`}
+            key={key}
             className={cn(
               'message-bubble transcript-row',
               message.role === 'user' ? 'message-user ml-auto' : 'message-agent mr-auto',
