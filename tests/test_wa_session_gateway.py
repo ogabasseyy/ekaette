@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from sip_bridge.wa_session import SILENCE_FRAME
 from sip_bridge.wa_session import WaSession
 
 
@@ -84,6 +85,49 @@ class TestWaSessionGatewayMode:
         original_send.assert_called_once_with(pcm16)
 
     @pytest.mark.asyncio
+    async def test_gateway_send_loop_mutes_only_during_greeting_lock(self):
+        """Greeting lock should mute caller audio during the non-interruptible greeting."""
+        s = WaSession(call_id="c1", tenant_id="public", company_id="acme")
+        mock_client = MockGatewayClient()
+        original_send = mock_client.send_audio
+
+        async def send_and_stop(data):
+            await original_send(data)
+            s._shutdown.set()
+
+        mock_client.send_audio = send_and_stop
+        s.gateway_client = mock_client
+        s._greeting_lock_active = True
+
+        pcm16 = b"\x01\x02" * 320
+        await s._gemini_in_queue.put(pcm16)
+
+        await s._gateway_send_loop()
+        original_send.assert_called_once_with(SILENCE_FRAME)
+
+    @pytest.mark.asyncio
+    async def test_gateway_send_loop_keeps_caller_audio_after_greeting(self):
+        """Post-greeting speech should remain interruptible."""
+        s = WaSession(call_id="c1", tenant_id="public", company_id="acme")
+        mock_client = MockGatewayClient()
+        original_send = mock_client.send_audio
+
+        async def send_and_stop(data):
+            await original_send(data)
+            s._shutdown.set()
+
+        mock_client.send_audio = send_and_stop
+        s.gateway_client = mock_client
+        s._model_speaking = True
+        s._greeting_lock_active = False
+
+        pcm16 = b"\x01\x02" * 320
+        await s._gemini_in_queue.put(pcm16)
+
+        await s._gateway_send_loop()
+        original_send.assert_called_once_with(pcm16)
+
+    @pytest.mark.asyncio
     async def test_gateway_recv_loop_routes_audio(self):
         """Audio from gateway goes to outbound_queue."""
         from sip_bridge.gateway_client import GatewayFrame
@@ -124,6 +168,7 @@ class TestWaSessionGatewayMode:
 
         s = WaSession(call_id="c1", tenant_id="public", company_id="acme")
         s._model_speaking = True
+        s.outbound_queue.put_nowait(b"\x00" * 100)
         mock_client = MockGatewayClient()
         mock_client._frames_to_yield = [
             GatewayFrame(
@@ -135,6 +180,7 @@ class TestWaSessionGatewayMode:
 
         await s._gateway_recv_loop()
         assert s._model_speaking is False
+        assert s.outbound_queue.empty()
 
     @pytest.mark.asyncio
     async def test_gateway_recv_loop_sends_virtual_assistant_greeting_once(self):
@@ -165,6 +211,7 @@ class TestWaSessionGatewayMode:
         assert mock_client.canonical_session_id == "canonical-xyz"
         assert s._gateway_greeting_sent is True
         assert s._model_speaking is False
+        assert s._greeting_lock_active is True
 
     @pytest.mark.asyncio
     async def test_gateway_recv_loop_skips_duplicate_greeting_on_resume(self):
@@ -201,6 +248,7 @@ class TestWaSessionGatewayMode:
         assert mock_client.canonical_session_id == "canonical-2"
         assert s._gateway_greeting_sent is True
         assert s._model_speaking is False
+        assert s._greeting_lock_active is False
 
     @pytest.mark.asyncio
     async def test_gateway_recv_loop_marks_failed_greeting_as_sent(self):
@@ -238,6 +286,7 @@ class TestWaSessionGatewayMode:
         assert mock_client.canonical_session_id == "canonical-resumed"
         assert s._gateway_greeting_sent is True
         assert s._model_speaking is False
+        assert s._greeting_lock_active is False
 
     @pytest.mark.asyncio
     async def test_gateway_recv_loop_session_ending_shuts_down(self):

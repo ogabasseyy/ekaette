@@ -120,6 +120,107 @@ class TestSearchCatalog:
         assert result["products"] == []
 
     @pytest.mark.asyncio
+    async def test_query_with_storage_variant_returns_matching_variant_only(self):
+        """Storage-specific queries should require that variant and return its price."""
+        from app.tools.catalog_tools import search_catalog
+
+        products = [
+            {
+                "id": "prod-iphone-15-pro-max",
+                "name": "iPhone 15 Pro Max",
+                "price": 950_000,
+                "currency": "NGN",
+                "category": "smartphones",
+                "brand": "Apple",
+                "in_stock": True,
+                "storage_variants": [
+                    {"storage": "256GB", "price": 950_000},
+                    {"storage": "512GB", "price": 1_100_000},
+                ],
+            },
+            {
+                "id": "prod-iphone-15-pro",
+                "name": "iPhone 15 Pro",
+                "price": 850_000,
+                "currency": "NGN",
+                "category": "smartphones",
+                "brand": "Apple",
+                "in_stock": True,
+                "storage_variants": [
+                    {"storage": "128GB", "price": 850_000},
+                    {"storage": "256GB", "price": 950_000},
+                ],
+            },
+        ]
+        mock_query = MagicMock()
+        docs = []
+        for prod in products:
+            doc = MagicMock()
+            doc.id = prod["id"]
+            doc.to_dict.return_value = prod
+            docs.append(doc)
+
+        mock_query.limit.return_value = mock_query
+        mock_query.stream.return_value = iter(docs)
+
+        with (
+            patch("app.tools.catalog_tools._get_firestore_db", return_value=MagicMock()),
+            patch("app.tools.catalog_tools.scoped_collection", return_value=mock_query),
+        ):
+            result = await search_catalog(query="iPhone 15 Pro 128GB")
+
+        assert [item["name"] for item in result["products"]] == ["iPhone 15 Pro"]
+        assert result["products"][0]["storage"] == "128GB"
+        assert result["products"][0]["price"] == 850_000
+
+    @pytest.mark.asyncio
+    async def test_query_with_model_number_filters_other_iphone_models(self):
+        """Numeric model tokens like 14/15 should constrain otherwise similar matches."""
+        from app.tools.catalog_tools import search_catalog
+
+        products = [
+            {
+                "id": "prod-iphone-15-pro",
+                "name": "iPhone 15 Pro",
+                "price": 850_000,
+                "currency": "NGN",
+                "category": "smartphones",
+                "brand": "Apple",
+                "in_stock": True,
+                "storage_variants": [{"storage": "128GB", "price": 850_000}],
+            },
+            {
+                "id": "prod-iphone-14",
+                "name": "iPhone 14",
+                "price": 520_000,
+                "currency": "NGN",
+                "category": "smartphones",
+                "brand": "Apple",
+                "in_stock": True,
+                "storage_variants": [{"storage": "128GB", "price": 520_000}],
+            },
+        ]
+        mock_query = MagicMock()
+        docs = []
+        for prod in products:
+            doc = MagicMock()
+            doc.id = prod["id"]
+            doc.to_dict.return_value = prod
+            docs.append(doc)
+
+        mock_query.limit.return_value = mock_query
+        mock_query.stream.return_value = iter(docs)
+
+        with (
+            patch("app.tools.catalog_tools._get_firestore_db", return_value=MagicMock()),
+            patch("app.tools.catalog_tools.scoped_collection", return_value=mock_query),
+        ):
+            result = await search_catalog(query="iPhone 14 128GB")
+
+        assert [item["name"] for item in result["products"]] == ["iPhone 14"]
+        assert result["products"][0]["storage"] == "128GB"
+
+    @pytest.mark.asyncio
     async def test_filters_by_category(self):
         """Should filter by category when provided."""
         from app.tools.catalog_tools import search_catalog

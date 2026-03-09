@@ -36,7 +36,7 @@ DEFAULT_COMPANY_PROFILE: dict[str, Any] = {
 
 LOCAL_COMPANY_PROFILES: dict[str, dict[str, Any]] = {
     "ekaette-electronics": {
-        "name": "Ogabassey Gadgets",
+        "name": "Awgabassey Gadgets",
         "overview": "Trade-in focused electronics store serving Lagos and Abuja.",
         "facts": {
             "primary_location": "Lagos - Ikeja",
@@ -590,8 +590,10 @@ def build_company_session_state(
         if item.get("text") or item.get("title")
     ]
 
+    company_name = str(normalized_profile.get("name", "")).strip() or "Company"
     return {
         "app:company_id": normalized_id,
+        "app:company_name": company_name,
         "app:company_profile": normalized_profile,
         "app:company_knowledge": normalized_knowledge,
     }

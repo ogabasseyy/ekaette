@@ -24,6 +24,7 @@ from app.tools.global_lessons import format_lessons_for_instruction
 logger = logging.getLogger(__name__)
 
 _PRICE_PATTERN = re.compile(r"\b\d[\d,]{2,}\b")
+_STORAGE_PATTERN = re.compile(r"\b\d+(?:gb|tb)\b", flags=re.IGNORECASE)
 
 # ═══ Capability Guard ═══
 
@@ -541,6 +542,24 @@ async def before_tool_log(
     redacted_args = dict(args)
     if "image_base64" in redacted_args:
         redacted_args["image_base64"] = "<redacted>"
+    if tool.name == "search_catalog":
+        query_raw = redacted_args.get("query")
+        category_raw = redacted_args.get("category")
+        query = query_raw if isinstance(query_raw, str) else ""
+        category = category_raw if isinstance(category_raw, str) else ""
+        storage_tokens = sorted(
+            {match.group(0).lower() for match in _STORAGE_PATTERN.finditer(query)}
+        )
+        logger.info(
+            "tool_start agent=%s tool=%s query=%r category=%r storage=%s args=%s",
+            tool_context.agent_name,
+            tool.name,
+            query[:160],
+            category[:80],
+            storage_tokens,
+            sorted(redacted_args.keys()),
+        )
+        return None
     logger.info(
         "tool_start agent=%s tool=%s args=%s",
         tool_context.agent_name,

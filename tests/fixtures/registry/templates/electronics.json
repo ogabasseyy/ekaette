@@ -12,7 +12,7 @@
     "title": "Electronics Trade Desk",
     "hint": "Inspect. Value. Negotiate. Book pickup."
   },
-  "capabilities": ["catalog_lookup", "valuation_tradein", "booking_reservations", "outbound_messaging"],
+  "capabilities": ["catalog_lookup", "valuation_tradein", "booking_reservations", "policy_qa", "connector_dispatch", "outbound_messaging"],
   "enabled_agents": ["vision_agent", "valuation_agent", "booking_agent", "catalog_agent", "support_agent"],
   "connectors_supported": ["crm"],
   "status": "active"

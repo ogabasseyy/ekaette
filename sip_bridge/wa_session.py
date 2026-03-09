@@ -51,6 +51,26 @@ SILENCE_FRAME = b"\x00" * 640  # 20ms of silence at 16kHz
 ECHO_HOLDOFF_SEC = 0.5
 
 
+def build_wa_vad_config():
+    """Build VAD config optimized for WhatsApp telephone audio (2026 best practices).
+
+    Same telephone-optimized values as AT bridge. Env vars use WA_ prefix.
+    """
+    from google.genai import types
+
+    return types.RealtimeInputConfig(
+        automatic_activity_detection=types.AutomaticActivityDetection(
+            disabled=False,
+            startOfSpeechSensitivity=types.StartSensitivity.START_SENSITIVITY_LOW,
+            endOfSpeechSensitivity=types.EndSensitivity.END_SENSITIVITY_LOW,
+            prefixPaddingMs=int(os.getenv("WA_AUTO_VAD_PREFIX_PADDING_MS", "120")),
+            silenceDurationMs=int(os.getenv("WA_AUTO_VAD_SILENCE_DURATION_MS", "450")),
+        ),
+        activity_handling=types.ActivityHandling.START_OF_ACTIVITY_INTERRUPTS,
+        turn_coverage=types.TurnCoverage.TURN_INCLUDES_ONLY_ACTIVITY,
+    )
+
+
 def compute_rtp_timestamp_increment(clock_rate: int, frame_duration_ms: int) -> int:
     """Compute RTP timestamp increment per frame.
 
@@ -119,6 +139,7 @@ class WaSession:
     _model_speaking: bool = False
     _model_speech_end_time: float = 0.0
     _gateway_greeting_sent: bool = False
+    _greeting_lock_active: bool = False
     _last_model_audio_at: float = 0.0
     _gateway_audio_frames_received: int = 0
     _gateway_audio_bytes_received: int = 0
@@ -140,6 +161,14 @@ class WaSession:
     def notify_ack(self) -> None:
         """Called by SIP server when ACK is received for this call."""
         self._ack_event.set()
+
+    def _clear_outbound_audio(self) -> None:
+        """Drop queued playback so interrupted speech stops immediately."""
+        while True:
+            try:
+                self.outbound_queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
 
     async def run(self) -> None:
         """Run the three concurrent tasks. Cancels all on first failure."""
@@ -219,19 +248,7 @@ class WaSession:
                         )
                     )
                 else:
-                    live_config["realtime_input_config"] = types.RealtimeInputConfig(
-                        automatic_activity_detection=types.AutomaticActivityDetection(
-                            disabled=False,
-                            startOfSpeechSensitivity=getattr(
-                                types.StartSensitivity, "START_SENSITIVITY_LOW", None
-                            ),
-                            endOfSpeechSensitivity=getattr(
-                                types.EndSensitivity, "END_SENSITIVITY_LOW", None
-                            ),
-                            prefixPaddingMs=int(os.getenv("SIP_AUTO_VAD_PREFIX_PADDING_MS", "300")),
-                            silenceDurationMs=int(os.getenv("SIP_AUTO_VAD_SILENCE_DURATION_MS", "1500")),
-                        )
-                    )
+                    live_config["realtime_input_config"] = build_wa_vad_config()
 
                 client = genai.Client(
                     api_key=self.gemini_api_key,
@@ -897,7 +914,13 @@ class WaSession:
         self._shutdown.set()
 
     async def _gateway_send_loop(self) -> None:
-        """Read PCM16 from inbound pipeline, send to Cloud Run."""
+        """Read PCM16 from inbound pipeline, send to Cloud Run.
+
+        In gateway mode the first greeting is non-interruptible, so we mute caller
+        audio only while that greeting lock is active. After the greeting finishes,
+        we keep streaming real caller audio upstream so Cloud Run/Gemini can detect
+        interruption and barge-in for later speech.
+        """
         while not self._shutdown.is_set():
             try:
                 pcm16 = await asyncio.wait_for(
@@ -905,23 +928,6 @@ class WaSession:
                 )
             except TimeoutError:
                 continue
-
-            if (
-                self._model_speaking
-                and self._last_model_audio_at > 0.0
-                and (time.time() - self._last_model_audio_at) > GATEWAY_AUDIO_STALL_UNMUTE_SEC
-            ):
-                self._model_speaking = False
-                self._model_speech_end_time = time.time()
-                logger.info(
-                    "Gateway audio stalled; clearing model_speaking mute call_id=%s",
-                    self.call_id,
-                )
-
-            echo_muted = (
-                self._model_speaking
-                or (time.time() - self._model_speech_end_time) < ECHO_HOLDOFF_SEC
-            )
             gateway_client = self.gateway_client
             if gateway_client is None:
                 await asyncio.sleep(0.05)
@@ -931,11 +937,13 @@ class WaSession:
                 logger.info(
                     "Gateway send frame=%d muted=%s bytes=%d call_id=%s",
                     self._gateway_send_frames,
-                    echo_muted,
+                    self._greeting_lock_active,
                     len(pcm16),
                     self.call_id,
                 )
-            await gateway_client.send_audio(SILENCE_FRAME if echo_muted else pcm16)
+            await gateway_client.send_audio(
+                SILENCE_FRAME if self._greeting_lock_active else pcm16
+            )
 
     async def _gateway_recv_loop(self) -> None:
         """Receive from Cloud Run, route audio to outbound, handle JSON protocol."""
@@ -1002,8 +1010,9 @@ class WaSession:
                     if not self._gateway_greeting_sent:
                         # Trigger the virtual assistant greeting once per call.
                         # Do not pre-emptively mute caller audio here. We only
-                        # enable echo suppression once gateway audio actually starts.
+                        # lock interruption for the first greeting turn only.
                         self._gateway_greeting_sent = True
+                        self._greeting_lock_active = True
                         try:
                             await self.gateway_client.send_text(json.dumps({
                                 "type": "text",
@@ -1029,7 +1038,9 @@ class WaSession:
                 elif msg_type == "interrupted":
                     logger.info("Gateway interrupted call_id=%s", self.call_id)
                     self._model_speaking = False
+                    self._greeting_lock_active = False
                     self._model_speech_end_time = time.time()
+                    self._clear_outbound_audio()
                 elif msg_type == "agent_status":
                     logger.info(
                         "Gateway agent_status=%s call_id=%s",
@@ -1038,6 +1049,7 @@ class WaSession:
                     )
                     if msg.get("status") == "idle":
                         self._model_speaking = False
+                        self._greeting_lock_active = False
                         self._model_speech_end_time = time.time()
                 elif msg_type == "agent_transfer":
                     logger.info(

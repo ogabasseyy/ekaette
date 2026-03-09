@@ -109,6 +109,8 @@ _QUERY_ALIAS_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"\bsecurity\s+cam(?:era)?s?\b", flags=re.IGNORECASE), "cctv"),
 )
 
+_STORAGE_TOKEN_PATTERN = re.compile(r"^(?:\d+gb|\d+tb)$", flags=re.IGNORECASE)
+
 
 def _get_firestore_db() -> Any | None:
     """Get or create Firestore client. Returns None if unavailable."""
@@ -140,14 +142,71 @@ def _significant_query_tokens(query: str) -> list[str]:
     return [
         token
         for token in _normalized_tokens(normalized_query)
-        if len(token) >= 3 and token not in _QUERY_STOPWORDS
+        if (len(token) >= 3 or token.isdigit()) and token not in _QUERY_STOPWORDS
     ]
+
+
+def _extract_storage_tokens(query: str) -> set[str]:
+    normalized_query = _normalize_query_text(query)
+    return {
+        token
+        for token in _normalized_tokens(normalized_query)
+        if _STORAGE_TOKEN_PATTERN.fullmatch(token)
+    }
+
+
+def _product_storage_tokens(product: dict[str, Any]) -> set[str]:
+    tokens: set[str] = set()
+    variants = product.get("storage_variants")
+    if isinstance(variants, list):
+        for variant in variants:
+            if not isinstance(variant, dict):
+                continue
+            storage = variant.get("storage")
+            if not isinstance(storage, str):
+                continue
+            normalized = "".join(storage.lower().split())
+            if _STORAGE_TOKEN_PATTERN.fullmatch(normalized):
+                tokens.add(normalized)
+    features = product.get("features")
+    if isinstance(features, list):
+        for item in features:
+            if not isinstance(item, str):
+                continue
+            for token in _normalized_tokens(item):
+                if _STORAGE_TOKEN_PATTERN.fullmatch(token):
+                    tokens.add(token)
+    return tokens
+
+
+def _matched_storage_variant(product: dict[str, Any], query: str) -> dict[str, Any] | None:
+    requested_storage = _extract_storage_tokens(query)
+    if not requested_storage:
+        return None
+    variants = product.get("storage_variants")
+    if not isinstance(variants, list):
+        return None
+    for variant in variants:
+        if not isinstance(variant, dict):
+            continue
+        storage = variant.get("storage")
+        if not isinstance(storage, str):
+            continue
+        normalized = "".join(storage.lower().split())
+        if normalized in requested_storage:
+            return variant
+    return None
 
 
 def _product_matches_query(product: dict[str, Any], query: str) -> bool:
     tokens = _significant_query_tokens(query)
     if not tokens:
         return True
+
+    storage_tokens = _extract_storage_tokens(query)
+    if storage_tokens:
+        if not storage_tokens.issubset(_product_storage_tokens(product)):
+            return False
 
     features = product.get("features", [])
     haystack_parts = [
@@ -156,20 +215,31 @@ def _product_matches_query(product: dict[str, Any], query: str) -> bool:
         str(product.get("category", "")),
         str(product.get("description", "")),
         " ".join(str(item) for item in features) if isinstance(features, list) else "",
+        " ".join(sorted(_product_storage_tokens(product))),
     ]
     haystack = " ".join(haystack_parts).lower()
     haystack_tokens = set(_normalized_tokens(haystack))
 
+    numeric_tokens = {token for token in tokens if token.isdigit()}
+    if numeric_tokens and not numeric_tokens.issubset(haystack_tokens):
+        return False
+
     matches = 0
-    for token in tokens:
+    non_storage_tokens = [token for token in tokens if token not in storage_tokens]
+    for token in non_storage_tokens:
         if token in haystack_tokens or token in haystack:
             matches += 1
 
-    if len(tokens) == 1:
+    token_count = len(non_storage_tokens)
+    if token_count == 0:
+        return True
+    if storage_tokens or numeric_tokens:
+        return matches == token_count
+    if token_count == 1:
         return matches == 1
-    if len(tokens) == 2:
+    if token_count == 2:
         return matches >= 1
-    return matches >= max(2, (len(tokens) + 1) // 2)
+    return matches >= max(2, (token_count + 1) // 2)
 
 
 def _canonical_category(value: str) -> str:
@@ -213,18 +283,24 @@ def _fallback_products(query: str, category: str | None, max_results: int) -> li
             continue
         if not _product_matches_query(item, query):
             continue
-        products.append(_format_product(dict(item)))
+        products.append(_format_product(dict(item), query=query))
         if len(products) >= safe_max:
             break
     return products
 
 
-def _format_product(product: dict[str, Any]) -> dict[str, Any]:
+def _format_product(product: dict[str, Any], *, query: str = "") -> dict[str, Any]:
     """Format a product for display, flattening storage variants into the price field."""
     variants = product.get("storage_variants")
     if not variants or not isinstance(variants, list):
         return product
     formatted = dict(product)
+    matched_variant = _matched_storage_variant(product, query)
+    if matched_variant is not None:
+        formatted["price"] = matched_variant.get("price", formatted.get("price"))
+        formatted["storage"] = matched_variant.get("storage", "")
+        formatted.pop("storage_variants", None)
+        return formatted
     # Replace flat price with variant breakdown
     default_currency = formatted.get("currency", "₦")
     prices = [
@@ -300,7 +376,7 @@ async def search_catalog(
                 continue
             if not _product_matches_query(product, query_text):
                 continue
-            products.append(_format_product(product))
+            products.append(_format_product(product, query=query_text))
             if len(products) >= safe_max:
                 break
 

@@ -36,7 +36,7 @@ def _seed_registry(db: FakeFirestoreDB) -> None:
             "accent": "oklch(74% 0.21 158)",
             "title": "Electronics Trade Desk",
         },
-        "capabilities": ["catalog_lookup", "valuation_tradein", "booking_reservations", "outbound_messaging"],
+        "capabilities": ["catalog_lookup", "valuation_tradein", "booking_reservations", "policy_qa", "connector_dispatch", "outbound_messaging"],
         "enabled_agents": ["support_agent"],
         "connectors_supported": ["crm"],
         "status": "active",
@@ -64,7 +64,7 @@ def _seed_registry(db: FakeFirestoreDB) -> None:
         "company_id": "ekaette-electronics",
         "tenant_id": "public",
         "industry_template_id": "electronics",
-        "display_name": "Ogabassey Gadgets",
+        "display_name": "Awgabassey Gadgets",
         "overview": "Trade-in focused electronics store.",
         "facts": {"primary_location": "Lagos"},
         "links": [],
@@ -158,7 +158,7 @@ class TestRegistryFirstNoFallback:
 
         assert profile["company_id"] == "ekaette-electronics"
         # Registry name comes from display_name field
-        assert "Ogabassey Gadgets" in profile.get("name", "")
+        assert "Awgabassey Gadgets" in profile.get("name", "")
 
     @pytest.mark.asyncio
     async def test_load_company_knowledge_returns_registry_data(
@@ -510,7 +510,7 @@ class TestLocalFallbackTestOnly:
             )
             assert profile["name"] != "SENTINEL_COMPANY"
         finally:
-            LOCAL_COMPANY_PROFILES["ekaette-electronics"]["name"] = "Ogabassey Gadgets"
+            LOCAL_COMPANY_PROFILES["ekaette-electronics"]["name"] = "Awgabassey Gadgets"
 
     def test_seed_data_has_deprecation_notice(self) -> None:
         """seed_data.py should have a deprecation notice pointing to registry CLI."""

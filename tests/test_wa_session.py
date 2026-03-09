@@ -1380,3 +1380,60 @@ class TestWaCallStateTTLCleanup:
         from sip_bridge.wa_session import cleanup_stale_calls
 
         assert cleanup_stale_calls(None, ttl_seconds=3600) == 0
+
+
+class TestWaVadConfig:
+    """WA bridge VAD config (2026 telephone best practices)."""
+
+    def test_build_returns_realtime_input_config(self):
+        from google.genai import types
+        from sip_bridge.wa_session import build_wa_vad_config
+
+        config = build_wa_vad_config()
+        assert isinstance(config, types.RealtimeInputConfig)
+
+    def test_vad_not_disabled(self):
+        from sip_bridge.wa_session import build_wa_vad_config
+
+        config = build_wa_vad_config()
+        assert config.automatic_activity_detection.disabled is False
+
+    def test_prefix_padding_120ms_default(self):
+        from sip_bridge.wa_session import build_wa_vad_config
+
+        config = build_wa_vad_config()
+        assert config.automatic_activity_detection.prefix_padding_ms == 120
+
+    def test_silence_duration_450ms_default(self):
+        from sip_bridge.wa_session import build_wa_vad_config
+
+        config = build_wa_vad_config()
+        assert config.automatic_activity_detection.silence_duration_ms == 450
+
+    def test_turn_coverage_activity_only(self):
+        from google.genai import types
+        from sip_bridge.wa_session import build_wa_vad_config
+
+        config = build_wa_vad_config()
+        assert config.turn_coverage == types.TurnCoverage.TURN_INCLUDES_ONLY_ACTIVITY
+
+    def test_activity_handling_interrupts(self):
+        from google.genai import types
+        from sip_bridge.wa_session import build_wa_vad_config
+
+        config = build_wa_vad_config()
+        assert config.activity_handling == types.ActivityHandling.START_OF_ACTIVITY_INTERRUPTS
+
+    def test_env_override_prefix_padding(self, monkeypatch):
+        from sip_bridge.wa_session import build_wa_vad_config
+
+        monkeypatch.setenv("WA_AUTO_VAD_PREFIX_PADDING_MS", "200")
+        config = build_wa_vad_config()
+        assert config.automatic_activity_detection.prefix_padding_ms == 200
+
+    def test_env_override_silence_duration(self, monkeypatch):
+        from sip_bridge.wa_session import build_wa_vad_config
+
+        monkeypatch.setenv("WA_AUTO_VAD_SILENCE_DURATION_MS", "600")
+        config = build_wa_vad_config()
+        assert config.automatic_activity_detection.silence_duration_ms == 600

@@ -143,6 +143,45 @@ class TestChannelGatingInCallbacks:
         assert "CRITICAL latency policy" not in system_instruction
 
 
+class TestTransferHandoffInjection:
+    @pytest.mark.asyncio
+    async def test_transfer_injects_continuation_context_for_new_agent(self):
+        import app.api.v1.realtime.stream_tasks as st
+
+        user_turn = _make_live_event(
+            input_transcription=SimpleNamespace(
+                text="I want the iPhone 15 Pro 128GB.",
+                finished=True,
+            )
+        )
+        transfer = _make_live_event(
+            actions=SimpleNamespace(transfer_to_agent="catalog_agent", state_delta=None)
+        )
+
+        original_bind = st.bind_runtime_values
+
+        def fake_bind(*names):
+            if names == ("types",):
+                return (_FakeTypes,)
+            return original_bind(*names)
+
+        st.bind_runtime_values = fake_bind
+        try:
+            _, queue, _ = await _run_downstream_events(user_turn, transfer)
+        finally:
+            st.bind_runtime_values = original_bind
+
+        handoff_messages = [
+            getattr(content.parts[0], "text", "")
+            for content in queue.sent
+            if getattr(content, "parts", None)
+        ]
+        assert handoff_messages
+        assert any("catalog_agent" in message for message in handoff_messages)
+        assert any("Do NOT greet" in message for message in handoff_messages)
+        assert any("iPhone 15 Pro 128GB" in message for message in handoff_messages)
+
+
 # ─── Stream tasks: watchdog arming / clearing / nudge ──────────────
 
 

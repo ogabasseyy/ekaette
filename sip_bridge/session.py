@@ -45,6 +45,30 @@ SILENCE_FRAME = b"\x00" * 640
 # Keep short (0.5s) to avoid muting start of user's next utterance.
 ECHO_HOLDOFF_SEC = 0.5
 
+# Default audio gain for G.711 telephony input.
+# 2x compensates for typical PSTN attenuation without triggering VAD false positives.
+DEFAULT_AUDIO_GAIN = 2
+
+
+def build_telephone_vad_config() -> genai_types.RealtimeInputConfig:
+    """Build VAD config optimized for telephone audio (2026 best practices).
+
+    Tuned for G.711/Opus telephony: short prefix padding (120ms) to catch
+    clipped onsets, moderate silence duration (450ms) for natural pauses,
+    LOW sensitivities to reduce false triggers from line noise.
+    """
+    return genai_types.RealtimeInputConfig(
+        automatic_activity_detection=genai_types.AutomaticActivityDetection(
+            disabled=False,
+            startOfSpeechSensitivity=genai_types.StartSensitivity.START_SENSITIVITY_LOW,
+            endOfSpeechSensitivity=genai_types.EndSensitivity.END_SENSITIVITY_LOW,
+            prefixPaddingMs=int(os.getenv("SIP_AUTO_VAD_PREFIX_PADDING_MS", "120")),
+            silenceDurationMs=int(os.getenv("SIP_AUTO_VAD_SILENCE_DURATION_MS", "450")),
+        ),
+        activity_handling=genai_types.ActivityHandling.START_OF_ACTIVITY_INTERRUPTS,
+        turn_coverage=genai_types.TurnCoverage.TURN_INCLUDES_ONLY_ACTIVITY,
+    )
+
 
 @dataclass(slots=True)
 class CallSession:
@@ -96,6 +120,7 @@ class CallSession:
     _model_speech_end_time: float = 0.0
     # Guard against re-greeting on gateway reconnect
     _gateway_greeting_sent: bool = False
+    _greeting_lock_active: bool = False
 
     # Metrics
     frames_received: int = 0
@@ -171,6 +196,7 @@ class CallSession:
                     "input_audio_transcription": genai_types.AudioTranscriptionConfig(),
                     "output_audio_transcription": genai_types.AudioTranscriptionConfig(),
                     "proactivity": genai_types.ProactivityConfig(proactive_audio=True),
+                    "realtime_input_config": build_telephone_vad_config(),
                 }
 
                 client = genai.Client(
@@ -254,6 +280,15 @@ class CallSession:
     def shutdown(self) -> None:
         """Signal graceful shutdown."""
         self._shutdown.set()
+
+    def _clear_outbound_audio(self) -> None:
+        """Drop buffered playback so interrupted speech stops immediately."""
+        self._outbound_buffer.clear()
+        while True:
+            try:
+                self.outbound_queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
 
     async def feed_inbound(self, frame: bytes) -> None:
         """Feed an RTP audio frame from the phone side."""
@@ -354,7 +389,7 @@ class CallSession:
                     continue
 
                 if pcm16:
-                    gain = int(os.getenv("SIP_AUDIO_GAIN", "4"))
+                    gain = int(os.getenv("SIP_AUDIO_GAIN", str(DEFAULT_AUDIO_GAIN)))
                     if gain > 1:
                         n_amp = len(pcm16) // 2
                         samples_amp = struct.unpack(f"<{n_amp}h", pcm16)
@@ -593,7 +628,13 @@ class CallSession:
         self._shutdown.set()
 
     async def _gateway_send_loop(self) -> None:
-        """Read PCM16 from inbound pipeline, send to Cloud Run."""
+        """Read PCM16 from inbound pipeline, send to Cloud Run.
+
+        In gateway mode the first greeting is non-interruptible, so we mute caller
+        audio only while that greeting lock is active. After the greeting finishes,
+        we keep streaming real caller audio upstream so Cloud Run/Gemini can detect
+        interruption and barge-in for later speech.
+        """
         while not self._shutdown.is_set():
             try:
                 pcm16 = await asyncio.wait_for(
@@ -610,7 +651,9 @@ class CallSession:
             if gateway_client is None:
                 await asyncio.sleep(0.05)
                 continue
-            await gateway_client.send_audio(SILENCE_FRAME if echo_muted else pcm16)
+            await gateway_client.send_audio(
+                SILENCE_FRAME if self._greeting_lock_active else pcm16
+            )
 
     async def _gateway_recv_loop(self) -> None:
         """Receive from Cloud Run, route audio to outbound, handle JSON protocol."""
@@ -652,22 +695,35 @@ class CallSession:
                     # Trigger AI greeting only on first connect, not on reconnect
                     if not self._gateway_greeting_sent:
                         self._gateway_greeting_sent = True
-                        self._model_speaking = True
+                        self._greeting_lock_active = True
                         try:
                             await gateway_client.send_text(json.dumps({
                                 "type": "text",
                                 "text": "[Phone call connected]",
                             }))
                         except Exception:
-                            self._model_speaking = False
                             logger.warning("Failed to send gateway greeting", exc_info=True)
                     else:
                         logger.info("Gateway reconnected — skipping duplicate greeting")
                 elif msg_type == "transcription":
-                    logger.debug(
-                        "Transcription [%s]: %s",
-                        msg.get("role"), msg.get("text", "")[:100],
-                    )
+                    role = msg.get("role")
+                    partial = bool(msg.get("partial"))
+                    text = msg.get("text", "")[:100]
+                    if role == "user":
+                        logger.info(
+                            "Gateway user transcription partial=%s call_id=%s text=%s",
+                            partial,
+                            self.call_id,
+                            text,
+                        )
+                    elif role == "agent" and not partial:
+                        logger.info(
+                            "Gateway agent transcription final call_id=%s text=%s",
+                            self.call_id,
+                            text,
+                        )
+                    else:
+                        logger.debug("Transcription [%s]: %s", role, text)
                 elif msg_type == "session_ending":
                     reason = msg.get("reason", "")
                     logger.info("Gateway session ending: reason=%s", reason)
@@ -686,10 +742,13 @@ class CallSession:
                     pass  # Server keepalive is one-way — do NOT respond
                 elif msg_type == "interrupted":
                     self._model_speaking = False
+                    self._greeting_lock_active = False
                     self._model_speech_end_time = time.time()
+                    self._clear_outbound_audio()
                 elif msg_type == "agent_status":
                     if msg.get("status") == "idle":
                         self._model_speaking = False
+                        self._greeting_lock_active = False
                         self._model_speech_end_time = time.time()
                 elif msg_type == "agent_transfer":
                     session_id = msg.get("sessionId", "")

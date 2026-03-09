@@ -10,6 +10,7 @@ import json
 import logging
 import os
 import time
+from collections import deque
 from typing import Any
 
 from fastapi import WebSocketDisconnect
@@ -445,6 +446,50 @@ async def downstream_task(
     session_total_tokens = 0
     session_cost_usd = 0.0
     retry_attempt = 0
+    # Track recent conversation turns for context recovery after 1011 crashes
+    # and for explicit agent handoffs.
+    # Each entry: (role, text) — keeps the last 6 turns.
+    recent_turns: deque[tuple[str, str]] = deque(maxlen=6)
+    model_has_spoken = False
+
+    def _recent_turn_lines(*, include_agent: bool = True) -> list[str]:
+        lines: list[str] = []
+        for role, text in recent_turns:
+            if role == "agent" and not include_agent:
+                continue
+            label = "Customer" if role == "user" else "You"
+            lines.append(f"  {label}: {text}")
+        return lines
+
+    def _latest_user_turn() -> str:
+        for role, text in reversed(recent_turns):
+            if role == "user" and isinstance(text, str) and text.strip():
+                return text.strip()
+        return ""
+
+    def _inject_transfer_handoff(target_agent: str) -> None:
+        latest_user = _latest_user_turn()
+        if not latest_user:
+            return
+        (types_mod,) = bind_runtime_values("types")
+        handoff_lines = _recent_turn_lines(include_agent=False)
+        handoff = (
+            "[System: A handoff just moved this same live conversation to "
+            f"'{target_agent}'. Do NOT greet, introduce yourself, or repeat "
+            "the customer's request. Continue directly from the ongoing "
+            f"conversation. The customer's latest request or constraint is: '{latest_user}'."
+        )
+        if handoff_lines:
+            handoff += "\nRecent customer context:\n" + "\n".join(handoff_lines)
+        handoff += "]"
+        live_request_queue.send_content(
+            types_mod.Content(parts=[types_mod.Part(text=handoff)])
+        )
+        logger.info(
+            "Injected transfer handoff for agent=%s session=%s",
+            target_agent,
+            sanitize_log_fn(ctx.resolved_session_id),
+        )
 
     async def _finalize_input() -> None:
         """Send a non-partial input transcription to close the user's turn."""
@@ -534,6 +579,7 @@ async def downstream_task(
                                     "partial": is_partial,
                                 }))
                                 if finished:
+                                    recent_turns.append(("user", text))
                                     last_input_text = ""
                                     receiving_input = False
                                     input_finalized = True
@@ -568,6 +614,8 @@ async def downstream_task(
                                     "partial": is_partial,
                                 }))
                                 if finished:
+                                    recent_turns.append(("agent", text))
+                                    model_has_spoken = True
                                     last_output_text = ""
                                     output_finalized = True
 
@@ -595,6 +643,7 @@ async def downstream_task(
                                 "from": current_agent,
                                 "to": new_agent,
                             }))
+                            _inject_transfer_handoff(new_agent)
                             current_agent = new_agent
                             await websocket.send_text(json.dumps({
                                 "type": "agent_status",
@@ -750,6 +799,30 @@ async def downstream_task(
                     exc_info=True,
                 )
                 await asyncio.sleep(delay)
+                # Inject context recovery so the model doesn't re-greet
+                # or lose track of the conversation after a 1011 crash.
+                if model_has_spoken and recent_turns:
+                    (types_mod,) = bind_runtime_values("types")
+                    lines = _recent_turn_lines()
+                    recovery = (
+                        "[System: The connection was briefly interrupted. "
+                        "You are resuming a conversation already in progress. "
+                        "Do NOT greet the customer again — no hello, no introduction. "
+                        "Continue naturally from where you left off.\n"
+                        "Recent conversation:\n"
+                        + "\n".join(lines)
+                        + "]"
+                    )
+                    live_request_queue.send_content(
+                        types_mod.Content(
+                            parts=[types_mod.Part(text=recovery)],
+                        )
+                    )
+                    logger.info(
+                        "Injected context recovery (%d turns) for session %s",
+                        len(recent_turns),
+                        sanitize_log_fn(ctx.resolved_session_id),
+                    )
                 continue
             raise
 

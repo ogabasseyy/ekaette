@@ -178,7 +178,7 @@ ELECTRONICS_TEMPLATE = {
         "title": "Electronics Trade Desk",
         "hint": "Inspect. Value. Negotiate. Book pickup.",
     },
-    "capabilities": ["catalog_lookup", "valuation_tradein", "booking_reservations", "outbound_messaging"],
+    "capabilities": ["catalog_lookup", "valuation_tradein", "booking_reservations", "policy_qa", "connector_dispatch", "outbound_messaging"],
     "enabled_agents": ["vision_agent", "valuation_agent", "booking_agent"],
     "connectors_supported": ["crm"],
     "status": "active",
@@ -209,7 +209,7 @@ EKAETTE_ELECTRONICS_COMPANY = {
     "company_id": "ekaette-electronics",
     "tenant_id": "public",
     "industry_template_id": "electronics",
-    "display_name": "Ogabassey Gadgets",
+    "display_name": "Awgabassey Gadgets",
     "overview": "Trade-in focused electronics store.",
     "facts": {"primary_location": "Lagos - Ikeja"},
     "links": [],
@@ -408,7 +408,7 @@ class TestProvisionCompany:
         assert result["operation"] == "created"
         company = db.get_doc("tenants/public/companies/ekaette-electronics")
         assert company is not None
-        assert company["display_name"] == "Ogabassey Gadgets"
+        assert company["display_name"] == "Awgabassey Gadgets"
 
     def test_provision_company_rejects_missing_required_fields(self):
         """provision-company rejects companies missing required fields."""
@@ -1548,7 +1548,7 @@ class TestMigrateTenantScoped:
         db = FakeFirestoreDB()
         db.set_doc("company_profiles/ekaette-electronics", {
             "industry": "electronics",
-            "name": "Ogabassey Gadgets",
+            "name": "Awgabassey Gadgets",
             "overview": "Trade-in focused electronics store.",
             "facts": {"primary_location": "Lagos - Ikeja"},
             "links": [],
@@ -1560,7 +1560,7 @@ class TestMigrateTenantScoped:
         assert result["migrated"] == 1
         company = db.get_doc("tenants/public/companies/ekaette-electronics")
         assert company is not None
-        assert company["display_name"] == "Ogabassey Gadgets"
+        assert company["display_name"] == "Awgabassey Gadgets"
         assert company["industry_template_id"] == "electronics"
         assert company["tenant_id"] == "public"
 
@@ -1592,7 +1592,7 @@ class TestMigrateTenantScoped:
         # Need a company mapping to know which company owns the product
         db.set_doc("company_profiles/ekaette-electronics", {
             "industry": "electronics",
-            "name": "Ogabassey Gadgets",
+            "name": "Awgabassey Gadgets",
         })
         db.set_doc("products/prod-iphone-15-pro", {
             "name": "iPhone 15 Pro",
@@ -1648,7 +1648,7 @@ class TestMigrateTenantScoped:
         db = FakeFirestoreDB()
         db.set_doc("company_profiles/ekaette-electronics", {
             "industry": "electronics",
-            "name": "Ogabassey Gadgets",
+            "name": "Awgabassey Gadgets",
             "overview": "Trade-in focused electronics store.",
             "facts": {},
             "links": [],
@@ -1684,7 +1684,7 @@ class TestMigrateTenantScoped:
         db = FakeFirestoreDB()
         db.set_doc("company_profiles/ekaette-electronics", {
             "industry": "electronics",
-            "name": "Ogabassey Gadgets",
+            "name": "Awgabassey Gadgets",
             "overview": "Trade-in focused electronics store.",
             "facts": {},
             "links": [],
@@ -1725,7 +1725,7 @@ class TestMigrateTenantScoped:
         db = FakeFirestoreDB()
         db.set_doc("company_profiles/ekaette-electronics", {
             "industry": "electronics",
-            "name": "Ogabassey Gadgets",
+            "name": "Awgabassey Gadgets",
         })
         # Intentionally do not write target company doc.
 
@@ -1749,7 +1749,7 @@ class TestMigrateTenantScopedCLI:
         db = FakeFirestoreDB()
         db.set_doc("company_profiles/ekaette-electronics", {
             "industry": "electronics",
-            "name": "Ogabassey Gadgets",
+            "name": "Awgabassey Gadgets",
             "overview": "Trade-in focused electronics store.",
             "facts": {},
             "links": [],
@@ -1778,7 +1778,7 @@ class TestMigrateTenantScopedCLI:
         db = FakeFirestoreDB()
         db.set_doc("company_profiles/ekaette-electronics", {
             "industry": "electronics",
-            "name": "Ogabassey Gadgets",
+            "name": "Awgabassey Gadgets",
             "overview": "Trade-in focused electronics store.",
             "facts": {},
             "links": [],
@@ -1852,7 +1852,7 @@ class TestMigrateTenantScopedCLI:
         # Source docs present, but we run --verify without running migrations first.
         db.set_doc("company_profiles/ekaette-electronics", {
             "industry": "electronics",
-            "name": "Ogabassey Gadgets",
+            "name": "Awgabassey Gadgets",
         })
         _install_fake_cli_modules(monkeypatch, db)
         monkeypatch.setattr(

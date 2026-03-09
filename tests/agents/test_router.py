@@ -239,6 +239,23 @@ class TestSubAgentStubs:
         ("app.agents.catalog_agent.agent", "catalog_agent"),
         ("app.agents.support_agent.agent", "support_agent"),
     ])
+    def test_sub_agent_instruction_uses_static_company_name_placeholder(self, agent_module, agent_name):
+        """Specialist agents should ground company identity via template substitution."""
+        import importlib
+
+        mod = importlib.import_module(agent_module)
+        agent = getattr(mod, agent_name)
+        instruction = agent.instruction
+        assert "{app:company_name}" in instruction
+        assert "never invent" in instruction.lower()
+
+    @pytest.mark.parametrize("agent_module,agent_name", [
+        ("app.agents.vision_agent.agent", "vision_agent"),
+        ("app.agents.valuation_agent.agent", "valuation_agent"),
+        ("app.agents.booking_agent.agent", "booking_agent"),
+        ("app.agents.catalog_agent.agent", "catalog_agent"),
+        ("app.agents.support_agent.agent", "support_agent"),
+    ])
     def test_sub_agent_has_company_grounding_tools(self, agent_module, agent_name):
         """All specialist agents should have company grounding tools."""
         import importlib

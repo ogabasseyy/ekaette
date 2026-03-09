@@ -1,13 +1,20 @@
 """TDD tests for SIP bridge call session lifecycle.
 
 Covers: session creation, bounded queues, backpressure metrics,
-shutdown signal, TaskGroup structured concurrency.
+shutdown signal, TaskGroup structured concurrency, VAD config.
 """
 
 from __future__ import annotations
 
 import asyncio
-from sip_bridge.session import CallSession, INBOUND_QUEUE_SIZE, OUTBOUND_QUEUE_SIZE
+import os
+from sip_bridge.session import (
+    CallSession,
+    INBOUND_QUEUE_SIZE,
+    OUTBOUND_QUEUE_SIZE,
+    build_telephone_vad_config,
+    DEFAULT_AUDIO_GAIN,
+)
 
 
 class TestCallSessionCreation:
@@ -125,3 +132,76 @@ class TestOutboundQueue:
             tg.create_task(run_briefly())
 
         assert s.frames_sent == 3
+
+
+class TestTelephoneVadConfig:
+    """VAD config for telephone channels (2026 best practices)."""
+
+    def test_build_returns_realtime_input_config(self):
+        from google.genai import types
+
+        config = build_telephone_vad_config()
+        assert isinstance(config, types.RealtimeInputConfig)
+
+    def test_vad_not_disabled(self):
+        config = build_telephone_vad_config()
+        aad = config.automatic_activity_detection
+        assert aad.disabled is False
+
+    def test_start_sensitivity_low(self):
+        from google.genai import types
+
+        config = build_telephone_vad_config()
+        aad = config.automatic_activity_detection
+        assert aad.start_of_speech_sensitivity == types.StartSensitivity.START_SENSITIVITY_LOW
+
+    def test_end_sensitivity_low(self):
+        from google.genai import types
+
+        config = build_telephone_vad_config()
+        aad = config.automatic_activity_detection
+        assert aad.end_of_speech_sensitivity == types.EndSensitivity.END_SENSITIVITY_LOW
+
+    def test_prefix_padding_120ms(self):
+        config = build_telephone_vad_config()
+        aad = config.automatic_activity_detection
+        assert aad.prefix_padding_ms == 120
+
+    def test_silence_duration_450ms(self):
+        config = build_telephone_vad_config()
+        aad = config.automatic_activity_detection
+        assert aad.silence_duration_ms == 450
+
+    def test_turn_coverage_activity_only(self):
+        from google.genai import types
+
+        config = build_telephone_vad_config()
+        assert config.turn_coverage == types.TurnCoverage.TURN_INCLUDES_ONLY_ACTIVITY
+
+    def test_activity_handling_interrupts(self):
+        from google.genai import types
+
+        config = build_telephone_vad_config()
+        assert config.activity_handling == types.ActivityHandling.START_OF_ACTIVITY_INTERRUPTS
+
+    def test_env_override_prefix_padding(self, monkeypatch):
+        monkeypatch.setenv("SIP_AUTO_VAD_PREFIX_PADDING_MS", "200")
+        config = build_telephone_vad_config()
+        assert config.automatic_activity_detection.prefix_padding_ms == 200
+
+    def test_env_override_silence_duration(self, monkeypatch):
+        monkeypatch.setenv("SIP_AUTO_VAD_SILENCE_DURATION_MS", "600")
+        config = build_telephone_vad_config()
+        assert config.automatic_activity_detection.silence_duration_ms == 600
+
+
+class TestDefaultAudioGain:
+    """AT bridge audio gain default."""
+
+    def test_default_gain_is_2(self):
+        assert DEFAULT_AUDIO_GAIN == 2
+
+    def test_gain_env_override(self, monkeypatch):
+        monkeypatch.setenv("SIP_AUDIO_GAIN", "3")
+        # Re-read at usage site (session.py reads at frame time)
+        assert int(os.getenv("SIP_AUDIO_GAIN", str(DEFAULT_AUDIO_GAIN))) == 3

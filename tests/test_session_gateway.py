@@ -103,8 +103,8 @@ class TestCallSessionGatewayMode:
         original_send.assert_called_once_with(pcm16)
 
     @pytest.mark.asyncio
-    async def test_gateway_send_loop_echo_mutes(self):
-        """Echo suppression sends SILENCE when model is speaking."""
+    async def test_gateway_send_loop_mutes_only_during_greeting_lock(self):
+        """Greeting lock should mute caller audio during the non-interruptible greeting."""
         s = CallSession(call_id="c1", tenant_id="public", company_id="acme")
         mock_client = MockGatewayClient()
         original_send = mock_client.send_audio
@@ -113,13 +113,35 @@ class TestCallSessionGatewayMode:
             s._shutdown.set()
         mock_client.send_audio = send_and_stop
         s.gateway_client = mock_client
-        s._model_speaking = True
+        s._greeting_lock_active = True
 
         pcm16 = b"\x01\x02" * 320
         await s._gemini_in_queue.put(pcm16)
 
         await s._gateway_send_loop()
         original_send.assert_called_once_with(SILENCE_FRAME)
+
+    @pytest.mark.asyncio
+    async def test_gateway_send_loop_keeps_caller_audio_after_greeting(self):
+        """Post-greeting speech should remain interruptible."""
+        s = CallSession(call_id="c1", tenant_id="public", company_id="acme")
+        mock_client = MockGatewayClient()
+        original_send = mock_client.send_audio
+
+        async def send_and_stop(data):
+            await original_send(data)
+            s._shutdown.set()
+
+        mock_client.send_audio = send_and_stop
+        s.gateway_client = mock_client
+        s._model_speaking = True
+        s._greeting_lock_active = False
+
+        pcm16 = b"\x01\x02" * 320
+        await s._gemini_in_queue.put(pcm16)
+
+        await s._gateway_send_loop()
+        original_send.assert_called_once_with(pcm16)
 
     @pytest.mark.asyncio
     async def test_gateway_send_loop_tolerates_missing_gateway_client(self, monkeypatch):
@@ -173,6 +195,7 @@ class TestCallSessionGatewayMode:
 
         await s._gateway_recv_loop()
         assert mock_client.canonical_session_id == "canonical-xyz"
+        assert s._greeting_lock_active is True
 
     @pytest.mark.asyncio
     async def test_gateway_recv_loop_handles_interrupted(self):
@@ -181,6 +204,7 @@ class TestCallSessionGatewayMode:
 
         s = CallSession(call_id="c1", tenant_id="public", company_id="acme")
         s._model_speaking = True
+        s.outbound_queue.put_nowait(b"\x00" * 100)
         mock_client = MockGatewayClient()
         mock_client._frames_to_yield = [
             GatewayFrame(
@@ -192,6 +216,29 @@ class TestCallSessionGatewayMode:
 
         await s._gateway_recv_loop()
         assert s._model_speaking is False
+        assert s.outbound_queue.empty()
+
+    @pytest.mark.asyncio
+    async def test_gateway_recv_loop_session_started_enables_greeting_lock_only(self):
+        """session_started should lock interruption without faking model audio."""
+        from sip_bridge.gateway_client import GatewayFrame
+
+        s = CallSession(call_id="c1", tenant_id="public", company_id="acme")
+        mock_client = MockGatewayClient()
+        mock_client._frames_to_yield = [
+            GatewayFrame(
+                is_audio=False,
+                text_data=json.dumps({
+                    "type": "session_started",
+                    "sessionId": "canonical-xyz",
+                }),
+            ),
+        ]
+        s.gateway_client = mock_client
+
+        await s._gateway_recv_loop()
+        assert s._model_speaking is False
+        assert s._greeting_lock_active is True
 
     @pytest.mark.asyncio
     async def test_gateway_recv_loop_handles_agent_status_idle(self):
@@ -309,6 +356,41 @@ class TestCallSessionGatewayMode:
 
         assert "Ignoring malformed gateway JSON" in caplog.text
         assert s._shutdown.is_set()
+
+    @pytest.mark.asyncio
+    async def test_gateway_recv_loop_logs_transcriptions(self, caplog):
+        """Gateway transcriptions should be visible for SIP/AT debugging."""
+        from sip_bridge.gateway_client import GatewayFrame
+
+        caplog.set_level("INFO")
+        s = CallSession(call_id="c1", tenant_id="public", company_id="acme")
+        mock_client = MockGatewayClient()
+        mock_client._frames_to_yield = [
+            GatewayFrame(
+                is_audio=False,
+                text_data=json.dumps({
+                    "type": "transcription",
+                    "role": "user",
+                    "partial": True,
+                    "text": "What company do you work for?",
+                }),
+            ),
+            GatewayFrame(
+                is_audio=False,
+                text_data=json.dumps({
+                    "type": "transcription",
+                    "role": "agent",
+                    "partial": False,
+                    "text": "I work for Awgabassey Gadgets.",
+                }),
+            ),
+        ]
+        s.gateway_client = mock_client
+
+        await s._gateway_recv_loop()
+
+        assert "Gateway user transcription partial=True" in caplog.text
+        assert "Gateway agent transcription final" in caplog.text
 
 
 # ---------------------------------------------------------------------------

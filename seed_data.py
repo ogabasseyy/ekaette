@@ -125,7 +125,7 @@ company_profiles = [
     {
         "id": "ekaette-electronics",
         "industry": "electronics",
-        "name": "Ogabassey Gadgets",
+        "name": "Awgabassey Gadgets",
         "overview": "Trade-in focused electronics store serving Lagos and Abuja.",
         "facts": {
             "primary_location": "Lagos - Ikeja",

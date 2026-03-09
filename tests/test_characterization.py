@@ -148,10 +148,11 @@ class TestBuildCompanySessionStateCharacterization:
             profile={"name": "Test Store", "overview": "A store"},
             knowledge=[{"id": "k1", "title": "FAQ", "text": "Help text", "tags": ["faq"]}],
         )
-        expected_keys = {"app:company_id", "app:company_profile", "app:company_knowledge"}
+        expected_keys = {"app:company_id", "app:company_name", "app:company_profile", "app:company_knowledge"}
         assert expected_keys == set(state.keys()), (
             f"build_company_session_state keys changed. Expected {expected_keys}, got {set(state.keys())}"
         )
+        assert state["app:company_name"] == "Test Store"
 
     def test_company_id_is_normalized_lowercase(self):
         from app.configs.company_loader import build_company_session_state
