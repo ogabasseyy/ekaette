@@ -227,6 +227,8 @@ def serialize_message(msg: SipMessage) -> bytes:
         # Multi-valued headers (Via, Record-Route) are stored joined by \n;
         # emit each value as a separate header line on the wire.
         for single_value in value.split("\n"):
+            if not single_value:
+                continue
             lines.append(f"{wire_name}: {single_value}")
 
     header_block = "\r\n".join(lines) + "\r\n\r\n"

@@ -120,7 +120,7 @@ class TestInboundCallHandler:
             password="test-pass",
             nonce=params["nonce"],
             method="INVITE",
-            uri="sip:+2348001234567@sip.ogabassey.com",
+            uri="sip:+2348001234567@example.com",
             algorithm=params.get("algorithm", "MD5"),
             qop=params.get("qop"),
         )
@@ -185,7 +185,7 @@ class TestInboundCallHandler:
             password="test-pass",
             nonce=params["nonce"],
             method="INVITE",
-            uri="sip:+2348001234567@sip.ogabassey.com",
+            uri="sip:+2348001234567@example.com",
             algorithm=params.get("algorithm", "MD5"),
             qop=params.get("qop"),
         )
@@ -259,7 +259,7 @@ class TestInboundCallHandler:
             password="test-pass",
             nonce=params["nonce"],
             method="INVITE",
-            uri="sip:+2348001234567@example.com",
+            uri="sip:+2348001234567@sip.ogabassey.com",
             algorithm=params.get("algorithm", "MD5"),
             qop=params.get("qop"),
         )
@@ -502,6 +502,8 @@ class TestSDPAnswerPort:
 
     async def test_sdp_answer_port_differs_from_remote(self):
         """SDP answer local_port must NOT be the remote SDP media port."""
+        from sip_bridge.wa_main import _WA_RTP_PORT_MAX, _WA_RTP_PORT_MIN
+
         server, session = await _create_authenticated_session()
 
         # The remote SDP has media port 3480. The SDP answer must NOT
@@ -514,7 +516,7 @@ class TestSDPAnswerPort:
         # Local port must NOT be the remote port (3480)
         assert local_port != 3480
         assert local_port > 0
-        assert 10000 <= local_port <= 20000
+        assert _WA_RTP_PORT_MIN <= local_port <= _WA_RTP_PORT_MAX
 
         # Clean up
         session.shutdown()
@@ -1046,8 +1048,6 @@ class TestMaidenSRTPPacket:
 
     def test_send_maiden_srtp_sends_packet(self):
         """_send_maiden_srtp should send an SRTP-protected RTP packet to remote."""
-        from unittest.mock import patch
-
         from sip_bridge.wa_main import _send_maiden_srtp
 
         mock_sock = MagicMock()
@@ -1065,16 +1065,20 @@ class TestMaidenSRTPPacket:
         # Packet was sent to the remote media address
         mock_sock.sendto.assert_called_once_with(b"\x00" * 30, ("157.240.19.130", 3480))
 
-    def test_send_maiden_srtp_logs_on_failure(self):
+    def test_send_maiden_srtp_logs_on_failure(self, caplog):
         """Maiden send failure should log warning, not crash the call."""
+        import logging
+
         from sip_bridge.wa_main import _send_maiden_srtp
 
         mock_sock = MagicMock()
         mock_srtp = MagicMock()
         mock_srtp.protect.side_effect = RuntimeError("crypto fail")
 
-        # Should not raise
-        _send_maiden_srtp(mock_sock, ("157.240.19.130", 3480), mock_srtp, "call-fail")
+        with caplog.at_level(logging.WARNING):
+            _send_maiden_srtp(mock_sock, ("157.240.19.130", 3480), mock_srtp, "call-fail")
+
+        assert "maiden" in caplog.text.lower() or "srtp" in caplog.text.lower()
 
     async def test_session_has_maiden_srtp_method(self):
         """Session created by 407→200 OK flow must have _send_maiden_srtp method

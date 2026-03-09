@@ -24,10 +24,26 @@ logger = logging.getLogger(__name__)
 
 RESPONSE_LATENCY_FILLER_SECONDS = 3.0
 RESPONSE_LATENCY_REASSURE_SECONDS = 15.0
-LIVE_STREAM_MAX_RETRIES = max(0, int(os.getenv("LIVE_STREAM_MAX_RETRIES", "2")))
+
+
+def _parse_int_env(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
+def _parse_float_env(name: str, default: float) -> float:
+    try:
+        return float(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
+LIVE_STREAM_MAX_RETRIES = max(0, _parse_int_env("LIVE_STREAM_MAX_RETRIES", 2))
 LIVE_STREAM_RETRY_BASE_SECONDS = max(
     0.1,
-    float(os.getenv("LIVE_STREAM_RETRY_BASE_SECONDS", "0.5")),
+    _parse_float_env("LIVE_STREAM_RETRY_BASE_SECONDS", 0.5),
 )
 
 
@@ -64,6 +80,10 @@ def _is_retryable_live_error(exc: Exception) -> bool:
             return True
         current = getattr(current, "__cause__", None) or getattr(current, "__context__", None)
     return False
+
+
+def _is_connection_error(exc: Exception) -> bool:
+    return isinstance(exc, (WebSocketDisconnect, ConnectionError, OSError))
 
 
 def create_initial_silence_state() -> SilenceState:
@@ -448,6 +468,8 @@ async def downstream_task(
                 live_request_queue=live_request_queue,
                 run_config=ctx.run_config,
             ):
+                if retry_attempt > 0:
+                    retry_attempt = 0
                 try:
                     # Audio + Text content
                     if event.content and event.content.parts:
@@ -678,7 +700,11 @@ async def downstream_task(
                         }))
 
                 except Exception as e:
+                    if _is_connection_error(e):
+                        raise
                     logger.error("Error processing downstream event: %s", e, exc_info=True)
+                    if not session_alive.is_set():
+                        break
 
             # Live API session ended naturally (timeout / GoAway completion).
             # Notify client so it can decide to reconnect gracefully.

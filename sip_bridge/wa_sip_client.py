@@ -95,6 +95,24 @@ def generate_sdp_answer(
 
     Returns the SDP body string. Key material is embedded in the crypto line.
     """
+    sdp, _ = generate_sdp_answer_with_key(
+        local_ip=local_ip,
+        local_port=local_port,
+        payload_type=payload_type,
+        key_material=key_material,
+        ssrc=ssrc,
+    )
+    return sdp
+
+
+def generate_sdp_answer_with_key(
+    local_ip: str,
+    local_port: int,
+    payload_type: int = 111,
+    key_material: bytes | None = None,
+    ssrc: int | None = None,
+) -> tuple[str, bytes]:
+    """Generate an SDP answer and return the key material used."""
     local_key_material = key_material or generate_key_material()
     crypto_line = format_crypto_line(tag=1, key_material=local_key_material)
 
@@ -126,7 +144,7 @@ def generate_sdp_answer(
         "a=maxptime:20\r\n"
         "a=sendrecv\r\n"
     )
-    return sdp
+    return sdp, local_key_material
 
 
 # ---------------------------------------------------------------------------

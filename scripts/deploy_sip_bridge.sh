@@ -18,17 +18,44 @@ VM="${VM:-ekaette-sip}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 
+atomic_sync_dir() {
+  local src_dir="$1"
+  local dest_dir="$2"
+  local base_name
+  local temp_dir
+  local old_dir
+  base_name="$(basename "$dest_dir")"
+  temp_dir="${dest_dir}.new"
+  old_dir="${dest_dir}.old"
+
+  gcloud compute ssh "$VM" --zone="$ZONE" --project="$PROJECT" \
+    --command="rm -rf \"$temp_dir\" \"$old_dir\""
+  gcloud compute scp --recurse "$src_dir" \
+    "$VM:$temp_dir" --zone="$ZONE" --project="$PROJECT"
+  gcloud compute ssh "$VM" --zone="$ZONE" --project="$PROJECT" \
+    --command="
+      set -e
+      synced_path=\"$temp_dir\"
+      if [ -d \"$temp_dir/$base_name\" ]; then
+        synced_path=\"$temp_dir/$base_name\"
+      fi
+      rm -rf \"$old_dir\"
+      if [ -e \"$dest_dir\" ]; then
+        mv \"$dest_dir\" \"$old_dir\"
+      fi
+      mv \"\$synced_path\" \"$dest_dir\"
+      if [ -d \"$temp_dir\" ] && [ \"$temp_dir\" != \"$dest_dir\" ]; then
+        rm -rf \"$temp_dir\"
+      fi
+      rm -rf \"$old_dir\"
+    "
+}
+
 echo "Syncing shared/ to VM..."
-gcloud compute ssh "$VM" --zone="$ZONE" --project="$PROJECT" \
-  --command="rm -rf /home/mac/shared"
-gcloud compute scp --recurse "$ROOT_DIR/shared" \
-  "$VM:/home/mac/shared" --zone="$ZONE" --project="$PROJECT"
+atomic_sync_dir "$ROOT_DIR/shared" "/home/mac/shared"
 
 echo "Syncing sip_bridge/ to VM..."
-gcloud compute ssh "$VM" --zone="$ZONE" --project="$PROJECT" \
-  --command="rm -rf /home/mac/sip_bridge"
-gcloud compute scp --recurse "$ROOT_DIR/sip_bridge" \
-  "$VM:/home/mac/sip_bridge" --zone="$ZONE" --project="$PROJECT"
+atomic_sync_dir "$ROOT_DIR/sip_bridge" "/home/mac/sip_bridge"
 
 echo "Syncing requirements.txt to VM..."
 gcloud compute scp "$ROOT_DIR/requirements.txt" \

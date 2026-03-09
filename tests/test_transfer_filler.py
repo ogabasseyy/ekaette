@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import importlib
 import json
 import time
 from types import SimpleNamespace
@@ -310,6 +311,33 @@ class _RetryableFailureRunner:
         await asyncio.sleep(0)
 
 
+class _IntermittentRetryRunner:
+    def __init__(self, recovered_events, final_events):
+        self._recovered_events = list(recovered_events)
+        self._final_events = list(final_events)
+        self.call_count = 0
+
+    async def run_live(self, **kwargs):
+        self.call_count += 1
+        if self.call_count == 1:
+            inner = RuntimeError(
+                "received 1011 (internal error) The service is currently unavailable.; "
+                "then sent 1011 (internal error) The service is currently unavailable."
+            )
+            raise RuntimeError("1011 None. The service is currently unavailable.") from inner
+        if self.call_count == 2:
+            for event in self._recovered_events:
+                yield event
+            inner = RuntimeError(
+                "received 1011 (internal error) The service is currently unavailable.; "
+                "then sent 1011 (internal error) The service is currently unavailable."
+            )
+            raise RuntimeError("1011 None. The service is currently unavailable.") from inner
+        for event in self._final_events:
+            yield event
+        await asyncio.sleep(0)
+
+
 def _make_live_event(
     *,
     content=None,
@@ -391,6 +419,7 @@ async def _run_downstream_events(
         silence_state = _make_silence_state()
     queue = _FakeRequestQueue()
     session_alive = asyncio.Event()
+    session_alive.set()
     await st.downstream_task(ctx, queue, session_alive, silence_state)
     return ctx.websocket, queue, silence_state
 
@@ -469,6 +498,16 @@ class TestWatchdogArmingInDownstream:
 class TestDownstreamRetry:
     """Transient Live API errors should be retried in-process."""
 
+    def test_parse_env_helpers_fallback_to_defaults(self, monkeypatch):
+        import app.api.v1.realtime.stream_tasks as st
+
+        monkeypatch.setenv("LIVE_STREAM_MAX_RETRIES", "oops")
+        monkeypatch.setenv("LIVE_STREAM_RETRY_BASE_SECONDS", "bad")
+        importlib.reload(st)
+
+        assert st.LIVE_STREAM_MAX_RETRIES == 2
+        assert st.LIVE_STREAM_RETRY_BASE_SECONDS == 0.5
+
     @pytest.mark.asyncio
     async def test_retryable_live_error_retries_stream(self, monkeypatch):
         import app.api.v1.realtime.stream_tasks as st
@@ -497,6 +536,66 @@ class TestDownstreamRetry:
 
         assert runner.call_count == 2
         assert websocket.sent_bytes == [b"\x00\x01"]
+
+    @pytest.mark.asyncio
+    async def test_successful_reconnect_resets_retry_budget(self, monkeypatch):
+        import app.api.v1.realtime.stream_tasks as st
+
+        runner = _IntermittentRetryRunner(
+            [_make_content_event(audio_bytes=b"\x00\x01")],
+            [_make_content_event(audio_bytes=b"\x00\x02")],
+        )
+        st.configure_runtime(
+            runner=runner,
+            _extract_server_message_from_state_delta=lambda delta: None,
+            _usage_int=lambda *args: 0,
+            TOKEN_PRICE_PROMPT_PER_MILLION=0.0,
+            TOKEN_PRICE_COMPLETION_PER_MILLION=0.0,
+            DEBUG_TELEMETRY=False,
+            _sanitize_log=lambda value: value,
+        )
+        monkeypatch.setattr(st, "LIVE_STREAM_MAX_RETRIES", 1)
+        monkeypatch.setattr(st, "LIVE_STREAM_RETRY_BASE_SECONDS", 0.01)
+
+        websocket = _FakeWebSocket()
+        ctx = _make_ctx(websocket)
+        queue = _FakeRequestQueue()
+        session_alive = asyncio.Event()
+        session_alive.set()
+        silence_state = _make_silence_state()
+
+        await st.downstream_task(ctx, queue, session_alive, silence_state)
+
+        assert runner.call_count == 3
+        assert websocket.sent_bytes == [b"\x00\x01", b"\x00\x02"]
+
+    @pytest.mark.asyncio
+    async def test_connection_errors_are_re_raised(self):
+        import app.api.v1.realtime.stream_tasks as st
+
+        class _FailingSendWebSocket(_FakeWebSocket):
+            async def send_bytes(self, payload: bytes):
+                raise OSError("socket closed")
+
+        st.configure_runtime(
+            runner=_FakeRunner([_make_content_event(audio_bytes=b"\x00\x01")]),
+            _extract_server_message_from_state_delta=lambda delta: None,
+            _usage_int=lambda *args: 0,
+            TOKEN_PRICE_PROMPT_PER_MILLION=0.0,
+            TOKEN_PRICE_COMPLETION_PER_MILLION=0.0,
+            DEBUG_TELEMETRY=False,
+            _sanitize_log=lambda value: value,
+        )
+
+        websocket = _FailingSendWebSocket()
+        ctx = _make_ctx(websocket)
+        queue = _FakeRequestQueue()
+        session_alive = asyncio.Event()
+        session_alive.set()
+        silence_state = _make_silence_state()
+
+        with pytest.raises(OSError, match="socket closed"):
+            await st.downstream_task(ctx, queue, session_alive, silence_state)
 
 
 class TestWatchdogClearingInDownstream:

@@ -159,7 +159,7 @@ class TestSDPGeneration:
         )
         assert "c=IN IP4 203.0.113.1" in sdp
 
-    def test_sdp_omits_bundle_and_mid_for_single_audio_answer(self):
+    def test_sdp_includes_bundle_and_mid_for_meta_offer(self):
         from sip_bridge.wa_sip_client import generate_sdp_answer
 
         sdp = generate_sdp_answer(
@@ -167,18 +167,18 @@ class TestSDPGeneration:
             local_port=30000,
             payload_type=111,
         )
-        assert "a=group:BUNDLE" not in sdp
-        assert "a=mid:audio" not in sdp
+        assert "a=group:BUNDLE audio" in sdp
+        assert "a=mid:audio" in sdp
 
-    def test_sdp_returns_key_material(self):
-        from sip_bridge.wa_sip_client import generate_sdp_answer
+    def test_sdp_returns_key_material_via_helper(self):
+        from sip_bridge.wa_sip_client import generate_sdp_answer_with_key
 
-        sdp = generate_sdp_answer(
+        sdp, key_material = generate_sdp_answer_with_key(
             local_ip="10.0.0.1",
             local_port=30000,
             payload_type=111,
         )
-        # SDP string returned — key material is in the crypto line
+        assert len(key_material) == 30
         assert "inline:" in sdp
 
     def test_sdp_uses_provided_key_material(self):
