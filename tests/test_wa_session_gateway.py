@@ -14,6 +14,7 @@ import pytest
 
 from sip_bridge.wa_session import SILENCE_FRAME
 from sip_bridge.wa_session import WaSession
+from sip_bridge.wa_gateway import gateway_bidi_loop, _gateway_send_loop, _gateway_recv_loop
 
 
 # ---------------------------------------------------------------------------
@@ -81,7 +82,7 @@ class TestWaSessionGatewayMode:
         pcm16 = b"\x01\x02" * 320
         await s._gemini_in_queue.put(pcm16)
 
-        await s._gateway_send_loop()
+        await _gateway_send_loop(s)
         original_send.assert_called_once_with(pcm16)
 
     @pytest.mark.asyncio
@@ -102,7 +103,7 @@ class TestWaSessionGatewayMode:
         pcm16 = b"\x01\x02" * 320
         await s._gemini_in_queue.put(pcm16)
 
-        await s._gateway_send_loop()
+        await _gateway_send_loop(s)
         original_send.assert_called_once_with(SILENCE_FRAME)
 
     @pytest.mark.asyncio
@@ -124,7 +125,7 @@ class TestWaSessionGatewayMode:
         pcm16 = b"\x01\x02" * 320
         await s._gemini_in_queue.put(pcm16)
 
-        await s._gateway_send_loop()
+        await _gateway_send_loop(s)
         original_send.assert_called_once_with(pcm16)
 
     @pytest.mark.asyncio
@@ -140,7 +141,7 @@ class TestWaSessionGatewayMode:
         ]
         s.gateway_client = mock_client
 
-        await s._gateway_recv_loop()
+        await _gateway_recv_loop(s)
         assert s.outbound_queue.get_nowait() == audio
 
     @pytest.mark.asyncio
@@ -158,7 +159,7 @@ class TestWaSessionGatewayMode:
         ]
         s.gateway_client = mock_client
 
-        await s._gateway_recv_loop()
+        await _gateway_recv_loop(s)
         assert s.outbound_queue.get_nowait() == struct.pack("<2h", 2000, 0)
 
     @pytest.mark.asyncio
@@ -178,7 +179,7 @@ class TestWaSessionGatewayMode:
         ]
         s.gateway_client = mock_client
 
-        await s._gateway_recv_loop()
+        await _gateway_recv_loop(s)
         assert s._model_speaking is False
         assert s.outbound_queue.empty()
 
@@ -200,7 +201,7 @@ class TestWaSessionGatewayMode:
         ]
         s.gateway_client = mock_client
 
-        await s._gateway_recv_loop()
+        await _gateway_recv_loop(s)
 
         mock_client.send_text.assert_awaited_once()
         actual_payload = mock_client.send_text.await_args.args[0]
@@ -242,7 +243,7 @@ class TestWaSessionGatewayMode:
         ]
         s.gateway_client = mock_client
 
-        await s._gateway_recv_loop()
+        await _gateway_recv_loop(s)
 
         assert mock_client.send_text.await_count == 1
         assert mock_client.canonical_session_id == "canonical-2"
@@ -280,7 +281,7 @@ class TestWaSessionGatewayMode:
         ]
         s.gateway_client = mock_client
 
-        await s._gateway_recv_loop()
+        await _gateway_recv_loop(s)
 
         mock_client.send_text.assert_awaited_once()
         assert mock_client.canonical_session_id == "canonical-resumed"
@@ -306,7 +307,7 @@ class TestWaSessionGatewayMode:
         ]
         s.gateway_client = mock_client
 
-        await s._gateway_recv_loop()
+        await _gateway_recv_loop(s)
         assert s._shutdown.is_set()
 
     @pytest.mark.asyncio
@@ -324,7 +325,7 @@ class TestWaSessionGatewayMode:
         ]
         s.gateway_client = mock_client
         with patch.object(WaSession, "_handle_tool_call", new=AsyncMock()) as mock_tool_call:
-            await s._gateway_recv_loop()
+            await _gateway_recv_loop(s)
         mock_tool_call.assert_not_awaited()
 
 
@@ -386,16 +387,16 @@ class TestWaGatewayEarlyFailure:
         mock_client.connect = AsyncMock(side_effect=OSError("network down"))
         s.gateway_client = mock_client
 
-        # Track if _media_recv_loop is called (only happens inside TaskGroup)
+        # Track if media_recv_loop is called (only happens inside TaskGroup)
         recv_called = False
 
-        async def _trap_recv(_self):
+        async def _trap_recv(_session):
             nonlocal recv_called
             recv_called = True
 
         with patch.object(WaSession, "_write_call_start"), \
              patch.object(WaSession, "_write_call_end"), \
-             patch.object(WaSession, "_media_recv_loop", _trap_recv):
+             patch("sip_bridge.wa_media_pipeline.media_recv_loop", _trap_recv):
             await s.run()
 
         assert not recv_called, "TaskGroup should not be entered on gateway connect failure"

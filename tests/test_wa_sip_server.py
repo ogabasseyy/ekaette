@@ -1048,13 +1048,13 @@ class TestMaidenSRTPPacket:
 
     def test_send_maiden_srtp_sends_packet(self):
         """_send_maiden_srtp should send an SRTP-protected RTP packet to remote."""
-        from sip_bridge.wa_main import _send_maiden_srtp
+        from sip_bridge.wa_invite_handler import send_maiden_srtp
 
         mock_sock = MagicMock()
         mock_srtp = MagicMock()
         mock_srtp.protect.return_value = b"\x00" * 30
 
-        _send_maiden_srtp(mock_sock, ("157.240.19.130", 3480), mock_srtp, "call-maiden")
+        send_maiden_srtp(mock_sock, ("157.240.19.130", 3480), mock_srtp, "call-maiden")
 
         # SRTP protect was called with a valid RTP packet
         mock_srtp.protect.assert_called_once()
@@ -1069,14 +1069,14 @@ class TestMaidenSRTPPacket:
         """Maiden send failure should log warning, not crash the call."""
         import logging
 
-        from sip_bridge.wa_main import _send_maiden_srtp
+        from sip_bridge.wa_invite_handler import send_maiden_srtp
 
         mock_sock = MagicMock()
         mock_srtp = MagicMock()
         mock_srtp.protect.side_effect = RuntimeError("crypto fail")
 
         with caplog.at_level(logging.WARNING):
-            _send_maiden_srtp(mock_sock, ("157.240.19.130", 3480), mock_srtp, "call-fail")
+            send_maiden_srtp(mock_sock, ("157.240.19.130", 3480), mock_srtp, "call-fail")
 
         assert "maiden" in caplog.text.lower() or "srtp" in caplog.text.lower()
 

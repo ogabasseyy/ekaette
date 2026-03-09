@@ -7,106 +7,24 @@ Starts a TLS SIP server for WhatsApp Business Calling (Opus/SRTP).
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import ipaddress
 import logging
 import os
-import re
 import socket
 import sys
-import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
-_NONCE_RE = re.compile(r'nonce="([^"]+)"')
-
-from shared.phone_identity import canonical_phone_user_id
-
-from .gateway_client import GatewayClient
-from .sip_auth import verify_digest
 from .sip_tls import SipMessage, parse_message, serialize_message
 from .wa_config import WhatsAppBridgeConfig
 from .wa_server_helpers import (
     build_transaction_response,
     handle_health_request,
     handle_sip_connection,
-    resolve_advertised_ip,
 )
-from .wa_sip_client import (
-    build_200_ok,
-    build_407_response,
-    generate_sdp_answer,
-    parse_remote_sdp,
-    resolve_call_id,
-)
+from .wa_sip_client import resolve_call_id
 
 logger = logging.getLogger(__name__)
-
-
-def _extract_caller_phone(from_header: str) -> str:
-    """Extract caller address from SIP From header."""
-    match = re.search(r"sip:([^@;>]+)", from_header or "", re.IGNORECASE)
-    return match.group(1).strip() if match else ""
-
-
-def _send_maiden_srtp(
-    sock: socket.socket,
-    remote_addr: tuple[str, int],
-    srtp_sender: Any,
-    call_id: str,
-    *,
-    ssrc: int | None = None,
-    sequence: int = 0,
-    timestamp: int = 0,
-) -> None:
-    """Send the first SRTP packet to Meta's media endpoint.
-
-    Meta requires the business to send the first media packet before it
-    starts flowing RTP back.  A minimal Opus comfort-noise frame (silence)
-    is used.  This mirrors the working March 4th behaviour.
-    """
-    from .rtp import RTPPacket
-
-    if ssrc is None:
-        ssrc = int.from_bytes(os.urandom(4), "big")
-    # Opus payload: a single-byte silence frame (DTX/comfort noise)
-    maiden_rtp = RTPPacket(
-        version=2,
-        payload_type=111,  # Opus
-        sequence=sequence,
-        timestamp=timestamp,
-        ssrc=ssrc,
-        payload=b"\xf8\xff\xfe",  # Opus silence (3-byte CBR comfort noise)
-    ).serialize()
-    try:
-        maiden_srtp = srtp_sender.protect(maiden_rtp)
-        sock.sendto(maiden_srtp, remote_addr)
-        logger.info(
-            "Maiden SRTP packet sent to %s (%d bytes, SSRC=%08x)",
-            remote_addr, len(maiden_srtp), ssrc,
-            extra={"call_id": call_id},
-        )
-    except Exception:
-        logger.warning(
-            "Failed to send maiden SRTP packet",
-            exc_info=True,
-            extra={"call_id": call_id},
-        )
-
-
-def _extract_contact_host(invite: SipMessage, fallback_host: str) -> str:
-    """Prefer the dialed SIP host for Contact so TLS peers see a hostname."""
-    request_match = re.search(r"sips?:[^@]+@([^; >]+)", invite.first_line or "", re.IGNORECASE)
-    to_match = re.search(r"sips?:[^@;>]+@([^;>]+)", invite.headers.get("to", ""), re.IGNORECASE)
-    raw_host = (request_match or to_match).group(1).strip() if (request_match or to_match) else fallback_host
-    if raw_host.startswith("[") and "]" in raw_host:
-        return raw_host[1:].split("]", 1)[0]
-    if raw_host.count(":") == 1:
-        host, maybe_port = raw_host.rsplit(":", 1)
-        if maybe_port.isdigit():
-            return host
-    return raw_host
-
 
 # ---------------------------------------------------------------------------
 # WaSIPServer — TLS SIP server for WhatsApp Business Calling
@@ -118,13 +36,7 @@ _WA_RTP_PORT_MAX = 20000
 
 
 def _initial_media_port() -> int:
-    """Pick a randomized initial RTP port within the allowed range.
-
-    Fresh processes should not always start at the same low media ports.
-    The live failure pattern clusters on the first few ports after restart,
-    so randomizing the allocator's initial position reduces deterministic
-    retries against the same ports while preserving per-call rotation.
-    """
+    """Pick a randomized initial RTP port within the allowed range."""
     port_count = _WA_RTP_PORT_MAX - _WA_RTP_PORT_MIN + 1
     if port_count <= 1:
         return _WA_RTP_PORT_MIN
@@ -340,303 +252,9 @@ class WaSIPServer:
             return False
 
     async def _handle_invite(self, invite: SipMessage) -> SipMessage:
-        """Handle INVITE: challenge or authenticate then create session."""
-        call_id = resolve_call_id(invite.headers) or invite.headers.get("call-id", "")
-
-        # Concurrency limit
-        if len(self.active_sessions) >= self.max_concurrent_calls:
-            return build_transaction_response(
-                invite,
-                status_code=503,
-                reason="Service Unavailable",
-                call_id=call_id,
-                add_local_to_tag=True,
-            )
-
-        # Check for Proxy-Authorization header
-        auth_value = invite.headers.get("proxy-authorization", "")
-        if not auth_value:
-            # Evict oldest challenges if at capacity (prevent unbounded growth)
-            max_pending = self.max_concurrent_calls * 2
-            while len(self._pending_challenges) >= max_pending:
-                oldest = next(iter(self._pending_challenges))
-                self._pending_challenges.pop(oldest)
-            # No auth → send 407 challenge
-            realm = _extract_contact_host(
-                invite,
-                getattr(self.config, "sip_public_ip", "") or self.config.sip_host,
-            )
-            logger.info(
-                "WA issuing 407 challenge realm=%s",
-                realm,
-                extra={"call_id": call_id},
-            )
-            resp = build_407_response(invite, realm=realm)
-            # Debug: log full 407 response
-            resp_407_bytes = serialize_message(resp)
-            logger.debug(
-                "WA 407 response (%d bytes):\n%s",
-                len(resp_407_bytes),
-                resp_407_bytes.decode("utf-8", errors="replace"),
-                extra={"call_id": call_id},
-            )
-            challenge_value = resp.headers.get("proxy-authenticate", "")
-            nonce_match = _NONCE_RE.search(challenge_value)
-            issued_nonce = nonce_match.group(1) if nonce_match else ""
-            self._pending_challenges[call_id] = {
-                "realm": realm,
-                "nonce": issued_nonce,
-            }
-            return resp
-
-        # Verify nonce was issued by us for this call
-        pending = self._pending_challenges.get(call_id)
-        if pending:
-            from .sip_auth import parse_challenge as _parse_auth
-            try:
-                auth_params = _parse_auth(auth_value)
-                if auth_params.get("nonce") != pending.get("nonce"):
-                    logger.warning("Nonce mismatch for call %s", call_id)
-                    self._pending_challenges.pop(call_id, None)
-                    return build_transaction_response(
-                        invite,
-                        status_code=403,
-                        reason="Forbidden",
-                        call_id=call_id,
-                        add_local_to_tag=True,
-                    )
-            except Exception:
-                pass  # parse failure handled by verify_digest below
-
-        # Verify credentials
-        if not verify_digest(
-            auth_value=auth_value,
-            expected_username=self.config.sip_username,
-            expected_password=self.config.sip_password,
-            method="INVITE",
-        ):
-            logger.warning("WA digest auth failed", extra={"call_id": call_id})
-            self._pending_challenges.pop(call_id, None)
-            return build_transaction_response(
-                invite,
-                status_code=403,
-                reason="Forbidden",
-                call_id=call_id,
-                add_local_to_tag=True,
-            )
-
-        # Auth passed — parse remote SDP and create session
-        self._pending_challenges.pop(call_id, None)
-        # Debug: log full authenticated INVITE headers
-        invite_debug = serialize_message(invite)
-        logger.debug(
-            "WA authenticated INVITE (%d bytes):\n%s",
-            len(invite_debug),
-            invite_debug.decode("utf-8", errors="replace")[:2000],
-            extra={"call_id": call_id},
-        )
-        remote_sdp = parse_remote_sdp(invite.body) if invite.body else {}
-        # Log remote SDP for debugging media issues
-        if invite.body:
-            logger.debug(
-                "WA remote SDP:\n%s",
-                invite.body[:500],
-                extra={"call_id": call_id},
-            )
-        logger.info(
-            "WA parsed SDP: %s",
-            {k: v for k, v in remote_sdp.items() if k != "raw"},
-            extra={"call_id": call_id},
-        )
-
-        bind_ip = self.config.sip_host
-        local_ip = resolve_advertised_ip(
-            bind_ip,
-            public_ip=getattr(self.config, "sip_public_ip", ""),
-            logger=logger,
-        )
-
-        # Validate remote media endpoint before allocating resources
-        media_ip = remote_sdp.get("media_ip", "")
-        media_port = remote_sdp.get("media_port", 0)
-        if not media_ip or not media_port:
-            logger.warning("WA remote SDP missing media endpoint", extra={"call_id": call_id})
-            return build_transaction_response(
-                invite,
-                status_code=488,
-                reason="Not Acceptable Here",
-                call_id=call_id,
-                add_local_to_tag=True,
-            )
-
-        # Bind a local UDP socket for media — OS assigns a free port
-        media_sock = self._bind_media_socket(bind_ip)
-
-        try:
-            local_media_port = media_sock.getsockname()[1]
-
-            # Wire media dependencies from SDP (may raise on bad crypto)
-            codec_bridge = self._create_codec_bridge(remote_sdp)
-            srtp_sender, srtp_receiver, local_srtp_key = self._create_srtp_contexts(invite.body or "")
-            rtp_ssrc = int.from_bytes(os.urandom(4), "big")
-            rtp_frame_duration_ms = getattr(codec_bridge, "frame_duration_ms", 20)
-            if not isinstance(rtp_frame_duration_ms, int):
-                rtp_frame_duration_ms = 20
-            rtp_clock_rate = getattr(codec_bridge, "rtp_clock_rate", 48000)
-            if not isinstance(rtp_clock_rate, int):
-                rtp_clock_rate = 48000
-            rtp_timestamp_step = rtp_clock_rate * rtp_frame_duration_ms // 1000
-
-            sdp_body = generate_sdp_answer(
-                local_ip=local_ip,
-                local_port=local_media_port,
-                payload_type=remote_sdp.get("opus_payload_type", 111),
-                key_material=local_srtp_key,
-                ssrc=rtp_ssrc,
-            )
-            contact_host = _extract_contact_host(invite, local_ip)
-            local_contact = f"<sip:ekaette@{contact_host}:{self.config.sip_port};transport=tls>"
-            resp = build_200_ok(invite, sdp_body=sdp_body, local_contact=local_contact)
-            # Debug: log the full 200 OK we're sending (headers + SDP)
-            resp_bytes = serialize_message(resp)
-            logger.debug(
-                "WA 200 OK response (%d bytes):\n%s",
-                len(resp_bytes),
-                resp_bytes.decode("utf-8", errors="replace"),
-                extra={"call_id": call_id},
-            )
-
-            remote_addr = (media_ip, media_port)
-
-            # NOTE: Maiden SRTP is sent from WaSession.run(), NOT here.
-            # The 200 OK must reach Meta first (via TLS) so Meta knows
-            # our crypto key and media port before we send SRTP packets.
-            # asyncio.create_task() ensures session.run() starts after
-            # this coroutine returns resp to handle_sip_connection.
-
-            caller_phone = _extract_caller_phone(invite.headers.get("from", ""))
-
-            # Build gateway client if gateway mode enabled
-            gateway_client = None
-            if getattr(self.config, "gateway_mode", False) and getattr(self.config, "gateway_ws_url", ""):
-                if not getattr(self.config, "gateway_ws_secret", ""):
-                    raise ValueError("WA_GATEWAY_WS_SECRET is required when WA_GATEWAY_MODE is enabled")
-                user_id = canonical_phone_user_id(
-                    self.config.tenant_id, self.config.company_id, caller_phone,
-                    default_region=self.config.default_phone_region,
-                )
-                if user_id is None:
-                    anon_seed = f"{self.config.tenant_id}:{self.config.company_id}:call:{call_id}"
-                    user_id = f"wa-anon-{hashlib.sha256(anon_seed.encode()).hexdigest()[:16]}"
-                    if caller_phone:
-                        logger.warning(
-                            "Phone normalization failed for WA caller, using anonymous user_id",
-                            extra={"call_id": call_id},
-                        )
-                    else:
-                        logger.warning(
-                            "No caller phone in WA SIP From header, using anonymous user_id",
-                            extra={"call_id": call_id},
-                        )
-                session_id = f"wa-{uuid.uuid4().hex[:24]}"
-                gateway_client = GatewayClient(
-                    gateway_ws_url=self.config.gateway_ws_url,
-                    user_id=user_id,
-                    session_id=session_id,
-                    tenant_id=self.config.tenant_id,
-                    company_id=self.config.company_id,
-                    industry="",  # omit — session_init resolves from registry
-                    caller_phone=caller_phone,
-                    ws_secret=getattr(self.config, "gateway_ws_secret", ""),
-                )
-
-            # Create WaSession with full media pipeline (import here to avoid circular)
-            from .wa_session import WaSession
-
-            session = WaSession(
-                call_id=call_id,
-                tenant_id=self.config.tenant_id,
-                company_id=self.config.company_id,
-                codec_bridge=codec_bridge,
-                srtp_sender=srtp_sender,
-                srtp_receiver=srtp_receiver,
-                media_transport=media_sock,
-                remote_media_addr=remote_addr,
-                gemini_api_key=self.config.gemini_api_key,
-                gemini_model_id=self.config.live_model_id,
-                gemini_system_instruction=self.config.system_instruction,
-                gemini_voice=self.config.gemini_voice,
-                _caller_phone=caller_phone,
-                _bridge_config=self.config,
-                _owns_transport=True,
-                gateway_client=gateway_client,
-                rtp_ssrc=rtp_ssrc,
-                rtp_sequence=1,
-                rtp_timestamp=rtp_timestamp_step,
-            )
-            self.active_sessions[call_id] = session
-            task = asyncio.create_task(session.run(), name=f"wa_session_{call_id}")
-            self._session_tasks[call_id] = task
-
-            def _on_done(done_task: asyncio.Task[None]) -> None:
-                self._session_tasks.pop(call_id, None)
-                self.active_sessions.pop(call_id, None)
-                if done_task.cancelled():
-                    return
-                exc = done_task.exception()
-                if exc is not None:
-                    logger.error(
-                        "WA session task failed",
-                        exc_info=exc,
-                        extra={"call_id": call_id},
-                    )
-
-            task.add_done_callback(_on_done)
-
-            logger.info(
-                "WA INVITE accepted contact=%s media_port=%s",
-                local_contact,
-                local_media_port,
-                extra={"call_id": call_id},
-            )
-            return resp
-        except Exception:
-            # Close the socket to prevent leaks on SDP/SRTP errors
-            media_sock.close()
-            logger.exception("INVITE processing failed", extra={"call_id": call_id})
-            return build_transaction_response(
-                invite,
-                status_code=488,
-                reason="Not Acceptable Here",
-                call_id=call_id,
-                add_local_to_tag=True,
-            )
-
-    @staticmethod
-    def _create_codec_bridge(remote_sdp: dict) -> Any:
-        """Create OpusCodecBridge from parsed remote SDP parameters."""
-        from .codec_bridge import OpusCodecBridge
-
-        return OpusCodecBridge(
-            rtp_payload_type=remote_sdp.get("opus_payload_type", 111),
-            rtp_clock_rate=48000,
-            encode_rate=remote_sdp.get("encode_rate", 16000),
-            channels=remote_sdp.get("opus_channels", 2),
-        )
-
-    @staticmethod
-    def _create_srtp_contexts(sdp_body: str) -> tuple[Any, Any, bytes | None]:
-        """Create SRTP sender and receiver from SDP crypto attributes."""
-        from .srtp_context import SRTPContext, generate_key_material, parse_sdes_crypto
-
-        crypto = parse_sdes_crypto(sdp_body)
-        if crypto is not None:
-            remote_key = crypto["key"]
-            local_key = generate_key_material()
-            sender = SRTPContext(key_material=local_key, is_sender=True)
-            receiver = SRTPContext(key_material=remote_key, is_sender=False)
-            return sender, receiver, local_key
-        return None, None, None
+        """Handle INVITE: delegate to wa_invite_handler."""
+        from .wa_invite_handler import handle_invite
+        return await handle_invite(self, invite)
 
     def _handle_bye(self, bye: SipMessage) -> SipMessage:
         """Handle BYE: terminate active session."""

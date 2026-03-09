@@ -426,15 +426,15 @@ class TestServerCallerPhone:
 
     def test_extract_caller_phone_valid(self):
         """Valid SIP From header yields phone number."""
-        from sip_bridge.wa_main import _extract_caller_phone
+        from sip_bridge.wa_invite_handler import extract_caller_phone
 
-        assert _extract_caller_phone('"User" <sip:+2348012345678@example.com>') == "+2348012345678"
+        assert extract_caller_phone('"User" <sip:+2348012345678@example.com>') == "+2348012345678"
 
     def test_extract_caller_phone_empty(self):
         """Empty From header yields empty string."""
-        from sip_bridge.wa_main import _extract_caller_phone
+        from sip_bridge.wa_invite_handler import extract_caller_phone
 
-        assert _extract_caller_phone("") == ""
+        assert extract_caller_phone("") == ""
 
     def test_user_id_derivation_from_phone_is_namespaced(self):
         """user_id hash includes tenant/company scope to avoid cross-tenant collisions."""

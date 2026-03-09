@@ -882,14 +882,14 @@ class TestWaSessionRunSetup:
         mock_client = MagicMock()
         mock_client.aio.live.connect.return_value = mock_ctx
 
-        async def _trap_recv(_self):
+        async def _trap_recv(_session):
             nonlocal recv_called
             recv_called = True
 
         with patch("sip_bridge.wa_session.genai") as mock_genai, \
              patch.object(WaSession, "_write_call_start"), \
              patch.object(WaSession, "_write_call_end") as mock_end, \
-             patch.object(WaSession, "_media_recv_loop", _trap_recv):
+             patch("sip_bridge.wa_media_pipeline.media_recv_loop", _trap_recv):
             mock_genai.Client.return_value = mock_client
             await s.run()
 
