@@ -97,7 +97,7 @@ jobs:
 
       - name: Dependency Review
         # Pin to full SHA for supply chain security
-        uses: actions/dependency-review-action@05fe4576374b728f0c523d6a13d64c25081e0803 # v4.8.3
+        uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48 # v4.9.0
         with:
           fail-on-severity: high
           # 2026 best practice: use allow-licenses (deny-licenses is deprecated)
