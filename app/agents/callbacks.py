@@ -298,7 +298,9 @@ def _company_instruction(
             "Company context: "
             f"id='{company_id or 'default'}', name='{company_name}'. "
             "Use this exact company name in customer-facing replies when needed. "
-            "Do not invent alternate business or brand names."
+            "Do not invent alternate business or brand names. "
+            f"If the customer asks what company you work for, who you work for, or the business name, answer with the exact company name '{company_name}'. "
+            "Do not replace it with generic phrases like 'our company' or 'the business'."
         )
     ]
     if overview:

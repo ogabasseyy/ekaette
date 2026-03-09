@@ -189,6 +189,8 @@ class TestCompanyInstructionBuilder:
         assert "Company context" in text
         assert "name='Acme Grand Hotel'" in text
         assert "Use this exact company name" in text
+        assert "answer with the exact company name 'Acme Grand Hotel'" in text
+        assert "Do not replace it with generic phrases like 'our company'" in text
         assert "rooms=120" in text
         assert "Late checkout policy" in text
 

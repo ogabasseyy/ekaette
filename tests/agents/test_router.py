@@ -117,6 +117,7 @@ class TestEkaetteRouterAgent:
         instruction = ekaette_router.instruction
         assert "virtual assistant" in instruction.lower(), "Instruction should disclose assistant nature"
         assert "personal name is ehkaitay" in instruction.lower()
+        assert "not a generic phrase like 'our company'" in instruction.lower()
 
     def test_agent_instruction_includes_human_escalation(self):
         """Root agent instruction must offer human escalation path (EU AI Act best practice)."""
