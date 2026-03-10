@@ -13,27 +13,12 @@ logger = logging.getLogger(__name__)
 # One-time patch state (kept module-level for deterministic test monkeypatching).
 _ORIGINAL_BUILD_RESPONSE_EVENT: Callable[..., Any] | None = None
 
-# S11 scheduling matrix:
-# - User-facing tool responses should speak when the model is idle.
-# - Background tools should be silent.
+# Gemini Live only documents FunctionResponse.scheduling for NON_BLOCKING
+# function calls. Applying scheduling metadata to ordinary blocking tool
+# responses has correlated with 1008 websocket closes on the preview
+# native-audio stack, so keep this opt-in and effectively dormant unless a
+# function response explicitly behaves like a streaming/non-blocking one.
 TOOL_RESPONSE_SCHEDULING: dict[str, str] = {
-    "analyze_device_image_tool": "WHEN_IDLE",
-    "grade_and_value_tool": "WHEN_IDLE",
-    "negotiate_tool": "WHEN_IDLE",
-    "check_availability": "WHEN_IDLE",
-    "create_booking": "WHEN_IDLE",
-    "cancel_booking": "WHEN_IDLE",
-    "search_catalog": "WHEN_IDLE",
-    "get_topship_delivery_quote": "WHEN_IDLE",
-    "create_virtual_account_payment": "WHEN_IDLE",
-    "request_callback": "WHEN_IDLE",
-    "send_sms_message": "WHEN_IDLE",
-    "send_whatsapp_message": "WHEN_IDLE",
-    "check_payment_status": "WHEN_IDLE",
-    "get_virtual_account_record": "WHEN_IDLE",
-    "create_order_record": "WHEN_IDLE",
-    "track_order_delivery": "WHEN_IDLE",
-    "send_order_review_followup": "WHEN_IDLE",
     "preload_memory": "SILENT",
 }
 
@@ -63,6 +48,8 @@ def _apply_response_scheduling(event: Any, tool_name: str) -> None:
         function_response = getattr(part, "function_response", None)
         if function_response is None:
             continue
+        if getattr(function_response, "will_continue", None) is None:
+            return
         function_response.scheduling = scheduling
         break
 

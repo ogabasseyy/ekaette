@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from typing import Any
 
 from fastapi import WebSocket
@@ -17,6 +18,13 @@ from app.api.v1.realtime.runtime_cache import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def configure_runtime(**kwargs: Any) -> None:
@@ -526,27 +534,40 @@ async def initialize_session(
     voice_override = session_state.get("app:voice") if isinstance(session_state.get("app:voice"), str) else None
     session_voice = voice_override or voice_for_industry_fn(session_industry)
 
-    # Build session resumption config (with handle if reconnecting)
-    if resumption_token:
-        session_resumption = types_mod.SessionResumptionConfig(handle=resumption_token)
-    else:
-        session_resumption = types_mod.SessionResumptionConfig()
+    # ADK's live transparent resumption path is only supported on Vertex AI.
+    # On Gemini API, advertising session resumption leads to intermittent
+    # websocket 1008 closes ("Operation is not implemented...") mid-call.
+    live_session_resumption_enabled = _env_flag("GOOGLE_GENAI_USE_VERTEXAI", False)
+    session_resumption = None
+    if live_session_resumption_enabled:
+        if resumption_token:
+            session_resumption = types_mod.SessionResumptionConfig(handle=resumption_token)
+        else:
+            session_resumption = types_mod.SessionResumptionConfig()
+    elif resumption_token:
+        logger.info(
+            "Ignoring live resumption token on Gemini API backend session_id=%s",
+            sanitize_log_fn(resolved_session_id),
+        )
 
     if is_native_audio:
         run_config_kwargs: dict[str, object] = {
             "streaming_mode": streaming_mode_cls.BIDI,
             **native_audio_live_config_fn(industry, voice_override=voice_override),
-            "session_resumption": session_resumption,
         }
+        if session_resumption is not None:
+            run_config_kwargs["session_resumption"] = session_resumption
         if realtime_input_config is not None:
             run_config_kwargs["realtime_input_config"] = realtime_input_config
         run_config = run_config_cls(**run_config_kwargs)
     else:
-        run_config = run_config_cls(
-            streaming_mode=streaming_mode_cls.BIDI,
-            response_modalities=["TEXT"],
-            session_resumption=session_resumption,
-        )
+        run_config_kwargs = {
+            "streaming_mode": streaming_mode_cls.BIDI,
+            "response_modalities": ["TEXT"],
+        }
+        if session_resumption is not None:
+            run_config_kwargs["session_resumption"] = session_resumption
+        run_config = run_config_cls(**run_config_kwargs)
 
     logger.debug(
         "Model: %s, native_audio=%s, industry=%s, company_id=%s, voice=%s",
@@ -592,5 +613,6 @@ async def initialize_session(
         session_voice=session_voice,
         manual_vad_active=manual_vad_active,
         run_config=run_config,
+        live_session_resumption_enabled=live_session_resumption_enabled,
         caller_phone=caller_phone,
     )

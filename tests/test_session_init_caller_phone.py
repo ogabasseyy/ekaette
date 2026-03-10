@@ -303,8 +303,9 @@ class TestInitializeSession:
 
     @pytest.mark.asyncio
     async def test_resumption_token_flows_into_run_config(
-        self, session_init_runtime
+        self, monkeypatch, session_init_runtime
     ):
+        monkeypatch.setenv("GOOGLE_GENAI_USE_VERTEXAI", "true")
         session_init_runtime()
         websocket = _FakeWebSocket(
             query_params={
@@ -317,7 +318,28 @@ class TestInitializeSession:
         ctx = await session_init.initialize_session(websocket, "sip-user-123", "session-abc")
 
         assert ctx is not None
+        assert ctx.live_session_resumption_enabled is True
         assert ctx.run_config.session_resumption.handle == "resume-123"
+
+    @pytest.mark.asyncio
+    async def test_resumption_token_is_ignored_on_gemini_api_backend(
+        self, monkeypatch, session_init_runtime
+    ):
+        monkeypatch.setenv("GOOGLE_GENAI_USE_VERTEXAI", "false")
+        session_init_runtime()
+        websocket = _FakeWebSocket(
+            query_params={
+                "industry": "electronics",
+                "companyId": "Acme-Co",
+                "resumption_token": "resume-123",
+            }
+        )
+
+        ctx = await session_init.initialize_session(websocket, "sip-user-123", "session-abc")
+
+        assert ctx is not None
+        assert ctx.live_session_resumption_enabled is False
+        assert getattr(ctx.run_config, "session_resumption", None) is None
 
     @pytest.mark.asyncio
     async def test_query_param_caller_phone_is_ignored_without_trusted_claim(

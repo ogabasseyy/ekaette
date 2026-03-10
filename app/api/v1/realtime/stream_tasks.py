@@ -952,6 +952,9 @@ async def downstream_task(
 
                     # Session resumption token
                     if event.live_session_resumption_update:
+                        if not ctx.live_session_resumption_enabled:
+                            logger.debug("Ignoring live session resumption update on Gemini API backend")
+                            continue
                         logger.debug("Session resumption token received")
                         token_val = getattr(event.live_session_resumption_update, "token", None)
                         if isinstance(token_val, str) and token_val:
