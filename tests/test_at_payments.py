@@ -412,6 +412,8 @@ class TestPaystackPayments:
         sms_message = sms_call.kwargs.get("message") or sms_call[1].get("message", "")
         assert "9876543210" in sms_message
         assert "Wema Bank" in sms_message
+        assert "naira" in sms_message.lower()
+        assert "NGN" not in sms_message
         sms_recipients = sms_call.kwargs.get("recipients") or sms_call[1].get("recipients", [])
         assert "+2348099999999" in sms_recipients
 

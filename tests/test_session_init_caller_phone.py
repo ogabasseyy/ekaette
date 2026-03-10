@@ -10,6 +10,10 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from app.api.v1.realtime.caller_phone_registry import (
+    clear_registered_caller_phone,
+    get_registered_caller_phone,
+)
 from app.api.v1.public import ws_auth
 from app.api.v1.realtime import session_init
 
@@ -163,13 +167,69 @@ class TestInitializeSession:
         assert ctx is not None
         assert websocket.accepted is True
         assert ctx.session_state["user:caller_phone"] == "+2348012345678"
+        assert ctx.session_state["app:user_id"] == "sip-user-123"
+        assert ctx.session_state["app:session_id"] == "session-abc"
         assert ctx.company_id == "acme-co"
         runtime.session_service.create_session.assert_awaited_once()
         create_kwargs = runtime.session_service.create_session.await_args.kwargs
         assert create_kwargs["state"]["user:caller_phone"] == "+2348012345678"
+        assert create_kwargs["state"]["app:user_id"] == "sip-user-123"
         payload = json.loads(websocket.sent_texts[-1])
         assert payload["type"] == "session_started"
         assert payload["sessionState"]["user:caller_phone"] == "+2348012345678"
+        assert payload["sessionState"]["app:user_id"] == "sip-user-123"
+        assert payload["sessionState"]["app:session_id"] == "session-abc"
+        assert get_registered_caller_phone(
+            user_id="sip-user-123",
+            session_id="session-abc",
+        ) == "+2348012345678"
+        clear_registered_caller_phone(
+            user_id="sip-user-123",
+            session_id="session-abc",
+        )
+
+    @pytest.mark.asyncio
+    async def test_ctx_caller_phone_field_set_from_token(
+        self, session_init_runtime
+    ):
+        claims = ws_auth.WsTokenClaims(
+            sub="sip-user-123",
+            tenant_id="public",
+            company_id="acme-co",
+            exp=time.time() + 60,
+            jti="jti-ctx-phone",
+            caller_phone="+2348012345678",
+        )
+        session_init_runtime(ws_secret="test-secret", token_claims=claims)
+        websocket = _FakeWebSocket(
+            query_params={
+                "industry": "electronics",
+                "companyId": "Acme-Co",
+                "token": "signed-token",
+            }
+        )
+
+        ctx = await session_init.initialize_session(websocket, "sip-user-123", "session-abc")
+
+        assert ctx is not None
+        assert ctx.caller_phone == "+2348012345678"
+
+    @pytest.mark.asyncio
+    async def test_ctx_caller_phone_empty_without_token(
+        self, session_init_runtime
+    ):
+        session_init_runtime()
+        websocket = _FakeWebSocket(
+            query_params={
+                "industry": "electronics",
+                "companyId": "Acme-Co",
+            }
+        )
+
+        ctx = await session_init.initialize_session(websocket, "user-1", "session-1")
+
+        assert ctx is not None
+        assert ctx.caller_phone == ""
 
     @pytest.mark.asyncio
     async def test_resumed_session_adds_missing_caller_phone_via_state_save(
@@ -216,16 +276,30 @@ class TestInitializeSession:
         assert save_kwargs["state_updates"] == {
             "app:tenant_id": "public",
             "app:channel": "voice",
+            "app:user_id": "sip-user-123",
+            "app:session_id": "session-abc",
             "user:caller_phone": "+2348012345678",
         }
         assert ctx.session_state["app:tenant_id"] == "public"
         assert ctx.session_state["app:channel"] == "voice"
+        assert ctx.session_state["app:user_id"] == "sip-user-123"
+        assert ctx.session_state["app:session_id"] == "session-abc"
         assert ctx.session_state["user:caller_phone"] == "+2348012345678"
         payload = json.loads(websocket.sent_texts[-1])
         assert payload["type"] == "session_started"
         assert payload["sessionState"]["app:tenant_id"] == "public"
         assert payload["sessionState"]["app:channel"] == "voice"
+        assert payload["sessionState"]["app:user_id"] == "sip-user-123"
+        assert payload["sessionState"]["app:session_id"] == "session-abc"
         assert payload["sessionState"]["user:caller_phone"] == "+2348012345678"
+        assert get_registered_caller_phone(
+            user_id="sip-user-123",
+            session_id="session-abc",
+        ) == "+2348012345678"
+        clear_registered_caller_phone(
+            user_id="sip-user-123",
+            session_id="session-abc",
+        )
 
     @pytest.mark.asyncio
     async def test_resumption_token_flows_into_run_config(

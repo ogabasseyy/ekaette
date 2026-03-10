@@ -1,6 +1,7 @@
 """Tests for shared agent callback behaviors."""
 
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
 from google.adk.models.llm_request import LlmRequest
@@ -9,6 +10,7 @@ from google.genai import types
 from app.agents.callbacks import (
     AGENT_NOT_ENABLED_ERROR_CODE,
     _company_instruction,
+    after_model_valuation_sanity,
     after_tool_emit_messages,
     before_agent_isolation_guard,
     before_model_inject_config,
@@ -80,6 +82,8 @@ class TestBeforeModelInjectConfig:
         assert "Acme Grand Hotel" in system_instruction
         assert "rooms=120" in system_instruction
         assert "Late checkout policy" in system_instruction
+        assert "acme-hotel" not in system_instruction
+        assert "internal company ids" in system_instruction.lower()
 
     @pytest.mark.asyncio
     async def test_first_turn_greeting_uses_company_name_template(self):
@@ -102,8 +106,9 @@ class TestBeforeModelInjectConfig:
         assert "First-turn greeting policy" in system_instruction
         assert "assistant name is exactly 'ehkaitay'" in system_instruction
         assert "business name for this session is exactly 'Acme Grand Hotel'" in system_instruction
-        assert "This is ehkaitay from Acme Grand Hotel." in system_instruction
-        assert "end with exactly one actionable question" in system_instruction
+        assert "Hello, this is ehkaitay from Acme Grand Hotel." in system_instruction
+        assert "How can I help you today?" in system_instruction
+        assert "welcome to <company>" in system_instruction
 
     @pytest.mark.asyncio
     async def test_first_turn_greeting_uses_returning_customer_variant(self):
@@ -142,7 +147,7 @@ class TestBeforeModelInjectConfig:
         await before_model_inject_config(callback_context, llm_request)
 
         system_instruction = str(llm_request.config.system_instruction)
-        assert "This is ehkaitay from our service desk." in system_instruction
+        assert "Hello, this is ehkaitay from our service desk." in system_instruction
 
     @pytest.mark.asyncio
     async def test_does_not_emit_first_turn_greeting_when_already_greeted(self):
@@ -164,6 +169,110 @@ class TestBeforeModelInjectConfig:
         assert "First-turn greeting policy" not in system_instruction
         assert "Do NOT greet again" in system_instruction
         assert "Do not re-introduce your role" in system_instruction
+
+    @pytest.mark.asyncio
+    async def test_injects_pending_handoff_context_for_matching_agent(self):
+        callback_context = SimpleNamespace(
+            state={
+                "temp:greeted": True,
+                "app:industry_config": {"name": "Electronics"},
+                "app:company_profile": {"name": "Awgabassey Gadgets"},
+                "temp:pending_handoff_target_agent": "catalog_agent",
+                "temp:pending_handoff_latest_user": "I want the iPhone 14 128GB.",
+                "temp:pending_handoff_latest_agent": "Sure, let me connect you to catalog.",
+                "temp:pending_handoff_recent_customer_context": (
+                    "  Customer: I want the iPhone 14 128GB."
+                ),
+            },
+            agent_name="catalog_agent",
+        )
+        llm_request = LlmRequest(model="gemini-test", contents=[])
+
+        await before_model_inject_config(callback_context, llm_request)
+
+        system_instruction = str(llm_request.config.system_instruction)
+        assert "Live handoff continuity" in system_instruction
+        assert "I want the iPhone 14 128GB." in system_instruction
+        assert "let me connect you to catalog" in system_instruction.lower()
+
+    @pytest.mark.asyncio
+    async def test_after_model_clears_pending_handoff_for_target_agent(self):
+        callback_context = SimpleNamespace(
+            state={
+                "temp:pending_handoff_target_agent": "catalog_agent",
+                "temp:pending_handoff_latest_user": "I want the iPhone 14 128GB.",
+                "temp:pending_handoff_latest_agent": "Sure, let me connect you.",
+                "temp:pending_handoff_recent_customer_context": "Customer: iPhone 14 128GB",
+            },
+            agent_name="catalog_agent",
+        )
+        llm_response = SimpleNamespace(
+            content=SimpleNamespace(parts=[SimpleNamespace(text="We have that in stock.")])
+        )
+
+        await after_model_valuation_sanity(callback_context, llm_response)
+
+        assert callback_context.state.get("temp:pending_handoff_target_agent", "") == ""
+        assert callback_context.state.get("temp:pending_handoff_latest_user", "") == ""
+
+    @pytest.mark.asyncio
+    async def test_after_model_auto_queues_callback_from_spoken_commitment(self):
+        callback_context = SimpleNamespace(
+            state={
+                "app:channel": "voice",
+                "app:tenant_id": "public",
+                "app:company_id": "ekaette-electronics",
+                "user:caller_phone": "+2348012345678",
+            },
+            agent_name="ekaette_router",
+        )
+        llm_response = SimpleNamespace(
+            content=SimpleNamespace(
+                parts=[SimpleNamespace(text="I'll call you back on this same number right after this call.")]
+            )
+        )
+
+        with patch("app.agents.callbacks.service_voice.register_callback_request") as mock_register:
+            mock_register.return_value = {"status": "pending", "phone": "+2348012345678"}
+            await after_model_valuation_sanity(callback_context, llm_response)
+
+        mock_register.assert_called_once_with(
+            phone="+2348012345678",
+            tenant_id="public",
+            company_id="ekaette-electronics",
+            source="voice_ai_auto_callback",
+            reason="Auto-queued from spoken callback commitment",
+            trigger_after_hangup=True,
+        )
+        assert callback_context.state["temp:callback_requested"] is True
+
+    @pytest.mark.asyncio
+    async def test_after_model_auto_queues_callback_using_session_state_phone_fallback(self):
+        callback_context = SimpleNamespace(
+            state={
+                "app:channel": "voice",
+                "app:tenant_id": "public",
+                "app:company_id": "ekaette-electronics",
+            },
+            session=SimpleNamespace(
+                state={
+                    "user:caller_phone": "+2348012345678",
+                }
+            ),
+            agent_name="ekaette_router",
+        )
+        llm_response = SimpleNamespace(
+            content=SimpleNamespace(
+                parts=[SimpleNamespace(text="I will call you back on this number.")]
+            )
+        )
+
+        with patch("app.agents.callbacks.service_voice.register_callback_request") as mock_register:
+            mock_register.return_value = {"status": "pending", "phone": "+2348012345678"}
+            await after_model_valuation_sanity(callback_context, llm_response)
+
+        mock_register.assert_called_once()
+        assert callback_context.state["temp:callback_requested"] is True
 
 
 class TestCompanyInstructionBuilder:
@@ -217,7 +326,34 @@ class TestCompanyInstructionBuilder:
         assert "Facts:" in text
         assert "Knowledge topics:" in text
         assert "Trust policy:" in text
-        assert text.endswith(".")
+
+
+class TestTransferHandoffStatePreparation:
+    @pytest.mark.asyncio
+    async def test_transfer_tool_prepares_pending_handoff_state(self):
+        tool = SimpleNamespace(name="transfer_to_agent")
+        tool_context = SimpleNamespace(
+            state={
+                "temp:last_user_turn": "I want the iPhone 14 128GB.",
+                "temp:last_agent_turn": "Sure, let me connect you to catalog.",
+                "temp:recent_customer_context": "  Customer: I want the iPhone 14 128GB.",
+            },
+            agent_name="ekaette_router",
+        )
+
+        result = await before_tool_capability_guard_and_log(
+            tool,
+            {"agent_name": "catalog_agent"},
+            tool_context,
+        )
+
+        assert result is None
+        assert tool_context.state["temp:pending_handoff_target_agent"] == "catalog_agent"
+        assert tool_context.state["temp:pending_handoff_latest_user"] == "I want the iPhone 14 128GB."
+        assert tool_context.state["temp:pending_handoff_latest_agent"] == (
+            "Sure, let me connect you to catalog."
+        )
+        assert tool_context.state["temp:pending_handoff_recent_customer_context"].endswith(".")
 
 
 class TestAfterToolEmitMessages:
@@ -279,6 +415,31 @@ class TestAfterToolEmitMessages:
         assert message["code"] == AGENT_NOT_ENABLED_ERROR_CODE
         assert message["agentName"] == "catalog_agent"
         assert message["allowedAgents"] == ["booking_agent", "support_agent"]
+
+    @pytest.mark.asyncio
+    async def test_status_error_without_error_key_is_still_emitted_as_error(self):
+        tool = SimpleNamespace(name="request_callback")
+        ctx = SimpleNamespace(state={}, agent_name="ekaette_router")
+        result = {
+            "status": "error",
+            "detail": "Could not queue callback request",
+        }
+
+        await after_tool_emit_messages(tool, {}, ctx, result)
+
+        message = ctx.state["temp:last_server_message"]
+        assert message["type"] == "error"
+        assert message["message"] == "Could not queue callback request"
+
+    @pytest.mark.asyncio
+    async def test_request_callback_marks_state_when_queued(self):
+        tool = SimpleNamespace(name="request_callback")
+        ctx = SimpleNamespace(state={}, agent_name="ekaette_router")
+        result = {"status": "pending", "phone": "+2348012345678"}
+
+        await after_tool_emit_messages(tool, {}, ctx, result)
+
+        assert ctx.state["temp:callback_requested"] is True
 
 
 class TestQuestionnaireWiring:

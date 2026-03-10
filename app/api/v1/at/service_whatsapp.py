@@ -23,6 +23,7 @@ from typing import Any
 
 from app.channels import adk_text_adapter
 from app.configs import sanitize_log
+from shared.phone_identity import normalize_phone
 from shared.phone_identity import canonical_phone_user_id
 
 from . import bridge_text
@@ -371,7 +372,36 @@ def _window_key(
     company_id: str,
 ) -> str:
     """Scoped service window key: tenant:company:phone_number_id:user_phone."""
-    return f"{tenant_id}:{company_id}:{phone_number_id}:{user_phone}"
+    normalized_phone = normalize_phone(user_phone) or user_phone.strip()
+    return f"{tenant_id}:{company_id}:{phone_number_id}:{normalized_phone}"
+
+
+def _window_key_candidates(
+    user_phone: str,
+    phone_number_id: str,
+    tenant_id: str,
+    company_id: str,
+) -> tuple[str, ...]:
+    """Return normalized key plus legacy raw-phone key when they differ."""
+    candidates: list[str] = []
+    seen: set[str] = set()
+    normalized_phone = normalize_phone(user_phone) or user_phone.strip()
+    raw_phone = user_phone.strip()
+    legacy_phones = [
+        normalized_phone,
+        raw_phone,
+        normalized_phone.removeprefix("+"),
+        raw_phone.removeprefix("+"),
+    ]
+    for phone in legacy_phones:
+        if not phone:
+            continue
+        key = f"{tenant_id}:{company_id}:{phone_number_id}:{phone}"
+        if key in seen:
+            continue
+        seen.add(key)
+        candidates.append(key)
+    return tuple(candidates)
 
 
 def check_service_window(
@@ -381,21 +411,23 @@ def check_service_window(
     company_id: str = "ekaette-electronics",
 ) -> bool:
     """Check if 24h service window is open for this user."""
-    key = _window_key(
+    resolved_phone_id = phone_number_id or WHATSAPP_PHONE_NUMBER_ID
+    keys = _window_key_candidates(
         user_phone,
-        phone_number_id or WHATSAPP_PHONE_NUMBER_ID,
+        resolved_phone_id,
         tenant_id,
         company_id,
     )
     now = time.time()
     if _state_store_uses_firestore():
-        return _check_service_window_firestore(key, now)
+        return any(_check_service_window_firestore(key, now) for key in keys)
 
     _evict_service_windows(now)
-    last_ts = _service_windows.get(key)
-    if last_ts is None:
-        return False
-    return (now - last_ts) < _SERVICE_WINDOW_SECONDS
+    for key in keys:
+        last_ts = _service_windows.get(key)
+        if last_ts is not None and (now - last_ts) < _SERVICE_WINDOW_SECONDS:
+            return True
+    return False
 
 
 def record_inbound_timestamp(

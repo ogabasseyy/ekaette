@@ -4,6 +4,7 @@
 
 # Google API
 GOOGLE_API_KEY=<your-gemini-api-key>
+GOOGLE_CLOUD_PROJECT=ekaette
 
 # SIP server (WhatsApp Business Calling)
 WA_SIP_HOST=0.0.0.0

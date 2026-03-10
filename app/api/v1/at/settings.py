@@ -26,6 +26,7 @@ class ATSettings(BaseSettings):
     at_allowed_source_ips: str = Field(default="", alias="AT_ALLOWED_SOURCE_IPS")
     at_voice_enabled: bool = Field(default=False, alias="AT_VOICE_ENABLED")
     at_sms_enabled: bool = Field(default=False, alias="AT_SMS_ENABLED")
+    at_sms_sender_id: str = Field(default="", alias="AT_SMS_SENDER_ID")
     at_callback_dial_fallback: bool = Field(default=True, alias="AT_CALLBACK_DIAL_FALLBACK_ENABLED")
     sip_bridge_endpoint: str = Field(default="", alias="SIP_BRIDGE_ENDPOINT")
 
@@ -134,6 +135,7 @@ AT_VIRTUAL_NUMBER = cfg.at_virtual_number
 AT_WEBHOOK_SHARED_SECRET = cfg.at_webhook_shared_secret
 AT_VOICE_ENABLED = cfg.at_voice_enabled
 AT_SMS_ENABLED = cfg.at_sms_enabled
+AT_SMS_SENDER_ID = cfg.at_sms_sender_id
 AT_CALLBACK_DIAL_FALLBACK = cfg.at_callback_dial_fallback
 SIP_BRIDGE_ENDPOINT = cfg.sip_bridge_endpoint
 ALLOWED_SOURCE_IPS = _parse_ip_set(cfg.at_allowed_source_ips)

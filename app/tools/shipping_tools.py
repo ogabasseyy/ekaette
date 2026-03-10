@@ -15,6 +15,7 @@ from typing import Any
 
 import httpx
 
+from app.tools.sms_messaging import resolve_sms_sender_id_from_state
 from app.tools.scoped_queries import scoped_collection_or_global
 
 logger = logging.getLogger(__name__)
@@ -61,6 +62,21 @@ _TRACKING_STATUS_MAP: dict[str, str] = {
 _order_lock = threading.Lock()
 _order_records: dict[str, dict[str, Any]] = {}
 _firestore_db: Any = None
+
+
+def _currency_name(currency: object) -> str:
+    raw = str(currency or "").strip().upper()
+    if raw == "NGN":
+        return "naira"
+    return raw or "currency"
+
+
+def _format_amount_display(total_kobo: int, currency: object) -> str:
+    amount = round(total_kobo / 100, 2)
+    currency_name = _currency_name(currency)
+    if currency_name == "naira":
+        return f"{amount:,.2f} naira"
+    return f"{currency_name} {amount:,.2f}"
 
 
 def _now_iso() -> str:
@@ -415,6 +431,7 @@ def _map_rate_to_quote(rate: dict[str, Any]) -> dict[str, Any]:
     delivery_eta = str(rate.get("deliveryEta") or rate.get("duration") or "").strip()
     parsed_eta = _parse_delivery_eta(delivery_eta)
 
+    currency_code = str(rate.get("currency") or "NGN").upper()
     return {
         "service_type": service_type,
         "pricing_tier": pricing_tier,
@@ -423,7 +440,9 @@ def _map_rate_to_quote(rate: dict[str, Any]) -> dict[str, Any]:
         "total_kobo": total_kobo,
         "total_naira": round(total_kobo / 100, 2),
         "vat_kobo": vat_kobo,
-        "currency": str(rate.get("currency") or "NGN").upper(),
+        "currency": currency_code,
+        "currency_name": _currency_name(currency_code),
+        "total_display": _format_amount_display(total_kobo, currency_code),
         "delivery_eta": delivery_eta,
         "estimated_days": int(parsed_eta["estimated_days"] or 5),
         "min_days": parsed_eta["min_days"],
@@ -538,7 +557,7 @@ def _review_message_for(order_id: str) -> str:
     )
 
 
-async def _send_sms_message(phone: str, message: str) -> bool:
+async def _send_sms_message(phone: str, message: str, sender_id: str | None = None) -> bool:
     if not AT_SMS_ENABLED:
         return False
     clean_phone = _clean_str(phone)
@@ -547,7 +566,11 @@ async def _send_sms_message(phone: str, message: str) -> bool:
     try:
         from app.api.v1.at import providers
 
-        await providers.send_sms(message=message, recipients=[clean_phone])
+        await providers.send_sms(
+            message=message,
+            recipients=[clean_phone],
+            sender_id=sender_id or None,
+        )
         return True
     except Exception:
         logger.warning("Order review SMS failed for %s", clean_phone, exc_info=True)
@@ -770,7 +793,8 @@ async def send_order_review_followup(
         }
 
     resolved_message = _clean_str(message) or _review_message_for(resolved_order_id)
-    sms_sent = await _send_sms_message(phone, resolved_message)
+    sender_id = resolve_sms_sender_id_from_state(getattr(tool_context, "state", {}))
+    sms_sent = await _send_sms_message(phone, resolved_message, sender_id=sender_id)
     whatsapp_sent = await _send_whatsapp_message(phone, resolved_message)
 
     if not sms_sent and not whatsapp_sent:

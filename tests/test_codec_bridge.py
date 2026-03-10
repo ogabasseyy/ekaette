@@ -133,6 +133,22 @@ class TestG711CodecBridge:
         # Not all bytes should be the silence value (0xFF)
         assert ulaw != bytes([0xFF] * 160)
 
+    def test_g711_alaw_encode_output_size(self):
+        from sip_bridge.codec_bridge import G711CodecBridge
+
+        bridge = G711CodecBridge(rtp_payload_type=8, rtp_clock_rate=8000, law="alaw")
+        pcm16_24k = bytes(960)
+        alaw = bridge.encode_from_pcm16_24k(pcm16_24k)
+        assert len(alaw) == 160
+
+    def test_g711_alaw_decode_output_size(self):
+        from sip_bridge.codec_bridge import G711CodecBridge
+
+        bridge = G711CodecBridge(rtp_payload_type=8, rtp_clock_rate=8000, law="alaw")
+        alaw_frame = bytes([0x55] * 160)
+        pcm16_16k = bridge.decode_to_pcm16_16k(alaw_frame)
+        assert len(pcm16_16k) == 640
+
 
 # --- OpusCodecBridge tests ---
 

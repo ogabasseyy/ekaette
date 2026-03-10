@@ -17,6 +17,8 @@ class TestBookingAgentTools:
         assert "check_payment_status" in tool_names
         assert "create_order_record" in tool_names
         assert "track_order_delivery" in tool_names
+        assert "send_sms_message" in tool_names
+        assert "send_whatsapp_message" in tool_names
 
     def test_booking_instruction_mentions_purchase_fallback(self):
         from app.agents.booking_agent.agent import booking_agent
@@ -26,7 +28,7 @@ class TestBookingAgentTools:
         assert "fulfillment preference" in instruction
         assert "booking is optional for completed purchases" in instruction
 
-    def test_text_booking_agent_omits_send_whatsapp_message_tool(self):
+    def test_text_booking_agent_omits_outbound_message_tools(self):
         from app.agents.booking_agent.agent import create_booking_agent
 
         agent = create_booking_agent("gemini-3-flash-preview", channel="text")
@@ -34,6 +36,7 @@ class TestBookingAgentTools:
             getattr(tool, "name", getattr(tool, "__name__", str(tool)))
             for tool in agent.tools
         }
+        assert "send_sms_message" not in tool_names
         assert "send_whatsapp_message" not in tool_names
 
     def test_text_booking_instruction_avoids_out_of_band_followup(self):
@@ -43,3 +46,10 @@ class TestBookingAgentTools:
         instruction = agent.instruction.lower()
         assert "separate whatsapp follow-up" in instruction
         assert "do not promise" in instruction
+
+    def test_voice_booking_instruction_mentions_sms_or_whatsapp_followup(self):
+        from app.agents.booking_agent.agent import booking_agent
+
+        instruction = booking_agent.instruction.lower()
+        assert "sms or whatsapp" in instruction
+        assert "send_sms_message" in instruction

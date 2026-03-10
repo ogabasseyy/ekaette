@@ -304,9 +304,10 @@ class TestBeforeModelInjectConfigCharacterization:
         req = LlmRequest(model="test", contents=[])
         await before_model_inject_config(ctx, req)
         instruction = req.config.system_instruction
-        assert "acme-hotel" in instruction
         assert "Acme Grand Hotel" in instruction
         assert "rooms" in instruction
+        assert "internal company IDs" in instruction
+        assert "acme-hotel" not in instruction
 
     @pytest.mark.asyncio
     async def test_greeting_only_injected_on_first_turn(self):
@@ -319,7 +320,8 @@ class TestBeforeModelInjectConfigCharacterization:
         )
         req = LlmRequest(model="test", contents=[])
         await before_model_inject_config(ctx, req)
-        assert "Hello!" in req.config.system_instruction
+        assert "First-turn greeting policy" in req.config.system_instruction
+        assert "How can I help you today?" in req.config.system_instruction
 
         # Second turn — temp:greeted is True
         ctx2 = SimpleNamespace(

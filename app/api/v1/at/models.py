@@ -35,6 +35,16 @@ class TransferRequest(BaseModel):
     transfer_to: str
 
 
+class CallbackRequest(BaseModel):
+    """Request an outbound callback to a customer."""
+
+    phone: str = Field(min_length=1)
+    reason: str | None = None
+    mode: Literal["after_hangup", "immediate"] = "after_hangup"
+    tenant_id: str = "public"
+    company_id: str = "ekaette-electronics"
+
+
 class SendSMSRequest(BaseModel):
     """Send a single outbound SMS."""
 

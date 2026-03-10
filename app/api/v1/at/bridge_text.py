@@ -69,7 +69,9 @@ async def query_text(
         contents=[user_message],
         config=types.GenerateContentConfig(
             system_instruction=(
-                f"You are Ekaette, virtual assistant for {company_id}. "
+                "You are the virtual assistant named ehkaitay. "
+                "Your name is ehkaitay — always say it exactly like that. "
+                "Do not mention internal business IDs, slugs, or platform names. "
                 f"{cfg['system_suffix']}"
             ),
             max_output_tokens=cfg["max_tokens"],

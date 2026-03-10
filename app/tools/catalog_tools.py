@@ -112,6 +112,24 @@ _QUERY_ALIAS_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
 _STORAGE_TOKEN_PATTERN = re.compile(r"^(?:\d+gb|\d+tb)$", flags=re.IGNORECASE)
 
 
+def _currency_name(currency: object) -> str:
+    raw = str(currency or "").strip().upper()
+    if raw == "NGN":
+        return "naira"
+    return raw or "currency"
+
+
+def _format_price_display(price: object, currency: object) -> str:
+    try:
+        amount = int(price)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return str(price)
+    currency_name = _currency_name(currency)
+    if currency_name == "naira":
+        return f"{amount:,} naira"
+    return f"{currency_name} {amount:,}"
+
+
 def _get_firestore_db() -> Any | None:
     """Get or create Firestore client. Returns None if unavailable."""
     global _firestore_db
@@ -292,24 +310,35 @@ def _fallback_products(query: str, category: str | None, max_results: int) -> li
 def _format_product(product: dict[str, Any], *, query: str = "") -> dict[str, Any]:
     """Format a product for display, flattening storage variants into the price field."""
     variants = product.get("storage_variants")
-    if not variants or not isinstance(variants, list):
-        return product
     formatted = dict(product)
+    formatted["currency_name"] = _currency_name(formatted.get("currency"))
+    if isinstance(formatted.get("price"), (int, float)):
+        formatted["price_display"] = _format_price_display(
+            formatted.get("price"),
+            formatted.get("currency"),
+        )
+    if not variants or not isinstance(variants, list):
+        return formatted
     matched_variant = _matched_storage_variant(product, query)
     if matched_variant is not None:
         formatted["price"] = matched_variant.get("price", formatted.get("price"))
         formatted["storage"] = matched_variant.get("storage", "")
+        formatted["price_display"] = _format_price_display(
+            formatted.get("price"),
+            formatted.get("currency"),
+        )
         formatted.pop("storage_variants", None)
         return formatted
     # Replace flat price with variant breakdown
-    default_currency = formatted.get("currency", "₦")
+    default_currency = formatted.get("currency", "NGN")
     prices = [
-        f"{v['storage']}: {v.get('currency', default_currency)}{v['price']:,}"
+        f"{v['storage']}: {_format_price_display(v['price'], v.get('currency', default_currency))}"
         for v in variants
         if isinstance(v, dict) and "storage" in v and "price" in v
     ]
     if prices:
         formatted["price"] = " | ".join(prices)
+        formatted["price_display"] = formatted["price"]
         # Remove raw numeric price and variants to avoid model picking the flat number
         formatted.pop("storage_variants", None)
     return formatted

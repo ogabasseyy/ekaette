@@ -24,10 +24,6 @@ from app.tools.pii_redaction import redact_pii
 
 logger = logging.getLogger(__name__)
 
-RESPONSE_LATENCY_FILLER_SECONDS = 3.0
-RESPONSE_LATENCY_REASSURE_SECONDS = 15.0
-
-
 def _parse_int_env(name: str, default: int) -> int:
     try:
         return int(os.getenv(name, str(default)))
@@ -42,6 +38,14 @@ def _parse_float_env(name: str, default: float) -> float:
         return default
 
 
+RESPONSE_LATENCY_FILLER_SECONDS = max(
+    0.5,
+    _parse_float_env("RESPONSE_LATENCY_FILLER_SECONDS", 2.0),
+)
+RESPONSE_LATENCY_REASSURE_SECONDS = max(
+    RESPONSE_LATENCY_FILLER_SECONDS + 1.0,
+    _parse_float_env("RESPONSE_LATENCY_REASSURE_SECONDS", 15.0),
+)
 LIVE_STREAM_MAX_RETRIES = max(0, _parse_int_env("LIVE_STREAM_MAX_RETRIES", 2))
 LIVE_STREAM_RETRY_BASE_SECONDS = max(
     0.1,
@@ -55,8 +59,6 @@ _CONNECTION_ERRNOS = frozenset({
     errno.ETIMEDOUT,
     errno.ESHUTDOWN,
 })
-
-
 def configure_runtime(**kwargs: Any) -> None:
     """Inject runtime dependencies from main module."""
     globals().update(kwargs)
@@ -434,7 +436,162 @@ async def downstream_task(
         "DEBUG_TELEMETRY",
         "_sanitize_log",
     )
-    current_agent = "ekaette_router"
+    session_state_store = ctx.session_state
+
+    def _session_get(key: str, default: Any = None) -> Any:
+        getter = getattr(session_state_store, "get", None)
+        if callable(getter):
+            try:
+                return getter(key, default)
+            except TypeError:
+                value = getter(key)
+                return default if value is None else value
+        return default
+
+    def _session_set(key: str, value: Any) -> None:
+        try:
+            session_state_store[key] = value
+        except Exception:
+            logger.debug("Failed to persist session key %s", key, exc_info=True)
+
+    current_agent_raw = _session_get("temp:active_agent", "ekaette_router")
+    current_agent = current_agent_raw if isinstance(current_agent_raw, str) else "ekaette_router"
+
+    def _looks_like_callback_request(text: str) -> bool:
+        from app.agents.callbacks import looks_like_callback_request
+
+        return looks_like_callback_request(text)
+
+    def _maybe_register_callback_from_user_turn(text: str) -> None:
+        if not _looks_like_callback_request(text):
+            return
+        if bool(_session_get("temp:callback_requested", False)):
+            return
+
+        channel = _session_get("app:channel", "voice")
+        if isinstance(channel, str) and channel.strip().lower() != "voice":
+            return
+
+        from app.api.v1.at import service_voice
+        from app.api.v1.realtime.caller_phone_registry import get_registered_caller_phone
+        from app.tools.sms_messaging import resolve_caller_phone_from_state
+
+        caller_phone = resolve_caller_phone_from_state(session_state_store)
+        if not caller_phone:
+            caller_phone = get_registered_caller_phone(
+                user_id=ctx.user_id,
+                session_id=ctx.resolved_session_id,
+            )
+        if not caller_phone:
+            caller_phone = getattr(ctx, "caller_phone", "") or ""
+        if not caller_phone:
+            logger.warning(
+                "Voice callback intent detected but caller phone was unavailable "
+                "user_id=%s session_id=%s",
+                sanitize_log_fn(ctx.user_id),
+                sanitize_log_fn(ctx.resolved_session_id),
+            )
+            return
+
+        result = service_voice.register_callback_request(
+            phone=caller_phone,
+            tenant_id=ctx.tenant_id,
+            company_id=ctx.company_id,
+            source="voice_user_callback_intent",
+            reason=text,
+            trigger_after_hangup=True,
+        )
+        status = str(result.get("status", "")).strip().lower() if isinstance(result, dict) else ""
+        if status in {"pending", "queued", "cooldown"}:
+            _session_set("temp:callback_requested", True)
+            logger.info(
+                "Queued callback from live voice transcript phone=%s tenant_id=%s "
+                "company_id=%s status=%s",
+                sanitize_log_fn(caller_phone),
+                sanitize_log_fn(ctx.tenant_id),
+                sanitize_log_fn(ctx.company_id),
+                status,
+            )
+        else:
+            logger.warning(
+                "Failed to queue callback from live voice transcript phone=%s "
+                "tenant_id=%s company_id=%s result=%r",
+                sanitize_log_fn(caller_phone),
+                sanitize_log_fn(ctx.tenant_id),
+                sanitize_log_fn(ctx.company_id),
+                result,
+            )
+
+    def _maybe_register_callback_from_agent_promise(text: str) -> None:
+        """Register a callback when the agent's output promises one.
+
+        Catches cases where the model says "I'll call you back" but the
+        request_callback tool fails (e.g. caller phone not in tool context).
+        This runs in the stream layer which has direct access to caller
+        identity via ctx and the ephemeral registry.
+        """
+        from app.agents.callbacks import looks_like_callback_promise
+
+        if not looks_like_callback_promise(text):
+            return
+        if bool(_session_get("temp:callback_requested", False)):
+            return
+
+        channel = _session_get("app:channel", "voice")
+        if isinstance(channel, str) and channel.strip().lower() != "voice":
+            return
+
+        from app.api.v1.at import service_voice
+        from app.api.v1.realtime.caller_phone_registry import get_registered_caller_phone
+        from app.tools.sms_messaging import resolve_caller_phone_from_state
+
+        caller_phone = resolve_caller_phone_from_state(session_state_store)
+        if not caller_phone:
+            caller_phone = get_registered_caller_phone(
+                user_id=ctx.user_id,
+                session_id=ctx.resolved_session_id,
+            )
+        if not caller_phone:
+            caller_phone = getattr(ctx, "caller_phone", "") or ""
+        if not caller_phone:
+            logger.warning(
+                "Agent callback promise detected but caller phone unavailable "
+                "user_id=%s session_id=%s text=%s",
+                sanitize_log_fn(ctx.user_id),
+                sanitize_log_fn(ctx.resolved_session_id),
+                sanitize_log_fn(text[:120]),
+            )
+            return
+
+        result = service_voice.register_callback_request(
+            phone=caller_phone,
+            tenant_id=ctx.tenant_id,
+            company_id=ctx.company_id,
+            source="voice_agent_callback_promise",
+            reason=text[:240],
+            trigger_after_hangup=True,
+        )
+        status = str(result.get("status", "")).strip().lower() if isinstance(result, dict) else ""
+        if status in {"pending", "queued", "cooldown"}:
+            _session_set("temp:callback_requested", True)
+            logger.info(
+                "Queued callback from agent promise phone=%s tenant_id=%s "
+                "company_id=%s status=%s",
+                sanitize_log_fn(caller_phone),
+                sanitize_log_fn(ctx.tenant_id),
+                sanitize_log_fn(ctx.company_id),
+                status,
+            )
+        else:
+            logger.warning(
+                "Failed to queue callback from agent promise phone=%s "
+                "tenant_id=%s company_id=%s result=%r",
+                sanitize_log_fn(caller_phone),
+                sanitize_log_fn(ctx.tenant_id),
+                sanitize_log_fn(ctx.company_id),
+                result,
+            )
+
     last_input_text = ""
     last_output_text = ""
     receiving_input = False
@@ -451,6 +608,8 @@ async def downstream_task(
     # Each entry: (role, text) — keeps the last 6 turns.
     recent_turns: deque[tuple[str, str]] = deque(maxlen=6)
     model_has_spoken = False
+    handoff_sig_raw = _session_get("temp:last_transfer_handoff_signature", "")
+    last_handoff_signature = handoff_sig_raw if isinstance(handoff_sig_raw, str) else ""
 
     def _recent_turn_lines(*, include_agent: bool = True) -> list[str]:
         lines: list[str] = []
@@ -467,26 +626,48 @@ async def downstream_task(
                 return text.strip()
         return ""
 
-    def _inject_transfer_handoff(target_agent: str) -> None:
+    def _latest_agent_turn() -> str:
+        for role, text in reversed(recent_turns):
+            if role == "agent" and isinstance(text, str) and text.strip():
+                return text.strip()
+        return ""
+
+    def _persist_recent_customer_context() -> None:
+        customer_lines = _recent_turn_lines(include_agent=False)
+        recent_customer = "\n".join(customer_lines[-3:])
+        _session_set("temp:recent_customer_context", recent_customer)
+
+    def _clear_pending_handoff() -> None:
+        for key in (
+            "temp:pending_handoff_target_agent",
+            "temp:pending_handoff_latest_user",
+            "temp:pending_handoff_latest_agent",
+            "temp:pending_handoff_recent_customer_context",
+        ):
+            _session_set(key, "")
+
+    def _persist_transfer_handoff_state(target_agent: str) -> None:
+        nonlocal last_handoff_signature
         latest_user = _latest_user_turn()
-        if not latest_user:
+        latest_agent = _latest_agent_turn()
+        customer_context_lines = _recent_turn_lines(include_agent=False)
+        customer_context = "\n".join(customer_context_lines[-3:])
+        signature = f"{target_agent}|{latest_user}|{latest_agent}|{customer_context}"
+        if signature == last_handoff_signature:
+            logger.debug(
+                "Skipping duplicate persisted handoff for agent=%s session=%s",
+                target_agent,
+                sanitize_log_fn(ctx.resolved_session_id),
+            )
             return
-        (types_mod,) = bind_runtime_values("types")
-        handoff_lines = _recent_turn_lines(include_agent=False)
-        handoff = (
-            "[System: A handoff just moved this same live conversation to "
-            f"'{target_agent}'. Do NOT greet, introduce yourself, or repeat "
-            "the customer's request. Continue directly from the ongoing "
-            f"conversation. The customer's latest request or constraint is: '{latest_user}'."
-        )
-        if handoff_lines:
-            handoff += "\nRecent customer context:\n" + "\n".join(handoff_lines)
-        handoff += "]"
-        live_request_queue.send_content(
-            types_mod.Content(parts=[types_mod.Part(text=handoff)])
-        )
+        last_handoff_signature = signature
+        _session_set("temp:last_transfer_handoff_signature", signature)
+        _session_set("temp:pending_handoff_target_agent", target_agent)
+        _session_set("temp:pending_handoff_latest_user", latest_user)
+        _session_set("temp:pending_handoff_latest_agent", latest_agent)
+        _session_set("temp:pending_handoff_recent_customer_context", customer_context)
         logger.info(
-            "Injected transfer handoff for agent=%s session=%s",
+            "Persisted transfer handoff for agent=%s session=%s",
             target_agent,
             sanitize_log_fn(ctx.resolved_session_id),
         )
@@ -580,6 +761,9 @@ async def downstream_task(
                                 }))
                                 if finished:
                                     recent_turns.append(("user", text))
+                                    _session_set("temp:last_user_turn", text)
+                                    _maybe_register_callback_from_user_turn(text)
+                                    _persist_recent_customer_context()
                                     last_input_text = ""
                                     receiving_input = False
                                     input_finalized = True
@@ -613,11 +797,25 @@ async def downstream_task(
                                     "text": text,
                                     "partial": is_partial,
                                 }))
+                                # Check partial transcriptions too — if
+                                # Gemini crashes mid-turn the finished event
+                                # never arrives and the promise is lost.
+                                _maybe_register_callback_from_agent_promise(text)
                                 if finished:
                                     recent_turns.append(("agent", text))
+                                    _session_set("temp:last_agent_turn", text)
                                     model_has_spoken = True
                                     last_output_text = ""
                                     output_finalized = True
+                                    pending_target = _session_get(
+                                        "temp:pending_handoff_target_agent", ""
+                                    )
+                                    if (
+                                        isinstance(pending_target, str)
+                                        and pending_target.strip()
+                                        and pending_target.strip() == current_agent
+                                    ):
+                                        _clear_pending_handoff()
 
                     # Interrupted -> finalize + clear playback
                     if event.interrupted:
@@ -643,8 +841,29 @@ async def downstream_task(
                                 "from": current_agent,
                                 "to": new_agent,
                             }))
-                            _inject_transfer_handoff(new_agent)
+                            existing_pending = _session_get(
+                                "temp:pending_handoff_target_agent", ""
+                            )
+                            if (
+                                not isinstance(existing_pending, str)
+                                or existing_pending.strip() != new_agent
+                            ):
+                                _persist_transfer_handoff_state(new_agent)
                             current_agent = new_agent
+                            _session_set("temp:active_agent", current_agent)
+                            output_finished = bool(
+                                getattr(event.output_transcription, "finished", False)
+                            ) if event.output_transcription else False
+                            if output_finished:
+                                pending_target = _session_get(
+                                    "temp:pending_handoff_target_agent", ""
+                                )
+                                if (
+                                    isinstance(pending_target, str)
+                                    and pending_target.strip()
+                                    and pending_target.strip() == current_agent
+                                ):
+                                    _clear_pending_handoff()
                             await websocket.send_text(json.dumps({
                                 "type": "agent_status",
                                 "agent": new_agent,

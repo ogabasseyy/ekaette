@@ -9,7 +9,7 @@ import json
 import os
 import time
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi import WebSocketDisconnect
@@ -145,9 +145,7 @@ class TestChannelGatingInCallbacks:
 
 class TestTransferHandoffInjection:
     @pytest.mark.asyncio
-    async def test_transfer_injects_continuation_context_for_new_agent(self):
-        import app.api.v1.realtime.stream_tasks as st
-
+    async def test_transfer_persists_continuation_context_for_new_agent(self):
         user_turn = _make_live_event(
             input_transcription=SimpleNamespace(
                 text="I want the iPhone 15 Pro 128GB.",
@@ -157,29 +155,186 @@ class TestTransferHandoffInjection:
         transfer = _make_live_event(
             actions=SimpleNamespace(transfer_to_agent="catalog_agent", state_delta=None)
         )
+        ctx = _make_ctx(_FakeWebSocket())
 
-        original_bind = st.bind_runtime_values
+        await _run_downstream_events(user_turn, transfer, ctx=ctx)
 
-        def fake_bind(*names):
-            if names == ("types",):
-                return (_FakeTypes,)
-            return original_bind(*names)
+        assert ctx.session_state["temp:pending_handoff_target_agent"] == "catalog_agent"
+        assert ctx.session_state["temp:pending_handoff_latest_user"] == (
+            "I want the iPhone 15 Pro 128GB."
+        )
+        assert "iPhone 15 Pro 128GB" in ctx.session_state["temp:pending_handoff_recent_customer_context"]
 
-        st.bind_runtime_values = fake_bind
-        try:
-            _, queue, _ = await _run_downstream_events(user_turn, transfer)
-        finally:
-            st.bind_runtime_values = original_bind
+    @pytest.mark.asyncio
+    async def test_finished_user_transcription_persists_last_user_turn(self):
+        ctx = _make_ctx(_FakeWebSocket())
 
-        handoff_messages = [
-            getattr(content.parts[0], "text", "")
-            for content in queue.sent
-            if getattr(content, "parts", None)
-        ]
-        assert handoff_messages
-        assert any("catalog_agent" in message for message in handoff_messages)
-        assert any("Do NOT greet" in message for message in handoff_messages)
-        assert any("iPhone 15 Pro 128GB" in message for message in handoff_messages)
+        await _run_downstream_events(
+            _make_live_event(
+                input_transcription=SimpleNamespace(
+                    text="I need the iPhone 14 128GB.",
+                    finished=True,
+                )
+            ),
+            ctx=ctx,
+        )
+
+        assert ctx.session_state["temp:last_user_turn"] == "I need the iPhone 14 128GB."
+        assert "iPhone 14 128GB" in ctx.session_state["temp:recent_customer_context"]
+
+    @pytest.mark.asyncio
+    async def test_first_transferred_agent_final_clears_pending_handoff_state(self):
+        ctx = _make_ctx(_FakeWebSocket())
+        ctx.session_state.update(
+            {
+                "temp:active_agent": "catalog_agent",
+                "temp:pending_handoff_target_agent": "catalog_agent",
+                "temp:pending_handoff_latest_user": "I want the iPhone 14 128GB.",
+                "temp:pending_handoff_latest_agent": "Sure, let me connect you.",
+                "temp:pending_handoff_recent_customer_context": (
+                    "  Customer: I want the iPhone 14 128GB."
+                ),
+            }
+        )
+
+        await _run_downstream_events(
+            _make_live_event(
+                output_transcription=SimpleNamespace(
+                    text="We have that in stock.",
+                    finished=True,
+                )
+            ),
+            ctx=ctx,
+        )
+
+        assert ctx.session_state["temp:pending_handoff_target_agent"] == ""
+        assert ctx.session_state["temp:pending_handoff_latest_user"] == ""
+
+    @pytest.mark.asyncio
+    async def test_transfer_event_with_first_agent_output_clears_pending_handoff(self):
+        ctx = _make_ctx(_FakeWebSocket())
+        ctx.session_state.update(
+            {
+                "temp:pending_handoff_target_agent": "catalog_agent",
+                "temp:pending_handoff_latest_user": "I want the iPhone 14 128GB.",
+                "temp:pending_handoff_latest_agent": "Sure, let me connect you.",
+                "temp:pending_handoff_recent_customer_context": (
+                    "  Customer: I want the iPhone 14 128GB."
+                ),
+            }
+        )
+
+        await _run_downstream_events(
+            _make_live_event(
+                output_transcription=SimpleNamespace(
+                    text="Which storage size do you want?",
+                    finished=True,
+                ),
+                actions=SimpleNamespace(
+                    transfer_to_agent="catalog_agent",
+                    state_delta=None,
+                ),
+            ),
+            ctx=ctx,
+        )
+
+        assert ctx.session_state["temp:active_agent"] == "catalog_agent"
+        assert ctx.session_state["temp:pending_handoff_target_agent"] == ""
+
+
+class TestVoiceCallbackIntentRegistration:
+    @pytest.mark.asyncio
+    async def test_finished_user_transcription_queues_callback_request(self):
+        ctx = _make_ctx(_FakeWebSocket())
+        ctx.session_state.update(
+            {
+                "app:channel": "voice",
+                "user:caller_phone": "+2348012345678",
+            }
+        )
+
+        with patch(
+            "app.api.v1.at.service_voice.register_callback_request"
+        ) as mock_register:
+            mock_register.return_value = {"status": "pending", "phone": "+2348012345678"}
+            await _run_downstream_events(
+                _make_live_event(
+                    input_transcription=SimpleNamespace(
+                        text="Can you call me back please?",
+                        finished=True,
+                    )
+                ),
+                ctx=ctx,
+            )
+
+        mock_register.assert_called_once_with(
+            phone="+2348012345678",
+            tenant_id="public",
+            company_id="acme-co",
+            source="voice_user_callback_intent",
+            reason="Can you call me back please?",
+            trigger_after_hangup=True,
+        )
+        assert ctx.session_state["temp:callback_requested"] is True
+
+    @pytest.mark.asyncio
+    async def test_unrelated_user_transcription_does_not_queue_callback(self):
+        ctx = _make_ctx(_FakeWebSocket())
+        ctx.session_state.update(
+            {
+                "app:channel": "voice",
+                "user:caller_phone": "+2348012345678",
+            }
+        )
+
+        with patch(
+            "app.api.v1.at.service_voice.register_callback_request"
+        ) as mock_register:
+            await _run_downstream_events(
+                _make_live_event(
+                    input_transcription=SimpleNamespace(
+                        text="I want the iPhone 14 128GB.",
+                        finished=True,
+                    )
+                ),
+                ctx=ctx,
+            )
+
+        mock_register.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_noisy_user_transcription_still_queues_callback_request(self):
+        ctx = _make_ctx(_FakeWebSocket())
+        ctx.session_state.update(
+            {
+                "app:channel": "voice",
+                "user:caller_phone": "+2348012345678",
+            }
+        )
+
+        with patch(
+            "app.api.v1.at.service_voice.register_callback_request"
+        ) as mock_register:
+            mock_register.return_value = {"status": "pending", "phone": "+2348012345678"}
+            await _run_downstream_events(
+                _make_live_event(
+                    input_transcription=SimpleNamespace(
+                        text="you call me bug.",
+                        finished=True,
+                    )
+                ),
+                ctx=ctx,
+            )
+
+        mock_register.assert_called_once_with(
+            phone="+2348012345678",
+            tenant_id="public",
+            company_id="acme-co",
+            source="voice_user_callback_intent",
+            reason="you call me bug.",
+            trigger_after_hangup=True,
+        )
+        assert ctx.session_state["temp:callback_requested"] is True
 
 
 # ─── Stream tasks: watchdog arming / clearing / nudge ──────────────
@@ -872,7 +1027,7 @@ class TestWatchdogSuspensionOnNewInput:
 
 
 class TestResponseLatencyNudge:
-    """Verify the fast-path nudge fires at 3s and 15s."""
+    """Verify the fast-path nudge fires at the configured thresholds."""
 
     @pytest.mark.asyncio
     async def test_nudge_fires_at_3s(self):
@@ -914,7 +1069,7 @@ class TestResponseLatencyNudge:
         now = time.monotonic()
         ss = _make_silence_state(
             awaiting_agent_response=True,
-            user_spoke_at=now - 1.0,  # Only 1s — below 3s threshold
+            user_spoke_at=now - 0.1,  # Still safely below the 2s response-latency threshold
             agent_busy=False,
             silence_nudge_due_at=now - 1.0,  # Due in the past -> would fire
         )
@@ -923,7 +1078,7 @@ class TestResponseLatencyNudge:
             with pytest.raises(asyncio.TimeoutError):
                 await asyncio.wait_for(queue.sent_event.wait(), timeout=1.8)
 
-        # No customer-silence nudge should have fired (below 3s threshold,
+        # No customer-silence nudge should have fired (below response-latency threshold,
         # and customer-silence path is suppressed by awaiting_agent_response)
         assert ss.silence_nudge_count == 0
 

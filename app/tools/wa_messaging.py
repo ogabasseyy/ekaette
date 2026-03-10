@@ -17,6 +17,8 @@ from urllib.parse import urlparse
 
 import httpx
 
+from app.tools.sms_messaging import resolve_caller_phone_from_context
+
 logger = logging.getLogger(__name__)
 
 
@@ -26,7 +28,7 @@ async def send_whatsapp_message(text: str, tool_context) -> dict:
     Use this to share account numbers, payment details, booking confirmations,
     or any information the caller needs in written form.
     """
-    caller_phone = tool_context.state.get("user:caller_phone", "")
+    caller_phone = resolve_caller_phone_from_context(tool_context)
     if not caller_phone:
         return {"status": "error", "detail": "No caller phone in session"}
 

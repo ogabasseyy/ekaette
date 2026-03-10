@@ -9,11 +9,19 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import os
 import random
 import re
+import time
 from dataclasses import dataclass, field
 
-from shared.phone_identity import canonical_phone_user_id
+from shared.callback_prewarm import (
+    clear_callback_prewarm,
+    list_callback_prewarms,
+    update_callback_prewarm_status,
+)
+from shared.outbound_callback_hints import consume_outbound_callback_hint
+from shared.phone_identity import canonical_phone_user_id, normalize_phone
 
 from .codec_bridge import G711CodecBridge
 from .config import BridgeConfig
@@ -37,6 +45,51 @@ _RTP_PORT_MIN = 10000
 _RTP_PORT_MAX = 20000
 
 
+def _read_float_env(name: str, default: float) -> float:
+    raw_value = os.getenv(name, str(default))
+    try:
+        return float(raw_value)
+    except (TypeError, ValueError):
+        return default
+
+
+_PREANSWER_READY_TIMEOUT_SEC = max(
+    0.0,
+    _read_float_env("SIP_PREANSWER_READY_TIMEOUT_SEC", 6.0),
+)
+_CALLBACK_PREWARM_POLL_SEC = max(
+    0.1,
+    _read_float_env("AT_CALLBACK_PREWARM_POLL_SECONDS", 0.25),
+)
+_CALLBACK_PREWARM_READY_TIMEOUT_SEC = max(
+    1.0,
+    _read_float_env("AT_CALLBACK_PREWARM_TIMEOUT_SECONDS", 12.0),
+)
+_CALLBACK_POST_ANSWER_GRACE_SEC = max(
+    0.0,
+    _read_float_env("SIP_OUTBOUND_CALLBACK_POST_ANSWER_GRACE_MS", 1000.0) / 1000.0,
+)
+_CALLBACK_CONNECT_GREETING_TEXT = (
+    "[The customer requested a callback and has just answered. "
+    "Start speaking immediately, introduce yourself as ehkaitay, "
+    "say you are calling them back, and continue naturally.]"
+)
+
+
+@dataclass
+class PrewarmedCallbackSession:
+    """Warm callback session waiting for the AT SIP leg to attach."""
+
+    key: str
+    tenant_id: str
+    company_id: str
+    phone: str
+    session: CallSession
+    task: asyncio.Task
+    expires_at: float
+    attached: bool = False
+
+
 @dataclass
 class SIPServer:
     """Async UDP SIP server."""
@@ -44,8 +97,11 @@ class SIPServer:
     config: BridgeConfig
     _transport: asyncio.DatagramTransport | None = None
     _active_sessions: dict[str, CallSession] = field(default_factory=dict)
+    _prewarmed_callbacks: dict[str, PrewarmedCallbackSession] = field(default_factory=dict)
     _registrar: SIPRegistrar | None = None
     _register_task: asyncio.Task | None = None
+    _callback_prewarm_task: asyncio.Task | None = None
+    _stopping: bool = False
 
     async def start(self) -> None:
         """Bind UDP socket and start listening."""
@@ -71,6 +127,9 @@ class SIPServer:
             self._registrar.send_register()
             self._register_task = asyncio.create_task(self._registration_loop())
             logger.info("SIP registration started")
+        if self.config.gateway_mode and self.config.gateway_ws_url:
+            self._callback_prewarm_task = asyncio.create_task(self._callback_prewarm_loop())
+            logger.info("Callback prewarm watcher started")
 
     async def _registration_loop(self) -> None:
         """Periodically re-register to keep registration alive."""
@@ -85,15 +144,336 @@ class SIPServer:
 
     async def stop(self) -> None:
         """Gracefully shut down all sessions and close transport."""
+        self._stopping = True
         if self._register_task:
             self._register_task.cancel()
+        if self._callback_prewarm_task:
+            self._callback_prewarm_task.cancel()
         if self._registrar and self._registrar.registered:
             self._registrar.send_unregister()
         for session in self._active_sessions.values():
             session.shutdown()
+        for record in self._prewarmed_callbacks.values():
+            record.session.shutdown()
         if self._transport:
             self._transport.close()
         logger.info("SIP server stopped")
+
+    @staticmethod
+    def _extract_caller_phone(sip_from_header: str) -> str:
+        """Extract caller phone from a SIP From header."""
+        if not sip_from_header:
+            return ""
+        match = _PHONE_RE.search(sip_from_header)
+        return match.group(0) if match else ""
+
+    def _callback_reservation_key(self, *, tenant_id: str, company_id: str, phone: str) -> str:
+        normalized_phone = normalize_phone(phone) or phone.strip()
+        return f"{tenant_id}:{company_id}:{normalized_phone}"
+
+    def _build_gateway_client(
+        self,
+        *,
+        call_id: str,
+        caller_phone: str,
+        session_id_override: str = "",
+    ) -> GatewayClient | None:
+        """Build a gateway client for a SIP call leg when gateway mode is enabled."""
+        if not (self.config.gateway_mode and self.config.gateway_ws_url):
+            return None
+        if not self.config.gateway_ws_secret:
+            logger.error("Gateway mode enabled without GATEWAY_WS_SECRET")
+            raise ValueError("GATEWAY_WS_SECRET is required when GATEWAY_MODE is enabled")
+
+        user_id = canonical_phone_user_id(
+            self.config.tenant_id,
+            self.config.company_id,
+            caller_phone,
+            default_region=self.config.default_phone_region,
+        )
+        if user_id is None:
+            anon_seed = f"{self.config.tenant_id}:{self.config.company_id}:call:{call_id}"
+            user_id = f"sip-anon-{hashlib.sha256(anon_seed.encode()).hexdigest()[:16]}"
+            if caller_phone:
+                logger.warning(
+                    "Phone normalization failed for SIP caller, using anonymous user_id",
+                    extra={"call_id": call_id},
+                )
+            else:
+                logger.warning(
+                    "No caller phone in SIP From header, using anonymous user_id",
+                    extra={"call_id": call_id},
+                )
+
+        session_seed = session_id_override or f"{self.config.tenant_id}:{self.config.company_id}:session:{call_id}"
+        session_id = (
+            session_id_override
+            or f"sip-{hashlib.sha256(session_seed.encode()).hexdigest()[:24]}"
+        )
+        return GatewayClient(
+            gateway_ws_url=self.config.gateway_ws_url,
+            user_id=user_id,
+            session_id=session_id,
+            tenant_id=self.config.tenant_id,
+            company_id=self.config.company_id,
+            industry="",  # omit — session_init resolves from registry
+            caller_phone=caller_phone,
+            ws_secret=self.config.gateway_ws_secret,
+        )
+
+    async def _callback_prewarm_loop(self) -> None:
+        """Poll callback reservations and keep warm sessions ready on the VM."""
+        while not self._stopping:
+            try:
+                await self._sync_callback_prewarms()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("Callback prewarm watcher failed")
+            await asyncio.sleep(_CALLBACK_PREWARM_POLL_SEC)
+
+    async def _sync_callback_prewarms(self) -> None:
+        """Start or prune prewarmed callback sessions based on reservation state."""
+        now = time.time()
+        expired_keys: list[str] = []
+        for key, record in list(self._prewarmed_callbacks.items()):
+            if record.expires_at <= now and not record.attached:
+                record.session.shutdown()
+                expired_keys.append(key)
+        for key in expired_keys:
+            record = self._prewarmed_callbacks.pop(key, None)
+            if record is None:
+                continue
+            await asyncio.to_thread(
+                clear_callback_prewarm,
+                tenant_id=record.tenant_id,
+                company_id=record.company_id,
+                phone=record.phone,
+            )
+
+        reservations = await asyncio.to_thread(list_callback_prewarms)
+        for payload in reservations:
+            tenant_id = str(payload.get("tenant_id", "")).strip()
+            company_id = str(payload.get("company_id", "")).strip()
+            phone = str(payload.get("phone", "")).strip()
+            if not (tenant_id and company_id and phone):
+                continue
+            key = str(payload.get("key", "")).strip() or self._callback_reservation_key(
+                tenant_id=tenant_id,
+                company_id=company_id,
+                phone=phone,
+            )
+            if key in self._prewarmed_callbacks:
+                continue
+            status = str(payload.get("status", "")).strip().lower()
+            if status in {"attached", "failed", "consumed"}:
+                continue
+            expires_at = float(payload.get("expires_at", 0.0) or 0.0)
+            if expires_at and expires_at <= now:
+                await asyncio.to_thread(
+                    clear_callback_prewarm,
+                    tenant_id=tenant_id,
+                    company_id=company_id,
+                    phone=phone,
+                )
+                continue
+            self._start_callback_prewarm(
+                key=key,
+                tenant_id=tenant_id,
+                company_id=company_id,
+                phone=phone,
+                expires_at=expires_at or (now + 30.0),
+            )
+
+    def _start_callback_prewarm(
+        self,
+        *,
+        key: str,
+        tenant_id: str,
+        company_id: str,
+        phone: str,
+        expires_at: float,
+    ) -> None:
+        """Warm a callback session on the VM before the outbound INVITE arrives."""
+        local_rtp_port = random.randint(_RTP_PORT_MIN, _RTP_PORT_MAX)
+        prewarm_id = hashlib.sha256(key.encode()).hexdigest()[:24]
+        session = CallSession(
+            call_id=f"callback-prewarm-{prewarm_id[:12]}",
+            tenant_id=tenant_id,
+            company_id=company_id,
+            codec_bridge=G711CodecBridge(),
+            remote_rtp_addr=None,
+            local_rtp_port=local_rtp_port,
+            _caller_phone=phone,
+            gemini_api_key=self.config.gemini_api_key,
+            gemini_model_id=self.config.live_model_id,
+            gemini_system_instruction=self.config.system_instruction,
+            gemini_voice=self.config.gemini_voice,
+            gateway_client=self._build_gateway_client(
+                call_id=f"callback-prewarm:{prewarm_id}",
+                caller_phone=phone,
+                session_id_override=f"sip-callback-{prewarm_id}",
+            ),
+            delay_answer_until_ready=True,
+            callback_post_answer_grace_sec=_CALLBACK_POST_ANSWER_GRACE_SEC,
+            connect_greeting_text=_CALLBACK_CONNECT_GREETING_TEXT,
+        )
+        task = asyncio.create_task(session.run())
+        record = PrewarmedCallbackSession(
+            key=key,
+            tenant_id=tenant_id,
+            company_id=company_id,
+            phone=phone,
+            session=session,
+            task=task,
+            expires_at=expires_at,
+        )
+        self._prewarmed_callbacks[key] = record
+        asyncio.create_task(
+            asyncio.to_thread(
+                update_callback_prewarm_status,
+                tenant_id=tenant_id,
+                company_id=company_id,
+                phone=phone,
+                status="warming",
+                detail="VM prewarming callback session",
+            )
+        )
+        asyncio.create_task(self._await_callback_prewarm_ready(record))
+
+        def _on_done(done_task: asyncio.Task) -> None:
+            asyncio.create_task(self._handle_prewarm_session_done(record, done_task))
+
+        task.add_done_callback(_on_done)
+        logger.info(
+            "Callback prewarm started phone=%s local_rtp_port=%d",
+            phone,
+            local_rtp_port,
+        )
+
+    async def _await_callback_prewarm_ready(self, record: PrewarmedCallbackSession) -> None:
+        """Mark a prewarm reservation ready once outbound Ekaette audio is buffered."""
+        timeout = max(
+            0.5,
+            min(record.expires_at - time.time(), _CALLBACK_PREWARM_READY_TIMEOUT_SEC),
+        )
+        logger.info(
+            "Waiting for callback prewarm readiness phone=%s timeout=%.2fs",
+            record.phone,
+            timeout,
+        )
+        ready = await record.session.wait_until_answer_ready(timeout)
+        if record.attached or self._stopping:
+            return
+        if ready:
+            await asyncio.to_thread(
+                update_callback_prewarm_status,
+                tenant_id=record.tenant_id,
+                company_id=record.company_id,
+                phone=record.phone,
+                status="ready",
+                detail="Warm callback session ready on VM",
+            )
+            logger.info("Callback prewarm ready phone=%s", record.phone)
+            return
+        if record.session.startup_failed:
+            detail = "Callback prewarm startup failed"
+        else:
+            detail = "Callback prewarm timed out"
+        logger.warning(
+            "Callback prewarm failed phone=%s detail=%s first_audio_ready=%s startup_failed=%s",
+            record.phone,
+            detail,
+            record.session._first_outbound_audio_ready.is_set(),
+            record.session.startup_failed,
+        )
+        await asyncio.to_thread(
+            update_callback_prewarm_status,
+            tenant_id=record.tenant_id,
+            company_id=record.company_id,
+            phone=record.phone,
+            status="failed",
+            detail=detail,
+        )
+        record.session.shutdown()
+
+    async def _handle_prewarm_session_done(
+        self,
+        record: PrewarmedCallbackSession,
+        done_task: asyncio.Task,
+    ) -> None:
+        """Clean up prewarm records when a warm session exits."""
+        self._prewarmed_callbacks.pop(record.key, None)
+        active_ids = [
+            call_id
+            for call_id, session in self._active_sessions.items()
+            if session is record.session
+        ]
+        for call_id in active_ids:
+            self._active_sessions.pop(call_id, None)
+
+        if self._stopping or record.attached:
+            return
+
+        try:
+            exc = None if done_task.cancelled() else done_task.exception()
+        except Exception as callback_exc:  # pragma: no cover - defensive
+            exc = callback_exc
+
+        detail = "Callback prewarm session ended"
+        if exc is not None:
+            detail = str(exc)[:240] or detail
+
+        await asyncio.to_thread(
+            update_callback_prewarm_status,
+            tenant_id=record.tenant_id,
+            company_id=record.company_id,
+            phone=record.phone,
+            status="failed",
+            detail=detail,
+        )
+
+    def claim_prewarmed_callback_session(
+        self,
+        *,
+        call_id: str,
+        sip_from_header: str,
+        remote_rtp_addr: tuple[str, int] | None,
+    ) -> CallSession | None:
+        """Attach an outbound callback INVITE to an already-warm session."""
+        caller_phone = self._extract_caller_phone(sip_from_header)
+        normalized_phone = normalize_phone(caller_phone) or caller_phone.strip()
+        if not normalized_phone:
+            return None
+        key = self._callback_reservation_key(
+            tenant_id=self.config.tenant_id,
+            company_id=self.config.company_id,
+            phone=normalized_phone,
+        )
+        record = self._prewarmed_callbacks.get(key)
+        if record is None:
+            return None
+
+        record.attached = True
+        session = record.session
+        session.call_id = call_id
+        session.remote_rtp_addr = remote_rtp_addr
+        self._active_sessions[call_id] = session
+        asyncio.create_task(
+            asyncio.to_thread(
+                clear_callback_prewarm,
+                tenant_id=record.tenant_id,
+                company_id=record.company_id,
+                phone=record.phone,
+            )
+        )
+        logger.info(
+            "Attached prewarmed callback session call_id=%s phone=%s local_rtp_port=%d",
+            call_id,
+            normalized_phone,
+            session.local_rtp_port,
+        )
+        return session
 
     def handle_invite(
         self,
@@ -104,47 +484,18 @@ class SIPServer:
         sip_from_header: str = "",
     ) -> CallSession:
         """Create a new call session for an INVITE."""
-        # Extract caller phone from SIP From header
-        caller_phone = ""
-        if sip_from_header:
-            m = _PHONE_RE.search(sip_from_header)
-            if m:
-                caller_phone = m.group(0)
+        caller_phone = self._extract_caller_phone(sip_from_header)
+        gateway_client = self._build_gateway_client(
+            call_id=call_id,
+            caller_phone=caller_phone,
+        )
 
-        # Build gateway client if gateway mode enabled
-        gateway_client: GatewayClient | None = None
-        if self.config.gateway_mode and self.config.gateway_ws_url:
-            if not self.config.gateway_ws_secret:
-                logger.error("Gateway mode enabled without GATEWAY_WS_SECRET")
-                raise ValueError("GATEWAY_WS_SECRET is required when GATEWAY_MODE is enabled")
-            user_id = canonical_phone_user_id(
-                self.config.tenant_id, self.config.company_id, caller_phone,
-                default_region=self.config.default_phone_region,
-            )
-            if user_id is None:
-                anon_seed = f"{self.config.tenant_id}:{self.config.company_id}:call:{call_id}"
-                user_id = f"sip-anon-{hashlib.sha256(anon_seed.encode()).hexdigest()[:16]}"
-                if caller_phone:
-                    logger.warning(
-                        "Phone normalization failed for SIP caller, using anonymous user_id",
-                        extra={"call_id": call_id},
-                    )
-                else:
-                    logger.warning(
-                        "No caller phone in SIP From header, using anonymous user_id",
-                        extra={"call_id": call_id},
-                    )
-            session_seed = f"{self.config.tenant_id}:{self.config.company_id}:session:{call_id}"
-            session_id = f"sip-{hashlib.sha256(session_seed.encode()).hexdigest()[:24]}"
-            gateway_client = GatewayClient(
-                gateway_ws_url=self.config.gateway_ws_url,
-                user_id=user_id,
-                session_id=session_id,
+        outbound_callback_leg = False
+        if gateway_client is not None and caller_phone:
+            outbound_callback_leg = consume_outbound_callback_hint(
                 tenant_id=self.config.tenant_id,
                 company_id=self.config.company_id,
-                industry="",  # omit — session_init resolves from registry
-                caller_phone=caller_phone,
-                ws_secret=self.config.gateway_ws_secret,
+                phone=caller_phone,
             )
 
         session = CallSession(
@@ -160,6 +511,7 @@ class SIPServer:
             gemini_system_instruction=self.config.system_instruction,
             gemini_voice=self.config.gemini_voice,
             gateway_client=gateway_client,
+            delay_answer_until_ready=(gateway_client is not None and not outbound_callback_leg),
         )
         self._active_sessions[call_id] = session
         logger.info(
@@ -201,7 +553,7 @@ class SIPProtocol(asyncio.DatagramProtocol):
                 return
 
             if first_line.startswith("INVITE"):
-                self._handle_invite(message, addr)
+                asyncio.create_task(self._handle_invite(message, addr))
             elif first_line.startswith("BYE"):
                 parsed = parse_sip_request(message)
                 headers = self._coerce_dialog_headers(parsed["headers"])
@@ -226,7 +578,7 @@ class SIPProtocol(asyncio.DatagramProtocol):
         except Exception:
             logger.exception("SIP message parse error")
 
-    def _handle_invite(self, message: str, addr: tuple[str, int]) -> None:
+    async def _handle_invite(self, message: str, addr: tuple[str, int]) -> None:
         """Parse INVITE, send 100 Trying + 200 OK, create session."""
         parsed = parse_sip_request(message)
         headers = self._coerce_dialog_headers(parsed["headers"])
@@ -253,44 +605,97 @@ class SIPProtocol(asyncio.DatagramProtocol):
 
         # 2. Parse remote SDP for media address
         remote_rtp_addr: tuple[str, int] | None = None
+        negotiated_payload_type = 0
+        negotiated_codec_name = "PCMU"
         if sdp_body:
             sdp_info = parse_sdp_g711(sdp_body)
             if sdp_info["media_ip"] and sdp_info["media_port"]:
                 remote_rtp_addr = (sdp_info["media_ip"], sdp_info["media_port"])
+            negotiated_payload_type = int(sdp_info.get("audio_payload_type", 0) or 0)
+            negotiated_codec_name = str(sdp_info.get("audio_codec", "PCMU") or "PCMU")
 
-        # 3. Allocate local RTP port
-        local_rtp_port = random.randint(_RTP_PORT_MIN, _RTP_PORT_MAX)
+        session = self.server.claim_prewarmed_callback_session(
+            call_id=call_id,
+            sip_from_header=headers.get("From", ""),
+            remote_rtp_addr=remote_rtp_addr,
+        )
+        if session is None:
+            # 3. Allocate local RTP port
+            local_rtp_port = random.randint(_RTP_PORT_MIN, _RTP_PORT_MAX)
 
-        # 4. Build and send 200 OK with SDP answer
-        local_sdp = build_sdp_answer(config.sip_public_ip, local_rtp_port)
+            # 4. Create session and start the audio pipeline before answering so we can
+            # keep the caller ringing until the model has audio ready.
+            session = self.server.handle_invite(
+                call_id, addr,
+                remote_rtp_addr=remote_rtp_addr,
+                local_rtp_port=local_rtp_port,
+                sip_from_header=headers.get("From", ""),
+            )
+            session.codec_bridge = G711CodecBridge(
+                rtp_payload_type=negotiated_payload_type,
+                rtp_clock_rate=8000,
+                law="alaw" if negotiated_codec_name.upper() == "PCMA" else "ulaw",
+            )
+            task = asyncio.create_task(session.run())
+
+            def _on_done(done_task: asyncio.Task) -> None:
+                self.server._active_sessions.pop(call_id, None)
+                if not done_task.cancelled():
+                    exc = done_task.exception()
+                    if exc is not None:
+                        logger.error("Call session task failed", exc_info=exc, extra={"call_id": call_id})
+
+            task.add_done_callback(_on_done)
+        else:
+            local_rtp_port = session.local_rtp_port
+            session.codec_bridge = G711CodecBridge(
+                rtp_payload_type=negotiated_payload_type,
+                rtp_clock_rate=8000,
+                law="alaw" if negotiated_codec_name.upper() == "PCMA" else "ulaw",
+            )
+
+        if session.delay_answer_until_ready:
+            ready = await session.wait_until_answer_ready(_PREANSWER_READY_TIMEOUT_SEC)
+            if not ready and session.startup_failed:
+                response = build_sip_response(
+                    503,
+                    "Service Unavailable",
+                    headers,
+                    sdp_body=None,
+                    contact_uri=contact_uri,
+                )
+                transport.sendto(response.encode("utf-8"), addr)
+                logger.warning(
+                    "Rejecting INVITE after startup failure before answer",
+                    extra={"call_id": call_id},
+                )
+                return
+            if not ready:
+                logger.warning(
+                    "Proceeding to answer before audio readiness timeout=%.2fs",
+                    _PREANSWER_READY_TIMEOUT_SEC,
+                    extra={"call_id": call_id},
+                )
+
+        # 5. Build and send 200 OK with SDP answer
+        local_sdp = build_sdp_answer(
+            config.sip_public_ip,
+            local_rtp_port,
+            payload_type=negotiated_payload_type,
+            codec_name=negotiated_codec_name,
+        )
         ok_response = build_sip_response(200, "OK", headers, sdp_body=local_sdp, contact_uri=contact_uri)
         transport.sendto(ok_response.encode("utf-8"), addr)
+        session.mark_answered()
         logger.info(
             "200 OK sent",
             extra={
                 "call_id": call_id,
                 "local_rtp_port": local_rtp_port,
                 "remote_rtp": remote_rtp_addr,
+                "preanswer_timeout_sec": _PREANSWER_READY_TIMEOUT_SEC,
             },
         )
-
-        # 5. Create session and start audio pipeline
-        session = self.server.handle_invite(
-            call_id, addr,
-            remote_rtp_addr=remote_rtp_addr,
-            local_rtp_port=local_rtp_port,
-            sip_from_header=headers.get("From", ""),
-        )
-        task = asyncio.create_task(session.run())
-
-        def _on_done(done_task: asyncio.Task) -> None:
-            self.server._active_sessions.pop(call_id, None)
-            if not done_task.cancelled():
-                exc = done_task.exception()
-                if exc is not None:
-                    logger.error("Call session task failed", exc_info=exc, extra={"call_id": call_id})
-
-        task.add_done_callback(_on_done)
 
     def _contact_uri(self) -> str:
         """Build local Contact URI for SIP responses."""

@@ -27,10 +27,11 @@ class TestRecordOutboundTimestamp:
         from app.api.v1.at.service_whatsapp import (
             record_outbound_timestamp,
             _outbound_timestamps,
+            _window_key,
         )
 
         record_outbound_timestamp("2348001234567", "phone123")
-        key = "public:ekaette-electronics:phone123:2348001234567"
+        key = _window_key("2348001234567", "phone123", "public", "ekaette-electronics")
         assert key in _outbound_timestamps
         assert isinstance(_outbound_timestamps[key], float)
 
@@ -38,10 +39,11 @@ class TestRecordOutboundTimestamp:
         from app.api.v1.at.service_whatsapp import (
             record_outbound_timestamp,
             _outbound_timestamps,
+            _window_key,
         )
 
         record_outbound_timestamp("2348001234567", "phone123")
-        key = "public:ekaette-electronics:phone123:2348001234567"
+        key = _window_key("2348001234567", "phone123", "public", "ekaette-electronics")
         first_ts = _outbound_timestamps[key]
 
         # Small sleep to ensure different timestamp

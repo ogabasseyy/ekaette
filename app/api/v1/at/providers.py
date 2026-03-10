@@ -89,16 +89,57 @@ def _paystack_auth_headers(secret_key: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {secret_key}"}
 
 
+def _sms_response_has_invalid_sender_id(response: dict) -> bool:
+    """Detect AT invalid-sender responses so we can retry without branding."""
+    sms_data = response.get("SMSMessageData", {})
+    if not isinstance(sms_data, dict):
+        return False
+
+    summary = sms_data.get("Message")
+    if isinstance(summary, str) and summary.strip() == "InvalidSenderId":
+        return True
+
+    recipients = sms_data.get("Recipients", [])
+    if not isinstance(recipients, list):
+        return False
+
+    for recipient in recipients:
+        if not isinstance(recipient, dict):
+            continue
+        status = recipient.get("status")
+        if isinstance(status, str) and status.strip() == "InvalidSenderId":
+            return True
+        status_code = recipient.get("statusCode")
+        if status_code == 402:
+            return True
+    return False
+
+
 async def make_call(from_: str, to: list[str]) -> dict:
     """Initiate an outbound voice call via AT SDK."""
     import africastalking
     return await asyncio.to_thread(africastalking.Voice.call, callFrom=from_, callTo=to)
 
 
-async def send_sms(message: str, recipients: list[str]) -> dict:
-    """Send SMS via AT SDK."""
+async def send_sms(message: str, recipients: list[str], sender_id: str | None = None) -> dict:
+    """Send SMS via AT SDK with fallback when sender ID is not yet approved."""
     import africastalking
-    return await asyncio.to_thread(africastalking.SMS.send, message, recipients)
+
+    result = await asyncio.to_thread(
+        africastalking.SMS.send,
+        message,
+        recipients,
+        sender_id=sender_id,
+    )
+    if sender_id and _sms_response_has_invalid_sender_id(result):
+        logger.warning("AT sender_id rejected; retrying SMS without sender ID")
+        return await asyncio.to_thread(
+            africastalking.SMS.send,
+            message,
+            recipients,
+            sender_id=None,
+        )
+    return result
 
 
 async def transfer_call(session_id: str, phone_number: str, call_leg: str = "callee") -> dict:

@@ -14,17 +14,69 @@ from google.adk.tools.base_tool import BaseTool
 from google.adk.tools.tool_context import ToolContext
 from google.genai import types
 
+from app.api.v1.at import service_voice
 from app.agents.dedup import dedup_before_agent
 from app.configs.agent_policy import (
     KNOWN_SUB_AGENT_NAMES,
     resolve_enabled_agents_from_state,
 )
+from app.tools.sms_messaging import resolve_caller_phone_from_context
 from app.tools.global_lessons import format_lessons_for_instruction
 
 logger = logging.getLogger(__name__)
 
 _PRICE_PATTERN = re.compile(r"\b\d[\d,]{2,}\b")
 _STORAGE_PATTERN = re.compile(r"\b\d+(?:gb|tb)\b", flags=re.IGNORECASE)
+_CALLBACK_REQUEST_PATTERNS = (
+    re.compile(r"\bcall(?:ing)?\s+(?:me\s+)?back\b", re.IGNORECASE),
+    re.compile(r"\bcallback\b", re.IGNORECASE),
+    re.compile(r"\b(?:can|could|would|will)\s+you\s+call\s+me(?:\s+\w+)?\b", re.IGNORECASE),
+    re.compile(r"\bplease\s+call\s+me(?:\s+\w+)?\b", re.IGNORECASE),
+    re.compile(r"\byou\s+call\s+me(?:\s+\w+)?\b", re.IGNORECASE),
+    re.compile(r"\blow(?:\s+on)?\s+airtime\b", re.IGNORECASE),
+    re.compile(r"\b(?:no|not enough)\s+airtime\b", re.IGNORECASE),
+    re.compile(r"\bdon(?:'|’)t\s+have\s+(?:enough\s+)?airtime\b", re.IGNORECASE),
+    re.compile(r"\bdon(?:'|’)t\s+have\s+(?:the\s+|a\s+)?time\b", re.IGNORECASE),
+)
+_CALLBACK_PROMISE_PATTERNS = (
+    re.compile(r"\bi(?:'| wi)?ll call you back\b", re.IGNORECASE),
+    re.compile(r"\bi(?:'| wi)?ll call back\b", re.IGNORECASE),
+    re.compile(r"\bi can call you back\b", re.IGNORECASE),
+    re.compile(r"\blet me call you back\b", re.IGNORECASE),
+    re.compile(r"\bi(?:'| wi)?ll make sure to call you back\b", re.IGNORECASE),
+    re.compile(r"\bi can (?:certainly )?arrange a callback\b", re.IGNORECASE),
+    re.compile(r"\bi(?:'| wi)?ll (?:arrange|schedule) a callback\b", re.IGNORECASE),
+    re.compile(r"\bi(?:'| wi)?ll request a callback\b", re.IGNORECASE),
+    re.compile(r"\bwe(?:'| wi)?ll give you a call back\b", re.IGNORECASE),
+    re.compile(r"\bcall you back shortly\b", re.IGNORECASE),
+    re.compile(r"\bcall you back on this same number\b", re.IGNORECASE),
+    re.compile(r"\brequest a callback for you right after this\b", re.IGNORECASE),
+    re.compile(r"\bwhen i call back\b", re.IGNORECASE),
+)
+
+# Tools that require caller phone identity for outbound actions.
+_OUTBOUND_CALLER_TOOLS = frozenset({
+    "request_callback",
+    "send_sms_message",
+    "send_whatsapp_message",
+})
+
+
+def looks_like_callback_request(text: str) -> bool:
+    """Return True when customer text sounds like a callback request."""
+    normalized = text.strip()
+    if not normalized:
+        return False
+    return any(pattern.search(normalized) for pattern in _CALLBACK_REQUEST_PATTERNS)
+
+
+def looks_like_callback_promise(text: str) -> bool:
+    """Return True when the agent's output text contains a callback promise."""
+    normalized = text.strip()
+    if not normalized:
+        return False
+    return any(p.search(normalized) for p in _CALLBACK_PROMISE_PATTERNS)
+
 
 # ═══ Capability Guard ═══
 
@@ -42,6 +94,8 @@ TOOL_CAPABILITY_MAP: dict[str, str] = {
     "get_company_profile_fact": "policy_qa",
     "query_company_system": "connector_dispatch",
     "send_whatsapp_message": "outbound_messaging",
+    "send_sms_message": "outbound_messaging",
+    "request_callback": "outbound_messaging",
     "get_device_questionnaire_tool": "valuation_tradein",
 }
 
@@ -78,6 +132,48 @@ def _state_get(state: Any, key: str, default: Any = None) -> Any:
     return default
 
 
+def _maybe_inject_caller_phone(tool_context: Any) -> None:
+    """Inject caller phone into tool state from the ephemeral registry.
+
+    ADK's live-streaming mode sometimes does not surface ``user:caller_phone``
+    in the tool context's session state.  This bridging logic resolves it from
+    the per-process ephemeral registry (populated at session init time) and
+    writes it into the state so that downstream tool code can find it.
+    """
+    state = getattr(tool_context, "state", None)
+    if state is None:
+        return
+    existing = _state_get(state, "user:caller_phone", "")
+    if isinstance(existing, str) and existing.strip():
+        return  # already present — nothing to do
+
+    from app.api.v1.realtime.caller_phone_registry import get_registered_caller_phone
+
+    user_id = str(_state_get(state, "app:user_id", "") or "").strip()
+    session_id = str(_state_get(state, "app:session_id", "") or "").strip()
+    if not user_id:
+        user_id = str(getattr(tool_context, "user_id", "") or "").strip()
+    if not session_id:
+        session_id = str(getattr(getattr(tool_context, "session", None), "id", "") or "").strip()
+    if (not user_id or not session_id) and getattr(getattr(tool_context, "session", None), "state", None) is not None:
+        session_state = getattr(tool_context.session, "state", None)
+        user_id = user_id or str(_state_get(session_state, "app:user_id", "") or "").strip()
+        session_id = session_id or str(_state_get(session_state, "app:session_id", "") or "").strip()
+    if not user_id:
+        return
+    phone = get_registered_caller_phone(user_id=user_id, session_id=session_id)
+    if phone:
+        try:
+            state["user:caller_phone"] = phone
+        except Exception:
+            pass
+        logger.info(
+            "Injected caller phone from registry user_id=%s session_id=%s",
+            user_id,
+            session_id,
+        )
+
+
 def _industry_scope_label(state: Any) -> str:
     template_id = _state_get(state, "app:industry_template_id")
     if isinstance(template_id, str) and template_id.strip():
@@ -86,6 +182,13 @@ def _industry_scope_label(state: Any) -> str:
     if isinstance(industry, str) and industry.strip():
         return industry.strip()
     return "current"
+
+
+def _response_commits_to_callback(text: str) -> bool:
+    normalized = text.strip()
+    if not normalized:
+        return False
+    return any(pattern.search(normalized) for pattern in _CALLBACK_PROMISE_PATTERNS)
 
 
 def _agent_not_enabled_message(scope_label: str, agent_name: str) -> str:
@@ -212,9 +315,15 @@ def _industry_instruction(industry_config: dict[str, Any], *, include_greeting: 
     return line
 
 
+def _first_turn_opening(company_name: str, customer_name: str) -> str:
+    """Return the exact opening sentence to lock first-turn identity."""
+    if customer_name:
+        return f"Welcome back, {customer_name}. This is ehkaitay from {company_name}."
+    return f"Hello, this is ehkaitay from {company_name}."
+
+
 def _first_turn_greeting_instruction(
     *,
-    industry_config: dict[str, Any],
     company_profile: dict[str, Any],
     state: State,
 ) -> str:
@@ -223,11 +332,6 @@ def _first_turn_greeting_instruction(
     company_name = str(company_name_raw).strip() if isinstance(company_name_raw, str) else ""
     if not company_name:
         company_name = "our service desk"
-
-    greeting_raw = industry_config.get("greeting") if isinstance(industry_config, dict) else ""
-    greeting = str(greeting_raw).strip() if isinstance(greeting_raw, str) else ""
-    if not greeting:
-        greeting = "How can I help you today?"
 
     customer_name = ""
     for key in ("user:name", "user:first_name", "app:customer_name", "temp:customer_name"):
@@ -239,10 +343,8 @@ def _first_turn_greeting_instruction(
             customer_name = normalized[:60]
             break
 
-    if customer_name:
-        template = f"Welcome back, {customer_name}. This is ehkaitay from {company_name}. {greeting}"
-    else:
-        template = f"This is ehkaitay from {company_name}. {greeting}"
+    opening = _first_turn_opening(company_name, customer_name)
+    question = "How can I help you today?"
 
     return (
         "First-turn greeting policy: This is the first spoken response in the session. "
@@ -250,8 +352,11 @@ def _first_turn_greeting_instruction(
         f"The business name for this session is exactly '{company_name}'. "
         "Never substitute, paraphrase, or invent another assistant or company name. "
         "Never use the business name as your personal name. "
-        f"Use this greeting template intent: '{template}'. "
-        "Keep it short and end with exactly one actionable question."
+        f"Say this opening sentence exactly: '{opening}' "
+        "Do not begin with phrases like 'welcome to <company>' and do not make "
+        "the company sound like the speaker. "
+        f"Immediately follow with exactly one short actionable question: '{question}' "
+        "and nothing before the opening sentence."
     )
 
 
@@ -297,11 +402,12 @@ def _company_instruction(
     parts = [
         (
             "Company context: "
-            f"id='{company_id or 'default'}', name='{company_name}'. "
+            f"name='{company_name}'. "
             "Use this exact company name in customer-facing replies when needed. "
             "Do not invent alternate business or brand names. "
             f"If the customer asks what company you work for, who you work for, or the business name, answer with the exact company name '{company_name}'. "
-            "Do not replace it with generic phrases like 'our company' or 'the business'."
+            "Do not replace it with generic phrases like 'our company' or 'the business'. "
+            "Never mention internal company IDs, slugs, tenant labels, or system identifiers."
         )
     ]
     if overview:
@@ -317,6 +423,110 @@ def _company_instruction(
     return " ".join(parts)
 
 
+def _handoff_instruction(state: State, agent_name: str) -> str:
+    """Return explicit continuity guidance for the first turn after a transfer."""
+    target_agent = _state_get(state, "temp:pending_handoff_target_agent", "")
+    normalized_agent = agent_name.strip() if isinstance(agent_name, str) else ""
+    normalized_target = target_agent.strip() if isinstance(target_agent, str) else ""
+    if not normalized_agent or not normalized_target or normalized_target != normalized_agent:
+        return ""
+
+    latest_user_raw = _state_get(state, "temp:pending_handoff_latest_user", "")
+    latest_agent_raw = _state_get(state, "temp:pending_handoff_latest_agent", "")
+    recent_customer_raw = _state_get(state, "temp:pending_handoff_recent_customer_context", "")
+
+    latest_user = latest_user_raw.strip() if isinstance(latest_user_raw, str) else ""
+    latest_agent = latest_agent_raw.strip() if isinstance(latest_agent_raw, str) else ""
+    recent_customer = (
+        recent_customer_raw.strip() if isinstance(recent_customer_raw, str) else ""
+    )
+
+    parts = [
+        "LIVE HANDOFF — STRICT CONTINUITY RULES: "
+        "This is the first response immediately after an internal transfer "
+        f"to '{normalized_agent}'. "
+        "You MUST NOT: greet, say hello, introduce yourself, say your name, "
+        "say 'how can I help you', or repeat anything the previous agent said. "
+        "You MUST: continue the same conversation seamlessly as if you are the "
+        "same person. The customer should not notice the transfer at all.",
+    ]
+    if latest_user:
+        parts.append(
+            f"The customer's latest request before the transfer was: '{latest_user}'."
+        )
+    if latest_agent:
+        parts.append(
+            f"The previous agent's latest spoken line was: '{latest_agent}'. "
+            "Acknowledge and advance from there without paraphrasing it back."
+        )
+    if recent_customer:
+        parts.append(f"Recent customer-only context: '{recent_customer}'.")
+    return " ".join(parts)
+
+
+def _outbound_delivery_instruction(state: State) -> str:
+    """Tell the model the latest written delivery/send outcome."""
+    raw_status = _state_get(state, "temp:last_outbound_delivery_status", "")
+    status = raw_status.strip().lower() if isinstance(raw_status, str) else ""
+    if not status:
+        return ""
+
+    raw_channels = _state_get(state, "temp:last_outbound_delivery_channels", "")
+    channels = raw_channels.strip() if isinstance(raw_channels, str) else ""
+    raw_phone = _state_get(state, "temp:last_outbound_delivery_phone", "")
+    phone = raw_phone.strip() if isinstance(raw_phone, str) else ""
+
+    if status == "success":
+        return (
+            "Outbound delivery status: Written details were already sent successfully"
+            f"{' via ' + channels if channels else ''}"
+            f"{' to ' + phone if phone else ' to the caller'}. "
+            "If the customer asks, confirm that they were sent. "
+            "Do not claim there was a sending problem unless a later tool result fails."
+        )
+
+    if status == "partial":
+        return (
+            "Outbound delivery status: A written follow-up only partially succeeded"
+            f"{' via ' + channels if channels else ''}. "
+            "Be explicit about which channel worked, and offer the other channel as a fallback."
+        )
+
+    if status == "failure":
+        return (
+            "Outbound delivery status: The latest written follow-up attempt failed. "
+            "Do not say it was sent. Explain the failure plainly and offer the alternative channel."
+        )
+
+    return ""
+
+
+def _clear_pending_handoff_state(state: State) -> None:
+    """Clear one-shot transfer continuity keys after the new agent speaks."""
+    keys = (
+        "temp:pending_handoff_target_agent",
+        "temp:pending_handoff_latest_user",
+        "temp:pending_handoff_latest_agent",
+        "temp:pending_handoff_recent_customer_context",
+    )
+    pop = getattr(state, "pop", None)
+    for key in keys:
+        if callable(pop):
+            try:
+                pop(key, None)
+                continue
+            except TypeError:
+                try:
+                    pop(key)
+                    continue
+                except Exception:
+                    pass
+        try:
+            state[key] = ""
+        except Exception:
+            logger.debug("Failed to clear pending handoff key %s", key, exc_info=True)
+
+
 async def before_model_inject_config(
     callback_context: CallbackContext,
     llm_request: LlmRequest,
@@ -328,6 +538,7 @@ async def before_model_inject_config(
     every turn.
     """
     instruction_lines: list[str] = []
+    agent_name = getattr(callback_context, "agent_name", "") or ""
 
     already_greeted = bool(callback_context.state.get("temp:greeted", False))
 
@@ -341,7 +552,6 @@ async def before_model_inject_config(
         if not already_greeted:
             instruction_lines.append(
                 _first_turn_greeting_instruction(
-                    industry_config=industry_config,
                     company_profile=company_profile,
                     state=callback_context.state,
                 )
@@ -350,11 +560,32 @@ async def before_model_inject_config(
     has_runtime_context = isinstance(industry_config, dict)
 
     if already_greeted:
-        instruction_lines.append(
-            "Conversation continuity: A greeting has already been delivered in this "
-            "session. Do NOT greet again (no hello/hi/good morning). Continue "
-            "directly with the answer or next question."
-        )
+        # Build conversation recovery context so the model picks up mid-call
+        # even after a Live API crash/reconnect that wipes conversation history.
+        last_agent_turn = _state_get(callback_context.state, "temp:last_agent_turn", "")
+        last_user_turn = _state_get(callback_context.state, "temp:last_user_turn", "")
+        continuity_parts = [
+            "CONVERSATION CONTINUITY — STRICT RULES: "
+            "A greeting has already been delivered in this session. "
+            "Do NOT greet, say hello, say 'how can I help you today', "
+            "or introduce yourself again under any circumstances. "
+            "Resume the conversation naturally from where it left off.",
+        ]
+        if isinstance(last_agent_turn, str) and last_agent_turn.strip():
+            continuity_parts.append(
+                f"Your last spoken line was: '{last_agent_turn.strip()[:200]}'. "
+                "Continue from there."
+            )
+        if isinstance(last_user_turn, str) and last_user_turn.strip():
+            continuity_parts.append(
+                f"The customer last said: '{last_user_turn.strip()[:200]}'."
+            )
+        if not last_agent_turn and not last_user_turn:
+            continuity_parts.append(
+                "Ask the customer what they need help with today, but do NOT "
+                "re-introduce yourself or repeat a greeting."
+            )
+        instruction_lines.append(" ".join(continuity_parts))
         instruction_lines.append(
             "Style guard: Do not re-introduce your role (for example, never say "
             "'I am the support agent'). Keep responses task-focused."
@@ -376,11 +607,21 @@ async def before_model_inject_config(
         instruction_lines.append(company_line)
         has_runtime_context = True
 
+    handoff_line = _handoff_instruction(callback_context.state, agent_name)
+    if handoff_line:
+        instruction_lines.append(handoff_line)
+        has_runtime_context = True
+
+    outbound_line = _outbound_delivery_instruction(callback_context.state)
+    if outbound_line:
+        instruction_lines.append(outbound_line)
+        has_runtime_context = True
+
     # Inject global lessons (Tier 2 learning — cross-session behavioral rules)
     global_lessons = callback_context.state.get("app:global_lessons")
     if isinstance(global_lessons, list) and global_lessons:
         lessons_text = format_lessons_for_instruction(
-            global_lessons, agent_name=callback_context.agent_name,
+            global_lessons, agent_name=agent_name,
         )
         if lessons_text:
             instruction_lines.append(lessons_text)
@@ -401,7 +642,9 @@ async def before_model_inject_config(
                 "a colour preference?') rather than a short statement. Generate "
                 "spoken text FIRST, then the tool call, in the same turn. "
                 "Never leave more than 2 seconds of silence. "
-                "When saying prices, always say 'naira' after the number."
+                "When saying prices, always say 'naira' after the number. "
+                "If a tool result shows the code 'NGN', translate that aloud to "
+                "'naira' instead of saying the letters N-G-N."
             )
 
     if not instruction_lines:
@@ -434,6 +677,52 @@ async def after_model_valuation_sanity(
     text = _response_text(llm_response)
     if text and not bool(callback_context.state.get("temp:greeted", False)):
         callback_context.state["temp:greeted"] = True
+    pending_target = _state_get(callback_context.state, "temp:pending_handoff_target_agent", "")
+    if (
+        text
+        and isinstance(pending_target, str)
+        and pending_target.strip() == callback_context.agent_name
+    ):
+        _clear_pending_handoff_state(callback_context.state)
+
+    if (
+        text
+        and _state_get(callback_context.state, "app:channel", "") == "voice"
+        and _response_commits_to_callback(text)
+        and not bool(_state_get(callback_context.state, "temp:callback_requested", False))
+    ):
+        caller_phone = resolve_caller_phone_from_context(callback_context)
+        tenant_id = _state_get(callback_context.state, "app:tenant_id", "public")
+        company_id = _state_get(
+            callback_context.state,
+            "app:company_id",
+            "ekaette-electronics",
+        )
+        if isinstance(caller_phone, str) and caller_phone.strip():
+            result = service_voice.register_callback_request(
+                phone=caller_phone.strip(),
+                tenant_id=str(tenant_id or "public"),
+                company_id=str(company_id or "ekaette-electronics"),
+                source="voice_ai_auto_callback",
+                reason="Auto-queued from spoken callback commitment",
+                trigger_after_hangup=True,
+            )
+            status = str(result.get("status", "")).strip().lower()
+            if status in {"pending", "queued", "cooldown"}:
+                callback_context.state["temp:callback_requested"] = True
+                logger.info(
+                    "Auto-queued callback from spoken commitment agent=%s phone=%s status=%s",
+                    callback_context.agent_name,
+                    caller_phone.strip(),
+                    status,
+                )
+            else:
+                logger.warning(
+                    "Auto-callback queue failed after spoken commitment agent=%s phone=%s result=%r",
+                    callback_context.agent_name,
+                    caller_phone.strip(),
+                    result,
+                )
 
     if callback_context.agent_name != "valuation_agent":
         return None
@@ -560,6 +849,28 @@ async def before_tool_log(
             sorted(redacted_args.keys()),
         )
         return None
+    target_agent = _tool_transfer_target_agent_name(tool.name, args)
+    if target_agent is not None:
+        latest_user_raw = _state_get(tool_context.state, "temp:last_user_turn", "")
+        latest_agent_raw = _state_get(tool_context.state, "temp:last_agent_turn", "")
+        recent_customer_raw = _state_get(tool_context.state, "temp:recent_customer_context", "")
+        latest_user = latest_user_raw.strip() if isinstance(latest_user_raw, str) else ""
+        latest_agent = latest_agent_raw.strip() if isinstance(latest_agent_raw, str) else ""
+        recent_customer = (
+            recent_customer_raw.strip() if isinstance(recent_customer_raw, str) else ""
+        )
+        signature = f"{target_agent}|{latest_user}|{latest_agent}|{recent_customer}"
+        tool_context.state["temp:last_transfer_handoff_signature"] = signature
+        tool_context.state["temp:pending_handoff_target_agent"] = target_agent
+        tool_context.state["temp:pending_handoff_latest_user"] = latest_user
+        tool_context.state["temp:pending_handoff_latest_agent"] = latest_agent
+        tool_context.state["temp:pending_handoff_recent_customer_context"] = recent_customer
+        logger.info(
+            "Prepared transfer handoff target=%s has_user=%s has_agent=%s",
+            target_agent,
+            bool(latest_user),
+            bool(latest_agent),
+        )
     logger.info(
         "tool_start agent=%s tool=%s args=%s",
         tool_context.agent_name,
@@ -585,6 +896,11 @@ async def before_tool_capability_guard_and_log(
     blocked = await before_tool_capability_guard(tool, args, tool_context)
     if blocked is not None:
         return blocked
+    # Inject caller phone from ephemeral registry when session state lacks it.
+    # ADK live-streaming mode sometimes fails to surface user:caller_phone
+    # in the tool context's session state.
+    if tool.name in _OUTBOUND_CALLER_TOOLS:
+        _maybe_inject_caller_phone(tool_context)
     await before_tool_log(tool, args, tool_context)
     return None
 
@@ -595,6 +911,7 @@ def _tool_error_server_message(effective_result: dict[str, Any]) -> dict[str, An
     code = str(code_raw).strip() if isinstance(code_raw, str) and code_raw.strip() else ""
     error_raw = effective_result.get("error")
     message_raw = effective_result.get("message")
+    detail_raw = effective_result.get("detail")
 
     if code:
         message = (
@@ -633,7 +950,19 @@ def _tool_error_server_message(effective_result: dict[str, Any]) -> dict[str, An
     return {
         "type": "error",
         "code": "TOOL_ERROR",
-        "message": str(error_raw),
+        "message": (
+            str(error_raw).strip()
+            if isinstance(error_raw, str) and str(error_raw).strip()
+            else (
+                str(message_raw).strip()
+                if isinstance(message_raw, str) and str(message_raw).strip()
+                else (
+                    str(detail_raw).strip()
+                    if isinstance(detail_raw, str) and str(detail_raw).strip()
+                    else "Tool error"
+                )
+            )
+        ),
     }
 
 
@@ -662,15 +991,58 @@ async def after_tool_emit_messages(
         "tool_end agent=%s tool=%s success=%s",
         tool_context.agent_name,
         tool.name,
-        isinstance(effective_result, dict) and not effective_result.get("error"),
+        isinstance(effective_result, dict)
+        and not effective_result.get("error")
+        and str(effective_result.get("status", "")).strip().lower() != "error",
     )
 
     if not isinstance(effective_result, dict):
         return None
 
-    if effective_result.get("error"):
+    if effective_result.get("error") or str(effective_result.get("status", "")).strip().lower() == "error":
+        if tool.name in {"send_whatsapp_message", "send_sms_message"}:
+            tool_context.state["temp:last_outbound_delivery_status"] = "failure"
         queue_server_message(tool_context.state, _tool_error_server_message(effective_result))
         return None
+
+    if tool.name in {"send_whatsapp_message", "send_sms_message"}:
+        channel = "whatsapp" if tool.name == "send_whatsapp_message" else "sms"
+        phone = ""
+        if tool.name == "send_whatsapp_message":
+            caller_phone = _state_get(tool_context.state, "user:caller_phone", "")
+            phone = caller_phone.strip() if isinstance(caller_phone, str) else ""
+        else:
+            recipient = effective_result.get("recipient")
+            phone = recipient.strip() if isinstance(recipient, str) else ""
+        tool_context.state["temp:last_outbound_delivery_status"] = "success"
+        tool_context.state["temp:last_outbound_delivery_channels"] = channel
+        tool_context.state["temp:last_outbound_delivery_phone"] = phone
+        return None
+
+    if tool.name == "request_callback":
+        status = str(effective_result.get("status", "")).strip().lower()
+        if status in {"pending", "queued", "cooldown"}:
+            tool_context.state["temp:callback_requested"] = True
+        return None
+
+    if tool.name == "create_virtual_account_payment":
+        sms_sent = bool(effective_result.get("sms_sent"))
+        whatsapp_sent = bool(effective_result.get("whatsapp_sent"))
+        channels = [
+            channel
+            for channel, sent in (("sms", sms_sent), ("whatsapp", whatsapp_sent))
+            if sent
+        ]
+        if channels:
+            tool_context.state["temp:last_outbound_delivery_status"] = (
+                "success" if len(channels) == 2 else "partial"
+            )
+            tool_context.state["temp:last_outbound_delivery_channels"] = " and ".join(channels)
+            phone = effective_result.get("notification_phone", "")
+            if isinstance(phone, str):
+                tool_context.state["temp:last_outbound_delivery_phone"] = phone.strip()
+        elif effective_result.get("notification_phone"):
+            tool_context.state["temp:last_outbound_delivery_status"] = "failure"
 
     if tool.name == "analyze_device_image_tool":
         tool_context.state["temp:last_analysis"] = {

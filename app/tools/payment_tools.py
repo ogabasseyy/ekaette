@@ -7,8 +7,18 @@ from typing import Any
 
 from app.api.v1.at import service_payments
 from app.configs import sanitize_log
+from app.tools.sms_messaging import (
+    resolve_caller_phone_from_state,
+    resolve_sms_sender_id_from_state,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def _format_naira_from_kobo(amount_kobo: int | None) -> str:
+    if not isinstance(amount_kobo, int) or amount_kobo <= 0:
+        return ""
+    return f"{amount_kobo / 100:,.2f} naira"
 
 
 def _tenant_company_from_context(tool_context: Any) -> tuple[str, str]:
@@ -43,13 +53,20 @@ async def create_virtual_account_payment(
 ) -> dict[str, Any]:
     """Create a dedicated transfer account that can be read out on a live call."""
     tenant_id, company_id = _tenant_company_from_context(tool_context)
+    state = getattr(tool_context, "state", {}) if tool_context is not None else {}
+    resolved_customer_phone = (
+        customer_phone.strip()
+        if isinstance(customer_phone, str) and customer_phone.strip()
+        else resolve_caller_phone_from_state(state)
+    )
+    resolved_sender_id = resolve_sms_sender_id_from_state(state)
 
     try:
         result = await service_payments.create_virtual_account(
             email=customer_email,
             first_name=customer_first_name,
             last_name=customer_last_name,
-            phone=customer_phone,
+            phone=resolved_customer_phone,
             preferred_bank_slug=preferred_bank_slug,
             country=None,
             tenant_id=tenant_id,
@@ -57,7 +74,7 @@ async def create_virtual_account_payment(
             campaign_id=campaign_id,
             expected_amount_kobo=expected_amount_kobo,
             reference=reference,
-            customer_phone=customer_phone,
+            customer_phone=resolved_customer_phone,
             metadata={"source": "agent_tool"},
         )
     except service_payments.PaymentGatewayError as exc:
@@ -84,14 +101,21 @@ async def create_virtual_account_payment(
         }
 
     notify_kwargs = dict(
-        phone=customer_phone or "",
+        phone=resolved_customer_phone,
+        account_number=result.get("account_number", ""),
+        bank_name=result.get("bank_name", ""),
+        account_name=result.get("account_name", ""),
+        amount_kobo=expected_amount_kobo,
+        sender_id=resolved_sender_id,
+    )
+    sms_sent = await service_payments.send_va_notification_sms(**notify_kwargs)
+    whatsapp_sent = await service_payments.send_va_notification_whatsapp(
+        phone=resolved_customer_phone,
         account_number=result.get("account_number", ""),
         bank_name=result.get("bank_name", ""),
         account_name=result.get("account_name", ""),
         amount_kobo=expected_amount_kobo,
     )
-    sms_sent = await service_payments.send_va_notification_sms(**notify_kwargs)
-    whatsapp_sent = await service_payments.send_va_notification_whatsapp(**notify_kwargs)
 
     return {
         "status": "ok",
@@ -101,6 +125,11 @@ async def create_virtual_account_payment(
         "account_name": result.get("account_name"),
         "bank_name": result.get("bank_name"),
         "bank_slug": result.get("bank_slug"),
+        "expected_amount_kobo": expected_amount_kobo,
+        "expected_amount_display": _format_naira_from_kobo(expected_amount_kobo),
+        "currency_name": "naira" if isinstance(expected_amount_kobo, int) and expected_amount_kobo > 0 else "",
+        "notification_phone": resolved_customer_phone,
+        "sms_sender_id": resolved_sender_id,
         "sms_sent": sms_sent,
         "whatsapp_sent": whatsapp_sent,
         "instructions": (

@@ -110,6 +110,20 @@ class TestParseSdpG711:
         assert result["media_ip"] == ""
         assert result["media_port"] == 5000
 
+    def test_prefers_pcma_when_offered(self):
+        from sip_bridge.sip_dialog import parse_sdp_g711
+
+        sdp = (
+            "v=0\r\n"
+            "c=IN IP4 10.0.0.1\r\n"
+            "m=audio 5000 RTP/AVP 8 101\r\n"
+            "a=rtpmap:8 PCMA/8000\r\n"
+            "a=rtpmap:101 telephone-event/8000\r\n"
+        )
+        result = parse_sdp_g711(sdp)
+        assert result["audio_payload_type"] == 8
+        assert result["audio_codec"] == "PCMA"
+
     def test_detects_dtmf_payload_type(self):
         from sip_bridge.sip_dialog import parse_sdp_g711
 
@@ -156,6 +170,18 @@ class TestBuildSdpAnswer:
 
         sdp = build_sdp_answer("34.69.236.219", 12000)
         assert "a=sendrecv" in sdp
+
+    def test_supports_pcma_answer(self):
+        from sip_bridge.sip_dialog import build_sdp_answer
+
+        sdp = build_sdp_answer(
+            "34.69.236.219",
+            12000,
+            payload_type=8,
+            codec_name="PCMA",
+        )
+        assert "m=audio 12000 RTP/AVP 8" in sdp
+        assert "a=rtpmap:8 PCMA/8000" in sdp
 
 
 class TestBuildSipResponse:

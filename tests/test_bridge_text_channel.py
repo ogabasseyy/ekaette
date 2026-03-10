@@ -48,6 +48,10 @@ class TestQueryText:
         call_kwargs = _mock_genai.models.generate_content.call_args[1]
         config = call_kwargs["config"]
         assert config.system_instruction.endswith(_CHANNEL_CONFIG["sms"]["system_suffix"])
+        assert "e hkaitay" not in config.system_instruction.lower()
+        assert "named ehkaitay" in config.system_instruction.lower()
+        assert "you are ekaette" not in config.system_instruction.lower()
+        assert "ekaette-electronics" not in config.system_instruction.lower()
 
     async def test_whatsapp_channel(self, _mock_genai) -> None:
         await query_text(user_message="Hi", channel="whatsapp")

@@ -15,6 +15,8 @@ from app.agents.callbacks import (
     on_tool_error_emit,
 )
 from app.configs.model_resolver import resolve_live_model_id
+from app.tools.callback_tools import request_callback
+from app.tools.sms_messaging import send_sms_message
 from app.tools.wa_messaging import send_whatsapp_message
 from app.tools.knowledge_tools import (
     get_company_profile_fact,
@@ -36,8 +38,8 @@ from app.tools.shipping_tools import (
 LIVE_MODEL_ID = resolve_live_model_id()
 
 _VOICE_PAYMENT_FOLLOWUP = (
-    "    - Offer to send the account details via WhatsApp when helpful and use "
-    "send_whatsapp_message only if the customer wants that follow-up."
+    "    - Offer to send the account details via SMS or WhatsApp when helpful and use "
+    "send_sms_message or send_whatsapp_message only if the customer wants that follow-up."
 )
 _TEXT_PAYMENT_FOLLOWUP = (
     "    - Share the account details directly in this chat and do not promise a "
@@ -58,6 +60,13 @@ _INSTRUCTION_TEMPLATE = """You answer general customer questions, FAQs, and prov
     - You may be reached after another agent already spoke to the customer.
     - In that case, do NOT greet, re-introduce yourself, or restate the
       customer's request. Continue directly from the active handoff context.
+    - If '{{temp:pending_handoff_target_agent}}' is 'support_agent', this is the
+      first turn immediately after a live transfer.
+    - Latest customer request before transfer: '{{temp:pending_handoff_latest_user}}'.
+    - Previous agent's latest spoken line: '{{temp:pending_handoff_latest_agent}}'.
+    - Recent customer-only context: '{{temp:pending_handoff_recent_customer_context}}'.
+    - In that first transferred turn, do NOT repeat or paraphrase the previous
+      agent's last question or statement. Continue from the next useful step.
 
     Grounding priority:
     1) Use company tools first for company-specific truth:
@@ -104,6 +113,11 @@ _INSTRUCTION_TEMPLATE = """You answer general customer questions, FAQs, and prov
     - If the question is about a specific order, ask for the order/confirmation ID
     - For trade-in related questions, suggest transferring to the valuation agent
     - For booking questions, suggest transferring to the booking agent
+    - After a successful send_sms_message or send_whatsapp_message tool call, confirm the
+      written details were sent. Do not claim failure unless the latest tool result failed.
+    - If the customer asks for a callback, says they do not have enough airtime,
+      or says they do not have time to continue, use request_callback and confirm
+      you will call them back on this number, then wrap up the call warmly.
     - Always be honest if you don't know — never make up information
     """
 
@@ -133,6 +147,8 @@ _CALLBACKS = dict(
 def _tools_for_channel(channel: str) -> list[object]:
     tools = list(_BASE_TOOLS)
     if channel == "voice":
+        tools.append(request_callback)
+        tools.append(send_sms_message)
         tools.append(send_whatsapp_message)
     return tools
 

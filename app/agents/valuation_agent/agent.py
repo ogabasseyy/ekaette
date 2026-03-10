@@ -15,6 +15,8 @@ from app.agents.callbacks import (
     on_tool_error_emit,
 )
 from app.configs.model_resolver import resolve_live_model_id
+from app.tools.callback_tools import request_callback
+from app.tools.sms_messaging import send_sms_message
 from app.tools.wa_messaging import send_whatsapp_message
 from app.tools.knowledge_tools import (
     get_company_profile_fact,
@@ -44,6 +46,13 @@ _INSTRUCTION = """You assess item condition, calculate trade-in value, and handl
     - You may be reached after another agent already spoke to the customer.
     - In that case, do NOT greet, re-introduce yourself, or restate the
       customer's request. Continue directly from the active handoff context.
+    - If '{temp:pending_handoff_target_agent}' is 'valuation_agent', this is the
+      first turn immediately after a live transfer.
+    - Latest customer request before transfer: '{temp:pending_handoff_latest_user}'.
+    - Previous agent's latest spoken line: '{temp:pending_handoff_latest_agent}'.
+    - Recent customer-only context: '{temp:pending_handoff_recent_customer_context}'.
+    - In that first transferred turn, do NOT repeat or paraphrase the previous
+      agent's last question or statement. Continue from the next useful step.
 
     TRADE-IN VALUATION FLOW:
     When you receive analysis results from the vision_agent:
@@ -105,6 +114,11 @@ _INSTRUCTION = """You assess item condition, calculate trade-in value, and handl
       - search_company_knowledge for valuation policy details
       - query_company_system when connected systems provide live policy flags
     - Always use Nigerian Naira (₦)
+    - If the customer asks to be called back later, says they are out of airtime,
+      or says they do not have time to continue, use request_callback and confirm
+      you will call them back on this number, then wrap up the call warmly.
+      Once you confirm the callback, do NOT ask follow-up questions — just say
+      goodbye warmly (e.g., "We'll call you right back. Thank you!").
     - Be transparent about pricing — explain what affects the grade
     - If the device is not in our catalog, apologize and explain we can't value it right now
     - Never promise a price you can't back up with the tool result
@@ -141,6 +155,8 @@ _CALLBACKS = dict(
 def _tools_for_channel(channel: str) -> list[object]:
     tools = list(_BASE_TOOLS)
     if channel == "voice":
+        tools.append(request_callback)
+        tools.append(send_sms_message)
         tools.append(send_whatsapp_message)
     return tools
 

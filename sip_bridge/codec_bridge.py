@@ -127,22 +127,33 @@ class G711CodecBridge(CodecBridge):
 
     frame_duration_ms: int = 20
 
-    def __init__(self, rtp_payload_type: int = 0, rtp_clock_rate: int = 8000) -> None:
+    def __init__(
+        self,
+        rtp_payload_type: int = 0,
+        rtp_clock_rate: int = 8000,
+        law: str = "ulaw",
+    ) -> None:
         self.rtp_payload_type = rtp_payload_type
         self.rtp_clock_rate = rtp_clock_rate
+        self.law = "alaw" if law.strip().lower() == "alaw" else "ulaw"
 
     def decode_to_pcm16_16k(self, encoded: bytes) -> bytes:
-        """G.711 μ-law -> PCM16 8kHz -> resample -> PCM16 16kHz."""
-        from sip_bridge.audio_codec import resample_8k_to_16k, ulaw_to_pcm16
+        """G.711 A-law/μ-law -> PCM16 8kHz -> resample -> PCM16 16kHz."""
+        from sip_bridge.audio_codec import alaw_to_pcm16, resample_8k_to_16k, ulaw_to_pcm16
 
-        pcm16_8k = ulaw_to_pcm16(encoded)
+        if self.law == "alaw":
+            pcm16_8k = alaw_to_pcm16(encoded)
+        else:
+            pcm16_8k = ulaw_to_pcm16(encoded)
         return resample_8k_to_16k(pcm16_8k)
 
     def encode_from_pcm16_24k(self, pcm16_24k: bytes) -> bytes:
-        """PCM16 24kHz -> resample -> PCM16 8kHz -> G.711 μ-law."""
-        from sip_bridge.audio_codec import pcm16_to_ulaw, resample_24k_to_8k
+        """PCM16 24kHz -> resample -> PCM16 8kHz -> G.711 A-law/μ-law."""
+        from sip_bridge.audio_codec import pcm16_to_alaw, pcm16_to_ulaw, resample_24k_to_8k
 
         pcm16_8k = resample_24k_to_8k(pcm16_24k)
+        if self.law == "alaw":
+            return pcm16_to_alaw(pcm16_8k)
         return pcm16_to_ulaw(pcm16_8k)
 
 

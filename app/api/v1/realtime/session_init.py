@@ -8,6 +8,7 @@ from typing import Any
 
 from fastapi import WebSocket
 
+from app.api.v1.realtime.caller_phone_registry import register_caller_phone
 from app.api.v1.realtime.models import SessionInitContext
 from app.api.v1.realtime.runtime_cache import (
     bind_runtime_values,
@@ -260,6 +261,10 @@ async def initialize_session(
             state_updates["app:tenant_id"] = tenant_id
         if "app:channel" not in session.state:
             state_updates["app:channel"] = "voice"
+        if "app:user_id" not in session.state:
+            state_updates["app:user_id"] = user_id
+        if "app:session_id" not in session.state:
+            state_updates["app:session_id"] = resolved_session_id
         if "app:industry_config" not in session.state:
             industry_config = await load_industry_config_fn(industry_config_client_obj, industry)
             state_updates.update(build_session_state_fn(industry_config, industry))
@@ -336,6 +341,9 @@ async def initialize_session(
                 session_id=resolved_session_id,
                 state_updates=state_updates,
             )
+            session_state_ref = getattr(session, "state", None)
+            if isinstance(session_state_ref, dict):
+                session_state_ref.update(state_updates)
     else:
         if registry_enabled_fn():
             try:
@@ -455,6 +463,8 @@ async def initialize_session(
             initial_state.update(canonical_state_updates_from_registry_fn(registry_config))
         initial_state.setdefault("app:tenant_id", tenant_id)
         initial_state.setdefault("app:channel", "voice")
+        initial_state.setdefault("app:user_id", user_id)
+        initial_state.setdefault("app:session_id", resolved_session_id)
 
         # Inject caller phone for SIP bridge connections
         if caller_phone:
@@ -485,12 +495,21 @@ async def initialize_session(
         created_session = await session_service_obj.create_session(
             **create_kwargs,
         )
+        if getattr(created_session, "state", None) is None:
+            try:
+                created_session.state = dict(initial_state)
+            except Exception:
+                pass
+        session = created_session
         if (
             uses_vertex_sessions
             and isinstance(getattr(created_session, "id", None), str)
             and created_session.id
         ):
             resolved_session_id = created_session.id
+            session_state_ref = getattr(session, "state", None)
+            if isinstance(session_state_ref, dict):
+                session_state_ref["app:session_id"] = resolved_session_id
 
     # Collect the final session state for voice + canonical fields.
     if session is not None:
@@ -550,6 +569,13 @@ async def initialize_session(
         session_state=session_state,
     )))
 
+    if caller_phone:
+        register_caller_phone(
+            user_id=user_id,
+            session_id=resolved_session_id,
+            caller_phone=caller_phone,
+        )
+
     return SessionInitContext(
         websocket=websocket,
         user_id=user_id,
@@ -566,4 +592,5 @@ async def initialize_session(
         session_voice=session_voice,
         manual_vad_active=manual_vad_active,
         run_config=run_config,
+        caller_phone=caller_phone,
     )

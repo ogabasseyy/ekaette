@@ -142,8 +142,9 @@ class TestEkaetteRouterAgent:
             for tool in ekaette_router.tools
         }
         assert "send_whatsapp_message" in tool_names
+        assert "send_sms_message" in tool_names
 
-    def test_text_router_omits_send_whatsapp_message_tool(self):
+    def test_text_router_omits_outbound_message_tools(self):
         from app.agents.ekaette_router.agent import create_ekaette_router
 
         agent = create_ekaette_router(model="gemini-3-flash-preview", channel="text")
@@ -151,9 +152,10 @@ class TestEkaetteRouterAgent:
             getattr(tool, "name", getattr(tool, "__name__", str(tool)))
             for tool in agent.tools
         }
+        assert "send_sms_message" not in tool_names
         assert "send_whatsapp_message" not in tool_names
 
-    def test_text_router_sub_agents_omit_send_whatsapp_message_tool(self):
+    def test_text_router_sub_agents_omit_outbound_message_tools(self):
         from app.agents.ekaette_router.agent import create_ekaette_router
 
         agent = create_ekaette_router(model="gemini-3-flash-preview", channel="text")
@@ -162,9 +164,10 @@ class TestEkaetteRouterAgent:
                 getattr(tool, "name", getattr(tool, "__name__", str(tool)))
                 for tool in getattr(sub_agent, "tools", [])
             }
+            assert "send_sms_message" not in tool_names
             assert "send_whatsapp_message" not in tool_names
 
-    def test_voice_router_expected_sub_agents_include_send_whatsapp_message_tool(self):
+    def test_voice_router_expected_sub_agents_include_outbound_message_tools(self):
         from app.agents.ekaette_router.agent import create_ekaette_router
         from app.configs.model_resolver import resolve_live_model_id
 
@@ -177,6 +180,7 @@ class TestEkaetteRouterAgent:
             for sub_agent in agent.sub_agents
         }
         for agent_name in {"valuation_agent", "booking_agent", "catalog_agent", "support_agent"}:
+            assert "send_sms_message" in tool_names_by_agent[agent_name]
             assert "send_whatsapp_message" in tool_names_by_agent[agent_name]
 
     def test_model_reads_from_env(self):

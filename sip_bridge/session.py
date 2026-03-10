@@ -40,6 +40,8 @@ OUTBOUND_QUEUE_SIZE = 10000
 
 # 20ms of silence at 16kHz 16-bit mono (640 bytes)
 SILENCE_FRAME = b"\x00" * 640
+# 20ms of silence at 24kHz 16-bit mono (960 bytes) for callback-leg media priming.
+SILENCE_FRAME_24K = b"\x00" * 960
 
 # Echo suppression holdoff after model stops speaking.
 # Keep short (0.5s) to avoid muting start of user's next utterance.
@@ -48,6 +50,28 @@ ECHO_HOLDOFF_SEC = 0.5
 # Default audio gain for G.711 telephony input.
 # 2x compensates for typical PSTN attenuation without triggering VAD false positives.
 DEFAULT_AUDIO_GAIN = 2
+
+
+def _read_float_env(name: str, default: float) -> float:
+    raw_value = os.getenv(name, str(default))
+    try:
+        return float(raw_value)
+    except (TypeError, ValueError):
+        return default
+
+
+_CALLBACK_MEDIA_PRIME_MS = max(
+    100.0,
+    _read_float_env("SIP_OUTBOUND_CALLBACK_MEDIA_PRIME_MS", 600.0),
+)
+_CALLBACK_MEDIA_PRIME_FRAME_COUNT = max(
+    1,
+    int(math.ceil(_CALLBACK_MEDIA_PRIME_MS / 20.0)),
+)
+_CALLBACK_POST_ANSWER_GRACE_MS = max(
+    0.0,
+    _read_float_env("SIP_OUTBOUND_CALLBACK_POST_ANSWER_GRACE_MS", 1000.0),
+)
 
 
 def build_telephone_vad_config() -> genai_types.RealtimeInputConfig:
@@ -97,6 +121,7 @@ class CallSession:
 
     # Gateway mode (Cloud Run WebSocket)
     gateway_client: GatewayClient | None = None
+    connect_greeting_text: str = "[Phone call connected]"
 
     # Queues
     inbound_queue: asyncio.Queue[bytes] = field(
@@ -121,6 +146,19 @@ class CallSession:
     # Guard against re-greeting on gateway reconnect
     _gateway_greeting_sent: bool = False
     _greeting_lock_active: bool = False
+    delay_answer_until_ready: bool = False
+    prime_outbound_on_answer: bool = False
+    _media_send_enabled: asyncio.Event = field(default_factory=asyncio.Event)
+    _first_outbound_audio_ready: asyncio.Event = field(default_factory=asyncio.Event)
+    _startup_failed: asyncio.Event = field(default_factory=asyncio.Event)
+    _answer_media_primed: bool = False
+    callback_post_answer_grace_sec: float = 0.0
+    _callback_post_answer_release_at: float = 0.0
+    _answered_at_monotonic: float = 0.0
+    _preanswer_agent_final_seen: bool = False
+    _suppress_postanswer_agent_audio_until_user_speaks: bool = False
+    _user_spoke_after_answer: bool = False
+    _suppressed_agent_audio_frames: int = 0
 
     # Metrics
     frames_received: int = 0
@@ -128,6 +166,68 @@ class CallSession:
     inbound_drops: int = 0
     outbound_drops: int = 0
     gemini_input_drops: int = 0
+
+    def __post_init__(self) -> None:
+        if not self.delay_answer_until_ready:
+            self._media_send_enabled.set()
+
+    async def wait_until_answer_ready(self, timeout: float) -> bool:
+        """Wait until greeting audio is buffered or startup fails."""
+        if not self.delay_answer_until_ready:
+            return True
+        deadline = time.monotonic() + max(0.0, timeout)
+        while time.monotonic() < deadline:
+            if self._first_outbound_audio_ready.is_set():
+                return True
+            if self._startup_failed.is_set() or self._shutdown.is_set():
+                return False
+            await asyncio.sleep(0.05)
+        return self._first_outbound_audio_ready.is_set()
+
+    @property
+    def startup_failed(self) -> bool:
+        return self._startup_failed.is_set()
+
+    def mark_answered(self) -> None:
+        """Release buffered outbound audio once SIP answers the call."""
+        self._answered_at_monotonic = time.monotonic()
+        if self.prime_outbound_on_answer and not self._answer_media_primed:
+            self._prime_outbound_callback_audio()
+        if self._preanswer_agent_final_seen:
+            self._suppress_postanswer_agent_audio_until_user_speaks = True
+        if self.callback_post_answer_grace_sec > 0:
+            self._callback_post_answer_release_at = (
+                time.monotonic() + self.callback_post_answer_grace_sec
+            )
+        self._media_send_enabled.set()
+
+    def _callback_post_answer_grace_active(self) -> bool:
+        """Return True while callback speech should still be held briefly after answer."""
+        release_at = self._callback_post_answer_release_at
+        return bool(release_at) and time.monotonic() < release_at
+
+    def _answered(self) -> bool:
+        return self._answered_at_monotonic > 0.0
+
+    def _prime_outbound_callback_audio(self) -> None:
+        """Queue short RTP silence so outbound callback legs stay alive during model startup."""
+        queued = 0
+        for _ in range(_CALLBACK_MEDIA_PRIME_FRAME_COUNT):
+            try:
+                self.outbound_queue.put_nowait(SILENCE_FRAME_24K)
+                queued += 1
+            except asyncio.QueueFull:
+                self.outbound_drops += 1
+                break
+        if queued:
+            self._answer_media_primed = True
+            self._first_outbound_audio_ready.set()
+            logger.info(
+                "Primed outbound callback media frames=%d ms=%d call_id=%s",
+                queued,
+                int(_CALLBACK_MEDIA_PRIME_MS),
+                self.call_id,
+            )
 
     async def run(self) -> None:
         """Run the four concurrent tasks. Cancels all on first failure."""
@@ -169,6 +269,7 @@ class CallSession:
                 logger.info("Gateway mode: connected to Cloud Run")
             except Exception:
                 logger.exception("Failed to connect to gateway")
+                self._startup_failed.set()
                 self._cleanup_transport()
                 return
         elif self.gemini_session is None and self.gemini_api_key:
@@ -217,7 +318,7 @@ class CallSession:
                 await self.gemini_session.send_client_content(
                     turns=genai_types.Content(
                         role="user",
-                        parts=[genai_types.Part(text="[Phone call connected]")],
+                        parts=[genai_types.Part(text=self.connect_greeting_text)],
                     ),
                     turn_complete=True,
                 )
@@ -225,6 +326,7 @@ class CallSession:
 
             except Exception:
                 logger.exception("Failed to connect to Gemini Live")
+                self._startup_failed.set()
                 gemini_ctx = None
 
         bidi_loop = self._gateway_bidi_loop if use_gateway else self._gemini_bidi_loop
@@ -527,6 +629,7 @@ class CallSession:
                                         self._model_speaking = True
                                         logger.info("Echo mute ON (model speaking)")
 
+                                    self._first_outbound_audio_ready.set()
                                     self._outbound_buffer.extend(inline.data)
                                     while len(self._outbound_buffer) >= 960:
                                         frame = bytes(self._outbound_buffer[:960])
@@ -666,6 +769,19 @@ class CallSession:
             if frame.is_audio:
                 # PCM16 24kHz from Gemini Live — pass to outbound pipeline
                 self._model_speaking = True
+                self._first_outbound_audio_ready.set()
+                if (
+                    self._suppress_postanswer_agent_audio_until_user_speaks
+                    and self._answered()
+                    and not self._user_spoke_after_answer
+                ):
+                    self._suppressed_agent_audio_frames += 1
+                    if self._suppressed_agent_audio_frames == 1:
+                        logger.info(
+                            "Suppressing callback agent audio after answer until user speaks call_id=%s",
+                            self.call_id,
+                        )
+                    continue
                 try:
                     self.outbound_queue.put_nowait(frame.audio_data)
                 except asyncio.QueueFull:
@@ -699,7 +815,7 @@ class CallSession:
                         try:
                             await gateway_client.send_text(json.dumps({
                                 "type": "text",
-                                "text": "[Phone call connected]",
+                                "text": self.connect_greeting_text,
                             }))
                         except Exception:
                             logger.warning("Failed to send gateway greeting", exc_info=True)
@@ -710,6 +826,9 @@ class CallSession:
                     partial = bool(msg.get("partial"))
                     text = msg.get("text", "")[:100]
                     if role == "user":
+                        if self._answered():
+                            self._user_spoke_after_answer = True
+                            self._suppress_postanswer_agent_audio_until_user_speaks = False
                         logger.info(
                             "Gateway user transcription partial=%s call_id=%s text=%s",
                             partial,
@@ -717,6 +836,8 @@ class CallSession:
                             text,
                         )
                     elif role == "agent" and not partial:
+                        if not self._answered():
+                            self._preanswer_agent_final_seen = True
                         logger.info(
                             "Gateway agent transcription final call_id=%s text=%s",
                             self.call_id,
@@ -792,8 +913,29 @@ class CallSession:
         target_logged = False
 
         FRAME_SIZE = 160  # 160 bytes = 20ms at 8kHz
+        callback_silence_frame: bytes | None = None
 
         while not self._shutdown.is_set():
+            if not self._media_send_enabled.is_set():
+                try:
+                    await asyncio.wait_for(self._media_send_enabled.wait(), timeout=0.5)
+                except TimeoutError:
+                    continue
+            if self._callback_post_answer_grace_active():
+                if callback_silence_frame is None:
+                    try:
+                        if self.codec_bridge is not None:
+                            callback_silence_frame = self.codec_bridge.encode_from_pcm16_24k(
+                                SILENCE_FRAME_24K
+                            )
+                        else:
+                            callback_silence_frame = SILENCE_FRAME_24K
+                    except Exception:
+                        logger.debug("Callback silence encode error", exc_info=True)
+                        await asyncio.sleep(0.02)
+                        continue
+                if len(g711_buffer) < FRAME_SIZE:
+                    g711_buffer.extend(callback_silence_frame)
             if len(g711_buffer) < FRAME_SIZE:
                 try:
                     pcm_frame = await asyncio.wait_for(
@@ -820,9 +962,14 @@ class CallSession:
                 del g711_buffer[:FRAME_SIZE]
 
                 marker = (self.frames_sent == 0)
+                payload_type = (
+                    getattr(self.codec_bridge, "rtp_payload_type", PCMU_PAYLOAD_TYPE)
+                    if self.codec_bridge is not None
+                    else PCMU_PAYLOAD_TYPE
+                )
                 pkt = RTPPacket(
                     version=2,
-                    payload_type=PCMU_PAYLOAD_TYPE,
+                    payload_type=payload_type,
                     sequence=seq & 0xFFFF,
                     timestamp=timestamp & 0xFFFFFFFF,
                     ssrc=ssrc,

@@ -3,7 +3,7 @@
 Handles the SIP signaling needed to answer AT INVITE calls:
 - Parse incoming SIP INVITE (method, headers, SDP body)
 - Parse G.711 SDP to extract remote media address
-- Build SDP answer with G.711 PCMU
+- Build SDP answer with the negotiated G.711 codec
 - Build SIP responses (100 Trying, 200 OK)
 """
 
@@ -52,11 +52,14 @@ def parse_sdp_g711(sdp: str) -> dict:
 
     Returns:
         dict with keys: media_ip (str), media_port (int),
+        audio_payload_type (int), audio_codec (str),
         pcmu_payload_type (int), dtmf_payload_type (int | None).
     """
     result: dict = {
         "media_ip": "",
         "media_port": 0,
+        "audio_payload_type": 0,
+        "audio_codec": "PCMU",
         "pcmu_payload_type": 0,  # PCMU is always PT 0 per RFC 3551
         "dtmf_payload_type": None,
     }
@@ -67,38 +70,72 @@ def parse_sdp_g711(sdp: str) -> dict:
         result["media_ip"] = conn_match.group(1)
 
     # Media line
+    offered_payloads: list[int] = []
     media_match = _MEDIA_LINE_RE.search(sdp)
     if media_match:
         result["media_port"] = int(media_match.group(1))
+        offered_payloads = [
+            int(part)
+            for part in media_match.group(2).split()
+            if part.isdigit()
+        ]
 
-    # rtpmap lines — detect telephone-event for DTMF
+    codec_by_payload: dict[int, str] = {}
+    # rtpmap lines — detect telephone-event for DTMF and named codecs
     for match in _RTPMAP_RE.finditer(sdp):
         pt = int(match.group(1))
         codec = match.group(2).lower()
         if codec.startswith("telephone-event/"):
             result["dtmf_payload_type"] = pt
+        elif codec.startswith("pcmu/"):
+            codec_by_payload[pt] = "PCMU"
+        elif codec.startswith("pcma/"):
+            codec_by_payload[pt] = "PCMA"
+
+    for pt in offered_payloads:
+        if pt in codec_by_payload:
+            result["audio_payload_type"] = pt
+            result["audio_codec"] = codec_by_payload[pt]
+            break
+        if pt == 8:
+            result["audio_payload_type"] = 8
+            result["audio_codec"] = "PCMA"
+            break
+        if pt == 0:
+            result["audio_payload_type"] = 0
+            result["audio_codec"] = "PCMU"
+            break
 
     return result
 
 
-def build_sdp_answer(local_ip: str, rtp_port: int) -> str:
-    """Build a G.711 PCMU SDP answer.
+def build_sdp_answer(
+    local_ip: str,
+    rtp_port: int,
+    *,
+    payload_type: int = 0,
+    codec_name: str = "PCMU",
+) -> str:
+    """Build a G.711 SDP answer using the negotiated static payload.
 
     Args:
         local_ip: Our public IP for the connection line.
         rtp_port: Our RTP port for the media line.
+        payload_type: Negotiated static RTP payload type (0=PCMU, 8=PCMA).
+        codec_name: Negotiated G.711 codec name.
 
     Returns:
         SDP body string.
     """
+    normalized_codec = "PCMA" if codec_name.strip().upper() == "PCMA" else "PCMU"
     return (
         "v=0\r\n"
         f"o=ekaette 0 0 IN IP4 {local_ip}\r\n"
         "s=Ekaette SIP Bridge\r\n"
         f"c=IN IP4 {local_ip}\r\n"
         "t=0 0\r\n"
-        f"m=audio {rtp_port} RTP/AVP 0\r\n"
-        "a=rtpmap:0 PCMU/8000\r\n"
+        f"m=audio {rtp_port} RTP/AVP {payload_type}\r\n"
+        f"a=rtpmap:{payload_type} {normalized_codec}/8000\r\n"
         "a=ptime:20\r\n"
         "a=sendrecv\r\n"
     )

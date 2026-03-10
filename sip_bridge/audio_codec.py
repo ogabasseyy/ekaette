@@ -102,6 +102,44 @@ def alaw_to_pcm16(alaw_bytes: bytes) -> bytes:
     return struct.pack(f"<{len(samples)}h", *samples)
 
 
+def pcm16_to_alaw(pcm16_bytes: bytes) -> bytes:
+    """Convert PCM16 linear bytes to G.711 A-law."""
+    n_samples = len(pcm16_bytes) // 2
+    samples = struct.unpack(f"<{n_samples}h", pcm16_bytes)
+    result = bytearray(n_samples)
+    for i, sample in enumerate(samples):
+        result[i] = _linear_to_alaw(sample)
+    return bytes(result)
+
+
+def _linear_to_alaw(sample: int) -> int:
+    """Encode a single PCM16 sample to A-law."""
+    clip = 0x7FFF
+    if sample >= 0:
+        mask = 0xD5
+    else:
+        mask = 0x55
+        sample = -sample - 1
+    if sample > clip:
+        sample = clip
+
+    sample >>= 4
+    segment_end = (0x1F, 0x3F, 0x7F, 0xFF, 0x1FF, 0x3FF, 0x7FF, 0xFFF)
+    segment = 0
+    while segment < len(segment_end) and sample > segment_end[segment]:
+        segment += 1
+
+    if segment >= 8:
+        return 0x7F ^ mask
+
+    encoded = segment << 4
+    if segment < 2:
+        encoded |= sample & 0x0F
+    else:
+        encoded |= (sample >> (segment - 1)) & 0x0F
+    return encoded ^ mask
+
+
 def resample_8k_to_16k(pcm16_8k: bytes) -> bytes:
     """Upsample PCM16 from 8kHz to 16kHz (linear interpolation)."""
     n = len(pcm16_8k) // 2

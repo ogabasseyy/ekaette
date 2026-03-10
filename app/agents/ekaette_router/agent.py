@@ -23,7 +23,9 @@ from app.agents.callbacks import (
     on_tool_error_emit,
 )
 from app.agents.dedup import telemetry_after_agent
+from app.tools.callback_tools import request_callback
 from app.tools.global_lessons import classify_lesson_scope, submit_global_lesson
+from app.tools.sms_messaging import send_sms_message
 from app.tools.wa_messaging import send_whatsapp_message
 from app.configs.model_resolver import resolve_live_model_id
 from app.agents.vision_agent.agent import create_vision_agent
@@ -276,6 +278,12 @@ _CORE_INSTRUCTION = """You are a virtual assistant named ehkaitay.
     trade-in value for you now."
 
     Route to the appropriate sub-agent based on customer intent.
+    PURCHASE INTENT ROUTING:
+    - If the customer confirms they want to buy now, asks for delivery/pickup,
+      asks for payment/account details, or says "let's proceed", route to
+      booking_agent immediately.
+    - Do not keep them in catalog/support once purchase intent is clear.
+
     For product questions:
     - Use catalog_agent for "do you have...", price, stock, availability,
       product lookup, and store recommendations.
@@ -345,6 +353,15 @@ _VOICE_SUPPLEMENT = """
     Say "four hundred and fifty thousand naira" NOT "four fifty K" or just
     the number. The ₦ symbol cannot be spoken — always use the word "naira".
 
+    CALLBACKS:
+    If the customer says they are low on airtime, do not have time to continue,
+    or asks to be called back, treat that as a callback request. Use
+    request_callback and confirm you will call them back on the same number
+    after this call ends. Once you have confirmed the callback, wrap up the
+    call warmly — do NOT ask follow-up questions about what they want to
+    discuss on the callback. Say something like "Alright, we'll give you a
+    call back shortly on this same number. Thank you and have a great day!"
+
     SILENCE HANDLING:
     If the customer has been silent for roughly 5-8 seconds after you spoke,
     gently check in with a short prompt. Keep it natural and not pushy:
@@ -409,6 +426,8 @@ def create_ekaette_router(model: str, *, channel: str = "voice") -> Agent:
     instruction = _TEXT_INSTRUCTION if channel == "text" else _INSTRUCTION
     tools = [PreloadMemoryTool()]
     if channel == "voice":
+        tools.append(request_callback)
+        tools.append(send_sms_message)
         tools.append(send_whatsapp_message)
     return Agent(
         name="ekaette_router",

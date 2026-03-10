@@ -172,6 +172,7 @@ class TestSearchCatalog:
         assert [item["name"] for item in result["products"]] == ["iPhone 15 Pro"]
         assert result["products"][0]["storage"] == "128GB"
         assert result["products"][0]["price"] == 850_000
+        assert result["products"][0]["price_display"] == "850,000 naira"
 
     @pytest.mark.asyncio
     async def test_query_with_model_number_filters_other_iphone_models(self):
@@ -436,3 +437,42 @@ class TestSearchCatalog:
             assert "name" in product
             assert "price" in product
             assert "in_stock" in product
+
+    @pytest.mark.asyncio
+    async def test_variant_breakdown_uses_naira_in_price_display(self):
+        from app.tools.catalog_tools import search_catalog
+
+        products = [
+            {
+                "id": "prod-iphone-15-pro",
+                "name": "iPhone 15 Pro",
+                "price": 850_000,
+                "currency": "NGN",
+                "category": "smartphones",
+                "brand": "Apple",
+                "in_stock": True,
+                "storage_variants": [
+                    {"storage": "128GB", "price": 850_000, "currency": "NGN"},
+                    {"storage": "256GB", "price": 950_000, "currency": "NGN"},
+                ],
+            },
+        ]
+        mock_query = MagicMock()
+        docs = []
+        for prod in products:
+            doc = MagicMock()
+            doc.id = prod["id"]
+            doc.to_dict.return_value = prod
+            docs.append(doc)
+        mock_query.limit.return_value = mock_query
+        mock_query.stream.return_value = iter(docs)
+
+        with (
+            patch("app.tools.catalog_tools._get_firestore_db", return_value=MagicMock()),
+            patch("app.tools.catalog_tools.scoped_collection", return_value=mock_query),
+        ):
+            result = await search_catalog(query="iPhone 15")
+
+        product = result["products"][0]
+        assert "naira" in product["price_display"]
+        assert "NGN" not in product["price_display"]

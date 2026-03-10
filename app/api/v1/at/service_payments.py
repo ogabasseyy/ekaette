@@ -16,6 +16,7 @@ from . import campaign_analytics
 from . import providers
 from .settings import (
     AT_SMS_ENABLED,
+    AT_SMS_SENDER_ID,
     PAYSTACK_DEFAULT_CALLBACK_URL,
     PAYSTACK_DEFAULT_DVA_BANK_SLUG,
     PAYSTACK_DEFAULT_DVA_COUNTRY,
@@ -761,7 +762,7 @@ def _format_va_sms(account_number: str, bank_name: str, account_name: str, amoun
         parts.append(f"Name: {account_name}")
     if amount_kobo and amount_kobo > 0:
         naira = amount_kobo / 100
-        parts.append(f"Amount: NGN {naira:,.2f}")
+        parts.append(f"Amount: {naira:,.2f} naira")
     return ". ".join(parts)
 
 
@@ -772,6 +773,7 @@ async def send_va_notification_sms(
     bank_name: str,
     account_name: str,
     amount_kobo: int | None,
+    sender_id: str | None = None,
 ) -> bool:
     """Fire-and-forget SMS with virtual account details. Returns True on success."""
     if not AT_SMS_ENABLED:
@@ -782,7 +784,11 @@ async def send_va_notification_sms(
 
     message = _format_va_sms(account_number, bank_name, account_name, amount_kobo)
     try:
-        await providers.send_sms(message=message, recipients=[phone.strip()])
+        await providers.send_sms(
+            message=message,
+            recipients=[phone.strip()],
+            sender_id=(sender_id or AT_SMS_SENDER_ID or None),
+        )
         logger.info("VA SMS sent")
         return True
     except Exception:

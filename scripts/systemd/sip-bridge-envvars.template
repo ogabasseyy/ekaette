@@ -4,6 +4,7 @@
 
 # Google API
 GOOGLE_API_KEY=<your-gemini-api-key>
+GOOGLE_CLOUD_PROJECT=ekaette
 
 # SIP server
 SIP_BRIDGE_HOST=0.0.0.0
@@ -37,3 +38,8 @@ PHONE_ID_HMAC_KEY=<generate-secure-key>
 # GATEWAY_MODE=true
 # GATEWAY_WS_URL=wss://ekaette-xxx.run.app/ws
 # GATEWAY_WS_SECRET=<shared-secret>
+
+# Outbound callback prewarm
+AT_CALLBACK_PREWARM_POLL_SECONDS=0.25
+AT_CALLBACK_PREWARM_TIMEOUT_SECONDS=12
+SIP_OUTBOUND_CALLBACK_POST_ANSWER_GRACE_MS=1000

@@ -55,6 +55,8 @@ class TestTopshipDeliveryQuote:
         assert len(result["quotes"]) == 2
         assert result["cheapest"]["total_kobo"] == 250000
         assert result["fastest"]["estimated_days"] == 2
+        assert result["cheapest"]["currency_name"] == "naira"
+        assert result["cheapest"]["total_display"] == "2,500.00 naira"
 
     @pytest.mark.asyncio
     async def test_parses_wrapped_response_and_prefers_fastest(self):
@@ -94,6 +96,7 @@ class TestTopshipDeliveryQuote:
         assert result["status"] == "ok"
         assert result["recommended"]["pricing_tier"] == "Premium"
         assert result["recommended"]["estimated_days"] <= result["cheapest"]["estimated_days"]
+        assert result["recommended"]["total_display"].endswith("naira")
 
     @pytest.mark.asyncio
     async def test_returns_api_error_on_non_2xx(self):

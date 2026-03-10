@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from unittest.mock import AsyncMock
 
 import pytest
@@ -198,6 +199,71 @@ class TestCallSessionGatewayMode:
         assert s._greeting_lock_active is True
 
     @pytest.mark.asyncio
+    async def test_wait_until_answer_ready_returns_when_audio_buffered(self):
+        """Pre-answer wait should unblock once outbound greeting audio is ready."""
+        s = CallSession(
+            call_id="c1",
+            tenant_id="public",
+            company_id="acme",
+            delay_answer_until_ready=True,
+        )
+
+        async def _emit_ready():
+            await asyncio.sleep(0.01)
+            s._first_outbound_audio_ready.set()
+
+        waiter = asyncio.create_task(s.wait_until_answer_ready(0.2))
+        emitter = asyncio.create_task(_emit_ready())
+        result = await waiter
+        await emitter
+
+        assert result is True
+
+    def test_mark_answered_releases_media_gate(self):
+        """mark_answered should release outbound media sending after pre-answer warmup."""
+        s = CallSession(
+            call_id="c1",
+            tenant_id="public",
+            company_id="acme",
+            delay_answer_until_ready=True,
+        )
+        assert s._media_send_enabled.is_set() is False
+        s.mark_answered()
+        assert s._media_send_enabled.is_set() is True
+
+    def test_mark_answered_sets_callback_post_answer_release_time(self):
+        """Callback-only post-answer grace should start when the SIP leg answers."""
+        s = CallSession(
+            call_id="c1",
+            tenant_id="public",
+            company_id="acme",
+            delay_answer_until_ready=True,
+            callback_post_answer_grace_sec=0.4,
+        )
+
+        before = time.monotonic()
+        s.mark_answered()
+
+        assert s._media_send_enabled.is_set() is True
+        assert s._callback_post_answer_release_at >= before + 0.35
+        assert s._callback_post_answer_grace_active() is True
+
+    def test_mark_answered_enables_postanswer_agent_suppression_when_greeting_finished_preanswer(self):
+        """If the callback greeting completed before answer, suppress repeat agent audio until user speaks."""
+        s = CallSession(
+            call_id="c1",
+            tenant_id="public",
+            company_id="acme",
+            delay_answer_until_ready=True,
+            callback_post_answer_grace_sec=1.0,
+        )
+        s._preanswer_agent_final_seen = True
+
+        s.mark_answered()
+
+        assert s._suppress_postanswer_agent_audio_until_user_speaks is True
+
+    @pytest.mark.asyncio
     async def test_gateway_recv_loop_handles_interrupted(self):
         """interrupted clears model speaking state."""
         from sip_bridge.gateway_client import GatewayFrame
@@ -217,6 +283,54 @@ class TestCallSessionGatewayMode:
         await s._gateway_recv_loop()
         assert s._model_speaking is False
         assert s.outbound_queue.empty()
+
+    @pytest.mark.asyncio
+    async def test_gateway_recv_loop_suppresses_agent_audio_until_user_speaks_after_answer(self):
+        """Callback sessions should drop repeated post-answer agent audio until the caller speaks."""
+        from sip_bridge.gateway_client import GatewayFrame
+
+        s = CallSession(call_id="c1", tenant_id="public", company_id="acme")
+        s._answered_at_monotonic = time.monotonic()
+        s._suppress_postanswer_agent_audio_until_user_speaks = True
+        mock_client = MockGatewayClient()
+        mock_client._frames_to_yield = [
+            GatewayFrame(is_audio=True, audio_data=b"\x00" * 960),
+        ]
+        s.gateway_client = mock_client
+
+        await s._gateway_recv_loop()
+
+        assert s.outbound_queue.empty()
+        assert s._suppressed_agent_audio_frames == 1
+
+    @pytest.mark.asyncio
+    async def test_gateway_recv_loop_user_transcription_releases_postanswer_agent_suppression(self):
+        """Caller speech after answer should release the callback duplicate-audio guard."""
+        from sip_bridge.gateway_client import GatewayFrame
+
+        s = CallSession(call_id="c1", tenant_id="public", company_id="acme")
+        s._answered_at_monotonic = time.monotonic()
+        s._suppress_postanswer_agent_audio_until_user_speaks = True
+        mock_client = MockGatewayClient()
+        mock_client._frames_to_yield = [
+            GatewayFrame(
+                is_audio=False,
+                text_data=json.dumps({
+                    "type": "transcription",
+                    "role": "user",
+                    "partial": False,
+                    "text": "hello",
+                }),
+            ),
+            GatewayFrame(is_audio=True, audio_data=b"\x00" * 960),
+        ]
+        s.gateway_client = mock_client
+
+        await s._gateway_recv_loop()
+
+        assert s._suppress_postanswer_agent_audio_until_user_speaks is False
+        assert s._user_spoke_after_answer is True
+        assert s.outbound_queue.qsize() == 1
 
     @pytest.mark.asyncio
     async def test_gateway_recv_loop_session_started_enables_greeting_lock_only(self):
@@ -528,6 +642,26 @@ class TestServerHandleInviteGateway:
         assert session.gateway_client.caller_phone == "+2348012345678"
         assert session.gateway_client.user_id.startswith("phone-")
 
+    def test_handle_invite_outbound_callback_skips_preanswer_delay(self, monkeypatch):
+        """Recent outbound callback hints should fast-answer the AT SIP leg."""
+        from sip_bridge.server import SIPServer
+
+        config = self._make_config(
+            gateway_mode=True,
+            gateway_ws_url="wss://ekaette.run.app",
+            gateway_ws_secret="shared-hmac-secret",
+        )
+        server = SIPServer(config=config)
+        monkeypatch.setattr("sip_bridge.server.consume_outbound_callback_hint", lambda **_: True)
+
+        session = server.handle_invite(
+            "call-fast-answer",
+            ("1.2.3.4", 5060),
+            sip_from_header='"User" <sip:+2348012345678@example.com>',
+        )
+
+        assert session.delay_answer_until_ready is False
+
     def test_handle_invite_gateway_no_phone_uses_anon(self):
         """Gateway mode without From header → sip-anon user_id."""
         from sip_bridge.server import SIPServer
@@ -571,6 +705,101 @@ class TestServerHandleInviteGateway:
         server = SIPServer(config=config)
         with pytest.raises(ValueError, match="GATEWAY_WS_SECRET"):
             server.handle_invite("call-4", ("1.2.3.4", 5060))
+
+    @pytest.mark.asyncio
+    async def test_claim_prewarmed_callback_session_reuses_warm_session(self):
+        """Outbound callback INVITEs should attach to a warm session instead of creating a cold one."""
+        from sip_bridge.server import PrewarmedCallbackSession, SIPServer
+
+        config = self._make_config(
+            gateway_mode=True,
+            gateway_ws_url="wss://ekaette.run.app",
+            gateway_ws_secret="shared-hmac-secret",
+        )
+        server = SIPServer(config=config)
+        session = CallSession(
+            call_id="callback-prewarm-1",
+            tenant_id="public",
+            company_id="ekaette-electronics",
+            local_rtp_port=14567,
+            delay_answer_until_ready=True,
+            _caller_phone="+2348012345678",
+        )
+        task = asyncio.create_task(asyncio.sleep(0))
+        key = "public:ekaette-electronics:+2348012345678"
+        record = PrewarmedCallbackSession(
+            key=key,
+            tenant_id="public",
+            company_id="ekaette-electronics",
+            phone="+2348012345678",
+            session=session,
+            task=task,
+            expires_at=9999999999.0,
+        )
+        server._prewarmed_callbacks[key] = record
+
+        attached = server.claim_prewarmed_callback_session(
+            call_id="call-attach-1",
+            sip_from_header='"User" <sip:+2348012345678@example.com>',
+            remote_rtp_addr=("1.2.3.4", 4000),
+        )
+        await task
+
+        assert attached is session
+        assert attached.call_id == "call-attach-1"
+        assert attached.remote_rtp_addr == ("1.2.3.4", 4000)
+        assert server._active_sessions["call-attach-1"] is session
+        assert server._prewarmed_callbacks[key].attached is True
+
+    def test_start_callback_prewarm_sets_post_answer_grace(self):
+        """Prewarmed callback sessions should hold speech briefly after answer."""
+        from sip_bridge.server import SIPServer
+
+        config = self._make_config(
+            gateway_mode=True,
+            gateway_ws_url="wss://ekaette.run.app",
+            gateway_ws_secret="shared-hmac-secret",
+        )
+        server = SIPServer(config=config)
+        original_create_task = asyncio.create_task
+
+        class _DummyTask:
+            def __init__(self) -> None:
+                self._callbacks = []
+
+            def add_done_callback(self, callback) -> None:
+                self._callbacks.append(callback)
+
+            def cancel(self) -> None:
+                return None
+
+        created_tasks: list[_DummyTask] = []
+
+        def _fake_create_task(coro):
+            task = _DummyTask()
+            created_tasks.append(task)
+            try:
+                coro.close()
+            except Exception:
+                pass
+            return task
+
+        try:
+            asyncio.create_task = _fake_create_task  # type: ignore[assignment]
+            server._start_callback_prewarm(
+                key="public:ekaette-electronics:+2348012345678",
+                tenant_id="public",
+                company_id="ekaette-electronics",
+                phone="+2348012345678",
+                expires_at=time.time() + 30.0,
+            )
+        finally:
+            asyncio.create_task = original_create_task  # type: ignore[assignment]
+
+        record = next(iter(server._prewarmed_callbacks.values()))
+        assert record.session.callback_post_answer_grace_sec > 0.0
+        for task in created_tasks:
+            task.cancel()
 
 
 # ---------------------------------------------------------------------------
@@ -722,7 +951,7 @@ class TestServerDoneCallback:
             "body": "v=0",
         })
         monkeypatch.setattr(server_mod, "parse_sdp_g711", lambda body: {"media_ip": "1.2.3.4", "media_port": 4000})
-        monkeypatch.setattr(server_mod, "build_sdp_answer", lambda public_ip, local_rtp_port: "v=0")
+        monkeypatch.setattr(server_mod, "build_sdp_answer", lambda public_ip, local_rtp_port, **kwargs: "v=0")
         monkeypatch.setattr(server_mod, "build_sip_response", lambda code, reason, headers, sdp_body=None, contact_uri="": f"SIP/2.0 {code} {reason}")
         monkeypatch.setattr(server_mod.random, "randint", lambda start, end: 12000)
         monkeypatch.setattr("sip_bridge.session.CallSession.run", _fake_run)
@@ -735,7 +964,7 @@ class TestServerDoneCallback:
 
         monkeypatch.setattr(server_mod.asyncio, "create_task", _capture_task)
 
-        protocol._handle_invite("INVITE sip:test SIP/2.0", ("1.2.3.4", 5060))
+        await protocol._handle_invite("INVITE sip:test SIP/2.0", ("1.2.3.4", 5060))
         assert "call-done-1" in server._active_sessions
         assert created_tasks
         results = await asyncio.wait_for(
@@ -771,7 +1000,7 @@ class TestServerDoneCallback:
             "body": "v=0",
         })
         monkeypatch.setattr(server_mod, "parse_sdp_g711", lambda body: {"media_ip": "1.2.3.4", "media_port": 4000})
-        monkeypatch.setattr(server_mod, "build_sdp_answer", lambda public_ip, local_rtp_port: "v=0")
+        monkeypatch.setattr(server_mod, "build_sdp_answer", lambda public_ip, local_rtp_port, **kwargs: "v=0")
         monkeypatch.setattr(server_mod, "build_sip_response", lambda code, reason, headers, sdp_body=None, contact_uri="": f"SIP/2.0 {code} {reason}")
         monkeypatch.setattr(server_mod.random, "randint", lambda start, end: 12000)
         monkeypatch.setattr("sip_bridge.session.CallSession.run", _fake_run)
@@ -784,7 +1013,7 @@ class TestServerDoneCallback:
 
         monkeypatch.setattr(server_mod.asyncio, "create_task", _capture_task)
 
-        protocol._handle_invite("INVITE sip:test SIP/2.0", ("1.2.3.4", 5060))
+        await protocol._handle_invite("INVITE sip:test SIP/2.0", ("1.2.3.4", 5060))
         assert "call-done-2" in server._active_sessions
         assert created_tasks
         results = await asyncio.wait_for(
@@ -796,3 +1025,61 @@ class TestServerDoneCallback:
         assert str(results[0]) == "session crashed"
         await asyncio.sleep(0)
         assert "call-done-2" not in server._active_sessions
+
+    @pytest.mark.asyncio
+    async def test_handle_invite_waits_for_preanswer_audio_before_200_ok(self, monkeypatch):
+        """Gateway sessions should keep ringing until the first outbound audio is ready."""
+        from sip_bridge.server import SIPProtocol, SIPServer
+
+        server = SIPServer(config=self._make_config(gateway_mode=True, gateway_ws_url="wss://ekaette.run.app", gateway_ws_secret="secret"))
+        protocol = SIPProtocol(server)
+        sent_messages: list[str] = []
+        ready = asyncio.Event()
+
+        class _DummyTransport:
+            def sendto(self, data, addr):
+                sent_messages.append(data.decode() if isinstance(data, bytes) else data)
+
+        class _FakeSession:
+            delay_answer_until_ready = True
+            startup_failed = False
+
+            def __init__(self):
+                self.answered = False
+
+            async def wait_until_answer_ready(self, timeout: float) -> bool:
+                await ready.wait()
+                return True
+
+            def mark_answered(self) -> None:
+                self.answered = True
+
+            async def run(self):
+                await asyncio.sleep(0)
+
+        server._transport = _DummyTransport()
+        fake_session = _FakeSession()
+
+        from sip_bridge import server as server_mod
+
+        monkeypatch.setattr(server_mod, "parse_sip_request", lambda message: {
+            "headers": {"Call-ID": "call-ready-1", "From": ""},
+            "body": "v=0",
+        })
+        monkeypatch.setattr(server_mod, "parse_sdp_g711", lambda body: {"media_ip": "1.2.3.4", "media_port": 4000})
+        monkeypatch.setattr(server_mod, "build_sdp_answer", lambda public_ip, local_rtp_port, **kwargs: "v=0")
+        monkeypatch.setattr(server_mod, "build_sip_response", lambda code, reason, headers, sdp_body=None, contact_uri="": f"SIP/2.0 {code} {reason}")
+        monkeypatch.setattr(server_mod.random, "randint", lambda start, end: 12000)
+        monkeypatch.setattr(server, "handle_invite", lambda *args, **kwargs: fake_session)
+
+        task = asyncio.create_task(protocol._handle_invite("INVITE sip:test SIP/2.0", ("1.2.3.4", 5060)))
+        await asyncio.sleep(0)
+
+        assert "SIP/2.0 100 Trying" in sent_messages
+        assert "SIP/2.0 200 OK" not in sent_messages
+
+        ready.set()
+        await task
+
+        assert "SIP/2.0 200 OK" in sent_messages
+        assert fake_session.answered is True

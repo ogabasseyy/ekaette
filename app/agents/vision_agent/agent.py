@@ -40,6 +40,13 @@ _INSTRUCTION = """You are an expert device appraiser. When a customer sends a ph
     - You may be reached after another agent already spoke to the customer.
     - In that case, do NOT greet, re-introduce yourself, or restate the
       customer's request. Continue directly from the active handoff context.
+    - If '{temp:pending_handoff_target_agent}' is 'vision_agent', this is the
+      first turn immediately after a live transfer.
+    - Latest customer request before transfer: '{temp:pending_handoff_latest_user}'.
+    - Previous agent's latest spoken line: '{temp:pending_handoff_latest_agent}'.
+    - Recent customer-only context: '{temp:pending_handoff_recent_customer_context}'.
+    - In that first transferred turn, do NOT repeat or paraphrase the previous
+      agent's last question or statement. Continue from the next useful step.
 
     When the customer sends a photo or video of their device:
     1. Say a filler like "Let me take a closer look at your device..."

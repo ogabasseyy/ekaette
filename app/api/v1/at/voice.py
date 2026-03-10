@@ -17,7 +17,7 @@ from .settings import AT_VOICE_ENABLED, SIP_BRIDGE_ENDPOINT, AT_VIRTUAL_NUMBER
 from . import service_voice
 from . import providers
 from . import campaign_analytics
-from .models import OutboundCallRequest, CampaignCallRequest, TransferRequest
+from .models import CallbackRequest, OutboundCallRequest, CampaignCallRequest, TransferRequest
 from .idempotency import (
     require_idempotency_key,
     idempotency_preflight,
@@ -54,8 +54,24 @@ async def voice_callback(
         return Response(content=service_voice.build_end_xml(), media_type="application/xml")
 
     if isActive == "0":
+        tenant_id, company_id = service_voice.resolve_tenant_context(destinationNumber or AT_VIRTUAL_NUMBER)
         service_voice.log_call_ended(sessionId, callerNumber, durationInSeconds, amount)
+        await service_voice.maybe_trigger_post_call_callback(
+            caller_phone=callerNumber,
+            direction=direction,
+            duration_seconds=durationInSeconds,
+            tenant_id=tenant_id,
+            company_id=company_id,
+        )
         return Response(content=service_voice.build_end_xml(), media_type="application/xml")
+
+    tenant_id, company_id = service_voice.resolve_tenant_context(destinationNumber or AT_VIRTUAL_NUMBER)
+    if direction.strip().lower() == "outbound" and callerNumber:
+        service_voice.mark_outbound_callback_hint(
+            tenant_id=tenant_id,
+            company_id=company_id,
+            phone=callerNumber,
+        )
 
     xml = service_voice.build_dial_xml(SIP_BRIDGE_ENDPOINT, AT_VIRTUAL_NUMBER)
     service_voice.log_call_bridged(sessionId, callerNumber, direction)
@@ -194,6 +210,57 @@ async def voice_transfer(
     idempotency_commit(
         scope="at_voice_transfer",
         tenant_id="public",
+        idempotency_key=idempotency_key,
+        body=body,
+    )
+    return body
+
+
+@router.post("/voice/callback-request")
+async def voice_callback_request(
+    req: CallbackRequest,
+    idempotency_key: str = Depends(require_idempotency_key),
+) -> dict:
+    """Create or trigger a customer callback request."""
+    if not AT_VOICE_ENABLED:
+        return {"status": "disabled", "detail": "Voice channel is disabled"}
+
+    cached = idempotency_preflight(
+        scope="at_voice_callback_request",
+        tenant_id=req.tenant_id,
+        idempotency_key=idempotency_key,
+        payload={
+            "phone": req.phone,
+            "reason": req.reason,
+            "mode": req.mode,
+            "tenant_id": req.tenant_id,
+            "company_id": req.company_id,
+        },
+    )
+    if cached is not None:
+        return cached
+
+    if req.mode == "immediate":
+        body = await service_voice.trigger_callback(
+            phone=req.phone,
+            tenant_id=req.tenant_id,
+            company_id=req.company_id,
+            source="manual_callback_request",
+            reason=req.reason or "",
+        )
+    else:
+        body = service_voice.register_callback_request(
+            phone=req.phone,
+            tenant_id=req.tenant_id,
+            company_id=req.company_id,
+            source="manual_callback_request",
+            reason=req.reason or "",
+            trigger_after_hangup=True,
+        )
+
+    idempotency_commit(
+        scope="at_voice_callback_request",
+        tenant_id=req.tenant_id,
         idempotency_key=idempotency_key,
         body=body,
     )

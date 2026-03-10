@@ -224,3 +224,55 @@ class TestServiceSMS:
         result = truncate_sms(msg)
         assert len(result) == 160
         assert result.endswith("...")
+
+
+class TestSMSProviderFallback:
+    """AT sender ID fallback behavior."""
+
+    @pytest.mark.asyncio
+    async def test_send_sms_retries_without_sender_id_on_invalid_sender(self, monkeypatch) -> None:
+        from app.api.v1.at import providers
+
+        fake_sdk = type("FakeAT", (), {"SMS": type("FakeSMS", (), {"send": object()})})()
+        monkeypatch.setitem(__import__("sys").modules, "africastalking", fake_sdk)
+
+        responses = [
+            {"SMSMessageData": {"Message": "InvalidSenderId", "Recipients": []}},
+            {"SMSMessageData": {"Recipients": [{"status": "Success", "statusCode": 101}]}},
+        ]
+
+        async def fake_to_thread(fn, message, recipients, sender_id=None):
+            return responses.pop(0)
+
+        with patch("app.api.v1.at.providers.asyncio.to_thread", side_effect=fake_to_thread) as mock_thread:
+            result = await providers.send_sms(
+                message="Hello",
+                recipients=["+2348012345678"],
+                sender_id="Ogabassey",
+            )
+
+        assert result["SMSMessageData"]["Recipients"][0]["status"] == "Success"
+        assert mock_thread.call_count == 2
+        assert mock_thread.call_args_list[0].kwargs["sender_id"] == "Ogabassey"
+        assert mock_thread.call_args_list[1].kwargs["sender_id"] is None
+
+    @pytest.mark.asyncio
+    async def test_send_sms_keeps_sender_id_when_provider_accepts_it(self, monkeypatch) -> None:
+        from app.api.v1.at import providers
+
+        fake_sdk = type("FakeAT", (), {"SMS": type("FakeSMS", (), {"send": object()})})()
+        monkeypatch.setitem(__import__("sys").modules, "africastalking", fake_sdk)
+
+        async def fake_to_thread(fn, message, recipients, sender_id=None):
+            return {"SMSMessageData": {"Recipients": [{"status": "Success", "statusCode": 101}]}}
+
+        with patch("app.api.v1.at.providers.asyncio.to_thread", side_effect=fake_to_thread) as mock_thread:
+            result = await providers.send_sms(
+                message="Hello",
+                recipients=["+2348012345678"],
+                sender_id="Ogabassey",
+            )
+
+        assert result["SMSMessageData"]["Recipients"][0]["status"] == "Success"
+        assert mock_thread.call_count == 1
+        assert mock_thread.call_args.kwargs["sender_id"] == "Ogabassey"

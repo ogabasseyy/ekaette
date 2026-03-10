@@ -27,6 +27,7 @@ class SessionInitContext:
     session_voice: str
     manual_vad_active: bool
     run_config: Any
+    caller_phone: str = ""
 
 
 @dataclass

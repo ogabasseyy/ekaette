@@ -6,6 +6,8 @@ Includes idempotency and callback dedup tests.
 
 from __future__ import annotations
 
+import time
+
 import pytest
 from unittest.mock import patch, AsyncMock
 from fastapi import FastAPI
@@ -124,6 +126,87 @@ class TestVoiceCallback:
         assert resp2.status_code == 200
         assert "<Response/>" in resp2.text
 
+    @patch("app.api.v1.at.voice.service_voice.mark_outbound_callback_hint")
+    def test_outbound_active_call_marks_fast_answer_hint(
+        self,
+        mock_mark_hint,
+        voice_client: TestClient,
+    ) -> None:
+        resp = voice_client.post(
+            "/api/v1/at/voice/callback",
+            data={
+                "isActive": "1",
+                "sessionId": "AT-outbound-001",
+                "direction": "Outbound",
+                "callerNumber": "+2348012345678",
+                "destinationNumber": "+23417006000",
+            },
+        )
+        assert resp.status_code == 200
+        mock_mark_hint.assert_called_once_with(
+            tenant_id="public",
+            company_id="ekaette-electronics",
+            phone="+2348012345678",
+        )
+
+    @patch("app.api.v1.at.voice.service_voice.maybe_trigger_post_call_callback", new_callable=AsyncMock)
+    def test_ended_call_checks_for_post_call_callback(
+        self,
+        mock_post_call_callback: AsyncMock,
+        voice_client: TestClient,
+    ) -> None:
+        resp = voice_client.post(
+            "/api/v1/at/voice/callback",
+            data={
+                "isActive": "0",
+                "sessionId": "AT-end-001",
+                "direction": "Inbound",
+                "callerNumber": "+2348012345678",
+                "destinationNumber": "+23417006000",
+                "durationInSeconds": "2",
+            },
+        )
+        assert resp.status_code == 200
+        mock_post_call_callback.assert_awaited_once_with(
+            caller_phone="+2348012345678",
+            direction="Inbound",
+            duration_seconds="2",
+            tenant_id="public",
+            company_id="ekaette-electronics",
+        )
+
+
+class TestPostCallCallbackFallback:
+    @pytest.mark.asyncio
+    async def test_short_inbound_call_triggers_flash_callback_with_new_threshold(
+        self,
+        monkeypatch,
+    ) -> None:
+        from app.api.v1.at import service_voice
+
+        service_voice._CALLBACK_REQUESTS_LOCAL.clear()
+        monkeypatch.setenv("AT_FLASH_CALLBACK_ENABLED", "true")
+        monkeypatch.setenv("AT_FLASH_CALLBACK_MAX_DURATION_SECONDS", "8")
+        monkeypatch.setattr(service_voice, "AT_CALLBACK_DIAL_FALLBACK", True)
+        monkeypatch.setattr(service_voice, "_load_callback_request", lambda *args, **kwargs: None)
+
+        with patch("app.api.v1.at.service_voice.trigger_callback", new_callable=AsyncMock) as mock_trigger:
+            await service_voice.maybe_trigger_post_call_callback(
+                caller_phone="+2348012345678",
+                direction="Inbound",
+                duration_seconds="6",
+                tenant_id="public",
+                company_id="ekaette-electronics",
+            )
+
+        mock_trigger.assert_awaited_once_with(
+            phone="+2348012345678",
+            tenant_id="public",
+            company_id="ekaette-electronics",
+            source="flash_callback",
+            reason="Short inbound call requested callback",
+        )
+
 
 # ── Outbound Call Tests ──
 
@@ -214,6 +297,40 @@ class TestOutboundCall:
         )
         assert resp.status_code == 502
         assert "Voice provider unavailable" in resp.json()["detail"]
+
+
+class TestCallbackRequest:
+    @patch("app.api.v1.at.voice.service_voice.register_callback_request")
+    def test_callback_request_after_hangup(
+        self,
+        mock_register,
+        voice_client: TestClient,
+    ) -> None:
+        mock_register.return_value = {"status": "pending", "phone": "+2348012345678"}
+        resp = voice_client.post(
+            "/api/v1/at/voice/callback-request",
+            json={"phone": "+2348012345678", "reason": "Low airtime"},
+            headers={"Idempotency-Key": "callback-001"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "pending"
+        mock_register.assert_called_once()
+
+    @patch("app.api.v1.at.voice.service_voice.trigger_callback", new_callable=AsyncMock)
+    def test_callback_request_immediate(
+        self,
+        mock_trigger: AsyncMock,
+        voice_client: TestClient,
+    ) -> None:
+        mock_trigger.return_value = {"status": "queued", "phone": "+2348012345678"}
+        resp = voice_client.post(
+            "/api/v1/at/voice/callback-request",
+            json={"phone": "+2348012345678", "mode": "immediate"},
+            headers={"Idempotency-Key": "callback-002"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "queued"
+        mock_trigger.assert_awaited_once()
 
 
 # ── Campaign Tests ──
@@ -312,3 +429,157 @@ class TestServiceVoice:
         tenant_id, company_id = resolve_tenant_context("+23417006000")
         assert tenant_id == "public"
         assert company_id == "ekaette-electronics"
+
+    @pytest.mark.asyncio
+    @patch("app.api.v1.at.service_voice.mark_outbound_callback_hint")
+    @patch("app.api.v1.at.providers.make_call", new_callable=AsyncMock)
+    @patch("app.api.v1.at.service_voice.get_callback_prewarm")
+    @patch("app.api.v1.at.service_voice.request_callback_prewarm")
+    async def test_trigger_callback_waits_for_prewarm_ready(
+        self,
+        mock_request_prewarm,
+        mock_get_prewarm,
+        mock_make_call: AsyncMock,
+        mock_mark_hint,
+        monkeypatch,
+    ) -> None:
+        from app.api.v1.at import service_voice
+
+        service_voice._CALLBACK_REQUESTS_LOCAL.clear()
+        monkeypatch.delenv("GOOGLE_CLOUD_PROJECT", raising=False)
+        monkeypatch.delenv("FIRESTORE_EMULATOR_HOST", raising=False)
+        mock_get_prewarm.side_effect = [
+            {"status": "warming", "phone": "+2348012345678"},
+            {"status": "ready", "phone": "+2348012345678"},
+        ]
+        mock_make_call.return_value = {"status": "Queued"}
+
+        async def _no_sleep(_delay: float) -> None:
+            return None
+
+        monkeypatch.setattr(service_voice.asyncio, "sleep", _no_sleep)
+
+        result = await service_voice.trigger_callback(
+            phone="+2348012345678",
+            tenant_id="public",
+            company_id="ekaette-electronics",
+            source="manual_callback_request",
+        )
+
+        assert result["status"] == "queued"
+        mock_request_prewarm.assert_called_once()
+        assert mock_get_prewarm.call_count >= 2
+        mock_make_call.assert_awaited_once()
+        mock_mark_hint.assert_called_once_with(
+            tenant_id="public",
+            company_id="ekaette-electronics",
+            phone="+2348012345678",
+        )
+
+    @pytest.mark.asyncio
+    @patch("app.api.v1.at.service_voice.clear_callback_prewarm")
+    @patch("app.api.v1.at.providers.make_call", new_callable=AsyncMock)
+    @patch("app.api.v1.at.service_voice.get_callback_prewarm")
+    @patch("app.api.v1.at.service_voice.request_callback_prewarm")
+    async def test_trigger_callback_fails_closed_when_prewarm_not_ready(
+        self,
+        mock_request_prewarm,
+        mock_get_prewarm,
+        mock_make_call: AsyncMock,
+        mock_clear_prewarm,
+        monkeypatch,
+    ) -> None:
+        from app.api.v1.at import service_voice
+
+        service_voice._CALLBACK_REQUESTS_LOCAL.clear()
+        monkeypatch.delenv("GOOGLE_CLOUD_PROJECT", raising=False)
+        monkeypatch.delenv("FIRESTORE_EMULATOR_HOST", raising=False)
+        mock_get_prewarm.return_value = {
+            "status": "failed",
+            "detail": "Callback prewarm timed out",
+            "phone": "+2348012345678",
+        }
+
+        result = await service_voice.trigger_callback(
+            phone="+2348012345678",
+            tenant_id="public",
+            company_id="ekaette-electronics",
+            source="manual_callback_request",
+        )
+
+        assert result["status"] == "error"
+        assert "timed out" in result["detail"]
+        mock_request_prewarm.assert_called_once()
+        mock_clear_prewarm.assert_called_once()
+        mock_make_call.assert_not_awaited()
+
+    def test_register_callback_request_returns_error_when_persistence_fails(
+        self,
+        monkeypatch,
+    ) -> None:
+        from app.api.v1.at import service_voice
+
+        service_voice._CALLBACK_REQUESTS_LOCAL.clear()
+        monkeypatch.setattr(
+            service_voice,
+            "_save_callback_request_verified",
+            lambda *args, **kwargs: False,
+        )
+
+        result = service_voice.register_callback_request(
+            phone="+2348012345678",
+            tenant_id="public",
+            company_id="ekaette-electronics",
+            source="voice_ai_request",
+        )
+
+        assert result["status"] == "error"
+        assert "queue callback request" in result["detail"].lower()
+
+    def test_register_callback_request_returns_error_when_verification_fails(
+        self,
+        monkeypatch,
+    ) -> None:
+        from app.api.v1.at import service_voice
+
+        service_voice._CALLBACK_REQUESTS_LOCAL.clear()
+        monkeypatch.setattr(
+            service_voice,
+            "_save_callback_request_verified",
+            lambda *args, **kwargs: True,
+        )
+        monkeypatch.setattr(service_voice, "_load_callback_request", lambda *args, **kwargs: None)
+
+        result = service_voice.register_callback_request(
+            phone="+2348012345678",
+            tenant_id="public",
+            company_id="ekaette-electronics",
+            source="voice_ai_request",
+        )
+
+        assert result["status"] == "error"
+        assert "verify callback request" in result["detail"].lower()
+
+    def test_load_callback_request_expires_stale_queued_local_record(
+        self,
+        monkeypatch,
+    ) -> None:
+        from app.api.v1.at import service_voice
+
+        service_voice._CALLBACK_REQUESTS_LOCAL.clear()
+        monkeypatch.setattr(service_voice, "_uses_firestore", lambda: False)
+        key = service_voice._callback_key("public", "ekaette-electronics", "+2348012345678")
+        service_voice._CALLBACK_REQUESTS_LOCAL[key] = {
+            "status": "queued",
+            "phone": "+2348012345678",
+            "cooldown_until": time.time() - 10,
+        }
+
+        result = service_voice._load_callback_request(
+            "public",
+            "ekaette-electronics",
+            "+2348012345678",
+        )
+
+        assert result is None
+        assert key not in service_voice._CALLBACK_REQUESTS_LOCAL

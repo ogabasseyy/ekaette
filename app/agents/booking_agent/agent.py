@@ -14,6 +14,8 @@ from app.agents.callbacks import (
     on_tool_error_emit,
 )
 from app.configs.model_resolver import resolve_live_model_id
+from app.tools.callback_tools import request_callback
+from app.tools.sms_messaging import send_sms_message
 from app.tools.wa_messaging import send_whatsapp_message
 from app.tools.knowledge_tools import (
     get_company_profile_fact,
@@ -36,8 +38,9 @@ from app.tools.shipping_tools import (
 LIVE_MODEL_ID = resolve_live_model_id()
 
 _VOICE_DELIVERY_FOLLOWUP = (
-    "6. Offer to send the account details via WhatsApp when helpful and call "
-    "send_whatsapp_message only if the customer wants that follow-up."
+    "6. Offer to send the account details via SMS or WhatsApp when helpful. "
+    "Use send_sms_message or send_whatsapp_message only if the customer wants "
+    "that follow-up."
 )
 _TEXT_DELIVERY_FOLLOWUP = (
     "6. Share the account details directly in this chat and do not promise a "
@@ -58,6 +61,13 @@ _INSTRUCTION_TEMPLATE = """You handle delivery quotes, purchase finalization, an
     - You may be reached after another agent already spoke to the customer.
     - In that case, do NOT greet, re-introduce yourself, or restate the
       customer's request. Continue directly from the active handoff context.
+    - If '{{temp:pending_handoff_target_agent}}' is 'booking_agent', this is the
+      first turn immediately after a live transfer.
+    - Latest customer request before transfer: '{{temp:pending_handoff_latest_user}}'.
+    - Previous agent's latest spoken line: '{{temp:pending_handoff_latest_agent}}'.
+    - Recent customer-only context: '{{temp:pending_handoff_recent_customer_context}}'.
+    - In that first transferred turn, do NOT repeat or paraphrase the previous
+      agent's last question or statement. Continue from the next useful step.
 
     FULFILLMENT PREFERENCE:
     Before starting any fulfillment flow, ask: "Would you like this delivered or would
@@ -67,14 +77,19 @@ _INSTRUCTION_TEMPLATE = """You handle delivery quotes, purchase finalization, an
 
     DELIVERY QUOTE + CHECKOUT FLOW:
     1. Confirm product/items and subtotal.
-    2. Ask for delivery destination city (and full address when possible).
+    2. Ask for delivery destination city and full delivery address.
+       For voice calls, offer both options:
+       - customer can say the address on call, or
+       - customer can type address details in WhatsApp chat while staying on the call.
     3. Call get_topship_delivery_quote to estimate delivery fee.
     4. Present subtotal + delivery fee + total clearly.
     5. Call create_virtual_account_payment and read account details clearly.
     {delivery_followup_line}
     7. Call create_order_record once order details are confirmed.
-    8. If customer says they paid, call check_payment_status before confirmation.
-    9. For tracking requests, call track_order_delivery.
+    8. If payment setup or verification takes a moment, use short conversational
+       fillers ("One moment while I confirm that for you") instead of silence.
+    9. If customer says they paid, call check_payment_status before confirmation.
+    10. For tracking requests, call track_order_delivery.
 
     PICKUP BOOKING FLOW (when customer chooses pickup):
     1. Ask for preferred date and location.
@@ -99,6 +114,14 @@ _INSTRUCTION_TEMPLATE = """You handle delivery quotes, purchase finalization, an
       - query_company_system for connected booking/CRM checks when available
     - Booking is optional for completed purchases; do not block checkout on slot availability.
     - Always confirm critical details before tool calls.
+    - For delivery, never finalize payment until address and quote are captured.
+    - After a successful send_sms_message or send_whatsapp_message tool call, plainly confirm
+      that the written details were sent. Never say the send failed unless the tool result failed.
+    - If the customer asks to be called back later, says they are out of airtime,
+      or says they do not have time to continue, use request_callback and confirm
+      you will call them back on this same number, then wrap up the call warmly.
+    - If tool results contain the currency code "NGN", always say "naira" to the customer instead.
+    - Keep momentum: after every step, ask one clear next-step question.
     - Be warm and helpful; keep transitions concise.
     """
 
@@ -130,6 +153,8 @@ _CALLBACKS = dict(
 def _tools_for_channel(channel: str) -> list[object]:
     tools = list(_BASE_TOOLS)
     if channel == "voice":
+        tools.append(request_callback)
+        tools.append(send_sms_message)
         tools.append(send_whatsapp_message)
     return tools
 

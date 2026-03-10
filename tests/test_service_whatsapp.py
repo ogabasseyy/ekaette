@@ -91,6 +91,10 @@ class TestServiceWindow:
         record_inbound_timestamp("234", "phone1")
         assert check_service_window("234", "phone1") is True
 
+    def test_normalizes_e164_window_key(self) -> None:
+        record_inbound_timestamp("2349169449282", "phone1")
+        assert check_service_window("+2349169449282", "phone1") is True
+
     def test_no_window(self) -> None:
         assert check_service_window("234", "phone1") is False
 
@@ -134,6 +138,18 @@ class TestTemplateFallback:
         assert status == 200
         mock_send.assert_awaited_once()
         assert mock_send.await_args.kwargs["phone_number_id"] == "phone123"
+
+    @patch("app.api.v1.at.providers.whatsapp_send_text", new_callable=AsyncMock)
+    async def test_sends_text_when_window_open_with_e164_mismatch(self, mock_send) -> None:
+        mock_send.return_value = (200, {"messages": [{"id": "wamid.out"}]})
+        record_inbound_timestamp("2349169449282", "phone123")
+        status, _ = await send_with_template_fallback(
+            to="+2349169449282",
+            text="Hello",
+            phone_number_id="phone123",
+        )
+        assert status == 200
+        mock_send.assert_awaited_once()
 
     @patch("app.api.v1.at.providers.whatsapp_send_template", new_callable=AsyncMock)
     async def test_sends_template_when_no_window(self, mock_template) -> None:
