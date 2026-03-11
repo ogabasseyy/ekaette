@@ -864,6 +864,11 @@ def _sync_realtime_runtime() -> None:
     _runtime_wiring_state["realtime"] = True
 
 
+def sync_realtime_runtime() -> None:
+    """Public wrapper for syncing realtime runtime dependencies."""
+    _sync_realtime_runtime()
+
+
 @app.websocket("/ws/{user_id}/{session_id}")
 async def websocket_endpoint(
     websocket: WebSocket,
@@ -871,7 +876,7 @@ async def websocket_endpoint(
     session_id: str,
 ) -> None:
     """WebSocket endpoint for bidirectional streaming with ADK."""
-    _sync_realtime_runtime()
+    sync_realtime_runtime()
     await realtime_ws.websocket_endpoint(websocket, user_id, session_id)
 
 

@@ -158,7 +158,7 @@ class TestRegistryFirstNoFallback:
         )
 
         assert profile["company_id"] == "ekaette-electronics"
-        # Registry name comes from display_name field
+        # Voice-facing profile name comes from spoken_name when present.
         assert "Awgabassey Gadgets" in profile.get("name", "")
 
     @pytest.mark.asyncio

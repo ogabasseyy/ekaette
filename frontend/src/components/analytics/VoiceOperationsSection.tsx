@@ -37,10 +37,7 @@ export function VoiceOperationsSection({
         {
           label: 'Completed',
           value: formatCompactNumber(summary.calls_completed),
-          rate:
-            summary.calls_total > 0
-              ? summary.calls_completed / Math.max(summary.calls_total, 1)
-              : 0,
+          rate: summary.calls_total > 0 ? summary.calls_completed / summary.calls_total : 0,
           colorClass: 'bg-primary',
         },
         {
@@ -119,7 +116,11 @@ export function VoiceOperationsSection({
           ) : null}
         </div>
 
-        {recentCalls.length > 0 ? (
+        {loading && recentCalls.length === 0 ? (
+          <div className="rounded-2xl border border-border/40 bg-card/20 px-4 py-6 text-center text-muted-foreground text-sm">
+            Loading recent calls…
+          </div>
+        ) : recentCalls.length > 0 ? (
           <div className="grid gap-3">
             {recentCalls.map(call => (
               <article
@@ -131,7 +132,7 @@ export function VoiceOperationsSection({
                     <p className="font-medium text-foreground text-sm">{call.transcript_preview}</p>
                     <p className="text-muted-foreground text-xs">
                       {call.agent_path.length > 0
-                        ? call.agent_path.map(prettyAgentName).join(' -> ')
+                        ? call.agent_path.map(prettyAgentName).join(' → ')
                         : 'No agent path'}
                     </p>
                   </div>

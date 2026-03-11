@@ -173,7 +173,7 @@ def create_booking_agent(model: str, *, channel: str = "voice") -> Agent:
     return Agent(
         name="booking_agent",
         model=model,
-        description="Schedules appointments, reservations, pickups, and manages booking modifications.",
+        description="Handles delivery quotes, checkout, payment processing, and schedules pickups and bookings.",
         instruction=instruction,
         tools=_tools_for_channel(channel),
         **_CALLBACKS,

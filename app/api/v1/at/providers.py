@@ -14,6 +14,7 @@ from urllib.parse import urlparse
 
 import httpx
 
+from app.configs.model_resolver import resolve_tts_model_id
 from app.genai_clients import build_genai_client
 
 from .settings import (
@@ -322,9 +323,6 @@ async def whatsapp_send_text(
 
 
 # ── Text-to-Speech (Gemini TTS) ──
-
-
-from app.configs.model_resolver import resolve_tts_model_id
 _TTS_VOICE = "Kore"  # Warm, friendly female voice
 
 _genai_client = None

@@ -118,6 +118,57 @@ describe('useEkaetteSocket', () => {
     })
   })
 
+  it('caps prewarm buffers and flushes the latest buffered data on promote', async () => {
+    const audioHandler = vi.fn()
+    const { result } = renderHook(() => useEkaetteSocket('user1', 'session1'))
+
+    result.current.onAudioData.current = audioHandler
+
+    act(() => {
+      result.current.prewarm()
+    })
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+      vi.advanceTimersByTime(1)
+    })
+
+    expect(result.current.state).toBe('prewarming')
+    const ws = getLastSocket()
+
+    act(() => {
+      for (let i = 0; i < 55; i += 1) {
+        ws.onmessage?.(
+          new MessageEvent('message', {
+            data: JSON.stringify({
+              type: 'transcription',
+              role: 'agent',
+              text: `buffered-${i}`,
+              partial: false,
+            }),
+          }),
+        )
+      }
+      for (let i = 0; i < 105; i += 1) {
+        ws.onmessage?.(new MessageEvent('message', { data: new Uint8Array([i]).buffer }))
+      }
+    })
+
+    await act(async () => {
+      await result.current.connect()
+    })
+
+    expect(result.current.state).toBe('connected')
+    expect(result.current.messages).toHaveLength(50)
+    const firstMessage = result.current.messages[0]
+    expect(firstMessage.type).toBe('transcription')
+    if (firstMessage.type === 'transcription') {
+      expect(firstMessage.text).toBe('buffered-5')
+    }
+    expect(audioHandler).toHaveBeenCalledTimes(100)
+  })
+
   it('rejects connect promise with typed timeout error when websocket never opens', async () => {
     const OriginalWebSocket = globalThis.WebSocket
 

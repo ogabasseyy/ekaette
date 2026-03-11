@@ -41,6 +41,7 @@ const MOCK_VOICE_OVERVIEW: VoiceAnalyticsOverviewResponse = {
 
 describe('useVoiceAnalytics', () => {
   afterEach(() => {
+    vi.unstubAllGlobals()
     vi.restoreAllMocks()
   })
 
@@ -49,7 +50,7 @@ describe('useVoiceAnalytics', () => {
       ok: true,
       json: () => Promise.resolve(MOCK_VOICE_OVERVIEW),
     })
-    global.fetch = fetchMock as unknown as typeof fetch
+    vi.stubGlobal('fetch', fetchMock)
 
     const { result } = renderHook(() =>
       useVoiceAnalytics({ tenantId: 'public', companyId: 'ekaette-electronics' }),

@@ -1,5 +1,5 @@
-import { render, screen, waitFor } from '@testing-library/react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { render, screen } from '@testing-library/react'
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { StepCatalog } from '../wizard/StepCatalog'
 
@@ -8,6 +8,10 @@ const fetchSpy = vi.spyOn(globalThis, 'fetch')
 describe('StepCatalog', () => {
   beforeEach(() => {
     fetchSpy.mockReset()
+  })
+
+  afterAll(() => {
+    fetchSpy.mockRestore()
   })
 
   it('shows the current connected catalog item count from export data', async () => {
@@ -34,8 +38,6 @@ describe('StepCatalog', () => {
       />,
     )
 
-    await waitFor(() => {
-      expect(screen.getByText(/3 products connected/i)).toBeInTheDocument()
-    })
+    expect(await screen.findByText(/3 products connected/i)).toBeInTheDocument()
   })
 })

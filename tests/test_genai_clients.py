@@ -38,3 +38,15 @@ def test_build_genai_client_uses_api_key_when_vertex_disabled(monkeypatch):
     client = build_genai_client(api_version="v1alpha")
 
     assert client._api_client.vertexai is None
+
+
+def test_build_genai_client_rejects_empty_explicit_api_key(monkeypatch):
+    monkeypatch.setenv("GOOGLE_GENAI_USE_VERTEXAI", "false")
+    monkeypatch.setenv("GOOGLE_API_KEY", "test-key")
+
+    try:
+        build_genai_client(api_key="   ")
+    except ValueError as exc:
+        assert "api_key must be non-empty" in str(exc)
+    else:
+        raise AssertionError("Expected ValueError for empty explicit api_key")

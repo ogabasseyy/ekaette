@@ -375,8 +375,8 @@ function App() {
   })
   const isConnected = socket.state === 'connected'
 
-  // Prewarm: connect WebSocket early so greeting starts generating before
-  // user clicks "Start Call". Saves ~5-7s of Live API cold-start latency.
+  // Prewarm: establish the WebSocket early so the backend is ready before
+  // the user clicks "Start Call". This avoids a full cold-start path.
   // rerender-dependencies: use primitive deps, not the socket object.
   const { prewarm, disconnect: socketDisconnect } = socket
   const prewarmConfigKey = `${industry}:${companyId}`
@@ -387,11 +387,12 @@ function App() {
     (onboardingConfigStatus === 'ready' || onboardingConfigStatus === 'compat')
   )
   useEffect(() => {
-    if (!canPrewarm) return
+    if (!canPrewarm || activeCallRef.current) return
     prewarm()
     return () => {
       // Tear down prewarmed WS only when config actually changes
       // (industry/company switch before user clicks Start).
+      if (activeCallRef.current) return
       socketDisconnect()
     }
   }, [canPrewarm, prewarmConfigKey, prewarm, socketDisconnect])
@@ -463,6 +464,7 @@ function App() {
   const processedCountRef = useRef(0)
   const wasConnectedRef = useRef(false)
   const isMountedRef = useRef(true)
+  const activeCallRef = useRef(false)
 
   // Single-pass message extraction (js-combine-iterations)
   const derived = useMemo(() => {
@@ -857,6 +859,10 @@ function App() {
       }
     }
   }, [socket.messages, audio.clearPlaybackBuffer, pushDebugEvent])
+
+  useEffect(() => {
+    activeCallRef.current = isConnected
+  }, [isConnected])
 
   useEffect(() => {
     if (!isConnected) {

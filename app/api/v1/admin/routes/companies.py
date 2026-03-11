@@ -406,7 +406,11 @@ async def update_admin_company_route(
     next_spoken_name = (
         payload.spoken_name.strip()
         if isinstance(payload.spoken_name, str)
-        else str(company_doc.get("spoken_name") or company_doc.get("name") or next_display_name)
+        else (
+            str(company_doc.get("spoken_name"))
+            if "spoken_name" in company_doc
+            else str(company_doc.get("name") or next_display_name)
+        )
     )
     next_template_id = (
         _m._normalize_template_id(payload.industry_template_id)

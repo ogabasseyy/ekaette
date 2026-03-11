@@ -19,6 +19,8 @@ const AUDIO_TX_BACKPRESSURE_BYTES = 256 * 1024
 const AUDIO_RX_GAP_SUSPECT_MS = 220
 const DEBUG_METRICS_FLUSH_MS = 200
 const WEB_VOICE_SESSION_START_MARKER = '[Web voice session connected]'
+const MAX_PREWARM_AUDIO_CHUNKS = 100
+const MAX_PREWARM_MESSAGES = 50
 const IS_TEST_ENV = import.meta.env.MODE === 'test'
 
 export type SocketConnectErrorCode = 'CONNECT_TIMEOUT' | 'CONNECT_FAILED' | 'CONNECT_CANCELLED'
@@ -186,6 +188,13 @@ function appendMessage(
     // Cap message array to prevent unbounded growth and UI lag.
     return next.length > MAX_MESSAGES ? next.slice(-MAX_MESSAGES) : next
   })
+}
+
+function pushBoundedItem<T>(buffer: T[], item: T, maxSize: number): void {
+  if (buffer.length >= maxSize) {
+    buffer.shift()
+  }
+  buffer.push(item)
 }
 
 export function useEkaetteSocket(
@@ -524,7 +533,11 @@ export function useEkaetteSocket(
           }
           // Buffer messages during prewarm; flush on promote.
           if (isPrewarmingRef.current) {
-            prewarmMessageBufferRef.current.push(serverMessage)
+            pushBoundedItem(
+              prewarmMessageBufferRef.current,
+              serverMessage,
+              MAX_PREWARM_MESSAGES,
+            )
           } else {
             appendMessage(setMessages, serverMessage)
           }
@@ -566,7 +579,7 @@ export function useEkaetteSocket(
       if (data instanceof ArrayBuffer) {
         trackRxAudioChunk(data.byteLength)
         if (isPrewarmingRef.current) {
-          prewarmAudioBufferRef.current.push(data)
+          pushBoundedItem(prewarmAudioBufferRef.current, data, MAX_PREWARM_AUDIO_CHUNKS)
           return
         }
         onAudioData.current?.(data)
@@ -578,7 +591,7 @@ export function useEkaetteSocket(
         .then(buffer => {
           trackRxAudioChunk(blobSize || buffer.byteLength)
           if (isPrewarmingRef.current) {
-            prewarmAudioBufferRef.current.push(buffer)
+            pushBoundedItem(prewarmAudioBufferRef.current, buffer, MAX_PREWARM_AUDIO_CHUNKS)
             return
           }
           onAudioData.current?.(buffer)
@@ -1113,6 +1126,11 @@ export function useEkaetteSocket(
         state === 'prewarming' &&
         wsRef.current?.readyState === WebSocket.OPEN
       ) {
+        const bufferedMessages = prewarmMessageBufferRef.current
+        const bufferedAudio = prewarmAudioBufferRef.current
+        prewarmMessageBufferRef.current = []
+        prewarmAudioBufferRef.current = []
+
         isPrewarmingRef.current = false
         setState('connected')
         const ws = wsRef.current
@@ -1121,14 +1139,10 @@ export function useEkaetteSocket(
           sessionStartMarkerSentForSessionRef.current = currentSessionIdRef.current
         }
         // Flush buffered messages from prewarm phase.
-        const bufferedMessages = prewarmMessageBufferRef.current
-        prewarmMessageBufferRef.current = []
         for (const msg of bufferedMessages) {
           appendMessage(setMessages, msg)
         }
         // Flush buffered audio from prewarm phase.
-        const bufferedAudio = prewarmAudioBufferRef.current
-        prewarmAudioBufferRef.current = []
         for (const chunk of bufferedAudio) {
           onAudioData.current?.(chunk)
         }
@@ -1162,8 +1176,9 @@ export function useEkaetteSocket(
   }, [cleanup, rejectPendingConnect])
 
   /**
-   * Pre-connect the WebSocket so the backend starts the Live API session
-   * and begins generating the greeting before the user clicks "Start Call".
+   * Pre-establish the WebSocket before the user clicks "Start Call".
+   * The backend session remains idle until connect() sends the session start
+   * marker and flushes any prewarm buffers.
    * Sets state to 'prewarming' — UI treats this like 'disconnected'.
    * Call connect() to promote to 'connected'.
    */

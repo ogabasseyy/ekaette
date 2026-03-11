@@ -54,4 +54,24 @@ describe('StepIndustry', () => {
       companyId: 'ekaette-electronics',
     })
   })
+
+  it('does not overwrite the company input while the user is typing', async () => {
+    const user = userEvent.setup()
+
+    render(
+      <StepIndustry
+        templates={templates}
+        companies={companies}
+        defaultTemplateId="electronics"
+        defaultCompanyId="ekaette-electronics"
+        onNext={() => {}}
+      />,
+    )
+
+    const input = screen.getByLabelText(/company name/i)
+    await user.clear(input)
+    await user.type(input, 'ogab')
+
+    expect(input).toHaveValue('ogab')
+  })
 })

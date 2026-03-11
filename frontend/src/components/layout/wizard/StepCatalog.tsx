@@ -18,7 +18,7 @@ export function StepCatalog({ companyId, tenantId, onNext, onBack }: StepCatalog
   const [productsJson, setProductsJson] = useState(DEFAULT_PRODUCTS_JSON)
   const [sourceUrl, setSourceUrl] = useState('')
   const [status, setStatus] = useState<string | null>(null)
-  const [productCount, setProductCount] = useState<number | null>(null)
+  const [productCount, setProductCount] = useState<number | null | undefined>(undefined)
   const [file, setFile] = useState<File | null>(null)
   const [fileInputKey, setFileInputKey] = useState(0)
   const { callJson, callFormData, runAction, busy, error } = useWizardApi({ tenantId })
@@ -35,7 +35,8 @@ export function StepCatalog({ companyId, tenantId, onNext, onBack }: StepCatalog
           ? (payload.counts as Record<string, unknown>)
           : {}
       setProductCount(typeof counts.products === 'number' ? counts.products : 0)
-    } catch {
+    } catch (error) {
+      console.error('Failed to load catalog summary:', error)
       setProductCount(null)
     }
   }, [callJson, companyUrl])
@@ -96,9 +97,11 @@ export function StepCatalog({ companyId, tenantId, onNext, onBack }: StepCatalog
         <div className="rounded-lg border border-border/40 bg-card/30 px-4 py-2.5">
           <p className="text-xs text-muted-foreground uppercase tracking-wider">Current catalog</p>
           <p className="mt-1 text-sm text-white">
-            {productCount !== null
-              ? `${productCount} product${productCount === 1 ? '' : 's'} connected`
-              : 'Unable to load catalog summary'}
+            {productCount === undefined
+              ? 'Loading catalog…'
+              : productCount !== null
+                ? `${productCount} product${productCount === 1 ? '' : 's'} connected`
+                : 'Unable to load catalog summary'}
           </p>
         </div>
 

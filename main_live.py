@@ -26,5 +26,5 @@ async def websocket_endpoint(
     session_id: str,
 ) -> None:
     """Dedicated websocket endpoint for SIP/WA gateway traffic."""
-    full_main._sync_realtime_runtime()
+    full_main.sync_realtime_runtime()
     await full_main.realtime_ws.websocket_endpoint(websocket, user_id, session_id)

@@ -66,8 +66,8 @@ export interface VoiceCallSnapshot {
   session_id: string
   tenant_id: string
   company_id: string
-  channel: string
-  status: string
+  channel: 'voice' | 'whatsapp' | 'sms' | 'omni'
+  status: 'active' | 'completed'
   started_at: string
   updated_at: string
   ended_at: string | null

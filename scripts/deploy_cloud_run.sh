@@ -224,10 +224,12 @@ else
 fi
 
 if [[ "${ENABLE_CROSS_CHANNEL_CONTEXT_TTL:-1}" == "1" ]]; then
-  gcloud firestore fields ttls update expires_at \
+  if ! gcloud firestore fields ttls update expires_at \
     --collection-group=cross_channel_context \
     --project "${PROJECT}" \
-    --quiet >/dev/null 2>&1 || true
+    --quiet 2>&1; then
+    echo "Warning: Failed to update Firestore TTL policy (non-fatal)" >&2
+  fi
 fi
 
 SERVICE_URL="$(gcloud run services describe "${SERVICE}" --project "${PROJECT}" --region "${REGION}" --format='value(status.url)' 2>/dev/null || true)"

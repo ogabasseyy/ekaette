@@ -14,7 +14,6 @@ function normalizeKnowledgeEntries(rawEntries: AdminKnowledgeEntry[]): AdminKnow
   const deduped: AdminKnowledgeEntry[] = []
   for (const entry of rawEntries) {
     const signature = [
-      entry.id?.trim().toLowerCase() || '',
       entry.title?.trim().toLowerCase() || '',
       entry.text?.trim().toLowerCase() || '',
       entry.source?.trim().toLowerCase() || '',
@@ -47,8 +46,9 @@ export function StepKnowledge({ companyId, tenantId, onNext, onBack }: StepKnowl
           ? normalizeKnowledgeEntries(payload.entries as AdminKnowledgeEntry[])
           : [],
       )
+      setStatus(prev => (prev === 'Failed to load knowledge entries' ? null : prev))
     } catch {
-      /* non-blocking */
+      setStatus('Failed to load knowledge entries')
     } finally {
       setLoadingEntries(false)
     }

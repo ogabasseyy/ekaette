@@ -40,6 +40,8 @@ def build_genai_client(
     When Vertex is enabled, do not rely on implicit environment precedence.
     When Vertex is disabled, require an API key.
     """
+    if api_key is not None and not api_key.strip():
+        raise ValueError("api_key must be non-empty if provided")
     use_vertex = use_vertex_ai_backend() if prefer_vertex is None else prefer_vertex
     http_options = types.HttpOptions(api_version=api_version) if api_version else None
     # Explicit api_key overrides Vertex preference — caller wants Gemini Developer API
@@ -60,7 +62,7 @@ def build_genai_client(
             http_options=http_options,
         )
 
-    resolved_api_key = (api_key if api_key is not None else os.getenv("GOOGLE_API_KEY", "")).strip()
+    resolved_api_key = os.getenv("GOOGLE_API_KEY", "").strip()
     if not resolved_api_key:
         raise ValueError("GOOGLE_API_KEY is required when Vertex AI backend is disabled")
     return genai.Client(

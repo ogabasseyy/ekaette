@@ -136,6 +136,7 @@ export function StepIndustry({
       fallbackCompanyId,
     ),
   )
+  const [isTypingCompanyInput, setIsTypingCompanyInput] = useState(false)
 
   useEffect(() => {
     if (
@@ -153,6 +154,7 @@ export function StepIndustry({
   }, [defaultTemplateId, initialTemplateId, options, selectedTemplateId, templateTouched])
 
   useEffect(() => {
+    if (isTypingCompanyInput) return
     const nextCompanyId =
       (defaultCompanyId &&
         availableCompanies.some(c => c.id === defaultCompanyId) &&
@@ -163,14 +165,21 @@ export function StepIndustry({
       setSelectedCompanyId(nextCompanyId)
       setCompanyInputValue(resolveCompanyInputValue(nextCompanyId, availableCompanies, fallbackCompanyId))
     }
-  }, [availableCompanies, defaultCompanyId, fallbackCompanyId, selectedCompanyId])
+  }, [
+    availableCompanies,
+    defaultCompanyId,
+    fallbackCompanyId,
+    isTypingCompanyInput,
+    selectedCompanyId,
+  ])
 
   useEffect(() => {
+    if (isTypingCompanyInput) return
     const matchedCompany = availableCompanies.find(company => company.id === selectedCompanyId)
     if (matchedCompany && companyInputValue !== matchedCompany.displayName) {
       setCompanyInputValue(matchedCompany.displayName)
     }
-  }, [availableCompanies, companyInputValue, selectedCompanyId])
+  }, [availableCompanies, companyInputValue, isTypingCompanyInput, selectedCompanyId])
 
   return (
     <>
@@ -219,6 +228,8 @@ export function StepIndustry({
           type="text"
           aria-label="Company Name"
           value={companyInputValue}
+          onFocus={() => setIsTypingCompanyInput(true)}
+          onBlur={() => setIsTypingCompanyInput(false)}
           onChange={event => {
             const nextValue = event.target.value
             const normalizedValue = nextValue.trim().toLowerCase()

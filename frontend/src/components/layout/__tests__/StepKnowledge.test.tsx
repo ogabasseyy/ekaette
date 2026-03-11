@@ -1,5 +1,5 @@
 import { render, screen, waitFor } from '@testing-library/react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { StepKnowledge } from '../wizard/StepKnowledge'
 
@@ -8,6 +8,10 @@ const fetchSpy = vi.spyOn(globalThis, 'fetch')
 describe('StepKnowledge', () => {
   beforeEach(() => {
     fetchSpy.mockReset()
+  })
+
+  afterAll(() => {
+    fetchSpy.mockRestore()
   })
 
   it('deduplicates repeated knowledge artifacts in the onboarding list', async () => {

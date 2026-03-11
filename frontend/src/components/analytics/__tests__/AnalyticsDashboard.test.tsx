@@ -100,9 +100,14 @@ const MOCK_VOICE_OVERVIEW: VoiceAnalyticsOverviewResponse = {
   ],
 }
 
-function mockAnalyticsFetch(options?: { overviewOk?: boolean; detailOk?: boolean }) {
+function mockAnalyticsFetch(options?: {
+  overviewOk?: boolean
+  detailOk?: boolean
+  voiceOk?: boolean
+}) {
   const overviewOk = options?.overviewOk ?? true
   const detailOk = options?.detailOk ?? true
+  const voiceOk = options?.voiceOk ?? true
   return vi.fn((input: RequestInfo | URL) => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
     if (url.includes('/api/onboarding/config')) {
@@ -129,6 +134,13 @@ function mockAnalyticsFetch(options?: { overviewOk?: boolean; detailOk?: boolean
       } as unknown as Response)
     }
     if (url.includes('/api/v1/at/analytics/voice/overview')) {
+      if (!voiceOk) {
+        return Promise.resolve({
+          ok: false,
+          status: 500,
+          statusText: 'Server Error',
+        } as unknown as Response)
+      }
       return Promise.resolve({
         ok: true,
         json: () => Promise.resolve(MOCK_VOICE_OVERVIEW),
@@ -155,18 +167,22 @@ function mockAnalyticsFetch(options?: { overviewOk?: boolean; detailOk?: boolean
 }
 
 afterEach(() => {
+  vi.unstubAllGlobals()
   vi.restoreAllMocks()
 })
 
 describe('AnalyticsDashboard', () => {
-  it('renders the page title', () => {
-    global.fetch = mockAnalyticsFetch() as unknown as typeof fetch
+  it('renders the page title', async () => {
+    vi.stubGlobal('fetch', mockAnalyticsFetch())
     render(<AnalyticsDashboard />)
     expect(screen.getByText('Operations Dashboard')).toBeInTheDocument()
+    await waitFor(() => {
+      expect(screen.getByText('Voice Operations')).toBeInTheDocument()
+    })
   })
 
   it('shows loading state while fetching', () => {
-    global.fetch = vi.fn((input: RequestInfo | URL) => {
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
       if (url.includes('/api/onboarding/config')) {
         return Promise.resolve({
@@ -179,13 +195,13 @@ describe('AnalyticsDashboard', () => {
         } as unknown as Response)
       }
       return new Promise<Response>(() => {})
-    }) as unknown as typeof fetch
+    }))
     render(<AnalyticsDashboard />)
     expect(screen.getByText('Loading analytics…')).toBeInTheDocument()
   })
 
   it('renders KPI cards after data loads', async () => {
-    global.fetch = mockAnalyticsFetch() as unknown as typeof fetch
+    vi.stubGlobal('fetch', mockAnalyticsFetch())
     render(<AnalyticsDashboard />)
 
     await waitFor(() => {
@@ -197,7 +213,7 @@ describe('AnalyticsDashboard', () => {
   })
 
   it('renders campaign table with campaign names', async () => {
-    global.fetch = mockAnalyticsFetch() as unknown as typeof fetch
+    vi.stubGlobal('fetch', mockAnalyticsFetch())
     render(<AnalyticsDashboard />)
 
     await waitFor(() => {
@@ -206,7 +222,7 @@ describe('AnalyticsDashboard', () => {
   })
 
   it('renders voice operations metrics and recent calls', async () => {
-    global.fetch = mockAnalyticsFetch() as unknown as typeof fetch
+    vi.stubGlobal('fetch', mockAnalyticsFetch())
     render(<AnalyticsDashboard />)
 
     await waitFor(() => {
@@ -215,12 +231,14 @@ describe('AnalyticsDashboard', () => {
 
     expect(screen.getByText('Calls')).toBeInTheDocument()
     expect(screen.getByText('Transcript Coverage')).toBeInTheDocument()
+    expect(screen.getByText('12')).toBeInTheDocument()
+    expect(screen.getByText('75.0%')).toBeInTheDocument()
     expect(screen.getByText('Customer: I want to buy an iPhone 14.')).toBeInTheDocument()
   })
 
   it('clicking a campaign row shows campaign detail', async () => {
     const user = userEvent.setup()
-    global.fetch = mockAnalyticsFetch() as unknown as typeof fetch
+    vi.stubGlobal('fetch', mockAnalyticsFetch())
 
     render(<AnalyticsDashboard />)
 
@@ -237,7 +255,16 @@ describe('AnalyticsDashboard', () => {
   })
 
   it('shows error state on fetch failure', async () => {
-    global.fetch = mockAnalyticsFetch({ overviewOk: false }) as unknown as typeof fetch
+    vi.stubGlobal('fetch', mockAnalyticsFetch({ overviewOk: false }))
+    render(<AnalyticsDashboard />)
+
+    await waitFor(() => {
+      expect(screen.getByText(/500/)).toBeInTheDocument()
+    })
+  })
+
+  it('shows voice analytics error when voice overview fails', async () => {
+    vi.stubGlobal('fetch', mockAnalyticsFetch({ voiceOk: false }))
     render(<AnalyticsDashboard />)
 
     await waitFor(() => {
