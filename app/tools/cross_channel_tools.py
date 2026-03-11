@@ -88,13 +88,12 @@ def _normalize_summary(summary: str) -> str:
 
 
 def _media_request_message(summary: str) -> str:
-    base = (
-        "Please send a clear photo or short video of your device here on WhatsApp. "
-        "I already have the context from our call, so you do not need to repeat yourself."
+    _ = summary  # Context stays in the durable handoff record, not the outbound template text.
+    return (
+        "Please send a clear photo or short video of your device here on WhatsApp "
+        "so I can continue the valuation. I already have the context from our call, "
+        "so you do not need to repeat yourself."
     )
-    if not summary:
-        return base
-    return f"{base}\n\nContext: {summary}"
 
 
 def _extract_snapshot_data(snapshot: Any) -> dict[str, Any] | None:

@@ -12,7 +12,7 @@ set -euo pipefail
 
 SERVICE="${SERVICE:-${SERVICE_NAME:-ekaette}}"
 PROJECT="${PROJECT:-${PROJECT_ID:-ekaette}}"
-REGION="${REGION:-us-central1}"
+REGION="${REGION:-us-east1}"
 PORT="${PORT:-8080}"
 TIMEOUT="${TIMEOUT:-3600}"
 MEMORY="${MEMORY:-1Gi}"
@@ -25,6 +25,10 @@ RUN_DOCS_CHECK="${RUN_DOCS_CHECK:-0}"
 RELEASE_GATE_STRICT="${RELEASE_GATE_STRICT:-1}"
 SESSION_AFFINITY="${SESSION_AFFINITY:-1}"
 APP_MODULE="${APP_MODULE:-}"
+WA_SERVICE_TARGET_SERVICE="${WA_SERVICE_TARGET_SERVICE:-}"
+WA_SERVICE_TARGET_REGION="${WA_SERVICE_TARGET_REGION:-${REGION}}"
+WA_SERVICE_API_BASE_URL_OVERRIDE="${WA_SERVICE_API_BASE_URL_OVERRIDE:-}"
+WA_CLOUD_TASKS_AUDIENCE_OVERRIDE="${WA_CLOUD_TASKS_AUDIENCE_OVERRIDE:-}"
 PYTHON_BIN="${PYTHON_BIN:-}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
@@ -75,7 +79,26 @@ fi
 
 echo "Preparing Cloud Run config for ${SERVICE} in project ${PROJECT} (${REGION})"
 
-"${PYTHON_BIN}" - "$ENV_FILE" "$ENV_YAML" "$APP_MODULE" <<'PY'
+if [[ -z "${WA_SERVICE_TARGET_SERVICE}" && "${SERVICE}" == "ekaette-east-canary" && "${REGION}" == "us-east1" ]]; then
+  WA_SERVICE_TARGET_SERVICE="${SERVICE}"
+  WA_SERVICE_TARGET_REGION="${REGION}"
+fi
+
+if [[ -n "${WA_SERVICE_TARGET_SERVICE}" && -z "${WA_SERVICE_API_BASE_URL_OVERRIDE}" ]]; then
+  WA_SERVICE_API_BASE_URL_OVERRIDE="$(
+    gcloud run services describe "${WA_SERVICE_TARGET_SERVICE}" \
+      --project "${PROJECT}" \
+      --region "${WA_SERVICE_TARGET_REGION}" \
+      --format='value(status.url)'
+  )"
+fi
+
+if [[ -n "${WA_SERVICE_API_BASE_URL_OVERRIDE}" && -z "${WA_CLOUD_TASKS_AUDIENCE_OVERRIDE}" ]]; then
+  WA_CLOUD_TASKS_AUDIENCE_OVERRIDE="${WA_SERVICE_API_BASE_URL_OVERRIDE%/}/api/v1/at/whatsapp/process"
+fi
+
+"${PYTHON_BIN}" - "$ENV_FILE" "$ENV_YAML" "$APP_MODULE" \
+  "$WA_SERVICE_API_BASE_URL_OVERRIDE" "$WA_CLOUD_TASKS_AUDIENCE_OVERRIDE" <<'PY'
 from __future__ import annotations
 
 import json
@@ -87,6 +110,8 @@ import sys
 env_file = pathlib.Path(sys.argv[1])
 tmp_yaml = pathlib.Path(sys.argv[2])
 app_module = sys.argv[3].strip()
+wa_service_api_base_url_override = sys.argv[4].strip()
+wa_cloud_tasks_audience_override = sys.argv[5].strip()
 
 SKIP_PREFIXES = (
     "SIP_BRIDGE_HOST", "SIP_BRIDGE_PORT", "SIP_PUBLIC_IP", "SIP_REGISTRAR",
@@ -157,6 +182,10 @@ if added_missing_origin_default:
     envs["ALLOW_MISSING_WS_ORIGIN"] = "true"
 if app_module:
     envs["APP_MODULE"] = app_module
+if wa_service_api_base_url_override:
+    envs["WA_SERVICE_API_BASE_URL"] = wa_service_api_base_url_override.rstrip("/")
+if wa_cloud_tasks_audience_override:
+    envs["WA_CLOUD_TASKS_AUDIENCE"] = wa_cloud_tasks_audience_override.rstrip("/")
 if envs.get("GOOGLE_GENAI_USE_VERTEXAI", "").strip().lower() == "true":
     # Runtime GenAI clients are constructed explicitly in code when Vertex is
     # enabled, so carrying GOOGLE_API_KEY into Cloud Run only reintroduces noisy
@@ -227,6 +256,7 @@ if [[ "${ENABLE_CROSS_CHANNEL_CONTEXT_TTL:-1}" == "1" ]]; then
   if ! gcloud firestore fields ttls update expires_at \
     --collection-group=cross_channel_context \
     --project "${PROJECT}" \
+    --enable-ttl \
     --quiet 2>&1; then
     echo "Warning: Failed to update Firestore TTL policy (non-fatal)" >&2
   fi

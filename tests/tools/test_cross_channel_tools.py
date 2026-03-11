@@ -62,6 +62,7 @@ async def test_request_media_via_whatsapp_creates_context_doc_and_sends_message(
     sent_text = mock_send.await_args.args[0]
     assert "send a clear photo or short video" in sent_text.lower()
     assert "do not need to repeat yourself" in sent_text.lower()
+    assert "\n" not in sent_text
     mock_update.assert_awaited()
 
 
