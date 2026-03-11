@@ -693,7 +693,7 @@ REALTIME_INPUT_CONFIG = (
 )
 
 TOKEN_CLIENT = (
-    build_genai_client(api_version="v1alpha", api_key=GEMINI_API_KEY)
+    build_genai_client(api_version="v1alpha", api_key=(GEMINI_API_KEY or None))
     if can_build_genai_client(api_key=GEMINI_API_KEY)
     else None
 )
