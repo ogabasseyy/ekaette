@@ -7,14 +7,19 @@ import pytest
 from google.adk.models.llm_request import LlmRequest
 from google.genai import types
 
+from google.adk.tools.base_tool import BaseTool
+
 from app.agents.callbacks import (
     AGENT_NOT_ENABLED_ERROR_CODE,
     _company_instruction,
+    _is_callback_leg,
+    _response_has_content,
     after_model_valuation_sanity,
     after_tool_emit_messages,
     before_agent_isolation_guard,
     before_model_inject_config,
     before_tool_capability_guard_and_log,
+    on_tool_error_emit,
     queue_server_message,
 )
 
@@ -167,8 +172,46 @@ class TestBeforeModelInjectConfig:
 
         system_instruction = str(llm_request.config.system_instruction)
         assert "First-turn greeting policy" not in system_instruction
-        assert "Do NOT greet again" in system_instruction
+        assert "Do NOT greet" in system_instruction
         assert "Do not re-introduce your role" in system_instruction
+
+    @pytest.mark.asyncio
+    async def test_injects_callback_wrapup_guidance_for_voice(self):
+        callback_context = SimpleNamespace(
+            state={
+                "temp:greeted": True,
+                "temp:callback_requested": True,
+                "app:channel": "voice",
+                "app:industry_config": {"name": "Electronics"},
+                "app:company_profile": {"name": "Awgabassey Gadgets"},
+            }
+        )
+        llm_request = LlmRequest(model="gemini-test", contents=[])
+
+        await before_model_inject_config(callback_context, llm_request)
+
+        system_instruction = str(llm_request.config.system_instruction)
+        assert "CALLBACK WRAP-UP" in system_instruction
+        assert "Do NOT ask follow-up questions" in system_instruction
+
+    @pytest.mark.asyncio
+    async def test_injects_nigerian_voice_style_guidance_for_voice(self):
+        callback_context = SimpleNamespace(
+            state={
+                "temp:greeted": True,
+                "app:channel": "voice",
+                "app:industry_config": {"name": "Electronics"},
+                "app:company_profile": {"name": "Awgabassey Gadgets"},
+            }
+        )
+        llm_request = LlmRequest(model="gemini-test", contents=[])
+
+        await before_model_inject_config(callback_context, llm_request)
+
+        system_instruction = str(llm_request.config.system_instruction)
+        assert "VOICE STYLE" in system_instruction
+        assert "Nigerian English" in system_instruction
+        assert "Pidgin" in system_instruction
 
     @pytest.mark.asyncio
     async def test_injects_pending_handoff_context_for_matching_agent(self):
@@ -191,7 +234,7 @@ class TestBeforeModelInjectConfig:
         await before_model_inject_config(callback_context, llm_request)
 
         system_instruction = str(llm_request.config.system_instruction)
-        assert "Live handoff continuity" in system_instruction
+        assert "LIVE HANDOFF" in system_instruction
         assert "I want the iPhone 14 128GB." in system_instruction
         assert "let me connect you to catalog" in system_instruction.lower()
 
@@ -214,6 +257,108 @@ class TestBeforeModelInjectConfig:
 
         assert callback_context.state.get("temp:pending_handoff_target_agent", "") == ""
         assert callback_context.state.get("temp:pending_handoff_latest_user", "") == ""
+
+    @pytest.mark.asyncio
+    async def test_clear_handoff_preserves_keys_in_state(self):
+        """Keys must remain in state (set to '') — never deleted.
+
+        ADK's inject_session_state raises KeyError when a template variable
+        referenced in an agent instruction is missing from state entirely.
+        """
+        callback_context = SimpleNamespace(
+            state={
+                "temp:pending_handoff_target_agent": "support_agent",
+                "temp:pending_handoff_latest_user": "Help me.",
+                "temp:pending_handoff_latest_agent": "Transferring now.",
+                "temp:pending_handoff_recent_customer_context": "Customer: Help me.",
+            },
+            agent_name="support_agent",
+        )
+        llm_response = SimpleNamespace(
+            content=SimpleNamespace(parts=[SimpleNamespace(text="How can I help?")])
+        )
+
+        await after_model_valuation_sanity(callback_context, llm_response)
+
+        # Keys must still exist (not popped) to avoid ADK KeyError
+        for key in (
+            "temp:pending_handoff_target_agent",
+            "temp:pending_handoff_latest_user",
+            "temp:pending_handoff_latest_agent",
+            "temp:pending_handoff_recent_customer_context",
+        ):
+            assert key in callback_context.state, f"{key} was deleted from state"
+            assert callback_context.state[key] == "", f"{key} was not cleared to ''"
+
+    @pytest.mark.asyncio
+    async def test_after_model_sets_greeted_on_audio_only_response(self):
+        """Native-audio Live API responses have inline_data, not text parts.
+
+        The greeted flag must still be set so the greeting instruction is not
+        re-injected on subsequent model turns.
+        """
+        callback_context = SimpleNamespace(
+            state={},
+            agent_name="support_agent",
+        )
+        audio_part = SimpleNamespace(
+            text=None,
+            inline_data=SimpleNamespace(
+                data=b"\x00" * 960,
+                mime_type="audio/pcm",
+            ),
+        )
+        llm_response = SimpleNamespace(
+            content=SimpleNamespace(parts=[audio_part])
+        )
+
+        await after_model_valuation_sanity(callback_context, llm_response)
+
+        assert callback_context.state.get("temp:greeted") is True
+
+    @pytest.mark.asyncio
+    async def test_after_model_clears_handoff_on_audio_only_response(self):
+        """Handoff state must clear when support_agent speaks via audio."""
+        callback_context = SimpleNamespace(
+            state={
+                "temp:pending_handoff_target_agent": "support_agent",
+                "temp:pending_handoff_latest_user": "Help me.",
+                "temp:pending_handoff_latest_agent": "Transferring.",
+                "temp:pending_handoff_recent_customer_context": "Help me.",
+            },
+            agent_name="support_agent",
+        )
+        audio_part = SimpleNamespace(
+            text=None,
+            inline_data=SimpleNamespace(
+                data=b"\x00" * 960,
+                mime_type="audio/pcm",
+            ),
+        )
+        llm_response = SimpleNamespace(
+            content=SimpleNamespace(parts=[audio_part])
+        )
+
+        await after_model_valuation_sanity(callback_context, llm_response)
+
+        assert callback_context.state["temp:pending_handoff_target_agent"] == ""
+        assert callback_context.state["temp:pending_handoff_latest_user"] == ""
+
+    def test_response_has_content_text_only(self):
+        resp = SimpleNamespace(content=SimpleNamespace(parts=[SimpleNamespace(text="hi")]))
+        assert _response_has_content(resp) is True
+
+    def test_response_has_content_audio_only(self):
+        part = SimpleNamespace(
+            text=None,
+            inline_data=SimpleNamespace(data=b"\x00" * 100, mime_type="audio/pcm"),
+        )
+        resp = SimpleNamespace(content=SimpleNamespace(parts=[part]))
+        assert _response_has_content(resp) is True
+
+    def test_response_has_content_empty(self):
+        resp = SimpleNamespace(content=SimpleNamespace(parts=[]))
+        assert _response_has_content(resp) is False
 
     @pytest.mark.asyncio
     async def test_after_model_auto_queues_callback_from_spoken_commitment(self):
@@ -245,6 +390,9 @@ class TestBeforeModelInjectConfig:
             trigger_after_hangup=True,
         )
         assert callback_context.state["temp:callback_requested"] is True
+        message = callback_context.state["temp:last_server_message"]
+        assert message["type"] == "call_control"
+        assert message["action"] == "end_after_speaking"
 
     @pytest.mark.asyncio
     async def test_after_model_auto_queues_callback_using_session_state_phone_fallback(self):
@@ -273,6 +421,157 @@ class TestBeforeModelInjectConfig:
 
         mock_register.assert_called_once()
         assert callback_context.state["temp:callback_requested"] is True
+
+    @pytest.mark.asyncio
+    async def test_after_model_callback_acknowledgement_queues_end_control(self):
+        callback_context = SimpleNamespace(
+            state={
+                "app:channel": "voice",
+                "temp:callback_requested": True,
+            },
+            agent_name="ekaette_router",
+        )
+        llm_response = SimpleNamespace(
+            content=SimpleNamespace(
+                parts=[SimpleNamespace(text="Certainly, I'll call you back on this same number shortly.")]
+            )
+        )
+
+        await after_model_valuation_sanity(callback_context, llm_response)
+
+        message = callback_context.state["temp:last_server_message"]
+        assert message["type"] == "call_control"
+        assert message["action"] == "end_after_speaking"
+
+
+class TestCallbackLegGuards:
+    """Callback-leg detection and request_callback blocking."""
+
+    def test_is_callback_leg_true(self):
+        state = {"app:session_id": "sip-callback-abc123"}
+        assert _is_callback_leg(state) is True
+
+    def test_is_callback_leg_false_normal_session(self):
+        state = {"app:session_id": "sip-inbound-abc123"}
+        assert _is_callback_leg(state) is False
+
+    def test_is_callback_leg_false_missing_key(self):
+        state: dict[str, object] = {}
+        assert _is_callback_leg(state) is False
+
+    @pytest.mark.asyncio
+    async def test_capability_guard_blocks_request_callback_on_callback_leg(self):
+        tool = SimpleNamespace(name="request_callback")
+        ctx = SimpleNamespace(
+            state={
+                "app:session_id": "sip-callback-abc123",
+                "app:capabilities": ["outbound_messaging"],
+            },
+            agent_name="ekaette_router",
+        )
+        result = await before_tool_capability_guard_and_log(tool, {}, ctx)
+        assert isinstance(result, dict)
+        assert result["status"] == "already_on_callback"
+
+    @pytest.mark.asyncio
+    async def test_capability_guard_allows_request_callback_on_normal_session(self):
+        tool = SimpleNamespace(name="request_callback")
+        ctx = SimpleNamespace(
+            state={
+                "app:session_id": "sip-inbound-abc123",
+                "app:capabilities": ["outbound_messaging"],
+            },
+            agent_name="ekaette_router",
+        )
+        result = await before_tool_capability_guard_and_log(tool, {}, ctx)
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_auto_callback_skipped_on_callback_leg(self):
+        callback_context = SimpleNamespace(
+            state={
+                "app:channel": "voice",
+                "app:session_id": "sip-callback-abc123",
+                "app:tenant_id": "public",
+                "app:company_id": "ekaette-electronics",
+                "user:caller_phone": "+2348012345678",
+            },
+            agent_name="ekaette_router",
+        )
+        llm_response = SimpleNamespace(
+            content=SimpleNamespace(
+                parts=[SimpleNamespace(text="I'll call you back on this same number.")]
+            )
+        )
+
+        with patch("app.agents.callbacks.service_voice.register_callback_request") as mock_register:
+            await after_model_valuation_sanity(callback_context, llm_response)
+
+        mock_register.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_callback_leg_instruction_injected(self):
+        state = {
+            "app:industry_config": {"name": "Electronics", "greeting": "Hello"},
+            "app:company_profile": {"name": "Test Co"},
+            "app:session_id": "sip-callback-abc123",
+            "temp:greeted": True,
+        }
+        ctx = SimpleNamespace(state=state, agent_name="ekaette_router")
+        llm_request = LlmRequest(config=types.GenerateContentConfig(system_instruction="Base."))
+        await before_model_inject_config(ctx, llm_request)
+        instruction = llm_request.config.system_instruction
+        assert "CALLBACK LEG" in instruction
+        assert "request_callback" in instruction
+
+    @pytest.mark.asyncio
+    async def test_transfer_blocked_before_greeting_on_voice(self):
+        """Transfer guard blocks premature transfers (ADK patch makes this safe in Live mode)."""
+        tool = SimpleNamespace(name="transfer_to_agent")
+        ctx = SimpleNamespace(
+            state={
+                "app:channel": "voice",
+                "app:capabilities": ["catalog_lookup", "policy_qa"],
+            },
+            agent_name="ekaette_router",
+        )
+        result = await before_tool_capability_guard_and_log(
+            tool, {"agent_name": "support_agent"}, ctx
+        )
+        assert isinstance(result, dict)
+        assert result["error"] == "greeting_required"
+        # Error must be actionable — tell the model exactly what to do
+        assert "greet" in result["detail"].lower()
+        assert "speak" in result["detail"].lower() or "say" in result["detail"].lower()
+
+    @pytest.mark.asyncio
+    async def test_transfer_allowed_after_greeting_on_voice(self):
+        tool = SimpleNamespace(name="transfer_to_agent")
+        ctx = SimpleNamespace(
+            state={
+                "app:channel": "voice",
+                "temp:greeted": True,
+            },
+            agent_name="ekaette_router",
+        )
+        result = await before_tool_capability_guard_and_log(
+            tool, {"agent_name": "support_agent"}, ctx
+        )
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_transfer_allowed_on_text_channel_without_greeting(self):
+        tool = SimpleNamespace(name="transfer_to_agent")
+        ctx = SimpleNamespace(
+            state={
+                "app:channel": "text",
+            },
+            agent_name="ekaette_router",
+        )
+        result = await before_tool_capability_guard_and_log(
+            tool, {"agent_name": "support_agent"}, ctx
+        )
+        assert result is None
 
 
 class TestCompanyInstructionBuilder:
@@ -434,12 +733,18 @@ class TestAfterToolEmitMessages:
     @pytest.mark.asyncio
     async def test_request_callback_marks_state_when_queued(self):
         tool = SimpleNamespace(name="request_callback")
-        ctx = SimpleNamespace(state={}, agent_name="ekaette_router")
+        ctx = SimpleNamespace(
+            state={"app:channel": "voice"},
+            agent_name="ekaette_router",
+        )
         result = {"status": "pending", "phone": "+2348012345678"}
 
         await after_tool_emit_messages(tool, {}, ctx, result)
 
         assert ctx.state["temp:callback_requested"] is True
+        message = ctx.state["temp:last_server_message"]
+        assert message["type"] == "call_control"
+        assert message["action"] == "end_after_speaking"
 
 
 class TestQuestionnaireWiring:
@@ -451,6 +756,13 @@ class TestQuestionnaireWiring:
 
         assert "get_device_questionnaire_tool" in TOOL_CAPABILITY_MAP
         assert TOOL_CAPABILITY_MAP["get_device_questionnaire_tool"] == "valuation_tradein"
+
+    def test_capability_map_contains_cross_channel_media_tool(self):
+        """Cross-channel media handoff should be guarded like other valuation tools."""
+        from app.agents.callbacks import TOOL_CAPABILITY_MAP
+
+        assert "request_media_via_whatsapp" in TOOL_CAPABILITY_MAP
+        assert TOOL_CAPABILITY_MAP["request_media_via_whatsapp"] == "valuation_tradein"
 
     @pytest.mark.asyncio
     async def test_emits_questionnaire_started_message(self):
@@ -567,3 +879,89 @@ class TestAgentIsolationGuards:
         assert blocked is not None
         message = state["temp:last_server_message"]
         assert message["code"] == AGENT_NOT_ENABLED_ERROR_CODE
+
+
+class TestOnToolErrorEmit:
+    """Tests for on_tool_error_emit — tool error recovery."""
+
+    def _make_tool_context(self, agent_name: str = "ekaette_router"):
+        state: dict[str, object] = {}
+        return SimpleNamespace(
+            agent_name=agent_name,
+            state=state,
+            actions=SimpleNamespace(transfer_to_agent=None),
+        )
+
+    @pytest.mark.asyncio
+    async def test_returns_recovery_dict_for_tool_not_found(self):
+        """When a tool is not found (hallucination), return a dict so ADK
+        feeds the error back to the model instead of crashing the live flow."""
+        tool = BaseTool(name="catalog_agent", description="Tool not found")
+        tool_context = self._make_tool_context()
+        err = ValueError("Tool 'catalog_agent' not found.")
+
+        result = await on_tool_error_emit(
+            tool=tool, args={}, tool_context=tool_context, error=err,
+        )
+
+        assert isinstance(result, dict), "Must return dict to prevent live flow crash"
+        assert "error" in result
+
+    @pytest.mark.asyncio
+    async def test_returns_recovery_dict_for_generic_error(self):
+        """Non-hallucination tool errors should also return a recovery dict."""
+        tool = BaseTool(name="request_callback", description="Request callback")
+        tool_context = self._make_tool_context()
+        err = RuntimeError("Connection timeout")
+
+        result = await on_tool_error_emit(
+            tool=tool, args={}, tool_context=tool_context, error=err,
+        )
+
+        assert isinstance(result, dict), "Must return dict to prevent live flow crash"
+
+    @pytest.mark.asyncio
+    async def test_queues_error_server_message(self):
+        """Should still queue an error ServerMessage for the client."""
+        tool = BaseTool(name="catalog_agent", description="Tool not found")
+        tool_context = self._make_tool_context()
+        err = ValueError("Tool 'catalog_agent' not found.")
+
+        await on_tool_error_emit(
+            tool=tool, args={}, tool_context=tool_context, error=err,
+        )
+
+        msg = tool_context.state.get("temp:last_server_message")
+        assert msg is not None
+        assert msg["type"] == "error"
+        assert msg["code"] == "TOOL_EXCEPTION"
+
+    @pytest.mark.asyncio
+    async def test_hallucinated_agent_name_hint(self):
+        """For hallucinated sub-agent calls, hint should mention transfer_to_agent."""
+        tool = BaseTool(name="catalog_agent", description="Tool not found")
+        tool_context = self._make_tool_context()
+        err = ValueError("Tool 'catalog_agent' not found.")
+
+        result = await on_tool_error_emit(
+            tool=tool, args={}, tool_context=tool_context, error=err,
+        )
+
+        assert "transfer_to_agent" in result.get("hint", "")
+
+    @pytest.mark.asyncio
+    async def test_hallucinated_agent_name_requests_real_transfer(self):
+        tool = BaseTool(name="catalog_agent", description="Tool not found")
+        tool_context = self._make_tool_context()
+        tool_context.state["temp:last_user_turn"] = "Do you have iPhone 14?"
+        tool_context.state["temp:last_agent_turn"] = "Let me check that for you."
+        tool_context.state["temp:recent_customer_context"] = "Customer wants a phone."
+        err = ValueError("Tool 'catalog_agent' not found.")
+
+        await on_tool_error_emit(
+            tool=tool, args={}, tool_context=tool_context, error=err,
+        )
+
+        assert tool_context.actions.transfer_to_agent == "catalog_agent"
+        assert tool_context.state["temp:pending_handoff_target_agent"] == "catalog_agent"
+        assert tool_context.state["temp:pending_handoff_latest_user"] == "Do you have iPhone 14?"

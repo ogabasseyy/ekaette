@@ -44,3 +44,7 @@ class SilenceState:
     awaiting_agent_response: bool = False
     user_spoke_at: float = 0.0
     response_nudge_count: int = 0
+    # Greeting lock: suppress caller audio until the first agent turn completes,
+    # matching the SIP/WA bridge pattern of non-interruptible greetings.
+    greeting_lock_active: bool = True
+    greeting_lock_deadline: float = 0.0  # monotonic deadline; 0 = not yet set

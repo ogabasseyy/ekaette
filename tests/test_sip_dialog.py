@@ -41,6 +41,7 @@ class TestParseSipRequest:
 
         result = parse_sip_request(SAMPLE_INVITE)
         assert result["method"] == "INVITE"
+        assert result["request_uri"] == "sip:agent1.ekaette@34.69.236.219:6060"
 
     def test_extracts_headers(self):
         from sip_bridge.sip_dialog import parse_sip_request
@@ -265,3 +266,26 @@ class TestBuildSipResponse:
             contact_uri="<sip:agent1.ekaette@34.69.236.219:6060>",
         )
         assert "Contact: <sip:agent1.ekaette@34.69.236.219:6060>" in resp
+
+
+class TestBuildSipByeRequest:
+    def test_builds_in_dialog_bye_request(self):
+        from sip_bridge.sip_dialog import build_sip_bye_request
+
+        msg = build_sip_bye_request(
+            request_uri="sip:+2348001234567@196.201.214.100:5060",
+            local_from_header="<sip:agent1.ekaette@ng.sip.africastalking.com>;tag=abcd1234",
+            remote_to_header="<sip:+2348001234567@ng.sip.africastalking.com>;tag=1928301774",
+            call_id="a84b4c76e66710@196.201.214.100",
+            cseq=314160,
+            contact_uri="<sip:agent1.ekaette@34.69.236.219:6060>",
+            via_host="34.69.236.219",
+            via_port=6060,
+        )
+
+        assert msg.startswith("BYE sip:+2348001234567@196.201.214.100:5060 SIP/2.0\r\n")
+        assert "From: <sip:agent1.ekaette@ng.sip.africastalking.com>;tag=abcd1234" in msg
+        assert "To: <sip:+2348001234567@ng.sip.africastalking.com>;tag=1928301774" in msg
+        assert "Call-ID: a84b4c76e66710@196.201.214.100" in msg
+        assert "CSeq: 314160 BYE" in msg
+        assert "Content-Length: 0" in msg

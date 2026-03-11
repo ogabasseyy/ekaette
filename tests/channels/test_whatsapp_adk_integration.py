@@ -93,6 +93,83 @@ class TestHandleImageMessageADK:
         mock_send.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_image_with_cross_channel_context_enriches_prompt(self):
+        """Pending voice->WA handoff should enrich the media prompt."""
+        from app.api.v1.at import service_whatsapp
+
+        mock_result = {
+            "text": "I can continue the trade-in here.",
+            "session_id": "whatsapp-abc123",
+            "channel": "whatsapp",
+        }
+
+        with patch(
+            "app.api.v1.at.service_whatsapp._get_adk_runner_and_service",
+            return_value=(MagicMock(), MagicMock(), "ekaette", None, ""),
+        ), patch(
+            "app.channels.adk_text_adapter.send_media_message",
+            new_callable=AsyncMock,
+            return_value=mock_result,
+        ) as mock_send, patch(
+            "app.api.v1.at.providers.whatsapp_download_media",
+            new_callable=AsyncMock,
+            return_value=(b"fake-jpeg", "image/jpeg"),
+        ), patch(
+            "app.api.v1.at.service_whatsapp.load_and_consume_cross_channel_context",
+            new_callable=AsyncMock,
+            return_value={
+                "pending_reason": "trade_in_photo_requested",
+                "conversation_summary": "Customer wants to trade in an iPhone XR for an iPhone 14 128GB.",
+            },
+        ):
+            reply = await service_whatsapp.handle_image_message(
+                from_="2348001234567",
+                media_id="media-123",
+                mime_type="image/jpeg",
+                caption="Here is the phone",
+            )
+
+        assert reply == "I can continue the trade-in here."
+        context_prefix = mock_send.call_args.kwargs["context_prefix"]
+        assert "Cross-channel handoff context" in context_prefix
+        assert "iPhone XR" in context_prefix
+
+    @pytest.mark.asyncio
+    async def test_image_without_cross_channel_context_uses_empty_prefix(self):
+        """Without pending voice context, media prompt should stay local to WA."""
+        from app.api.v1.at import service_whatsapp
+
+        mock_result = {
+            "text": "I can see the device.",
+            "session_id": "whatsapp-abc123",
+            "channel": "whatsapp",
+        }
+
+        with patch(
+            "app.api.v1.at.service_whatsapp._get_adk_runner_and_service",
+            return_value=(MagicMock(), MagicMock(), "ekaette", None, ""),
+        ), patch(
+            "app.channels.adk_text_adapter.send_media_message",
+            new_callable=AsyncMock,
+            return_value=mock_result,
+        ) as mock_send, patch(
+            "app.api.v1.at.providers.whatsapp_download_media",
+            new_callable=AsyncMock,
+            return_value=(b"fake-jpeg", "image/jpeg"),
+        ), patch(
+            "app.api.v1.at.service_whatsapp.load_and_consume_cross_channel_context",
+            new_callable=AsyncMock,
+            return_value=None,
+        ):
+            await service_whatsapp.handle_image_message(
+                from_="2348001234567",
+                media_id="media-123",
+                mime_type="image/jpeg",
+            )
+
+        assert mock_send.call_args.kwargs["context_prefix"] == ""
+
+    @pytest.mark.asyncio
     async def test_image_falls_back_when_no_runner(self):
         """When runner is not available, falls back to direct Gemini vision call."""
         from app.api.v1.at import service_whatsapp
@@ -156,6 +233,46 @@ class TestHandleVideoMessageADK:
         # Verify video mime_type is passed through
         call_kwargs = mock_send.call_args.kwargs
         assert call_kwargs["mime_type"] == "video/mp4"
+
+    @pytest.mark.asyncio
+    async def test_video_with_cross_channel_context_enriches_prompt(self):
+        """Video analysis should also receive durable handoff context."""
+        from app.api.v1.at import service_whatsapp
+
+        mock_result = {
+            "text": "I can review the video in the trade-in context.",
+            "session_id": "whatsapp-abc123",
+            "channel": "whatsapp",
+        }
+
+        with patch(
+            "app.api.v1.at.service_whatsapp._get_adk_runner_and_service",
+            return_value=(MagicMock(), MagicMock(), "ekaette", None, ""),
+        ), patch(
+            "app.channels.adk_text_adapter.send_media_message",
+            new_callable=AsyncMock,
+            return_value=mock_result,
+        ) as mock_send, patch(
+            "app.api.v1.at.providers.whatsapp_download_media",
+            new_callable=AsyncMock,
+            return_value=(b"fake-mp4", "video/mp4"),
+        ), patch(
+            "app.api.v1.at.service_whatsapp.load_and_consume_cross_channel_context",
+            new_callable=AsyncMock,
+            return_value={
+                "pending_reason": "trade_in_photo_requested",
+                "conversation_summary": "Customer wants a swap quote after media review.",
+            },
+        ):
+            reply = await service_whatsapp.handle_video_message(
+                from_="2348001234567",
+                media_id="media-456",
+                mime_type="video/mp4",
+            )
+
+        assert reply == "I can review the video in the trade-in context."
+        context_prefix = mock_send.call_args.kwargs["context_prefix"]
+        assert "swap quote" in context_prefix
 
     @pytest.mark.asyncio
     async def test_video_falls_back_when_no_runner(self):

@@ -72,12 +72,37 @@ def scoped_collection(
     if not company_id:
         return None
 
+    return tenant_company_collection(db, tenant_id, company_id, subcollection)
+
+
+def tenant_company_collection(
+    db: Any,
+    tenant_id: str,
+    company_id: str,
+    subcollection: str,
+) -> Any | None:
+    """Return a tenant/company-scoped Firestore collection reference.
+
+    Path: tenants/{tenant_id}/companies/{company_id}/{subcollection}
+
+    This helper is for non-tool paths (for example channel handlers) that still
+    need the same tenant/company scoping discipline as tool code.
+    """
+    if db is None:
+        return None
+
+    normalized_tenant = tenant_id.strip() if isinstance(tenant_id, str) else ""
+    normalized_company = company_id.strip() if isinstance(company_id, str) else ""
+    normalized_subcollection = subcollection.strip() if isinstance(subcollection, str) else ""
+    if not normalized_tenant or not normalized_company or not normalized_subcollection:
+        return None
+
     return (
         db.collection("tenants")
-        .document(tenant_id)
+        .document(normalized_tenant)
         .collection("companies")
-        .document(company_id)
-        .collection(subcollection)
+        .document(normalized_company)
+        .collection(normalized_subcollection)
     )
 
 

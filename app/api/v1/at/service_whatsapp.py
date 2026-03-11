@@ -23,6 +23,7 @@ from typing import Any
 
 from app.channels import adk_text_adapter
 from app.configs import sanitize_log
+from app.tools.cross_channel_tools import load_and_consume_cross_channel_context
 from shared.phone_identity import normalize_phone
 from shared.phone_identity import canonical_phone_user_id
 
@@ -227,6 +228,23 @@ async def _handle_media_message(
     runner, session_service, app_name, fallback_runner, fb_app = _get_adk_runner_and_service()
 
     _user_id = _resolve_whatsapp_user_id(tenant_id, company_id, from_, "media")
+    handoff_context = await load_and_consume_cross_channel_context(
+        tenant_id=tenant_id,
+        company_id=company_id,
+        phone=from_,
+    )
+    context_prefix = ""
+    if isinstance(handoff_context, dict):
+        summary = str(handoff_context.get("conversation_summary", "") or "").strip()
+        reason = str(handoff_context.get("pending_reason", "") or "").strip()
+        if summary:
+            context_prefix = (
+                "[Cross-channel handoff context for assistant use only]\n"
+                f"Previous channel: voice call\n"
+                f"Handoff reason: {reason or 'media_followup'}\n"
+                f"Conversation summary: {summary}\n"
+                "Continue from this context and do not ask the customer to repeat it.\n"
+            )
 
     if runner is not None:
         result = await adk_text_adapter.send_media_message(
@@ -237,6 +255,7 @@ async def _handle_media_message(
             media_bytes=media_bytes,
             mime_type=resolved_mime,
             caption=caption,
+            context_prefix=context_prefix,
             channel="whatsapp",
             tenant_id=tenant_id,
             company_id=company_id,

@@ -7,6 +7,7 @@ session initialization and streaming tasks to focused submodules.
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 from fastapi import WebSocket
@@ -47,4 +48,15 @@ async def websocket_endpoint(
         return
 
     live_request_queue = LiveRequestQueue()
-    await run_stream_loop(session_ctx, live_request_queue)
+    try:
+        await run_stream_loop(session_ctx, live_request_queue)
+    finally:
+        try:
+            from app.api.v1.at import voice_analytics
+
+            voice_analytics.end_session(
+                session_id=session_ctx.resolved_session_id,
+                ended_at=time.time(),
+            )
+        except Exception:
+            logger.debug("Voice analytics session end skipped", exc_info=True)

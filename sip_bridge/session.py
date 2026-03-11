@@ -20,17 +20,23 @@ import socket
 import struct
 import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable
 
 from google import genai
 from google.genai import types as genai_types
 
 from .audio_codec import alaw_to_pcm16, resample_8k_to_16k
+from .codec_bridge import resample_24k_to_16k
 from .rtp import PCMA_PAYLOAD_TYPE, PCMU_PAYLOAD_TYPE, RTPPacket, RTPTimer
 
 if TYPE_CHECKING:
     from .codec_bridge import CodecBridge
     from .gateway_client import GatewayClient
+
+try:
+    from aec_audio_processing import AudioProcessor
+except Exception:  # pragma: no cover - optional native dependency at runtime
+    AudioProcessor = None
 
 logger = logging.getLogger(__name__)
 
@@ -111,6 +117,7 @@ class CallSession:
 
     # Caller identity (extracted from SIP From header)
     _caller_phone: str = ""
+    request_hangup: Callable[[str], None] | None = None
 
     # Gemini Live config (direct mode)
     gemini_api_key: str = ""
@@ -146,6 +153,14 @@ class CallSession:
     # Guard against re-greeting on gateway reconnect
     _gateway_greeting_sent: bool = False
     _greeting_lock_active: bool = False
+    _greeting_lock_pending_release: bool = False
+    _greeting_lock_safety_deadline: float = 0.0
+    _last_outbound_rtp_sent_at: float = 0.0
+    _hangup_requested: bool = False
+    _end_after_speaking_pending: bool = False
+    _end_after_speaking_audio_seen: bool = False
+    _end_after_speaking_idle_seen: bool = False
+    _end_after_speaking_deadline: float = 0.0
     delay_answer_until_ready: bool = False
     prime_outbound_on_answer: bool = False
     _media_send_enabled: asyncio.Event = field(default_factory=asyncio.Event)
@@ -159,6 +174,17 @@ class CallSession:
     _suppress_postanswer_agent_audio_until_user_speaks: bool = False
     _user_spoke_after_answer: bool = False
     _suppressed_agent_audio_frames: int = 0
+    _denoise_enabled: bool = False
+    _noise_gate_multiplier: float = 1.6
+    _noise_gate_min_rms: float = 120.0
+    _noise_gate_attack_rms: float = 320.0
+    _noise_gate_attenuation: float = 0.12
+    _noise_floor_rms: float = 0.0
+    _noise_gate_suppressed_frames: int = 0
+    _webrtc_apm_enabled: bool = False
+    _webrtc_apm: Any = None
+    _webrtc_apm_frame_size_bytes: int = 0
+    _webrtc_apm_failures: int = 0
 
     # Metrics
     frames_received: int = 0
@@ -168,8 +194,62 @@ class CallSession:
     gemini_input_drops: int = 0
 
     def __post_init__(self) -> None:
+        self._denoise_enabled = os.getenv("SIP_DENOISE_ENABLED", "1").strip().lower() in {
+            "1", "true", "yes", "on",
+        }
+        self._noise_gate_multiplier = max(
+            1.0, _read_float_env("SIP_DENOISE_GATE_MULTIPLIER", 1.6)
+        )
+        self._noise_gate_min_rms = max(
+            0.0, _read_float_env("SIP_DENOISE_MIN_RMS", 120.0)
+        )
+        self._noise_gate_attack_rms = max(
+            self._noise_gate_min_rms,
+            _read_float_env("SIP_DENOISE_ATTACK_RMS", 320.0),
+        )
+        self._noise_gate_attenuation = min(
+            1.0,
+            max(0.0, _read_float_env("SIP_DENOISE_ATTENUATION", 0.12)),
+        )
+        self._webrtc_apm_enabled = os.getenv(
+            "SIP_WEBRTC_APM_ENABLED", "1"
+        ).strip().lower() in {"1", "true", "yes", "on"}
+        self._maybe_init_webrtc_apm()
         if not self.delay_answer_until_ready:
             self._media_send_enabled.set()
+
+    def _maybe_init_webrtc_apm(self) -> None:
+        """Initialize WebRTC Audio Processing when available."""
+        if not self._webrtc_apm_enabled or AudioProcessor is None:
+            return
+        try:
+            processor = AudioProcessor(
+                enable_aec=False,
+                enable_ns=True,
+                ns_level=max(0, min(3, int(os.getenv("SIP_WEBRTC_APM_NS_LEVEL", "2")))),
+                enable_agc=os.getenv("SIP_WEBRTC_APM_AGC_ENABLED", "1").strip().lower()
+                in {"1", "true", "yes", "on"},
+                agc_mode=max(0, min(3, int(os.getenv("SIP_WEBRTC_APM_AGC_MODE", "1")))),
+                enable_vad=False,
+            )
+            processor.set_stream_format(16000, 1, 16000, 1)
+            processor.set_reverse_stream_format(16000, 1)
+            processor.set_stream_delay(int(os.getenv("SIP_WEBRTC_APM_STREAM_DELAY_MS", "120")))
+            self._webrtc_apm = processor
+            self._webrtc_apm_frame_size_bytes = int(processor.get_frame_size()) * 2
+            logger.info(
+                "Enabled WebRTC APM on AT bridge call_id=%s frame_bytes=%d",
+                self.call_id,
+                self._webrtc_apm_frame_size_bytes,
+            )
+        except Exception:
+            self._webrtc_apm = None
+            self._webrtc_apm_frame_size_bytes = 0
+            logger.warning(
+                "Failed to initialize WebRTC APM; falling back to noise gate call_id=%s",
+                self.call_id,
+                exc_info=True,
+            )
 
     async def wait_until_answer_ready(self, timeout: float) -> bool:
         """Wait until greeting audio is buffered or startup fails."""
@@ -392,6 +472,168 @@ class CallSession:
             except asyncio.QueueEmpty:
                 break
 
+    def _maybe_finish_end_after_speaking(self) -> None:
+        """End the call after the callback acknowledgement has finished playing."""
+        if (
+            not self._end_after_speaking_pending
+            or self._shutdown.is_set()
+            or self._hangup_requested
+        ):
+            return
+
+        now = time.monotonic()
+        if (
+            not self._end_after_speaking_idle_seen
+            and self._end_after_speaking_deadline > 0
+            and now >= self._end_after_speaking_deadline
+        ):
+            logger.info(
+                "Ending call after callback acknowledgement (idle deadline) call_id=%s",
+                self.call_id,
+            )
+            self._finalize_end_after_speaking("idle deadline")
+            return
+
+        if not self._end_after_speaking_idle_seen:
+            return
+
+        outbound_drained = (
+            self._end_after_speaking_audio_seen
+            and self._last_outbound_rtp_sent_at > 0
+            and now - self._last_outbound_rtp_sent_at > 0.5
+        )
+        safety_timeout = (
+            self._end_after_speaking_deadline > 0
+            and now >= self._end_after_speaking_deadline
+        )
+        if outbound_drained or safety_timeout:
+            logger.info(
+                "Ending call after callback acknowledgement (%s) call_id=%s",
+                "outbound audio drained" if outbound_drained else "safety timeout",
+                self.call_id,
+            )
+            self._finalize_end_after_speaking(
+                "outbound audio drained" if outbound_drained else "safety timeout"
+            )
+
+    def _finalize_end_after_speaking(self, reason: str) -> None:
+        """Issue hangup once the callback acknowledgement has completed."""
+        self._end_after_speaking_pending = False
+        self._hangup_requested = True
+        if self.request_hangup is not None:
+            try:
+                self.request_hangup(reason)
+            except Exception:
+                logger.warning(
+                    "Failed to request SIP hangup after callback acknowledgement call_id=%s",
+                    self.call_id,
+                    exc_info=True,
+                )
+        self._shutdown.set()
+
+    @staticmethod
+    def _pcm_rms(pcm16: bytes) -> float:
+        """Compute frame RMS for simple noise-floor tracking."""
+        n = len(pcm16) // 2
+        if n <= 0:
+            return 0.0
+        samples = struct.unpack(f"<{n}h", pcm16)
+        return math.sqrt(sum(sample * sample for sample in samples) / n)
+
+    def _apply_input_noise_gate(self, pcm16: bytes) -> bytes:
+        """Apply a conservative adaptive noise gate to inbound telephony PCM."""
+        if not self._denoise_enabled or not pcm16:
+            return pcm16
+
+        rms = self._pcm_rms(pcm16)
+        if rms <= 0:
+            return pcm16
+
+        if self._noise_floor_rms <= 0:
+            self._noise_floor_rms = max(1.0, min(rms, self._noise_gate_min_rms))
+        elif rms <= max(self._noise_floor_rms * 2.5, self._noise_gate_attack_rms):
+            self._noise_floor_rms = (self._noise_floor_rms * 0.94) + (rms * 0.06)
+        else:
+            self._noise_floor_rms = (self._noise_floor_rms * 0.995) + (
+                min(rms, self._noise_floor_rms * 2.5) * 0.005
+            )
+
+        threshold = max(
+            self._noise_gate_min_rms,
+            self._noise_floor_rms * self._noise_gate_multiplier,
+        )
+        if rms >= threshold:
+            return pcm16
+
+        attenuation = self._noise_gate_attenuation
+        if attenuation <= 0.0:
+            return b"\x00" * len(pcm16)
+
+        n = len(pcm16) // 2
+        samples = struct.unpack(f"<{n}h", pcm16)
+        attenuated = struct.pack(
+            f"<{n}h",
+            *(int(sample * attenuation) for sample in samples),
+        )
+        self._noise_gate_suppressed_frames += 1
+        if (
+            self._noise_gate_suppressed_frames <= 3
+            or self._noise_gate_suppressed_frames % 200 == 0
+        ):
+            logger.info(
+                "Noise gate suppressed inbound frame call_id=%s rms=%.0f floor=%.0f threshold=%.0f count=%d",
+                self.call_id,
+                rms,
+                self._noise_floor_rms,
+                threshold,
+                self._noise_gate_suppressed_frames,
+            )
+        return attenuated
+
+    def _process_webrtc_apm_stream(self, pcm16: bytes, *, reverse: bool = False) -> bytes:
+        """Process PCM16 through WebRTC APM in 10ms frames.
+
+        The native processor expects 10ms chunks at the configured sample rate.
+        Our AT bridge works in 20ms chunks, so split each inbound/outbound frame
+        into 10ms subframes and trim any padded tail on return.
+        """
+        processor = self._webrtc_apm
+        frame_bytes = self._webrtc_apm_frame_size_bytes
+        if processor is None or frame_bytes <= 0 or not pcm16:
+            return pcm16
+
+        out = bytearray()
+        for start in range(0, len(pcm16), frame_bytes):
+            chunk = pcm16[start : start + frame_bytes]
+            original_len = len(chunk)
+            if original_len < frame_bytes:
+                chunk = chunk + (b"\x00" * (frame_bytes - original_len))
+            processed = (
+                processor.process_reverse_stream(chunk)
+                if reverse
+                else processor.process_stream(chunk)
+            )
+            out.extend(processed[:original_len])
+        return bytes(out)
+
+    def _apply_input_denoise(self, pcm16: bytes) -> bytes:
+        """Apply WebRTC APM denoising first, then fall back to the legacy gate."""
+        if not pcm16:
+            return pcm16
+        if self._webrtc_apm is not None:
+            try:
+                return self._process_webrtc_apm_stream(pcm16)
+            except Exception:
+                self._webrtc_apm_failures += 1
+                if self._webrtc_apm_failures <= 3 or self._webrtc_apm_failures % 100 == 0:
+                    logger.warning(
+                        "WebRTC APM processing failed; falling back to noise gate call_id=%s failures=%d",
+                        self.call_id,
+                        self._webrtc_apm_failures,
+                        exc_info=True,
+                    )
+        return self._apply_input_noise_gate(pcm16)
+
     async def feed_inbound(self, frame: bytes) -> None:
         """Feed an RTP audio frame from the phone side."""
         try:
@@ -491,6 +733,7 @@ class CallSession:
                     continue
 
                 if pcm16:
+                    pcm16 = self._apply_input_denoise(pcm16)
                     gain = int(os.getenv("SIP_AUDIO_GAIN", str(DEFAULT_AUDIO_GAIN)))
                     if gain > 1:
                         n_amp = len(pcm16) // 2
@@ -754,6 +997,30 @@ class CallSession:
             if gateway_client is None:
                 await asyncio.sleep(0.05)
                 continue
+            # Release greeting lock once the outbound RTP pipeline has
+            # drained — i.e. no new audio frame was sent for 500ms after
+            # agent_status=idle signalled the model finished speaking.
+            # This is data-driven: the lock tracks actual audio delivery,
+            # not an arbitrary timer.  A safety deadline (10s) covers the
+            # edge case where the outbound pipeline never sends a frame.
+            if (
+                self._greeting_lock_active
+                and self._greeting_lock_pending_release
+            ):
+                now = time.monotonic()
+                outbound_drained = (
+                    self._last_outbound_rtp_sent_at > 0
+                    and now - self._last_outbound_rtp_sent_at > 0.5
+                )
+                safety_timeout = now >= self._greeting_lock_safety_deadline
+                if outbound_drained or safety_timeout:
+                    self._greeting_lock_active = False
+                    self._greeting_lock_pending_release = False
+                    logger.info(
+                        "Greeting lock released (%s)",
+                        "outbound audio drained" if outbound_drained else "safety timeout",
+                    )
+
             await gateway_client.send_audio(
                 SILENCE_FRAME if self._greeting_lock_active else pcm16
             )
@@ -769,6 +1036,8 @@ class CallSession:
             if frame.is_audio:
                 # PCM16 24kHz from Gemini Live — pass to outbound pipeline
                 self._model_speaking = True
+                if self._end_after_speaking_pending:
+                    self._end_after_speaking_audio_seen = True
                 self._first_outbound_audio_ready.set()
                 if (
                     self._suppress_postanswer_agent_audio_until_user_speaks
@@ -864,13 +1133,29 @@ class CallSession:
                 elif msg_type == "interrupted":
                     self._model_speaking = False
                     self._greeting_lock_active = False
+                    self._greeting_lock_pending_release = False
                     self._model_speech_end_time = time.time()
                     self._clear_outbound_audio()
                 elif msg_type == "agent_status":
                     if msg.get("status") == "idle":
                         self._model_speaking = False
-                        self._greeting_lock_active = False
                         self._model_speech_end_time = time.time()
+                        # Don't release greeting lock immediately — the
+                        # outbound queue may still contain greeting audio
+                        # that hasn't been played to the caller yet.
+                        # Releasing now lets caller audio reach the model,
+                        # which self-interrupts and clears the queue,
+                        # truncating the greeting.  Use a time-based grace
+                        # period so the greeting fully plays before the
+                        # caller's audio flows through.
+                        if self._greeting_lock_active:
+                            self._greeting_lock_pending_release = True
+                            self._greeting_lock_safety_deadline = time.monotonic() + 10.0
+                        if self._end_after_speaking_pending:
+                            self._end_after_speaking_idle_seen = True
+                            self._end_after_speaking_deadline = time.monotonic() + (
+                                2.0 if self._end_after_speaking_audio_seen else 1.0
+                            )
                 elif msg_type == "agent_transfer":
                     session_id = msg.get("sessionId", "")
                     if session_id:
@@ -889,6 +1174,18 @@ class CallSession:
                     )
                 elif msg_type == "error":
                     logger.warning("Gateway error: %s", msg.get("message", ""))
+                elif msg_type == "call_control":
+                    action = str(msg.get("action", "")).strip().lower()
+                    if action == "end_after_speaking":
+                        self._end_after_speaking_pending = True
+                        self._end_after_speaking_audio_seen = False
+                        self._end_after_speaking_idle_seen = False
+                        self._end_after_speaking_deadline = time.monotonic() + 20.0
+                        logger.info(
+                            "Received call_control end_after_speaking call_id=%s reason=%s",
+                            self.call_id,
+                            msg.get("reason", ""),
+                        )
                 else:
                     logger.debug(
                         "Gateway JSON [%s]: %s",
@@ -916,10 +1213,14 @@ class CallSession:
         callback_silence_frame: bytes | None = None
 
         while not self._shutdown.is_set():
+            self._maybe_finish_end_after_speaking()
+            if self._shutdown.is_set():
+                break
             if not self._media_send_enabled.is_set():
                 try:
                     await asyncio.wait_for(self._media_send_enabled.wait(), timeout=0.5)
                 except TimeoutError:
+                    self._maybe_finish_end_after_speaking()
                     continue
             if self._callback_post_answer_grace_active():
                 if callback_silence_frame is None:
@@ -942,9 +1243,16 @@ class CallSession:
                         self.outbound_queue.get(), timeout=1.0
                     )
                 except TimeoutError:
+                    self._maybe_finish_end_after_speaking()
                     continue
 
                 try:
+                    if self._webrtc_apm is not None and pcm_frame:
+                        try:
+                            reverse_pcm16 = resample_24k_to_16k(pcm_frame)
+                            self._process_webrtc_apm_stream(reverse_pcm16, reverse=True)
+                        except Exception:
+                            logger.debug("WebRTC APM reverse-stream error", exc_info=True)
                     if self.codec_bridge is not None:
                         encoded = self.codec_bridge.encode_from_pcm16_24k(pcm_frame)
                     else:
@@ -986,6 +1294,7 @@ class CallSession:
                             )
                             target_logged = True
                         self.media_transport.sendto(pkt.serialize(), self.remote_rtp_addr)
+                        self._last_outbound_rtp_sent_at = time.monotonic()
                 except Exception:
                     logger.debug("Outbound send error", exc_info=True)
 

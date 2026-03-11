@@ -16,13 +16,36 @@ import re
 _MEDIA_LINE_RE = re.compile(r"m=audio\s+(\d+)\s+\S+\s+([\d\s]+)")
 _CONNECTION_RE = re.compile(r"c=IN\s+IP4\s+([\d.]+)")
 _RTPMAP_RE = re.compile(r"a=rtpmap:(\d+)\s+(\S+)")
+_URI_IN_ANGLE_RE = re.compile(r"<([^>]+)>")
+
+
+def ensure_dialog_to_header(to_header: str, *, tag: str | None = None) -> str:
+    """Ensure a dialog-establishing To header has a stable local tag."""
+    if ";tag=" in to_header:
+        return to_header
+    dialog_tag = tag or os.urandom(4).hex()
+    return f"{to_header};tag={dialog_tag}"
+
+
+def extract_sip_uri(header_value: str) -> str:
+    """Extract the SIP URI from a Contact/From/To style header value."""
+    if not header_value:
+        return ""
+    match = _URI_IN_ANGLE_RE.search(header_value)
+    if match:
+        return match.group(1).strip()
+    stripped = header_value.strip()
+    if stripped.lower().startswith("sip:"):
+        return stripped
+    return ""
 
 
 def parse_sip_request(message: str) -> dict:
     """Parse a raw SIP request into method, headers, and body.
 
     Returns:
-        dict with keys: method (str), headers (dict[str, str]), body (str).
+        dict with keys: method (str), request_uri (str), headers (dict[str, str]),
+        body (str).
     """
     # Split headers from body at the blank line
     parts = message.split("\r\n\r\n", 1)
@@ -36,6 +59,11 @@ def parse_sip_request(message: str) -> dict:
     # Request line: "INVITE sip:user@host SIP/2.0"
     request_line = lines[0]
     method = request_line.split(" ", 1)[0] if request_line else ""
+    request_uri = ""
+    if request_line:
+        parts = request_line.split()
+        if len(parts) >= 2:
+            request_uri = parts[1]
 
     # Parse headers
     headers: dict[str, str] = {}
@@ -44,7 +72,12 @@ def parse_sip_request(message: str) -> dict:
             key, value = line.split(":", 1)
             headers[key.strip()] = value.strip()
 
-    return {"method": method, "headers": headers, "body": body}
+    return {
+        "method": method,
+        "request_uri": request_uri,
+        "headers": headers,
+        "body": body,
+    }
 
 
 def parse_sdp_g711(sdp: str) -> dict:
@@ -164,9 +197,7 @@ def build_sip_response(
         Complete SIP response as string.
     """
     # Add tag to To header per RFC 3261 §8.2.6.2
-    to_header = invite_headers.get("To", "")
-    if ";tag=" not in to_header:
-        to_header = f"{to_header};tag={os.urandom(4).hex()}"
+    to_header = ensure_dialog_to_header(invite_headers.get("To", ""))
 
     lines = [
         f"SIP/2.0 {status} {reason}",
@@ -188,4 +219,32 @@ def build_sip_response(
         lines.append("")
         lines.append("")
 
+    return "\r\n".join(lines)
+
+
+def build_sip_bye_request(
+    *,
+    request_uri: str,
+    local_from_header: str,
+    remote_to_header: str,
+    call_id: str,
+    cseq: int,
+    contact_uri: str,
+    via_host: str,
+    via_port: int,
+) -> str:
+    """Build an in-dialog SIP BYE request from the local side."""
+    lines = [
+        f"BYE {request_uri} SIP/2.0",
+        f"Via: SIP/2.0/UDP {via_host}:{via_port};branch=z9hG4bK{os.urandom(6).hex()}",
+        "Max-Forwards: 70",
+        f"From: {local_from_header}",
+        f"To: {remote_to_header}",
+        f"Call-ID: {call_id}",
+        f"CSeq: {cseq} BYE",
+        f"Contact: {contact_uri}",
+        "Content-Length: 0",
+        "",
+        "",
+    ]
     return "\r\n".join(lines)

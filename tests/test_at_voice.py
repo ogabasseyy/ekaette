@@ -583,3 +583,130 @@ class TestServiceVoice:
 
         assert result is None
         assert key not in service_voice._CALLBACK_REQUESTS_LOCAL
+
+    def test_register_callback_request_overrides_queued_cooldown_for_explicit_voice_request(
+        self,
+        monkeypatch,
+    ) -> None:
+        from app.api.v1.at import service_voice
+
+        service_voice._CALLBACK_REQUESTS_LOCAL.clear()
+        now = time.time()
+        monkeypatch.setattr(
+            service_voice,
+            "_load_callback_request",
+            lambda *args, **kwargs: {
+                "status": "queued",
+                "phone": "+2348012345678",
+                "source": "voice_ai_request",
+                "cooldown_until": now + 1800,
+            },
+        )
+        deleted: list[tuple[str, str, str]] = []
+        monkeypatch.setattr(
+            service_voice,
+            "_delete_callback_request",
+            lambda tenant_id, company_id, phone: deleted.append((tenant_id, company_id, phone)),
+        )
+        monkeypatch.setattr(
+            service_voice,
+            "_save_callback_request_verified",
+            lambda *args, **kwargs: True,
+        )
+        monkeypatch.setattr(
+            service_voice,
+            "_load_callback_request",
+            lambda *args, **kwargs: {
+                "status": "pending",
+                "phone": "+2348012345678",
+            } if deleted else {
+                "status": "queued",
+                "phone": "+2348012345678",
+                "source": "voice_ai_request",
+                "cooldown_until": now + 1800,
+            },
+        )
+
+        result = service_voice.register_callback_request(
+            phone="+2348012345678",
+            tenant_id="public",
+            company_id="ekaette-electronics",
+            source="voice_user_callback_intent",
+            trigger_after_hangup=True,
+        )
+
+        assert result["status"] == "pending"
+        assert deleted == [("public", "ekaette-electronics", "+2348012345678")]
+
+    def test_register_callback_request_keeps_cooldown_for_non_override_source(
+        self,
+        monkeypatch,
+    ) -> None:
+        from app.api.v1.at import service_voice
+
+        service_voice._CALLBACK_REQUESTS_LOCAL.clear()
+        now = time.time()
+        monkeypatch.setattr(
+            service_voice,
+            "_load_callback_request",
+            lambda *args, **kwargs: {
+                "status": "queued",
+                "phone": "+2348012345678",
+                "source": "voice_ai_request",
+                "cooldown_until": now + 1800,
+            },
+        )
+
+        result = service_voice.register_callback_request(
+            phone="+2348012345678",
+            tenant_id="public",
+            company_id="ekaette-electronics",
+            source="flash_callback",
+            trigger_after_hangup=False,
+        )
+
+        assert result["status"] == "cooldown"
+
+    def test_register_callback_request_overrides_failed_cooldown_for_explicit_voice_request(
+        self,
+        monkeypatch,
+    ) -> None:
+        from app.api.v1.at import service_voice
+
+        service_voice._CALLBACK_REQUESTS_LOCAL.clear()
+        now = time.time()
+        deleted: list[tuple[str, str, str]] = []
+        monkeypatch.setattr(
+            service_voice,
+            "_delete_callback_request",
+            lambda tenant_id, company_id, phone: deleted.append((tenant_id, company_id, phone)),
+        )
+        monkeypatch.setattr(
+            service_voice,
+            "_save_callback_request_verified",
+            lambda *args, **kwargs: True,
+        )
+        monkeypatch.setattr(
+            service_voice,
+            "_load_callback_request",
+            lambda *args, **kwargs: {
+                "status": "pending",
+                "phone": "+2348012345678",
+            } if deleted else {
+                "status": "failed",
+                "phone": "+2348012345678",
+                "source": "manual_callback_request",
+                "cooldown_until": now + 1800,
+            },
+        )
+
+        result = service_voice.register_callback_request(
+            phone="+2348012345678",
+            tenant_id="public",
+            company_id="ekaette-electronics",
+            source="voice_agent_callback_promise",
+            trigger_after_hangup=True,
+        )
+
+        assert result["status"] == "pending"
+        assert deleted == [("public", "ekaette-electronics", "+2348012345678")]

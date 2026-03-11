@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
+import time
 from typing import Any
 
 from fastapi import WebSocket
+from google.adk.errors.already_exists_error import AlreadyExistsError
 
 from app.api.v1.realtime.caller_phone_registry import register_caller_phone
 from app.api.v1.realtime.models import SessionInitContext
@@ -18,6 +21,13 @@ from app.api.v1.realtime.runtime_cache import (
 )
 
 logger = logging.getLogger(__name__)
+
+_HANDOFF_STATE_DEFAULTS: dict[str, str] = {
+    "temp:pending_handoff_target_agent": "",
+    "temp:pending_handoff_latest_user": "",
+    "temp:pending_handoff_latest_agent": "",
+    "temp:pending_handoff_recent_customer_context": "",
+}
 
 
 def _env_flag(name: str, default: bool = False) -> bool:
@@ -31,6 +41,12 @@ def configure_runtime(**kwargs: Any) -> None:
     """Inject runtime dependencies from main module."""
     globals().update(kwargs)
     configure_runtime_cache(**kwargs)
+
+
+def _ensure_default_temp_state(state: dict[str, object]) -> None:
+    """Populate one-shot temp keys that agent instruction templates depend on."""
+    for key, value in _HANDOFF_STATE_DEFAULTS.items():
+        state.setdefault(key, value)
 
 
 async def initialize_session(
@@ -265,6 +281,9 @@ async def initialize_session(
                 tenant_id = normalize_tenant_id_fn(resumed_tenant, default=tenant_id)
 
         state_updates = resumed_state_updates
+        for key, value in _HANDOFF_STATE_DEFAULTS.items():
+            if key not in session.state:
+                state_updates[key] = value
         if "app:tenant_id" not in session.state:
             state_updates["app:tenant_id"] = tenant_id
         if "app:channel" not in session.state:
@@ -283,16 +302,18 @@ async def initialize_session(
             or "app:company_id" not in session.state
         ):
             if registry_enabled_fn():
-                company_profile = await load_company_profile_fn(
-                    company_config_client_obj, company_id, tenant_id=tenant_id
-                )
-                company_knowledge = await load_company_knowledge_fn(
-                    company_config_client_obj, company_id, tenant_id=tenant_id
+                company_profile, company_knowledge = await asyncio.gather(
+                    load_company_profile_fn(
+                        company_config_client_obj, company_id, tenant_id=tenant_id,
+                    ),
+                    load_company_knowledge_fn(
+                        company_config_client_obj, company_id, tenant_id=tenant_id,
+                    ),
                 )
             else:
-                company_profile = await load_company_profile_fn(company_config_client_obj, company_id)
-                company_knowledge = await load_company_knowledge_fn(
-                    company_config_client_obj, company_id
+                company_profile, company_knowledge = await asyncio.gather(
+                    load_company_profile_fn(company_config_client_obj, company_id),
+                    load_company_knowledge_fn(company_config_client_obj, company_id),
                 )
             state_updates.update(
                 build_company_session_state_fn(
@@ -437,26 +458,22 @@ async def initialize_session(
                 await websocket.close(code=1008)
                 return None
 
-        # Load onboarding context and build initial state
-        industry_config = await load_industry_config_fn(
-            industry_config_client_obj,
-            industry,
-        )
+        # Load onboarding context and build initial state — parallel I/O
         if registry_enabled_fn():
-            company_profile = await load_company_profile_fn(
-                company_config_client_obj,
-                company_id,
-                tenant_id=tenant_id,
-            )
-            company_knowledge = await load_company_knowledge_fn(
-                company_config_client_obj,
-                company_id,
-                tenant_id=tenant_id,
+            industry_config, company_profile, company_knowledge = await asyncio.gather(
+                load_industry_config_fn(industry_config_client_obj, industry),
+                load_company_profile_fn(
+                    company_config_client_obj, company_id, tenant_id=tenant_id,
+                ),
+                load_company_knowledge_fn(
+                    company_config_client_obj, company_id, tenant_id=tenant_id,
+                ),
             )
         else:
-            company_profile = await load_company_profile_fn(company_config_client_obj, company_id)
-            company_knowledge = await load_company_knowledge_fn(
-                company_config_client_obj, company_id
+            industry_config, company_profile, company_knowledge = await asyncio.gather(
+                load_industry_config_fn(industry_config_client_obj, industry),
+                load_company_profile_fn(company_config_client_obj, company_id),
+                load_company_knowledge_fn(company_config_client_obj, company_id),
             )
 
         initial_state = build_session_state_fn(industry_config, industry)
@@ -467,6 +484,7 @@ async def initialize_session(
                 knowledge=company_knowledge,
             )
         )
+        _ensure_default_temp_state(initial_state)
         if registry_config is not None:
             initial_state.update(canonical_state_updates_from_registry_fn(registry_config))
         initial_state.setdefault("app:tenant_id", tenant_id)
@@ -500,9 +518,22 @@ async def initialize_session(
         # Vertex sessions currently auto-generate server-side IDs.
         if not uses_vertex_sessions:
             create_kwargs["session_id"] = resolved_session_id
-        created_session = await session_service_obj.create_session(
-            **create_kwargs,
-        )
+        try:
+            created_session = await session_service_obj.create_session(
+                **create_kwargs,
+            )
+        except AlreadyExistsError:
+            # Prewarm or reconnect already created this session — reuse it.
+            logger.info("Session %s already exists, reusing", resolved_session_id)
+            created_session = await session_service_obj.get_session(
+                app_name=session_app_name,
+                user_id=user_id,
+                session_id=resolved_session_id,
+            )
+            if created_session is None:
+                raise RuntimeError(
+                    f"Session {resolved_session_id} reported as existing but get_session returned None"
+                )
         if getattr(created_session, "state", None) is None:
             try:
                 created_session.state = dict(initial_state)
@@ -596,6 +627,20 @@ async def initialize_session(
             session_id=resolved_session_id,
             caller_phone=caller_phone,
         )
+
+    try:
+        from app.api.v1.at import voice_analytics
+
+        voice_analytics.start_session(
+            session_id=resolved_session_id,
+            tenant_id=tenant_id,
+            company_id=company_id,
+            channel=str(session_state.get("app:channel", "voice") or "voice"),
+            started_at=time.time(),
+            caller_phone=caller_phone,
+        )
+    except Exception:
+        logger.debug("Voice analytics session start skipped", exc_info=True)
 
     return SessionInitContext(
         websocket=websocket,

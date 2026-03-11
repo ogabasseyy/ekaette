@@ -163,6 +163,7 @@ async def send_media_message(
     media_bytes: bytes,
     mime_type: str = "image/jpeg",
     caption: str = "",
+    context_prefix: str = "",
     channel: str = "whatsapp",
     tenant_id: str = "public",
     company_id: str = "ekaette-electronics",
@@ -206,11 +207,21 @@ async def send_media_message(
         channel=channel,
     )
 
+    customer_prompt = ""
     if caption and caption.strip():
-        text_prompt = caption.strip()
+        customer_prompt = caption.strip()
     else:
         media_category = mime_type.split("/")[0] if "/" in mime_type else "default"
-        text_prompt = _DEFAULT_MEDIA_PROMPTS.get(media_category, _DEFAULT_MEDIA_PROMPTS["default"])
+        customer_prompt = _DEFAULT_MEDIA_PROMPTS.get(media_category, _DEFAULT_MEDIA_PROMPTS["default"])
+
+    normalized_context_prefix = context_prefix.strip()
+    if normalized_context_prefix:
+        text_prompt = (
+            f"{normalized_context_prefix}\n\n"
+            f"Customer message about this media: {customer_prompt}"
+        )
+    else:
+        text_prompt = customer_prompt
 
     content = types.Content(
         parts=[

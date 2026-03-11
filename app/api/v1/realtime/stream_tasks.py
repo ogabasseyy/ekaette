@@ -24,6 +24,23 @@ from app.tools.pii_redaction import redact_pii
 
 logger = logging.getLogger(__name__)
 
+# 20ms of silence at 16kHz mono PCM16 (640 bytes) — matches SIP/WA bridge pattern
+_SILENCE_FRAME = b"\x00" * 640
+
+
+def _text_overlap(a: str, b: str) -> float:
+    """Return 0.0–1.0 word-level overlap ratio between two strings.
+
+    Used for output-level dedup (ADK #3395) — detects near-duplicate
+    finished transcriptions arriving within seconds of each other.
+    """
+    wa = set(a.lower().split())
+    wb = set(b.lower().split())
+    if not wa or not wb:
+        return 0.0
+    intersection = len(wa & wb)
+    return intersection / max(len(wa), len(wb))
+
 def _parse_int_env(name: str, default: int) -> int:
     try:
         return int(os.getenv(name, str(default)))
@@ -175,7 +192,6 @@ async def upstream_task(
             now = time.monotonic()
             silence_state.last_client_activity = now
             silence_state.silence_nudge_count = 0
-            silence_state.agent_busy = True
             # New caller audio supersedes any pending response-latency watchdog.
             silence_state.awaiting_agent_response = False
             silence_state.response_nudge_count = 0
@@ -183,7 +199,26 @@ async def upstream_task(
                 silence_state.silence_nudge_due_at,
                 silence_state.silence_nudge_interval,
             ) = _reset_silence_nudge_schedule(now)
-            audio_blob = types_mod.Blob(mime_type="audio/pcm;rate=16000", data=audio_data)
+            # During the greeting lock, substitute silence so the model's
+            # server-side VAD doesn't detect caller speech and interrupt
+            # the initial greeting — same pattern as SIP/WA bridges.
+            # Safety: release after 10s to prevent permanent muting.
+            if silence_state.greeting_lock_active:
+                if silence_state.greeting_lock_deadline == 0.0:
+                    silence_state.greeting_lock_deadline = now + 10.0
+                elif now >= silence_state.greeting_lock_deadline:
+                    silence_state.greeting_lock_active = False
+                    logger.warning("Greeting lock released (safety timeout)")
+            if silence_state.greeting_lock_active:
+                audio_blob = types_mod.Blob(
+                    mime_type="audio/pcm;rate=16000",
+                    data=_SILENCE_FRAME,
+                )
+            else:
+                silence_state.agent_busy = True
+                audio_blob = types_mod.Blob(
+                    mime_type="audio/pcm;rate=16000", data=audio_data,
+                )
             live_request_queue.send_realtime(audio_blob)
 
         # Text frames: JSON messages
@@ -218,7 +253,17 @@ async def upstream_task(
                 ) = _reset_silence_nudge_schedule(now)
 
             if msg_type == "text":
-                content = types_mod.Content(parts=[types_mod.Part(text=json_message["text"])])
+                raw_text = json_message.get("text", "")
+                # System-context markers (e.g. "[Phone call connected]") are
+                # transport metadata, NOT customer speech.  Wrapping them as
+                # a system hint prevents the model from interpreting them as
+                # user intent and immediately trying to act on them.
+                if raw_text.startswith("[") and raw_text.endswith("]"):
+                    raw_text = (
+                        "[System: " + raw_text[1:-1] + ". "
+                        "Greet the customer now.]"
+                    )
+                content = types_mod.Content(parts=[types_mod.Part(text=raw_text)])
                 live_request_queue.send_content(content)
 
             elif msg_type == "image":
@@ -437,6 +482,10 @@ async def downstream_task(
         "_sanitize_log",
     )
     session_state_store = ctx.session_state
+    try:
+        from app.api.v1.at import voice_analytics
+    except Exception:  # pragma: no cover - best effort analytics only
+        voice_analytics = None
 
     def _session_get(key: str, default: Any = None) -> Any:
         getter = getattr(session_state_store, "get", None)
@@ -457,6 +506,30 @@ async def downstream_task(
     current_agent_raw = _session_get("temp:active_agent", "ekaette_router")
     current_agent = current_agent_raw if isinstance(current_agent_raw, str) else "ekaette_router"
 
+    def _record_voice_transcript(role: str, text: str, partial: bool) -> None:
+        if voice_analytics is None:
+            return
+        try:
+            voice_analytics.record_transcript(
+                session_id=ctx.resolved_session_id,
+                role=role,
+                text=text,
+                partial=partial,
+            )
+        except Exception:
+            logger.debug("Voice analytics transcript capture skipped", exc_info=True)
+
+    def _record_voice_transfer(target_agent: str) -> None:
+        if voice_analytics is None:
+            return
+        try:
+            voice_analytics.record_transfer(
+                session_id=ctx.resolved_session_id,
+                target_agent=target_agent,
+            )
+        except Exception:
+            logger.debug("Voice analytics transfer capture skipped", exc_info=True)
+
     def _looks_like_callback_request(text: str) -> bool:
         from app.agents.callbacks import looks_like_callback_request
 
@@ -466,6 +539,11 @@ async def downstream_task(
         if not _looks_like_callback_request(text):
             return
         if bool(_session_get("temp:callback_requested", False)):
+            return
+
+        # Never register callbacks on callback legs (prevents infinite loop).
+        session_id = _session_get("app:session_id", "")
+        if isinstance(session_id, str) and session_id.strip().startswith("sip-callback-"):
             return
 
         channel = _session_get("app:channel", "voice")
@@ -537,6 +615,11 @@ async def downstream_task(
         if bool(_session_get("temp:callback_requested", False)):
             return
 
+        # Never register callbacks on callback legs (prevents infinite loop).
+        session_id = _session_get("app:session_id", "")
+        if isinstance(session_id, str) and session_id.strip().startswith("sip-callback-"):
+            return
+
         channel = _session_get("app:channel", "voice")
         if isinstance(channel, str) and channel.strip().lower() != "voice":
             return
@@ -597,6 +680,10 @@ async def downstream_task(
     receiving_input = False
     input_finalized = False   # late-partial suppression
     output_finalized = False  # late-partial suppression
+    # Output-level dedup: suppress near-duplicate finished transcriptions
+    # (ADK Bug #3395 — model sometimes emits two finals within ~2s)
+    _last_final_text = ""
+    _last_final_ts = 0.0
     last_structured_message_id = 0
     session_prompt_tokens = 0
     session_completion_tokens = 0
@@ -636,6 +723,11 @@ async def downstream_task(
         customer_lines = _recent_turn_lines(include_agent=False)
         recent_customer = "\n".join(customer_lines[-3:])
         _session_set("temp:recent_customer_context", recent_customer)
+
+    def _mark_greeted_from_agent_output() -> None:
+        """Persist that the agent has already greeted once output begins."""
+        if not bool(_session_get("temp:greeted", False)):
+            _session_set("temp:greeted", True)
 
     def _clear_pending_handoff() -> None:
         for key in (
@@ -686,7 +778,7 @@ async def downstream_task(
         receiving_input = False
         input_finalized = True
 
-    async def _finalize_output() -> None:
+    async def _finalize_output(*, interrupted: bool = False) -> None:
         """Send a non-partial output transcription to close the agent's turn."""
         nonlocal last_output_text, output_finalized
         if last_output_text:
@@ -696,6 +788,10 @@ async def downstream_task(
                 "text": last_output_text,
                 "partial": False,
             }))
+            # Preserve partial agent text on interruption so recovery
+            # instructions have context about what the model was saying.
+            if interrupted:
+                _session_set("temp:last_agent_turn", last_output_text)
         last_output_text = ""
         output_finalized = True
 
@@ -722,6 +818,7 @@ async def downstream_task(
                             ):
                                 silence_state.agent_busy = True
                                 silence_state.awaiting_agent_response = False
+                                _mark_greeted_from_agent_output()
                                 audio_bytes = part.inline_data.data
                                 if isinstance(audio_bytes, str):
                                     audio_bytes = base64.b64decode(audio_bytes)
@@ -731,6 +828,7 @@ async def downstream_task(
                             elif part.text and not ctx.is_native_audio:
                                 silence_state.agent_busy = True
                                 silence_state.awaiting_agent_response = False
+                                _mark_greeted_from_agent_output()
                                 await websocket.send_text(json.dumps({
                                     "type": "transcription",
                                     "role": "agent",
@@ -759,6 +857,7 @@ async def downstream_task(
                                     "text": redact_pii(text),
                                     "partial": is_partial,
                                 }))
+                                _record_voice_transcript("user", text, is_partial)
                                 if finished:
                                     recent_turns.append(("user", text))
                                     _session_set("temp:last_user_turn", text)
@@ -789,21 +888,51 @@ async def downstream_task(
                                 # Agent started responding -> finalize user's input
                                 if receiving_input:
                                     await _finalize_input()
+                                _mark_greeted_from_agent_output()
                                 last_output_text = text
                                 is_partial = not finished
-                                await websocket.send_text(json.dumps({
-                                    "type": "transcription",
-                                    "role": "agent",
-                                    "text": text,
-                                    "partial": is_partial,
-                                }))
+
+                                # Output-level dedup (ADK #3395): suppress
+                                # near-duplicate finished transcriptions
+                                # arriving within 3s of each other.
+                                _is_dup_final = False
+                                if finished:
+                                    _now_f = time.monotonic()
+                                    if (
+                                        _last_final_text
+                                        and (_now_f - _last_final_ts) < 3.0
+                                        and _text_overlap(
+                                            _last_final_text, text
+                                        ) > 0.6
+                                    ):
+                                        _is_dup_final = True
+                                        logger.info(
+                                            "Dedup output: suppressing duplicate "
+                                            "final (%.1fs gap) text=%s",
+                                            _now_f - _last_final_ts,
+                                            text[:80],
+                                        )
+
+                                if not _is_dup_final:
+                                    await websocket.send_text(json.dumps({
+                                        "type": "transcription",
+                                        "role": "agent",
+                                        "text": text,
+                                        "partial": is_partial,
+                                    }))
+                                    _record_voice_transcript("agent", text, is_partial)
                                 # Check partial transcriptions too — if
                                 # Gemini crashes mid-turn the finished event
                                 # never arrives and the promise is lost.
                                 _maybe_register_callback_from_agent_promise(text)
                                 if finished:
-                                    recent_turns.append(("agent", text))
-                                    _session_set("temp:last_agent_turn", text)
+                                    if not _is_dup_final:
+                                        recent_turns.append(("agent", text))
+                                        _session_set(
+                                            "temp:last_agent_turn", text
+                                        )
+                                    _last_final_text = text
+                                    _last_final_ts = time.monotonic()
                                     model_has_spoken = True
                                     last_output_text = ""
                                     output_finalized = True
@@ -820,7 +949,7 @@ async def downstream_task(
                     # Interrupted -> finalize + clear playback
                     if event.interrupted:
                         await _finalize_input()
-                        await _finalize_output()
+                        await _finalize_output(interrupted=True)
                         silence_state.agent_busy = False
                         silence_state.awaiting_agent_response = False
                         await websocket.send_text(json.dumps({
@@ -851,6 +980,7 @@ async def downstream_task(
                                 _persist_transfer_handoff_state(new_agent)
                             current_agent = new_agent
                             _session_set("temp:active_agent", current_agent)
+                            _record_voice_transfer(new_agent)
                             output_finished = bool(
                                 getattr(event.output_transcription, "finished", False)
                             ) if event.output_transcription else False
@@ -889,6 +1019,16 @@ async def downstream_task(
                     if event.turn_complete:
                         await _finalize_input()
                         await _finalize_output()
+                        # Release greeting lock after the first complete
+                        # agent turn so caller audio flows through.
+                        # Also set temp:greeted — in native audio mode the
+                        # after_model callback cannot see audio content, so
+                        # this is the reliable signal that the greeting was
+                        # actually delivered.
+                        if silence_state.greeting_lock_active:
+                            silence_state.greeting_lock_active = False
+                            _session_set("temp:greeted", True)
+                            logger.info("Greeting lock released (first turn complete)")
                         # Anchor silence nudges to when the agent actually finishes,
                         # not when the user last spoke. This avoids check-in nudges
                         # racing right after a long agent response.

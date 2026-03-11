@@ -22,6 +22,26 @@ class TestAgentFactories:
         assert agent.model == "gemini-3-flash-preview"
         assert agent.name == "valuation_agent"
 
+    def test_voice_valuation_agent_includes_cross_channel_media_tool(self):
+        from app.agents.valuation_agent.agent import create_valuation_agent
+
+        agent = create_valuation_agent(model="gemini-3-flash-preview", channel="voice")
+        tool_names = {
+            getattr(tool, "name", getattr(tool, "__name__", str(tool)))
+            for tool in getattr(agent, "tools", [])
+        }
+        assert "request_media_via_whatsapp" in tool_names
+
+    def test_text_valuation_agent_omits_cross_channel_media_tool(self):
+        from app.agents.valuation_agent.agent import create_valuation_agent
+
+        agent = create_valuation_agent(model="gemini-3-flash-preview", channel="text")
+        tool_names = {
+            getattr(tool, "name", getattr(tool, "__name__", str(tool)))
+            for tool in getattr(agent, "tools", [])
+        }
+        assert "request_media_via_whatsapp" not in tool_names
+
     def test_create_booking_agent_uses_given_model(self):
         from app.agents.booking_agent.agent import create_booking_agent
 

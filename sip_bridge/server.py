@@ -28,8 +28,11 @@ from .config import BridgeConfig
 from .gateway_client import GatewayClient
 from .session import CallSession
 from .sip_dialog import (
+    build_sip_bye_request,
     build_sdp_answer,
     build_sip_response,
+    ensure_dialog_to_header,
+    extract_sip_uri,
     parse_sdp_g711,
     parse_sip_request,
 )
@@ -74,6 +77,10 @@ _CALLBACK_CONNECT_GREETING_TEXT = (
     "Start speaking immediately, introduce yourself as ehkaitay, "
     "say you are calling them back, and continue naturally.]"
 )
+# Note: this seed is forwarded through the gateway as a normal text turn, so it
+# must stay neutral. Instruction-like phrasing causes the router to treat the
+# opening seed as customer intent and transfer before the caller speaks.
+_INBOUND_CONNECT_GREETING_TEXT = "[Phone call connected]"
 
 
 @dataclass
@@ -90,6 +97,28 @@ class PrewarmedCallbackSession:
     attached: bool = False
 
 
+@dataclass(slots=True)
+class ActiveSIPDialog:
+    """Minimal in-dialog SIP state for originating a BYE."""
+
+    remote_addr: tuple[str, int]
+    request_uri: str
+    local_from_header: str
+    remote_to_header: str
+    call_id: str
+    next_local_cseq: int
+    contact_uri: str
+
+
+@dataclass(slots=True)
+class PendingByeTransaction:
+    """Track outbound BYE until the far side acknowledges it."""
+
+    cseq: int
+    reason: str
+    remote_addr: tuple[str, int]
+
+
 @dataclass
 class SIPServer:
     """Async UDP SIP server."""
@@ -97,6 +126,8 @@ class SIPServer:
     config: BridgeConfig
     _transport: asyncio.DatagramTransport | None = None
     _active_sessions: dict[str, CallSession] = field(default_factory=dict)
+    _dialogs: dict[str, ActiveSIPDialog] = field(default_factory=dict)
+    _pending_byes: dict[str, PendingByeTransaction] = field(default_factory=dict)
     _prewarmed_callbacks: dict[str, PrewarmedCallbackSession] = field(default_factory=dict)
     _registrar: SIPRegistrar | None = None
     _register_task: asyncio.Task | None = None
@@ -511,6 +542,7 @@ class SIPServer:
             gemini_system_instruction=self.config.system_instruction,
             gemini_voice=self.config.gemini_voice,
             gateway_client=gateway_client,
+            connect_greeting_text=_INBOUND_CONNECT_GREETING_TEXT,
             delay_answer_until_ready=(gateway_client is not None and not outbound_callback_leg),
         )
         self._active_sessions[call_id] = session
@@ -528,10 +560,56 @@ class SIPServer:
 
     def handle_bye(self, call_id: str) -> None:
         """End a call session on BYE."""
+        self._dialogs.pop(call_id, None)
+        self._pending_byes.pop(call_id, None)
         session = self._active_sessions.pop(call_id, None)
         if session:
             session.shutdown()
             logger.info("SIP BYE", extra={"call_id": call_id})
+
+    def request_hangup(self, call_id: str, *, reason: str = "normal") -> None:
+        """Originate SIP BYE for an active dialog and stop the local session."""
+        dialog = self._dialogs.pop(call_id, None)
+        session = self._active_sessions.pop(call_id, None)
+        if session is not None:
+            session.shutdown()
+        if dialog is None:
+            logger.warning(
+                "SIP hangup requested without active dialog call_id=%s reason=%s",
+                call_id,
+                reason,
+            )
+            return
+        transport = self._transport
+        if transport is None:
+            logger.warning(
+                "SIP hangup requested without transport call_id=%s reason=%s",
+                call_id,
+                reason,
+            )
+            return
+        bye_request = build_sip_bye_request(
+            request_uri=dialog.request_uri,
+            local_from_header=dialog.local_from_header,
+            remote_to_header=dialog.remote_to_header,
+            call_id=dialog.call_id,
+            cseq=dialog.next_local_cseq,
+            contact_uri=dialog.contact_uri,
+            via_host=self.config.sip_public_ip,
+            via_port=self.config.sip_port,
+        )
+        transport.sendto(bye_request.encode("utf-8"), dialog.remote_addr)
+        self._pending_byes[call_id] = PendingByeTransaction(
+            cseq=dialog.next_local_cseq,
+            reason=reason,
+            remote_addr=dialog.remote_addr,
+        )
+        logger.info(
+            "SIP BYE sent call_id=%s reason=%s remote=%s",
+            call_id,
+            reason,
+            dialog.remote_addr,
+        )
 
 
 class SIPProtocol(asyncio.DatagramProtocol):
@@ -550,6 +628,27 @@ class SIPProtocol(asyncio.DatagramProtocol):
             if first_line.startswith("SIP/2.0"):
                 if self.server._registrar:
                     self.server._registrar.handle_response(message)
+                response_headers = self._extract_response_headers(message)
+                call_id = response_headers.get("Call-ID", "")
+                cseq_header = response_headers.get("CSeq", "")
+                cseq_parts = cseq_header.split()
+                if call_id and len(cseq_parts) >= 2 and cseq_parts[1].upper() == "BYE":
+                    pending = self.server._pending_byes.get(call_id)
+                    try:
+                        status_code = int(first_line.split()[1])
+                    except (IndexError, ValueError):
+                        status_code = 0
+                    if pending is not None:
+                        if status_code >= 200:
+                            self.server._pending_byes.pop(call_id, None)
+                        log_fn = logger.info if 200 <= status_code < 300 else logger.warning
+                        log_fn(
+                            "SIP BYE acknowledged call_id=%s status=%s reason=%s remote=%s",
+                            call_id,
+                            status_code,
+                            pending.reason,
+                            pending.remote_addr,
+                        )
                 return
 
             if first_line.startswith("INVITE"):
@@ -586,6 +685,9 @@ class SIPProtocol(asyncio.DatagramProtocol):
         call_id = headers.get("Call-ID", "")
         if not call_id:
             return
+        dialog_to_header = ensure_dialog_to_header(headers.get("To", ""))
+        dialog_headers = dict(headers)
+        dialog_headers["To"] = dialog_to_header
 
         # Skip re-INVITEs for existing calls
         if call_id in self.server._active_sessions:
@@ -599,7 +701,13 @@ class SIPProtocol(asyncio.DatagramProtocol):
         contact_uri = self._contact_uri()
 
         # 1. Send 100 Trying immediately
-        trying = build_sip_response(100, "Trying", headers, sdp_body=None, contact_uri=contact_uri)
+        trying = build_sip_response(
+            100,
+            "Trying",
+            dialog_headers,
+            sdp_body=None,
+            contact_uri=contact_uri,
+        )
         transport.sendto(trying.encode("utf-8"), addr)
         logger.info("100 Trying sent", extra={"call_id": call_id})
 
@@ -640,6 +748,7 @@ class SIPProtocol(asyncio.DatagramProtocol):
 
             def _on_done(done_task: asyncio.Task) -> None:
                 self.server._active_sessions.pop(call_id, None)
+                self.server._dialogs.pop(call_id, None)
                 if not done_task.cancelled():
                     exc = done_task.exception()
                     if exc is not None:
@@ -654,13 +763,20 @@ class SIPProtocol(asyncio.DatagramProtocol):
                 law="alaw" if negotiated_codec_name.upper() == "PCMA" else "ulaw",
             )
 
+        session.request_hangup = (
+            lambda reason="normal", _session=session: self.server.request_hangup(
+                _session.call_id,
+                reason=reason,
+            )
+        )
+
         if session.delay_answer_until_ready:
             ready = await session.wait_until_answer_ready(_PREANSWER_READY_TIMEOUT_SEC)
             if not ready and session.startup_failed:
                 response = build_sip_response(
                     503,
                     "Service Unavailable",
-                    headers,
+                    dialog_headers,
                     sdp_body=None,
                     contact_uri=contact_uri,
                 )
@@ -684,8 +800,33 @@ class SIPProtocol(asyncio.DatagramProtocol):
             payload_type=negotiated_payload_type,
             codec_name=negotiated_codec_name,
         )
-        ok_response = build_sip_response(200, "OK", headers, sdp_body=local_sdp, contact_uri=contact_uri)
+        ok_response = build_sip_response(
+            200,
+            "OK",
+            dialog_headers,
+            sdp_body=local_sdp,
+            contact_uri=contact_uri,
+        )
         transport.sendto(ok_response.encode("utf-8"), addr)
+        remote_contact = parsed["headers"].get("Contact") or parsed["headers"].get("contact", "")
+        request_uri = (
+            extract_sip_uri(remote_contact)
+            or extract_sip_uri(headers.get("From", ""))
+            or str(parsed.get("request_uri", "")).strip()
+        )
+        try:
+            invite_cseq_number = int(headers.get("CSeq", "0 INVITE").split()[0])
+        except (AttributeError, IndexError, TypeError, ValueError):
+            invite_cseq_number = 1
+        self.server._dialogs[call_id] = ActiveSIPDialog(
+            remote_addr=addr,
+            request_uri=request_uri,
+            local_from_header=dialog_to_header,
+            remote_to_header=headers.get("From", ""),
+            call_id=call_id,
+            next_local_cseq=invite_cseq_number + 1,
+            contact_uri=contact_uri,
+        )
         session.mark_answered()
         logger.info(
             "200 OK sent",
@@ -721,3 +862,16 @@ class SIPProtocol(asyncio.DatagramProtocol):
             if line.lower().startswith("call-id:"):
                 return line.split(":", 1)[1].strip()
         return None
+
+    @staticmethod
+    def _extract_response_headers(message: str) -> dict[str, str]:
+        """Extract SIP response headers using simple wire parsing."""
+        headers: dict[str, str] = {}
+        for line in message.split("\r\n")[1:]:
+            if not line:
+                break
+            if ":" not in line:
+                continue
+            name, value = line.split(":", 1)
+            headers[name.strip()] = value.strip()
+        return headers

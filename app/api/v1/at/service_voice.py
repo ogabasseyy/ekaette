@@ -54,6 +54,13 @@ _CALLBACK_PREWARM_POLL_SECONDS = max(
     0.1,
     _read_float_env("AT_CALLBACK_PREWARM_POLL_SECONDS", 0.25),
 )
+_CALLBACK_OVERRIDE_SOURCES = frozenset({
+    "manual_callback_request",
+    "voice_ai_auto_callback",
+    "voice_ai_request",
+    "voice_agent_callback_promise",
+    "voice_user_callback_intent",
+})
 
 
 def _callback_collection_name() -> str:
@@ -202,6 +209,25 @@ def _save_callback_request_verified(
     return True
 
 
+def _can_override_callback_cooldown(
+    *,
+    existing: dict[str, object] | None,
+    source: str,
+    trigger_after_hangup: bool,
+) -> bool:
+    """Allow an explicit voice callback request to replace any cooled-down record.
+
+    If the caller is actively asking for a callback again on a fresh voice call,
+    we should honor that request immediately rather than suppressing it because a
+    previous callback attempt recently happened.
+    """
+    if not trigger_after_hangup or source not in _CALLBACK_OVERRIDE_SOURCES:
+        return False
+    if not isinstance(existing, dict):
+        return False
+    return True
+
+
 def register_callback_request(
     *,
     phone: str,
@@ -224,11 +250,28 @@ def register_callback_request(
     existing = _load_callback_request(tenant_id, company_id, normalized_phone)
     cooldown_until = float((existing or {}).get("cooldown_until", 0.0) or 0.0)
     if cooldown_until > now:
-        return {
-            "status": "cooldown",
-            "phone": normalized_phone,
-            "cooldown_until": cooldown_until,
-        }
+        if _can_override_callback_cooldown(
+            existing=existing,
+            source=source,
+            trigger_after_hangup=trigger_after_hangup,
+        ):
+            logger.info(
+                "Overriding queued callback cooldown tenant_id=%s company_id=%s "
+                "phone=%s source=%s existing_source=%s cooldown_until=%s",
+                tenant_id,
+                company_id,
+                normalized_phone,
+                source,
+                (existing or {}).get("source"),
+                cooldown_until,
+            )
+            _delete_callback_request(tenant_id, company_id, normalized_phone)
+        else:
+            return {
+                "status": "cooldown",
+                "phone": normalized_phone,
+                "cooldown_until": cooldown_until,
+            }
 
     payload = {
         "tenant_id": tenant_id,
@@ -411,6 +454,16 @@ async def trigger_callback(
         "provider_result": provider_result,
     }
     _save_callback_request(tenant_id, company_id, normalized_phone, payload)
+    try:
+        from app.api.v1.at import voice_analytics
+
+        voice_analytics.mark_callback_triggered(
+            tenant_id=tenant_id,
+            company_id=company_id,
+            phone=normalized_phone,
+        )
+    except Exception:
+        logger.debug("Voice analytics callback trigger skipped", exc_info=True)
     return {"status": "queued", "phone": normalized_phone, "result": provider_result}
 
 

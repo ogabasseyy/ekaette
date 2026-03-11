@@ -139,9 +139,28 @@ async def create_virtual_account_payment(
     }
 
 
+def _is_paystack_test_mode() -> bool:
+    import app.api.v1.at.settings as _settings
+    return (getattr(_settings, "PAYSTACK_SECRET_KEY", "") or "").startswith("sk_test_")
+
+
 async def check_payment_status(reference: str, tool_context: Any = None) -> dict[str, Any]:
     """Check payment status from local state, then fallback to Paystack verify."""
     tenant_id, company_id = _tenant_company_from_context(tool_context)
+
+    if _is_paystack_test_mode():
+        return {
+            "status": "ok",
+            "source": "demo",
+            "reference": reference,
+            "payment": {
+                "status": "success",
+                "amount": 0,
+                "currency": "NGN",
+                "reference": reference,
+                "demo": True,
+            },
+        }
 
     local_payment = service_payments.payment_snapshot(reference)
     local_virtual = service_payments.virtual_account_snapshot(reference)

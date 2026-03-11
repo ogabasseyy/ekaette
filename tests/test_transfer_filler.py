@@ -72,6 +72,12 @@ class TestVoiceSupplementInstruction:
 
         assert "transfer" in _VOICE_SUPPLEMENT.lower()
 
+    def test_voice_supplement_includes_nigerian_english_style(self):
+        from app.agents.ekaette_router.agent import _VOICE_SUPPLEMENT
+
+        assert "Nigerian English" in _VOICE_SUPPLEMENT
+        assert "Pidgin" in _VOICE_SUPPLEMENT
+
 
 class TestChannelGatingInCallbacks:
     """Step 2: Latency policy gated on app:channel == 'voice'."""
@@ -95,6 +101,8 @@ class TestChannelGatingInCallbacks:
         await before_model_inject_config(callback_context, llm_request)
 
         system_instruction = str(llm_request.config.system_instruction)
+        assert "VOICE STYLE" in system_instruction
+        assert "Nigerian English" in system_instruction
         assert "CRITICAL latency policy" in system_instruction
         assert "tool call or agent transfer" in system_instruction
 
@@ -872,6 +880,30 @@ class TestWatchdogClearingInDownstream:
             "text": "Welcome!",
             "partial": False,
         }]
+
+    @pytest.mark.asyncio
+    async def test_output_transcription_marks_session_greeted(self):
+        ctx = _make_ctx(_FakeWebSocket())
+
+        await _run_downstream_events(
+            _make_live_event(
+                output_transcription=SimpleNamespace(text="Welcome!", finished=False)
+            ),
+            ctx=ctx,
+        )
+
+        assert ctx.session_state["temp:greeted"] is True
+
+    @pytest.mark.asyncio
+    async def test_audio_output_marks_session_greeted(self):
+        ctx = _make_ctx(_FakeWebSocket())
+
+        await _run_downstream_events(
+            _make_content_event(audio_bytes=b"\x00\x01"),
+            ctx=ctx,
+        )
+
+        assert ctx.session_state["temp:greeted"] is True
 
     @pytest.mark.asyncio
     async def test_interrupted_clears_watchdog(self):

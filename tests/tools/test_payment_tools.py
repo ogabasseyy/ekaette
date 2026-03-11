@@ -54,3 +54,42 @@ class TestCreateVirtualAccountPaymentTool:
         assert mock_create.await_args.kwargs["phone"] == "+2348012345678"
         assert mock_sms.await_args.kwargs["phone"] == "+2348012345678"
         assert mock_sms.await_args.kwargs["sender_id"] == "Awgabassey"
+
+
+class TestCheckPaymentStatusDemoMode:
+    """check_payment_status returns simulated success when Paystack test keys are active."""
+
+    @pytest.mark.asyncio
+    async def test_returns_simulated_success_with_test_key(self):
+        from app.tools.payment_tools import check_payment_status
+
+        ctx = SimpleNamespace(
+            state={
+                "app:tenant_id": "public",
+                "app:company_id": "ekaette-electronics",
+            }
+        )
+        with patch("app.tools.payment_tools._is_paystack_test_mode", return_value=True):
+            result = await check_payment_status("ref-demo-001", tool_context=ctx)
+        assert result["status"] == "ok"
+        assert result["source"] == "demo"
+        assert result["payment"]["status"] == "success"
+        assert result["reference"] == "ref-demo-001"
+
+    @pytest.mark.asyncio
+    async def test_live_key_does_not_trigger_demo_mode(self):
+        from app.tools.payment_tools import check_payment_status
+
+        ctx = SimpleNamespace(
+            state={
+                "app:tenant_id": "public",
+                "app:company_id": "ekaette-electronics",
+            }
+        )
+        with (
+            patch("app.tools.payment_tools._is_paystack_test_mode", return_value=False),
+            patch("app.tools.payment_tools.service_payments.verify_transaction", new_callable=AsyncMock) as mock_verify,
+        ):
+            mock_verify.return_value = {"payment": {"status": "success", "tenant_id": "public", "company_id": "ekaette-electronics"}, "processed": True}
+            result = await check_payment_status("ref-live-001", tool_context=ctx)
+        assert result["source"] == "gateway"

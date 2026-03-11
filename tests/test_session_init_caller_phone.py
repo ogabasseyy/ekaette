@@ -230,6 +230,10 @@ class TestInitializeSession:
 
         assert ctx is not None
         assert ctx.caller_phone == ""
+        assert ctx.session_state["temp:pending_handoff_target_agent"] == ""
+        assert ctx.session_state["temp:pending_handoff_latest_user"] == ""
+        assert ctx.session_state["temp:pending_handoff_latest_agent"] == ""
+        assert ctx.session_state["temp:pending_handoff_recent_customer_context"] == ""
 
     @pytest.mark.asyncio
     async def test_resumed_session_adds_missing_caller_phone_via_state_save(
@@ -274,6 +278,10 @@ class TestInitializeSession:
         runtime.async_save_session_state.assert_awaited_once()
         save_kwargs = runtime.async_save_session_state.await_args.kwargs
         assert save_kwargs["state_updates"] == {
+            "temp:pending_handoff_target_agent": "",
+            "temp:pending_handoff_latest_user": "",
+            "temp:pending_handoff_latest_agent": "",
+            "temp:pending_handoff_recent_customer_context": "",
             "app:tenant_id": "public",
             "app:channel": "voice",
             "app:user_id": "sip-user-123",
@@ -285,6 +293,10 @@ class TestInitializeSession:
         assert ctx.session_state["app:user_id"] == "sip-user-123"
         assert ctx.session_state["app:session_id"] == "session-abc"
         assert ctx.session_state["user:caller_phone"] == "+2348012345678"
+        assert ctx.session_state["temp:pending_handoff_target_agent"] == ""
+        assert ctx.session_state["temp:pending_handoff_latest_user"] == ""
+        assert ctx.session_state["temp:pending_handoff_latest_agent"] == ""
+        assert ctx.session_state["temp:pending_handoff_recent_customer_context"] == ""
         payload = json.loads(websocket.sent_texts[-1])
         assert payload["type"] == "session_started"
         assert payload["sessionState"]["app:tenant_id"] == "public"
@@ -320,6 +332,26 @@ class TestInitializeSession:
         assert ctx is not None
         assert ctx.live_session_resumption_enabled is True
         assert ctx.run_config.session_resumption.handle == "resume-123"
+
+    @pytest.mark.asyncio
+    async def test_vertex_backend_wires_session_resumption_without_token(
+        self, monkeypatch, session_init_runtime
+    ):
+        monkeypatch.setenv("GOOGLE_GENAI_USE_VERTEXAI", "true")
+        session_init_runtime()
+        websocket = _FakeWebSocket(
+            query_params={
+                "industry": "electronics",
+                "companyId": "Acme-Co",
+            }
+        )
+
+        ctx = await session_init.initialize_session(websocket, "sip-user-123", "session-abc")
+
+        assert ctx is not None
+        assert ctx.live_session_resumption_enabled is True
+        assert isinstance(ctx.run_config.session_resumption, _FakeSessionResumptionConfig)
+        assert ctx.run_config.session_resumption.handle is None
 
     @pytest.mark.asyncio
     async def test_resumption_token_is_ignored_on_gemini_api_backend(

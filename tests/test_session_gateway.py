@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
 from unittest.mock import AsyncMock
 
@@ -642,6 +643,24 @@ class TestServerHandleInviteGateway:
         assert session.gateway_client.caller_phone == "+2348012345678"
         assert session.gateway_client.user_id.startswith("phone-")
 
+    def test_handle_invite_gateway_uses_neutral_inbound_greeting_seed(self):
+        """Gateway mode seeds a neutral inbound turn so the router does not transfer early."""
+        from sip_bridge.server import SIPServer
+
+        config = self._make_config(
+            gateway_mode=True,
+            gateway_ws_url="wss://ekaette.run.app",
+            gateway_ws_secret="shared-hmac-secret",
+        )
+        server = SIPServer(config=config)
+        session = server.handle_invite(
+            "call-greeting-seed",
+            ("1.2.3.4", 5060),
+            sip_from_header='"User" <sip:+2348012345678@example.com>',
+        )
+
+        assert session.connect_greeting_text == "[Phone call connected]"
+
     def test_handle_invite_outbound_callback_skips_preanswer_delay(self, monkeypatch):
         """Recent outbound callback hints should fast-answer the AT SIP leg."""
         from sip_bridge.server import SIPServer
@@ -1083,3 +1102,300 @@ class TestServerDoneCallback:
 
         assert "SIP/2.0 200 OK" in sent_messages
         assert fake_session.answered is True
+
+    def test_bye_response_logs_ack_and_clears_pending(self, caplog):
+        from sip_bridge.server import PendingByeTransaction, SIPProtocol, SIPServer
+
+        server = SIPServer(config=self._make_config())
+        protocol = SIPProtocol(server)
+        server._pending_byes["call-bye-1"] = PendingByeTransaction(
+            cseq=2,
+            reason="callback_registered",
+            remote_addr=("1.2.3.4", 5060),
+        )
+
+        with caplog.at_level(logging.INFO):
+            protocol.datagram_received(
+                (
+                    "SIP/2.0 200 OK\r\n"
+                    "Call-ID: call-bye-1\r\n"
+                    "CSeq: 2 BYE\r\n"
+                    "Content-Length: 0\r\n\r\n"
+                ).encode(),
+                ("1.2.3.4", 5060),
+            )
+
+        assert "SIP BYE acknowledged" in caplog.text
+        assert "call-bye-1" not in server._pending_byes
+
+
+# ---------------------------------------------------------------------------
+# Greeting lock: data-driven release via outbound RTP drain
+# ---------------------------------------------------------------------------
+
+class TestGreetingLockDrainRelease:
+    """Greeting lock releases when outbound audio stops flowing, not on a timer."""
+
+    @pytest.mark.asyncio
+    async def test_greeting_lock_releases_after_outbound_drain(self):
+        """Lock releases when no RTP sent for >0.5s after agent_status=idle."""
+        s = CallSession(call_id="c1", tenant_id="public", company_id="acme")
+        s._greeting_lock_active = True
+        s._greeting_lock_pending_release = True
+        s._greeting_lock_safety_deadline = time.monotonic() + 10.0
+        # Simulate last RTP frame sent 0.6s ago
+        s._last_outbound_rtp_sent_at = time.monotonic() - 0.6
+
+        mock_client = MockGatewayClient()
+        sent = []
+
+        async def send_and_stop(data):
+            sent.append(data)
+            s._shutdown.set()
+
+        mock_client.send_audio = send_and_stop
+        s.gateway_client = mock_client
+
+        pcm16 = b"\x01\x02" * 320
+        await s._gemini_in_queue.put(pcm16)
+        await s._gateway_send_loop()
+
+        # Lock should have been released — real audio sent, not silence
+        assert s._greeting_lock_active is False
+        assert s._greeting_lock_pending_release is False
+        assert sent[0] == pcm16
+
+    @pytest.mark.asyncio
+    async def test_greeting_lock_holds_while_outbound_still_sending(self):
+        """Lock stays active when RTP was sent recently (<0.5s ago)."""
+        s = CallSession(call_id="c1", tenant_id="public", company_id="acme")
+        s._greeting_lock_active = True
+        s._greeting_lock_pending_release = True
+        s._greeting_lock_safety_deadline = time.monotonic() + 10.0
+        # Last RTP sent just 0.1s ago — still draining
+        s._last_outbound_rtp_sent_at = time.monotonic() - 0.1
+
+        mock_client = MockGatewayClient()
+        sent = []
+
+        async def send_and_stop(data):
+            sent.append(data)
+            s._shutdown.set()
+
+        mock_client.send_audio = send_and_stop
+        s.gateway_client = mock_client
+
+        pcm16 = b"\x01\x02" * 320
+        await s._gemini_in_queue.put(pcm16)
+        await s._gateway_send_loop()
+
+        # Lock still active — silence sent, not real audio
+        assert s._greeting_lock_active is True
+        assert sent[0] == SILENCE_FRAME
+
+    @pytest.mark.asyncio
+    async def test_greeting_lock_safety_timeout_releases(self):
+        """Safety deadline releases lock even if no RTP was ever sent."""
+        s = CallSession(call_id="c1", tenant_id="public", company_id="acme")
+        s._greeting_lock_active = True
+        s._greeting_lock_pending_release = True
+        # Safety deadline already passed
+        s._greeting_lock_safety_deadline = time.monotonic() - 1.0
+        # No outbound RTP ever sent
+        s._last_outbound_rtp_sent_at = 0.0
+
+        mock_client = MockGatewayClient()
+        sent = []
+
+        async def send_and_stop(data):
+            sent.append(data)
+            s._shutdown.set()
+
+        mock_client.send_audio = send_and_stop
+        s.gateway_client = mock_client
+
+        pcm16 = b"\x01\x02" * 320
+        await s._gemini_in_queue.put(pcm16)
+        await s._gateway_send_loop()
+
+        # Safety timeout fired — lock released
+        assert s._greeting_lock_active is False
+        assert sent[0] == pcm16
+
+    @pytest.mark.asyncio
+    async def test_agent_status_idle_sets_pending_release_with_safety_deadline(self):
+        """agent_status:idle should defer release, not release immediately."""
+        from sip_bridge.gateway_client import GatewayFrame
+
+        s = CallSession(call_id="c1", tenant_id="public", company_id="acme")
+        s._greeting_lock_active = True
+        mock_client = MockGatewayClient()
+        mock_client._frames_to_yield = [
+            GatewayFrame(
+                is_audio=False,
+                text_data=json.dumps({"type": "agent_status", "status": "idle"}),
+            ),
+        ]
+        s.gateway_client = mock_client
+
+        await s._gateway_recv_loop()
+
+        # Lock still active — only pending release set
+        assert s._greeting_lock_active is True
+        assert s._greeting_lock_pending_release is True
+        assert s._greeting_lock_safety_deadline > time.monotonic()
+
+    @pytest.mark.asyncio
+    async def test_interrupted_clears_greeting_lock_immediately(self):
+        """interrupted event should clear lock and pending release instantly."""
+        from sip_bridge.gateway_client import GatewayFrame
+
+        s = CallSession(call_id="c1", tenant_id="public", company_id="acme")
+        s._greeting_lock_active = True
+        s._greeting_lock_pending_release = True
+        mock_client = MockGatewayClient()
+        mock_client._frames_to_yield = [
+            GatewayFrame(
+                is_audio=False,
+                text_data=json.dumps({"type": "interrupted"}),
+            ),
+        ]
+        s.gateway_client = mock_client
+
+        await s._gateway_recv_loop()
+
+        assert s._greeting_lock_active is False
+        assert s._greeting_lock_pending_release is False
+
+
+class TestCallbackEndAfterSpeaking:
+    """Callback acknowledgement should end the call after speech drains."""
+
+    @pytest.mark.asyncio
+    async def test_call_control_end_after_speaking_sets_shutdown_after_idle_and_drain(self):
+        from sip_bridge.gateway_client import GatewayFrame
+
+        s = CallSession(call_id="c1", tenant_id="public", company_id="acme")
+        hangups: list[str] = []
+        s.request_hangup = lambda reason: hangups.append(reason)
+        mock_client = MockGatewayClient()
+        mock_client._frames_to_yield = [
+            GatewayFrame(
+                is_audio=False,
+                text_data=json.dumps(
+                    {
+                        "type": "call_control",
+                        "action": "end_after_speaking",
+                        "reason": "callback_registered",
+                    }
+                ),
+            ),
+            GatewayFrame(is_audio=True, audio_data=b"\x00" * 960),
+            GatewayFrame(
+                is_audio=False,
+                text_data=json.dumps({"type": "agent_status", "status": "idle"}),
+            ),
+        ]
+        s.gateway_client = mock_client
+
+        await s._gateway_recv_loop()
+
+        assert s._end_after_speaking_pending is True
+        assert s._end_after_speaking_audio_seen is True
+        assert s._end_after_speaking_idle_seen is True
+
+        s._last_outbound_rtp_sent_at = time.monotonic() - 0.6
+        s._maybe_finish_end_after_speaking()
+
+        assert s._shutdown.is_set() is True
+        assert hangups == ["outbound audio drained"]
+
+    @pytest.mark.asyncio
+    async def test_call_control_end_after_speaking_times_out_without_audio(self):
+        from sip_bridge.gateway_client import GatewayFrame
+
+        s = CallSession(call_id="c1", tenant_id="public", company_id="acme")
+        hangups: list[str] = []
+        s.request_hangup = lambda reason: hangups.append(reason)
+        mock_client = MockGatewayClient()
+        mock_client._frames_to_yield = [
+            GatewayFrame(
+                is_audio=False,
+                text_data=json.dumps(
+                    {
+                        "type": "call_control",
+                        "action": "end_after_speaking",
+                        "reason": "callback_registered",
+                    }
+                ),
+            ),
+            GatewayFrame(
+                is_audio=False,
+                text_data=json.dumps({"type": "agent_status", "status": "idle"}),
+            ),
+        ]
+        s.gateway_client = mock_client
+
+        await s._gateway_recv_loop()
+
+        assert s._end_after_speaking_audio_seen is False
+        s._end_after_speaking_deadline = time.monotonic() - 0.1
+        s._maybe_finish_end_after_speaking()
+
+        assert s._shutdown.is_set() is True
+        assert hangups == ["safety timeout"]
+
+
+class TestInputDenoise:
+    def test_webrtc_apm_processes_20ms_frame_in_two_10ms_chunks(self):
+        s = CallSession(call_id="c1", tenant_id="public", company_id="acme")
+
+        class _FakeAPM:
+            def __init__(self):
+                self.calls: list[bytes] = []
+
+            def process_stream(self, chunk: bytes) -> bytes:
+                self.calls.append(chunk)
+                return chunk
+
+        fake_apm = _FakeAPM()
+        s._webrtc_apm = fake_apm
+        s._webrtc_apm_frame_size_bytes = 320
+
+        frame = b"\x01\x00" * 320
+        denoised = s._apply_input_denoise(frame)
+
+        assert denoised == frame
+        assert len(fake_apm.calls) == 2
+        assert all(len(chunk) == 320 for chunk in fake_apm.calls)
+
+    def test_noise_gate_attenuates_quiet_frames(self):
+        s = CallSession(call_id="c1", tenant_id="public", company_id="acme")
+        s._webrtc_apm = None
+        s._denoise_enabled = True
+        s._noise_floor_rms = 100.0
+        s._noise_gate_multiplier = 1.5
+        s._noise_gate_min_rms = 100.0
+        s._noise_gate_attack_rms = 200.0
+        s._noise_gate_attenuation = 0.1
+
+        quiet = (10).to_bytes(2, "little", signed=True) * 320
+        denoised = s._apply_input_denoise(quiet)
+
+        assert denoised != quiet
+        assert s._noise_gate_suppressed_frames == 1
+
+    def test_noise_gate_keeps_strong_speech(self):
+        s = CallSession(call_id="c1", tenant_id="public", company_id="acme")
+        s._webrtc_apm = None
+        s._denoise_enabled = True
+        s._noise_floor_rms = 100.0
+        s._noise_gate_multiplier = 1.5
+        s._noise_gate_min_rms = 100.0
+        s._noise_gate_attack_rms = 200.0
+        s._noise_gate_attenuation = 0.1
+
+        loud = (1000).to_bytes(2, "little", signed=True) * 320
+        denoised = s._apply_input_denoise(loud)
+
+        assert denoised == loud

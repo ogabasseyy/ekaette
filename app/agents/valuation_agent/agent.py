@@ -16,6 +16,7 @@ from app.agents.callbacks import (
 )
 from app.configs.model_resolver import resolve_live_model_id
 from app.tools.callback_tools import request_callback
+from app.tools.cross_channel_tools import request_media_via_whatsapp
 from app.tools.sms_messaging import send_sms_message
 from app.tools.wa_messaging import send_whatsapp_message
 from app.tools.knowledge_tools import (
@@ -77,8 +78,13 @@ _INSTRUCTION = """You assess item condition, calculate trade-in value, and handl
     When a customer wants to swap their old device for a new one (e.g. "swap my 14 Pro for a 15 Pro Max"):
     1. First, you NEED a photo of their old device to assess its condition.
        If you haven't received vision analysis results yet, ask the customer to send a photo:
-       "To give you an accurate trade-in value, I'll need to see your device. Could you send me a photo?"
-       The vision_agent will analyze it and pass the results back to you.
+       "To give you an accurate trade-in value, I'll need to see your device."
+       On voice calls, do NOT ask them to describe it verbally — use request_media_via_whatsapp
+       with reason="trade_in_photo_requested" and a concise summary of the current conversation.
+       Tell them you'll send a WhatsApp message right away and they should reply there with
+       a quick video or some photos. The WhatsApp media session will continue from the
+       same conversation context; they should not need to repeat themselves.
+       The vision_agent will analyze the media and pass the results back to you.
     2. Once you have the vision analysis, complete the trade-in valuation of their OLD device (steps above)
     3. Ask which storage size they want for the NEW device — this makes the interaction
        feel more personal and affects the price. Products have storage_variants with
@@ -155,6 +161,7 @@ _CALLBACKS = dict(
 def _tools_for_channel(channel: str) -> list[object]:
     tools = list(_BASE_TOOLS)
     if channel == "voice":
+        tools.append(request_media_via_whatsapp)
         tools.append(request_callback)
         tools.append(send_sms_message)
         tools.append(send_whatsapp_message)
@@ -168,6 +175,7 @@ def create_valuation_agent(model: str, *, channel: str = "voice") -> Agent:
     return Agent(
         name="valuation_agent",
         model=model,
+        description="Assesses device condition, calculates trade-in and market values, and handles swap/upgrade pricing.",
         instruction=_INSTRUCTION,
         generate_content_config=_THINKING_CONFIG,
         tools=_tools_for_channel(channel),
