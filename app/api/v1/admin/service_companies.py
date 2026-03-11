@@ -23,6 +23,7 @@ def _admin_company_payload(
     company_id: str,
     industry_template_id: str,
     display_name: str,
+    spoken_name: str | None,
     status: str,
     connectors: dict[str, object],
     overview: str | None,
@@ -36,6 +37,7 @@ def _admin_company_payload(
         "company_id": company_id,
         "industry_template_id": industry_template_id,
         "display_name": display_name,
+        "spoken_name": (spoken_name or "").strip(),
         "status": status,
         "connectors": connectors,
         "overview": (overview or "").strip(),
@@ -53,6 +55,7 @@ def _admin_company_response(
 ) -> dict[str, object]:
     company = raw_company if isinstance(raw_company, dict) else {}
     display_name = company.get("display_name") or company.get("name") or company_id
+    spoken_name = company.get("spoken_name") or company.get("name") or display_name
     template_id = _m._normalize_template_id(company.get("industry_template_id")) or ""
     status = str(company.get("status") or "active").strip().lower() or "active"
     connectors = company.get("connectors")
@@ -64,6 +67,7 @@ def _admin_company_response(
         "tenantId": tenant_id,
         "templateId": template_id,
         "displayName": str(display_name),
+        "spokenName": str(spoken_name),
         "status": status,
         "connectors": connectors if isinstance(connectors, dict) else {},
         "inventorySync": inventory_sync if isinstance(inventory_sync, dict) else {},
@@ -161,6 +165,7 @@ async def _upsert_registry_company_doc(
     tenant_id: str,
     company_id: str,
     display_name: str,
+    spoken_name: str | None,
     industry_template_id: str,
     status: str,
     connectors: dict[str, object],
@@ -197,6 +202,7 @@ async def _upsert_registry_company_doc(
         "company_id": company_id,
         "industry_template_id": industry_template_id,
         "display_name": display_name,
+        "spoken_name": (spoken_name or "").strip(),
         "status": status,
         "connectors": connectors,
         "overview": overview.strip(),

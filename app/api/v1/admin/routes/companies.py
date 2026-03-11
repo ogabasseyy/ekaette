@@ -70,6 +70,7 @@ async def upsert_admin_company_route(
         )
     industry_template_id = _m._normalize_template_id(payload.industry_template_id) or ""
     display_name = payload.display_name.strip()
+    spoken_name = payload.spoken_name.strip() if isinstance(payload.spoken_name, str) else ""
     status = payload.status.strip().lower()
     connectors = payload.connectors if isinstance(payload.connectors, dict) else {}
     facts = payload.facts if isinstance(payload.facts, dict) else {}
@@ -109,6 +110,7 @@ async def upsert_admin_company_route(
             "companyId": company_id,
             "industryTemplateId": industry_template_id,
             "displayName": display_name,
+            "spokenName": spoken_name,
             "status": status,
             "connectors": connectors,
             "facts": facts,
@@ -162,6 +164,7 @@ async def upsert_admin_company_route(
             tenant_id=tenant_id,
             company_id=company_id,
             display_name=display_name,
+            spoken_name=spoken_name,
             industry_template_id=industry_template_id,
             status=status,
             connectors=connectors,
@@ -400,6 +403,11 @@ async def update_admin_company_route(
         if isinstance(payload.display_name, str)
         else str(company_doc.get("display_name") or company_doc.get("name") or normalized_company_id)
     )
+    next_spoken_name = (
+        payload.spoken_name.strip()
+        if isinstance(payload.spoken_name, str)
+        else str(company_doc.get("spoken_name") or company_doc.get("name") or next_display_name)
+    )
     next_template_id = (
         _m._normalize_template_id(payload.industry_template_id)
         if isinstance(payload.industry_template_id, str)
@@ -489,6 +497,7 @@ async def update_admin_company_route(
             "tenantId": tenant_id,
             "companyId": normalized_company_id,
             "displayName": next_display_name,
+            "spokenName": next_spoken_name,
             "industryTemplateId": next_template_id,
             "status": next_status,
             "connectors": next_connectors,
@@ -507,6 +516,7 @@ async def update_admin_company_route(
         company_id=normalized_company_id,
         industry_template_id=next_template_id,
         display_name=next_display_name,
+        spoken_name=next_spoken_name,
         status=next_status,
         connectors=next_connectors if isinstance(next_connectors, dict) else {},
         overview=next_overview,

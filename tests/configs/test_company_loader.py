@@ -25,6 +25,8 @@ class TestLoadCompanyProfile:
         profile = await load_company_profile(None, "ekaette-electronics")
         assert profile["company_id"] == "ekaette-electronics"
         assert profile["name"] == "Awgabassey Gadgets"
+        assert profile["display_name"] == "Ogabassey Gadgets"
+        assert profile["spoken_name"] == "Awgabassey Gadgets"
         assert profile["facts"]["support_hours"] == "09:00-19:00"
 
     @pytest.mark.asyncio
@@ -74,6 +76,7 @@ class TestLoadCompanyProfile:
                     "tenant_id": "public",
                     "industry_template_id": "telecom",
                     "display_name": "Ekaette Telecom",
+                    "spoken_name": "Ekaette Telecom",
                     "overview": "Customer support and plan sales.",
                     "facts": {"support_hours": "24/7"},
                     "links": [{"label": "Home", "url": "https://example.com"}],
@@ -87,6 +90,8 @@ class TestLoadCompanyProfile:
         mock_db.collection.assert_not_called()
         assert profile["company_id"] == "ekaette-telecom"
         assert profile["name"] == "Ekaette Telecom"
+        assert profile["display_name"] == "Ekaette Telecom"
+        assert profile["spoken_name"] == "Ekaette Telecom"
         assert profile["overview"] == "Customer support and plan sales."
         assert profile["facts"]["support_hours"] == "24/7"
         assert profile["system_connectors"]["crm"]["provider"] == "mock-crm"
@@ -293,10 +298,31 @@ class TestBuildCompanySessionState:
         )
 
         assert state["app:company_id"] == "acme-hotel"
+        assert state["app:company_name"] == "Acme Grand Hotel"
+        assert state["app:company_spoken_name"] == "Acme Grand Hotel"
         assert state["app:company_profile"]["name"] == "Acme Grand Hotel"
         assert state["app:company_knowledge"][0]["id"] == "kb-1"
         for key in state:
             assert key.startswith("app:")
+
+    def test_preserves_display_and_spoken_company_names_separately(self):
+        from app.configs.company_loader import build_company_session_state
+
+        state = build_company_session_state(
+            company_id="ekaette-electronics",
+            profile={
+                "company_id": "ekaette-electronics",
+                "display_name": "Ogabassey Gadgets",
+                "spoken_name": "Awgabassey Gadgets",
+                "name": "Awgabassey Gadgets",
+            },
+            knowledge=[],
+        )
+
+        assert state["app:company_name"] == "Ogabassey Gadgets"
+        assert state["app:company_spoken_name"] == "Awgabassey Gadgets"
+        assert state["app:company_profile"]["display_name"] == "Ogabassey Gadgets"
+        assert state["app:company_profile"]["spoken_name"] == "Awgabassey Gadgets"
 
     def test_tolerates_invalid_profile_and_knowledge_inputs(self):
         from app.configs.company_loader import build_company_session_state

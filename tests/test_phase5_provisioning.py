@@ -209,7 +209,8 @@ EKAETTE_ELECTRONICS_COMPANY = {
     "company_id": "ekaette-electronics",
     "tenant_id": "public",
     "industry_template_id": "electronics",
-    "display_name": "Awgabassey Gadgets",
+    "display_name": "Ogabassey Gadgets",
+    "spoken_name": "Awgabassey Gadgets",
     "overview": "Trade-in focused electronics store.",
     "facts": {"primary_location": "Lagos - Ikeja"},
     "links": [],
@@ -408,7 +409,7 @@ class TestProvisionCompany:
         assert result["operation"] == "created"
         company = db.get_doc("tenants/public/companies/ekaette-electronics")
         assert company is not None
-        assert company["display_name"] == "Awgabassey Gadgets"
+        assert company["display_name"] == "Ogabassey Gadgets"
 
     def test_provision_company_rejects_missing_required_fields(self):
         """provision-company rejects companies missing required fields."""
@@ -1560,7 +1561,7 @@ class TestMigrateTenantScoped:
         assert result["migrated"] == 1
         company = db.get_doc("tenants/public/companies/ekaette-electronics")
         assert company is not None
-        assert company["display_name"] == "Awgabassey Gadgets"
+        assert company["display_name"] == "Ogabassey Gadgets"
         assert company["industry_template_id"] == "electronics"
         assert company["tenant_id"] == "public"
 

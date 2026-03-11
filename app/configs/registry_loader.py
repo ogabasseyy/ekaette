@@ -631,7 +631,7 @@ def _build_onboarding_config_compat(tenant_id: str) -> dict[str, Any]:
         companies.append({
             "id": company_id,
             "templateId": template_id,
-            "displayName": profile.get("name", company_id),
+            "displayName": profile.get("display_name") or profile.get("name") or company_id,
         })
 
     return {

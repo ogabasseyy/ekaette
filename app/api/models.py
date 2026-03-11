@@ -19,6 +19,7 @@ class AdminCompanyUpsertPayload(BaseModel):
         pattern=r"^[A-Za-z0-9_-]+$",
     )
     display_name: str = Field(alias="displayName", min_length=2, max_length=120)
+    spoken_name: str | None = Field(default=None, alias="spokenName", min_length=2, max_length=120)
     industry_template_id: str = Field(
         alias="industryTemplateId",
         min_length=2,
@@ -39,6 +40,7 @@ class AdminCompanyUpdatePayload(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
     display_name: str | None = Field(default=None, alias="displayName", min_length=2, max_length=120)
+    spoken_name: str | None = Field(default=None, alias="spokenName", min_length=2, max_length=120)
     industry_template_id: str | None = Field(
         default=None,
         alias="industryTemplateId",

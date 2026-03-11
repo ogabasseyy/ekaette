@@ -3,7 +3,8 @@
   "company_id": "ekaette-electronics",
   "tenant_id": "public",
   "industry_template_id": "electronics",
-  "display_name": "Awgabassey Gadgets",
+  "display_name": "Ogabassey Gadgets",
+  "spoken_name": "Awgabassey Gadgets",
   "overview": "Trade-ins, valuation, negotiation, pickup booking.",
   "facts": {
     "flagship_product": "iPhone trade-ins",

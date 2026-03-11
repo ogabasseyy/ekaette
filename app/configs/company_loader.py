@@ -36,6 +36,8 @@ DEFAULT_COMPANY_PROFILE: dict[str, Any] = {
 
 LOCAL_COMPANY_PROFILES: dict[str, dict[str, Any]] = {
     "ekaette-electronics": {
+        "display_name": "Ogabassey Gadgets",
+        "spoken_name": "Awgabassey Gadgets",
         "name": "Awgabassey Gadgets",
         "overview": "Trade-in focused electronics store serving Lagos and Abuja.",
         "facts": {
@@ -247,9 +249,23 @@ def _normalize_profile(company_id: str, raw: Any) -> dict[str, Any]:
         profile = {}
     profile["company_id"] = (company_id or "default").strip().lower() or "default"
 
-    name = profile.get("name")
-    if not isinstance(name, str) or not name.strip():
-        profile["name"] = "Demo Company"
+    raw_name = profile.get("name")
+    name = raw_name.strip() if isinstance(raw_name, str) else ""
+
+    raw_display_name = profile.get("display_name")
+    display_name = raw_display_name.strip() if isinstance(raw_display_name, str) else ""
+    if not display_name:
+        display_name = name or "Demo Company"
+
+    raw_spoken_name = profile.get("spoken_name")
+    spoken_name = raw_spoken_name.strip() if isinstance(raw_spoken_name, str) else ""
+    if not spoken_name:
+        spoken_name = name or display_name or "Demo Company"
+
+    profile["display_name"] = display_name
+    profile["spoken_name"] = spoken_name
+    # Preserve legacy "name" as the spoken form for existing voice-grounding paths.
+    profile["name"] = spoken_name
 
     overview = profile.get("overview")
     if not isinstance(overview, str):
@@ -277,9 +293,17 @@ def _normalize_registry_company_profile(
     if not isinstance(raw_company, dict):
         return _normalize_profile(company_id, {})
 
+    display_name = raw_company.get("display_name") or raw_company.get("name")
+    spoken_name = (
+        raw_company.get("spoken_name")
+        or raw_company.get("voice_name")
+        or display_name
+    )
     projected = {
         "company_id": company_id,
-        "name": raw_company.get("display_name") or raw_company.get("name"),
+        "name": spoken_name,
+        "display_name": display_name,
+        "spoken_name": spoken_name,
         "overview": raw_company.get("overview"),
         "facts": raw_company.get("facts"),
         "links": raw_company.get("links"),
@@ -590,10 +614,16 @@ def build_company_session_state(
         if item.get("text") or item.get("title")
     ]
 
-    company_name = str(normalized_profile.get("name", "")).strip() or "Company"
+    company_display_name = str(
+        normalized_profile.get("display_name") or normalized_profile.get("name") or ""
+    ).strip() or "Company"
+    company_spoken_name = str(
+        normalized_profile.get("spoken_name") or normalized_profile.get("name") or company_display_name
+    ).strip() or company_display_name
     return {
         "app:company_id": normalized_id,
-        "app:company_name": company_name,
+        "app:company_name": company_display_name,
+        "app:company_spoken_name": company_spoken_name,
         "app:company_profile": normalized_profile,
         "app:company_knowledge": normalized_knowledge,
     }

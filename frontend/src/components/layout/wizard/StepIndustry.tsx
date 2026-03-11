@@ -70,6 +70,26 @@ function resolveTemplateDisplayLabel(option: IndustryTemplateMeta): string {
   return option.label
 }
 
+function normalizeCompanyIdInput(rawValue: string, fallbackCompanyId: string): string {
+  const normalized = rawValue
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .replace(/-{2,}/g, '-')
+  return normalized || fallbackCompanyId
+}
+
+function resolveCompanyInputValue(
+  companyId: string,
+  companies: OnboardingCompanyMeta[],
+  fallbackCompanyId: string,
+): string {
+  const matched = companies.find(company => company.id === companyId)
+  if (matched) return matched.displayName
+  return companyId || fallbackCompanyId
+}
+
 interface StepIndustryProps {
   templates?: IndustryTemplateMeta[]
   companies?: OnboardingCompanyMeta[]
@@ -107,6 +127,15 @@ export function StepIndustry({
       ? defaultCompanyId
       : (availableCompanies[0]?.id ?? fallbackCompanyId),
   )
+  const [companyInputValue, setCompanyInputValue] = useState<string>(() =>
+    resolveCompanyInputValue(
+      defaultCompanyId && availableCompanies.some(c => c.id === defaultCompanyId)
+        ? defaultCompanyId
+        : (availableCompanies[0]?.id ?? fallbackCompanyId),
+      availableCompanies,
+      fallbackCompanyId,
+    ),
+  )
 
   useEffect(() => {
     if (
@@ -132,8 +161,16 @@ export function StepIndustry({
       fallbackCompanyId
     if (!availableCompanies.some(c => c.id === selectedCompanyId)) {
       setSelectedCompanyId(nextCompanyId)
+      setCompanyInputValue(resolveCompanyInputValue(nextCompanyId, availableCompanies, fallbackCompanyId))
     }
   }, [availableCompanies, defaultCompanyId, fallbackCompanyId, selectedCompanyId])
+
+  useEffect(() => {
+    const matchedCompany = availableCompanies.find(company => company.id === selectedCompanyId)
+    if (matchedCompany && companyInputValue !== matchedCompany.displayName) {
+      setCompanyInputValue(matchedCompany.displayName)
+    }
+  }, [availableCompanies, companyInputValue, selectedCompanyId])
 
   return (
     <>
@@ -181,8 +218,20 @@ export function StepIndustry({
           id="vendor-company"
           type="text"
           aria-label="Company Name"
-          value={selectedCompanyId}
-          onChange={event => setSelectedCompanyId(event.target.value)}
+          value={companyInputValue}
+          onChange={event => {
+            const nextValue = event.target.value
+            const normalizedValue = nextValue.trim().toLowerCase()
+            const matchedCompany = availableCompanies.find(
+              company =>
+                company.displayName.trim().toLowerCase() === normalizedValue ||
+                company.id.trim().toLowerCase() === normalizedValue,
+            )
+            setCompanyInputValue(nextValue)
+            setSelectedCompanyId(
+              matchedCompany?.id ?? normalizeCompanyIdInput(nextValue, fallbackCompanyId),
+            )
+          }}
           placeholder="e.g. Acme Electronics"
           className="mt-2 w-full rounded-xl border border-border/70 bg-card/60 px-3 py-2 text-sm text-white placeholder:text-muted-foreground/50 outline-none focus:border-primary/60"
           list="vendor-company-suggestions"
@@ -190,7 +239,7 @@ export function StepIndustry({
         {availableCompanies.length > 0 && (
           <datalist id="vendor-company-suggestions">
             {availableCompanies.map(company => (
-              <option key={company.id} value={company.id}>
+              <option key={company.id} value={company.displayName}>
                 {company.displayName}
               </option>
             ))}
@@ -204,7 +253,9 @@ export function StepIndustry({
           onClick={() =>
             onNext({
               templateId: selectedTemplateId,
-              companyId: selectedCompanyId.trim() || fallbackCompanyId,
+              companyId:
+                selectedCompanyId.trim() ||
+                normalizeCompanyIdInput(companyInputValue, fallbackCompanyId),
             })
           }
           className="rounded-full bg-[color:var(--industry-accent)] px-5 py-2.5 font-semibold text-black text-sm transition hover:brightness-110 sm:py-2"
