@@ -22,7 +22,13 @@ from app.tools.sms_messaging import resolve_caller_phone_from_context
 logger = logging.getLogger(__name__)
 
 
-async def send_whatsapp_message(text: str, tool_context) -> dict:
+async def send_whatsapp_message(
+    text: str,
+    tool_context,
+    *,
+    template_name: str = "",
+    template_language: str = "",
+) -> dict:
     """Send a WhatsApp text message to the caller during the voice call.
 
     Use this to share account numbers, payment details, booking confirmations,
@@ -62,6 +68,8 @@ async def send_whatsapp_message(text: str, tool_context) -> dict:
         "type": "text",
         "tenant_id": tenant_id,
         "company_id": company_id,
+        "template_name": template_name,
+        "template_language": template_language,
     })
 
     # HMAC service auth

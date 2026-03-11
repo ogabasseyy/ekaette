@@ -501,6 +501,8 @@ async def wa_send(
     to = body.get("to", "")
     text = body.get("text", "")
     msg_type = body.get("type", "text")
+    template_name = str(body.get("template_name", "") or "").strip()
+    template_language = str(body.get("template_language", "") or "").strip()
     idempotency_key = request.headers.get("X-Idempotency-Key", "")
 
     if not to or not text:
@@ -517,11 +519,22 @@ async def wa_send(
             phone_number_id=phone_number_id,
             tenant_id=tenant_id,
             company_id=company_id,
+            template_name=template_name,
+            template_language=template_language,
         )
 
     if idempotency_key:
         payload_hash = hashlib.sha256(
-            json.dumps({"to": to, "text": text, "type": msg_type}, sort_keys=True).encode()
+            json.dumps(
+                {
+                    "to": to,
+                    "text": text,
+                    "type": msg_type,
+                    "template_name": template_name,
+                    "template_language": template_language,
+                },
+                sort_keys=True,
+            ).encode()
         ).hexdigest()
 
         status, result = await service_whatsapp.send_with_idempotency(

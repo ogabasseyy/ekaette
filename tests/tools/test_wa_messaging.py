@@ -135,3 +135,41 @@ class TestSendWhatsAppMessage:
         assert "X-Service-Auth" in headers
         assert "X-Service-Timestamp" in headers
         assert "X-Service-Nonce" in headers
+
+    @pytest.mark.asyncio
+    async def test_successful_send_with_template_override(self):
+        """Template override metadata is forwarded to the internal WA send API."""
+        ctx = MockToolContext(state={
+            "user:caller_phone": "+2348012345678",
+            "app:tenant_id": "public",
+            "app:company_id": "ekaette-electronics",
+        }, function_call_id="fc-456")
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "result": {"messages": [{"id": "msg-456"}]}
+        }
+
+        with patch.dict(os.environ, {
+            "WA_SERVICE_API_BASE_URL": "https://wa.example.com",
+            "WA_SERVICE_SECRET": "test-secret",
+        }):
+            with patch("app.tools.wa_messaging.httpx.AsyncClient") as mock_client_cls:
+                mock_client = AsyncMock()
+                mock_client.post.return_value = mock_response
+                mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+                mock_client.__aexit__ = AsyncMock(return_value=False)
+                mock_client_cls.return_value = mock_client
+
+                result = await send_whatsapp_message(
+                    "Please send a clear photo.",
+                    ctx,
+                    template_name="tradein_media_request",
+                    template_language="en_US",
+                )
+
+        assert result["status"] == "sent"
+        payload = json.loads(mock_client.post.call_args.kwargs["content"].decode())
+        assert payload["template_name"] == "tradein_media_request"
+        assert payload["template_language"] == "en_US"

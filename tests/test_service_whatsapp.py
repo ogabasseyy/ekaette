@@ -159,11 +159,27 @@ class TestTemplateFallback:
         assert status == 200
         mock_template.assert_awaited_once()
         assert mock_template.await_args.kwargs["phone_number_id"] == "phone123"
+        assert mock_template.await_args.kwargs["template_name"] == "test_template"
+
+    @patch("app.api.v1.at.providers.whatsapp_send_template", new_callable=AsyncMock)
+    async def test_uses_template_override_when_provided(self, mock_template) -> None:
+        mock_template.return_value = (200, {"messages": [{"id": "wamid.tradein"}]})
+        status, _ = await send_with_template_fallback(
+            to="234",
+            text="Please send a photo.",
+            phone_number_id="phone123",
+            template_name="tradein_media_request",
+            template_language="en_US",
+        )
+        assert status == 200
+        mock_template.assert_awaited_once()
+        assert mock_template.await_args.kwargs["template_name"] == "tradein_media_request"
+        assert mock_template.await_args.kwargs["language_code"] == "en_US"
 
     async def test_fails_closed_when_no_template_config(self) -> None:
         with (
             patch("app.api.v1.at.service_whatsapp.WA_UTILITY_TEMPLATE_NAME", ""),
-            pytest.raises(RuntimeError, match="WA_UTILITY_TEMPLATE_NAME"),
+            pytest.raises(RuntimeError, match="No WhatsApp fallback template configured"),
         ):
             await send_with_template_fallback(to="234", text="Hello")
 

@@ -636,6 +636,8 @@ async def send_with_template_fallback(
     phone_number_id: str = "",
     tenant_id: str = "public",
     company_id: str = "ekaette-electronics",
+    template_name: str = "",
+    template_language: str = "",
 ) -> tuple[int, dict]:
     """Try service message; if no window, use utility template."""
     resolved_phone_id = phone_number_id or WHATSAPP_PHONE_NUMBER_ID
@@ -650,17 +652,19 @@ async def send_with_template_fallback(
         )
 
     # Outside window — use template
-    if not WA_UTILITY_TEMPLATE_NAME:
+    resolved_template_name = (template_name or "").strip() or WA_UTILITY_TEMPLATE_NAME
+    resolved_language_code = (template_language or "").strip() or WA_UTILITY_TEMPLATE_LANGUAGE
+    if not resolved_template_name:
         raise RuntimeError(
-            "WA_UTILITY_TEMPLATE_NAME not configured — cannot send outside service window"
+            "No WhatsApp fallback template configured — cannot send outside service window"
         )
 
     return await providers.whatsapp_send_template(
         access_token=WHATSAPP_ACCESS_TOKEN,
         phone_number_id=resolved_phone_id,
         to=to,
-        template_name=WA_UTILITY_TEMPLATE_NAME,
-        language_code=WA_UTILITY_TEMPLATE_LANGUAGE,
+        template_name=resolved_template_name,
+        language_code=resolved_language_code,
         components=[
             {
                 "type": "body",

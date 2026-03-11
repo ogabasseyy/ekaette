@@ -17,6 +17,10 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from app.api.v1.admin.firestore_helpers import _doc_get, _doc_set, _doc_update
+from app.api.v1.at.settings import (
+    WA_TRADEIN_TEMPLATE_LANGUAGE,
+    WA_TRADEIN_TEMPLATE_NAME,
+)
 from app.tools.scoped_queries import tenant_company_collection
 from app.tools.sms_messaging import resolve_caller_phone_from_context
 from app.tools.wa_messaging import send_whatsapp_message
@@ -200,7 +204,12 @@ async def request_media_via_whatsapp(
     except Exception:
         logger.debug("Cross-channel state hint update skipped", exc_info=True)
 
-    wa_result = await send_whatsapp_message(_media_request_message(normalized_summary), tool_context)
+    wa_result = await send_whatsapp_message(
+        _media_request_message(normalized_summary),
+        tool_context,
+        template_name=WA_TRADEIN_TEMPLATE_NAME,
+        template_language=WA_TRADEIN_TEMPLATE_LANGUAGE,
+    )
     if str(wa_result.get("status", "")).strip().lower() != "sent":
         try:
             await _doc_update(

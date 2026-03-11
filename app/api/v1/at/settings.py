@@ -111,6 +111,8 @@ class ATSettings(BaseSettings):
     # WhatsApp template fallback
     wa_utility_template_name: str = Field(default="", alias="WA_UTILITY_TEMPLATE_NAME")
     wa_utility_template_language: str = Field(default="en_US", alias="WA_UTILITY_TEMPLATE_LANGUAGE")
+    wa_tradein_template_name: str = Field(default="", alias="WA_TRADEIN_TEMPLATE_NAME")
+    wa_tradein_template_language: str = Field(default="en_US", alias="WA_TRADEIN_TEMPLATE_LANGUAGE")
 
     # WhatsApp send idempotency
     wa_send_idempotency_ttl_hours: int = Field(default=24, alias="WA_SEND_IDEMPOTENCY_TTL_HOURS")
@@ -195,6 +197,8 @@ WA_GRAPH_RETRY_MAX_BACKOFF_SECONDS = cfg.wa_graph_retry_max_backoff_seconds
 # WhatsApp template fallback
 WA_UTILITY_TEMPLATE_NAME = cfg.wa_utility_template_name
 WA_UTILITY_TEMPLATE_LANGUAGE = cfg.wa_utility_template_language
+WA_TRADEIN_TEMPLATE_NAME = cfg.wa_tradein_template_name
+WA_TRADEIN_TEMPLATE_LANGUAGE = cfg.wa_tradein_template_language
 
 # WhatsApp send idempotency
 WA_SEND_IDEMPOTENCY_TTL_HOURS = cfg.wa_send_idempotency_ttl_hours
