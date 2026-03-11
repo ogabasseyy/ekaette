@@ -12,11 +12,16 @@ graph TB
 
     subgraph "Phone Channel"
         PHONE["PSTN / Africa's Talking"]
-        SIP_B["SIP Bridge<br/>(G.711/Opus ↔ PCM16)"]
+        SIP_B["SIP Bridge VM<br/>(G.711/Opus ↔ PCM16,<br/>denoise, callback prewarm,<br/>explicit SIP BYE)"]
     end
 
-    subgraph "Backend — Cloud Run (FastAPI + Python 3.13)"
-        GW["API Gateway + WebSocket"]
+    subgraph "Cloud Run — Main HTTP Service"
+        CTRL["Public + Admin + Channel Routes<br/>(AT voice callback, WhatsApp webhook,<br/>SMS, bootstrap, uploads)"]
+        TR["Text Runtime<br/>(WhatsApp/SMS/adk_text_adapter)"]
+    end
+
+    subgraph "Cloud Run — Live Voice Service"
+        GW["Live Voice Gateway<br/>/ws session auth + streaming"]
         subgraph "Google ADK 1.25.1"
             ROOT["ekaette_router<br/>(Gemini 2.5 Flash Native Audio)"]
             VA["vision_agent<br/>(Gemini 3 Flash)"]
@@ -25,7 +30,6 @@ graph TB
             CA["catalog_agent"]
             SA["support_agent"]
         end
-        TR["Text Runner<br/>(WhatsApp + fallback)"]
     end
 
     subgraph "Google Cloud"
@@ -40,12 +44,14 @@ graph TB
     UI --> WS
     MIC --> WS
     WS -->|"WSS"| GW
-    WA -->|"Webhook"| GW
+    WA -->|"Webhook / send"| CTRL
+    PHONE -->|"Voice webhook + SIP"| CTRL
     PHONE --> SIP_B
+    CTRL -->|"Dial XML<br/>callback orchestration"| PHONE
     SIP_B -->|"WSS (PCM16)"| GW
     GW --> ROOT
     GW --> TR
-    TR --> ROOT
+    CTRL --> TR
     ROOT -->|"photo"| VA
     ROOT -->|"price"| VLA
     ROOT -->|"book"| BA

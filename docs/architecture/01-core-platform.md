@@ -8,8 +8,9 @@
 - **Modular backend:** Three isolated API packages (admin, public, realtime) with enforced architectural boundaries — no circular dependencies
 - **Agent-per-capability:** Root orchestrator delegates to specialized sub-agents; each agent owns one domain
 - **Fail-closed config:** Missing registry data returns explicit errors, never silent defaults
-- **Single AI brain (gateway-enabled):** When `GATEWAY_MODE=true` and `WA_GATEWAY_MODE=true`, phone and WA-call traffic converge with web and WhatsApp text on one ADK agent graph on Cloud Run; both flags default to `false`, so this is not the default deployment
-- **Zero-latency voice:** For direct web voice, ephemeral tokens enable a direct client-to-API WebSocket and the backend handles auth/config only; SIP and WhatsApp voice use gateway/backend routing when `GATEWAY_MODE=true` or `WA_GATEWAY_MODE=true`
+- **Split control plane / media plane:** The main Cloud Run service handles REST, webhooks, registry resolution, callback control, and text channels; a dedicated live voice service handles long-lived `/ws` audio streams
+- **Single AI brain:** Web voice, AT voice, WhatsApp calls, and text channels still converge on one ADK agent graph, but through service-specific ingress paths
+- **Voice transport specialization:** Web voice can connect directly to the live voice service; AT and WhatsApp calls use the SIP bridge VM for codec conversion, denoising, callback prewarm, and explicit SIP call control
 - **Privacy by design:** AI disclosure at first interaction (EU AI Act), NDPA-compliant consent, PII redaction pipeline across logs/sessions/transcripts, HMAC-signed WebSocket tokens
 
 ### Firestore Data Model
@@ -31,24 +32,20 @@ tenants/{tenantId}/companies/{companyId}/global_lessons/{id}
 ```mermaid
 graph TB
     subgraph "Client Layer"
-        WW["Web App<br/>(Vite + React 19)"]
-        MW["Mobile Web"]
+        WEB["Web / Mobile Web"]
         PHONE["Phone Call<br/>(&lt;service-number&gt;)"]
         WA_CALL["WhatsApp Call"]
         WA_MSG["WhatsApp Chat<br/>(Text + Image + Video)"]
         SMS_C["SMS"]
     end
 
-    subgraph "Transport Layer"
-        WS["WebSocket<br/>(Voice + Real-time)"]
-        HTTP["HTTP REST<br/>(Config + Upload)"]
-        SIP["SIP/RTP<br/>(G.711 μ-law)"]
-        SRTP["SRTP/Opus<br/>(WhatsApp Call)"]
-        WA_HOOK["WhatsApp Webhook<br/>(Cloud Tasks)"]
-        SMS_T["SMS Webhook"]
+    subgraph "Channel Providers"
+        AT_HTTP["Africa's Talking<br/>Voice webhooks + XML control"]
+        AT_SIP["Africa's Talking<br/>SIP registrar + RTP"]
+        META["Meta WhatsApp<br/>Calls + webhooks"]
     end
 
-    subgraph "Cloud Run — FastAPI Backend"
+    subgraph "Cloud Run — Main HTTP Service"
         subgraph "main.py — Composition Layer"
             LIFE["Lifespan + CORS + Middleware"]
             AUTH_MW["Admin Auth Middleware<br/>JWT/IAP + Observability"]
@@ -67,34 +64,38 @@ graph TB
             ADMIN_I["Infrastructure: auth, idempotency,<br/>policy, circuit breaker"]
         end
 
+        subgraph "Channel & Control APIs"
+            AT_API["AT voice + SMS routes<br/>XML dial control,<br/>callback registration,<br/>post-call orchestration"]
+            WA_API["WhatsApp webhook + send routes<br/>service window + Cloud Tasks"]
+            TEXT["adk_text_adapter + Runner.run_async()<br/>WhatsApp/SMS text runtime"]
+        end
+    end
+
+    subgraph "Cloud Run — Live Voice Service"
         subgraph "app/api/v1/realtime — WebSocket Streaming"
-            SESS_INIT["Session Init<br/>Origin validation,<br/>registry config resolution,<br/>ADK session create/resume"]
-            STREAM["Stream Tasks<br/>upstream (client to agent),<br/>downstream (agent to client),<br/>keepalive + silence nudge"]
+            WS_EDGE["/ws gateway<br/>signed token auth,<br/>origin validation"]
+            SESS_INIT["Session Init<br/>registry config resolution,<br/>ADK session create/resume"]
+            STREAM["Stream Tasks<br/>upstream/downstream audio,<br/>keepalive + silence nudge,<br/>latency fillers"]
             ORCH["Orchestrator<br/>Task lifecycle,<br/>graceful shutdown"]
         end
 
         subgraph "ADK Runtime"
             LRQ["LiveRequestQueue"]
             RUN_LIVE["Runner.run_live()<br/>(Voice — bidi streaming)"]
-            RUN_ASYNC["Runner.run_async()<br/>(Text channels — request/response)"]
-            ADAPTER["adk_text_adapter<br/>(app/channels/)<br/>Session bootstrap,<br/>text/image routing"]
         end
 
         subgraph "Multi-Agent Hierarchy (ADK)"
             ROOT["ekaette_router<br/>(Voice Root Agent)<br/>Model: gemini-2.5-flash-native-audio<br/>Real-time voice I/O,<br/>intent detection, agent routing"]
-
-            TEXT_ROOT["ekaette_router<br/>(Text Root Agent)<br/>Model: gemini-3-flash-preview<br/>WhatsApp/SMS text channels,<br/>text-specific instructions"]
-
-            VA["vision_agent<br/>Image/video analysis,<br/>Visual Thinking"]
-
-            VLA["valuation_agent<br/>Condition grading,<br/>price calculation"]
-
-            BA["booking_agent<br/>Availability checking,<br/>reservation CRUD"]
-
-            CA["catalog_agent<br/>Product search,<br/>Vertex AI Search RAG"]
-
-            SA["support_agent<br/>FAQs + order tracking,<br/>Google Search grounding"]
         end
+    end
+
+    subgraph "Shared ADK Sub-Agents"
+        TEXT_ROOT["ekaette_router<br/>(Text Root Agent)<br/>Model: gemini-3-flash-preview"]
+        VA["vision_agent<br/>Image/video analysis,<br/>Visual Thinking"]
+        VLA["valuation_agent<br/>Condition grading,<br/>price calculation"]
+        BA["booking_agent<br/>Availability checking,<br/>reservation CRUD"]
+        CA["catalog_agent<br/>Product search,<br/>Vertex AI Search RAG"]
+        SA["support_agent<br/>FAQs + order tracking,<br/>Google Search grounding"]
     end
 
     subgraph "Google Cloud Services"
@@ -110,17 +111,10 @@ graph TB
     end
 
     subgraph "GCE VM — SIP Bridge (<reserved-static-ip>)"
-        SIP_SVR["SIPServer<br/>UDP :6060, SIP REGISTER,<br/>INVITE/ACK/BYE handling"]
-        CALL_SESS["CallSession<br/>4-task pipeline:<br/>recv → decode → Direct Gemini or Gateway WS → encode"]
-        WA_SESS["WaSession<br/>4-task pipeline:<br/>SRTP → Opus decode → Direct Gemini or Gateway WS → encode"]
-        GW_CLIENT["GatewayClient<br/>WSS → Cloud Run<br/>(feature-flagged path)"]
-        CODEC["CodecBridge<br/>G.711 μ-law ↔ PCM16 (AT)<br/>Opus ↔ PCM16 (WhatsApp)"]
-    end
-
-    subgraph "Africa's Talking"
-        AT_SIP["AT SIP Registrar<br/>(ng.sip.africastalking.com)"]
-        AT_VOICE["AT Voice API<br/>Outbound calls, transfers"]
-        AT_SMS["AT SMS API<br/>Send/receive SMS"]
+        SIP_SVR["SIPServer + WaSipClient<br/>AT SIP + WhatsApp SIP/TLS"]
+        CALL_SESS["CallSession / WaSession<br/>RTP/SRTP recv → decode →<br/>denoise → WSS bridge → encode"]
+        GW_CLIENT["GatewayClient<br/>WSS → live voice service"]
+        CODEC["Codec + Media Control<br/>G.711/Opus, RTP/SRTP,<br/>callback prewarm,<br/>explicit SIP BYE"]
     end
 
     subgraph "Payment & Shipping"
@@ -133,41 +127,36 @@ graph TB
         G3F["Gemini 3 Flash Preview<br/>(Standard API)"]
     end
 
-    WW --> WS
-    WW --> HTTP
-    MW --> WS
-    MW --> HTTP
-    PHONE -->|"PSTN"| AT_SIP
-    AT_SIP -->|"SIP INVITE"| SIP_SVR
-    WA_CALL -->|"WhatsApp Call"| WA_SESS
-    WA_MSG -->|"Meta Webhook"| WA_HOOK
-    SMS_C -->|"AT Webhook"| SMS_T
+    WEB -->|"WSS /ws"| WS_EDGE
+    WEB -->|"HTTP"| TOKEN
+    WEB -->|"HTTP"| ONBOARD
+    WEB -->|"HTTP"| BOOT
+    WEB -->|"HTTP"| UPLOAD
+    WEB -->|"HTTP"| ADMIN_R
+    PHONE -->|"PSTN"| AT_HTTP
+    AT_HTTP -->|"POST /api/v1/at/voice/callback"| AT_API
+    AT_API -->|"Dial XML (sip:...)"| AT_HTTP
+    AT_HTTP -->|"SIP INVITE / RTP"| AT_SIP
+    AT_SIP -->|"media leg"| SIP_SVR
+    WA_CALL -->|"WhatsApp calling"| META
+    META -->|"WhatsApp SIP/SRTP"| SIP_SVR
+    WA_MSG -->|"Meta webhook"| META
+    META -->|"webhook / send"| WA_API
+    SMS_C -->|"AT SMS webhook"| AT_API
 
-    WS --> SESS_INIT
-    HTTP --> TOKEN
-    HTTP --> ONBOARD
-    HTTP --> BOOT
-    HTTP --> UPLOAD
-    HTTP --> ADMIN_R
-
-    SESS_INIT --> STREAM
+    WS_EDGE --> SESS_INIT
     STREAM --> LRQ
     LRQ --> RUN_LIVE
     RUN_LIVE --> ROOT
 
-    WA_HOOK --> ADAPTER
-    SMS_T --> ADAPTER
-    ADAPTER --> RUN_ASYNC
-    RUN_ASYNC --> TEXT_ROOT
+    WA_API --> TEXT
+    AT_API --> TEXT
+    TEXT --> TEXT_ROOT
 
     SIP_SVR --> CALL_SESS
     CALL_SESS --> CODEC
-    WA_SESS --> CODEC
-    CALL_SESS -.->|"WSS (PCM16)<br/>if GATEWAY_MODE=true"| GW_CLIENT
-    WA_SESS -.->|"WSS (PCM16)<br/>if WA_GATEWAY_MODE=true"| GW_CLIENT
-    GW_CLIENT -->|"Cloud Run WS bridge<br/>(feature-flagged)"| SESS_INIT
-    CALL_SESS -.->|"Direct Gemini (default)"| G25
-    WA_SESS -.->|"Direct Gemini (default)"| G25
+    CALL_SESS --> GW_CLIENT
+    GW_CLIENT -->|"PCM16 over WSS"| WS_EDGE
 
     ROOT -->|"photo received"| VA
     ROOT -->|"assess/price"| VLA
@@ -200,7 +189,6 @@ graph TB
     TEXT_ROOT -->|"PreloadMemoryTool<br/>+ after_agent_callback"| MB
     ADMIN_R --> FS
     CALL_SESS --> FS
-    WA_SESS --> FS
 
     classDef client fill:#E3F2FD,stroke:#1565C0,stroke-width:2px
     classDef transport fill:#FFF3E0,stroke:#E65100,stroke-width:2px
@@ -216,18 +204,17 @@ graph TB
     classDef telco fill:#E8EAF6,stroke:#283593,stroke-width:2px
     classDef payments fill:#F3E5F5,stroke:#7B1FA2,stroke-width:2px
 
-    class WW,MW,PHONE,WA_CALL,WA_MSG,SMS_C client
-    class WS,HTTP,SIP,SRTP,WA_HOOK,SMS_T transport
+    class WEB,PHONE,WA_CALL,WA_MSG,SMS_C client
+    class AT_HTTP,AT_SIP,META transport
     class LIFE,AUTH_MW composition
     class TOKEN,ONBOARD,BOOT,UPLOAD public
-    class ADMIN_R,ADMIN_S,ADMIN_I admin
-    class SESS_INIT,STREAM,ORCH realtime
-    class LRQ,RUN_LIVE,RUN_ASYNC,ADAPTER adk
+    class ADMIN_R,ADMIN_S,ADMIN_I,AT_API,WA_API,TEXT admin
+    class WS_EDGE,SESS_INIT,STREAM,ORCH realtime
+    class LRQ,RUN_LIVE adk
     class ROOT,TEXT_ROOT,VA,VLA,BA,CA,SA agent
     class FS,CS,VAS,GS,MB gcp
     class G25,G3F model
-    class SIP_SVR,CALL_SESS,WA_SESS,CODEC sipbridge
-    class AT_SIP,AT_VOICE,AT_SMS telco
+    class SIP_SVR,CALL_SESS,CODEC,GW_CLIENT sipbridge
     class PAYSTACK,TOPSHIP payments
 ```
 

@@ -2,7 +2,7 @@
 
 > Part of [Ekaette System Architecture](../../Ekaette_Architecture.md)
 
-## SIP Bridge Architecture (GCE VM)
+## SIP Bridge Architecture (Reference Deployment)
 
 ```mermaid
 graph TB
@@ -24,8 +24,8 @@ graph TB
 
                 subgraph "4-Task Pattern"
                     T1["1. _media_recv_loop<br/>UDP recvfrom → inbound_queue"]
-                    T2["2. _media_inbound_loop<br/>RTP parse → codec decode → PCM16 16kHz"]
-                    T3["3. _gemini_bidi_loop / _gateway_bidi_loop<br/>PCM16 ↔ Gemini Live (direct) or Cloud Run WS (gateway)"]
+                    T2["2. _media_inbound_loop<br/>RTP/SRTP parse → codec decode →<br/>PCM16 16kHz → denoise / gain control"]
+                    T3["3. _gateway_bidi_loop<br/>PCM16 ↔ dedicated live voice service"]
                     T4["4. _media_outbound_loop<br/>PCM16 24kHz → codec encode → RTP send"]
                 end
             end
@@ -37,16 +37,19 @@ graph TB
                 SRTP_CTX["srtp_context.py<br/>SRTP protect/unprotect"]
             end
 
-            subgraph "Gateway Mode"
-                GW_CLIENT["gateway_client.py<br/>GatewayClient WSS → Cloud Run<br/>reconnect + resumption tokens"]
+            subgraph "Voice Gateway & Call Control"
+                GW_CLIENT["gateway_client.py<br/>GatewayClient WSS → live voice service<br/>reconnect + session tokens"]
+                PREWARM["callback prewarm<br/>warm live session before outbound callback"]
+                BYE["Explicit in-dialog SIP BYE<br/>after acknowledgement audio drains"]
             end
         end
     end
 
     subgraph "External"
-        AT["AT SIP Registrar<br/>(ng.sip.africastalking.com)"]
-        CR["Cloud Run (ADK)<br/>Full agent graph"]
-        GEMINI["Gemini Live API<br/>(v1alpha, native audio)"]
+        AT["Africa's Talking<br/>voice callback + SIP registrar"]
+        MAIN_HTTP["Cloud Run main service<br/>AT/WA webhooks, XML call control,<br/>text channels, callback orchestration"]
+        LIVE_HTTP["Cloud Run live voice service<br/>/ws only, Runner.run_live,<br/>voice ADK graph"]
+        GEMINI["Vertex Gemini Live<br/>native audio"]
         FSTORE["Firestore<br/>(wa_calls collection)"]
     end
 
@@ -69,11 +72,14 @@ graph TB
     T4 --> RTP
 
     WA_S --> SRTP_CTX
+    PREWARM --> GW_CLIENT
+    BYE --> SERVER
 
     REGISTER -->|"REGISTER/401/200"| AT
-    T3 -->|"Gateway mode:<br/>PCM16 via WSS"| GW_CLIENT
-    GW_CLIENT -->|"WSS"| CR
-    T3 -.->|"Direct mode:<br/>PCM16 bidi"| GEMINI
+    MAIN_HTTP -->|"Dial XML / callback jobs"| AT
+    T3 -->|"PCM16 via WSS"| GW_CLIENT
+    GW_CLIENT -->|"WSS"| LIVE_HTTP
+    LIVE_HTTP -->|"Live API"| GEMINI
     WA_S --> FSTORE
 
     classDef entry fill:#E3F2FD,stroke:#1565C0,stroke-width:2px
@@ -86,94 +92,98 @@ graph TB
     class SERVER,REGISTER,AUTH,DIALOG signaling
     class SESS,WA_S,T1,T2,T3,T4 media
     class RTP,CODEC_B,AUDIO,SRTP_CTX codec
-    class AT,GEMINI,FSTORE external
+    class AT,MAIN_HTTP,LIVE_HTTP,GEMINI,FSTORE external
 ```
 
 ---
 
-## Gateway Mode — Single AI Brain
+## Split Telephony Control Plane + Shared AI Brain
 
-When `GATEWAY_MODE=true`, the SIP bridge becomes a **thin transport adapter** that routes through Cloud Run instead of connecting directly to Gemini Live. This gives phone callers the full ADK agent graph (6 agents, all tools, registry config, persistent sessions, memory bank) — the same AI brain as web and WhatsApp text channels.
+The reference deployment uses a deliberate split:
 
 ```text
-Direct Mode (default):   Phone → SIP Bridge → Gemini Live (4-line prompt, 0 tools)
-Gateway Mode:            Phone → SIP Bridge → Cloud Run WS → ADK → Gemini Live (full agent graph)
+Main HTTP service:       Webhooks, XML call control, text channels, callback orchestration
+Live voice service:      Long-lived /ws audio streams and Runner.run_live voice sessions
+SIP bridge VM:           Codec conversion, denoise, callback prewarm, explicit BYE
 ```
 
-**What SIP bridge keeps:** G.711/Opus codec conversion, SRTP, SIP signaling, echo suppression, RTP pacing.
-**What SIP bridge loses:** Direct Gemini connection, hardcoded system instructions, local tool handling.
+This keeps one ADK agent brain for all channels while separating short-lived HTTP control traffic from long-lived voice media streams.
 
 Key implementation:
-- `gateway_client.py`: WebSocket client connecting to Cloud Run `/ws/{user_id}/{session_id}`
-- Task 3 replaced: `_gateway_bidi_loop` instead of `_gemini_bidi_loop`
+- `voice.py` + `service_voice.py`: AT webhook returns `<Dial sip:...>` XML and manages callbacks
+- `gateway_client.py`: WebSocket client connecting to the live voice service `/ws/{user_id}/{session_id}`
 - `caller_phone` travels in the signed WS auth token → stored as `user:caller_phone` in ADK session state
 - `send_whatsapp_message` is exposed only on voice-channel agents for during-call follow-up
-- Rollback: `GATEWAY_MODE=false` reverts to direct Gemini (zero code changes)
+- The direct-to-Gemini bridge remains as a fallback path, but the reference deployment keeps telephony on the split Cloud Run services
 
 ---
 
 ## Inbound Phone Call Flow
 
-### Gateway Mode (GATEWAY_MODE=true) — Full Agent Graph
+### Reference Deployment — AT Control Plane + SIP Media Plane
 
 ```mermaid
 sequenceDiagram
     participant CALLER as Caller (Phone)
-    participant AT as Africa's Talking<br/>(SIP Registrar)
+    participant ATC as Africa's Talking<br/>(voice callback)
+    participant MAIN as Cloud Run main service<br/>(/api/v1/at/voice/callback)
+    participant ATS as Africa's Talking<br/>(SIP registrar)
     participant SIP as SIPServer<br/>(GCE VM :6060)
     participant SESS as CallSession<br/>(4-task pipeline)
     participant GW as GatewayClient<br/>(WSS)
-    participant CR as Cloud Run<br/>(ADK Agent Graph)
+    participant LIVE as Cloud Run live voice service<br/>(ADK voice runtime)
 
-    Note over CALLER,CR: SIP Registration (on startup)
-    SIP->>AT: SIP REGISTER (UDP)
-    AT->>SIP: 401 Unauthorized (nonce challenge)
+    Note over CALLER,LIVE: SIP Registration (on startup)
+    SIP->>ATS: SIP REGISTER (UDP)
+    ATS->>SIP: 401 Unauthorized (nonce challenge)
     SIP->>SIP: Compute digest auth (MD5/SHA-256)
-    SIP->>AT: SIP REGISTER (with Authorization)
-    AT->>SIP: 200 OK (registered)
-    Note over SIP,AT: Re-registers at 80% of expiry
+    SIP->>ATS: SIP REGISTER (with Authorization)
+    ATS->>SIP: 200 OK (registered)
+    Note over SIP,ATS: Re-registers at 80% of expiry
 
-    Note over CALLER,CR: Inbound Call
-    CALLER->>AT: Dial <service-number>
-    AT->>SIP: SIP INVITE (SDP: G.711 μ-law, port X)
-    SIP->>AT: 100 Trying
+    Note over CALLER,LIVE: Inbound Call
+    CALLER->>ATC: Dial <service-number>
+    ATC->>MAIN: POST /api/v1/at/voice/callback (isActive=1)
+    MAIN-->>ATC: XML Dial sip:...
+    ATC->>ATS: Execute Dial to SIP endpoint
+    ATS->>SIP: SIP INVITE (SDP: G.711 μ-law, port X)
+    SIP->>ATS: 100 Trying
     SIP->>SIP: Allocate RTP port, extract caller phone from From header
     SIP->>SIP: Derive namespaced gateway IDs from tenant/company + caller/call context
-    SIP->>AT: 200 OK (SDP: G.711 μ-law, port Y)
-    AT->>SIP: ACK
-
-    Note over SIP,CR: Session Setup (Gateway Mode)
     SIP->>SESS: Create CallSession + GatewayClient
-    SESS->>GW: connect() → WSS to Cloud Run /ws/{user_id}/{session_id}?token=...
-    GW->>CR: WebSocket handshake
-    CR-->>GW: session_started {sessionId}
 
-    Note over CALLER,CR: Bidirectional Audio (4 concurrent tasks)
+    Note over SIP,LIVE: Live voice path comes up before the AT leg is answered
+    SESS->>GW: connect() → WSS to live voice service /ws/{user_id}/{session_id}?token=...
+    GW->>LIVE: WebSocket handshake
+    LIVE-->>GW: session_started {sessionId}
+    SIP->>ATS: 200 OK (SDP: G.711 μ-law, port Y)
+    ATS->>SIP: ACK
+
+    Note over CALLER,LIVE: Bidirectional Audio (4 concurrent tasks)
 
     par Task 1+2: Caller speaks
-        CALLER->>AT: Voice audio
-        AT->>SIP: RTP G.711 μ-law frames
-        SESS->>SESS: G.711 decode → resample 8k→16k
+        CALLER->>ATC: Voice audio
+        ATS->>SIP: RTP G.711 μ-law frames
+        SESS->>SESS: G.711 decode → resample 8k→16k<br/>→ denoise / gain normalization
         SESS->>GW: send_audio(PCM16 16kHz)
-        GW->>CR: Binary WebSocket frame
+        GW->>LIVE: Binary WebSocket frame
     and Task 3+4: AI responds
-        CR->>GW: Binary WebSocket frame (PCM16 24kHz)
+        LIVE->>GW: Binary WebSocket frame (PCM16 24kHz)
         GW->>SESS: GatewayFrame(audio)
         SESS->>SESS: Resample 24k→8k → G.711 encode → RTP
-        SESS->>AT: RTP audio frames
-        AT->>CALLER: Caller hears AI response
+        SESS->>ATS: RTP audio frames
+        ATS->>CALLER: Caller hears AI response
     end
 
-    Note over SESS,CR: Echo Suppression
-    SESS->>SESS: While model speaks: send SILENCE_FRAME<br/>to Cloud Run (not real mic audio).<br/>Holdoff 0.5s after model stops.
+    Note over SESS,LIVE: While the model speaks, the bridge suppresses loopback and can end callback legs with explicit SIP BYE after acknowledgement drains
 
-    Note over CALLER,CR: Call Ends
-    AT->>SIP: SIP BYE
+    Note over CALLER,LIVE: Call Ends
+    ATS->>SIP: SIP BYE or bridge originates BYE on callback legs
     SESS->>SESS: Shutdown signal → cancel all tasks
-    GW->>CR: Close WebSocket
+    GW->>LIVE: Close WebSocket
 ```
 
-### Direct Mode (GATEWAY_MODE=false, default) — Hardcoded Prompt
+### Fallback Direct Mode (GATEWAY_MODE=false) — Hardcoded Prompt
 
 ```mermaid
 sequenceDiagram
@@ -211,7 +221,7 @@ sequenceDiagram
 
 ## WhatsApp Call Flow (Opus/SRTP)
 
-### Gateway Mode (WA_GATEWAY_MODE=true) — Full Agent Graph
+### WhatsApp Voice — Shared Live Voice Service
 
 ```mermaid
 sequenceDiagram
@@ -219,7 +229,8 @@ sequenceDiagram
     participant WA_SIP as WaSipClient<br/>(GCE VM)
     participant WA_SESS as WaSession<br/>(4-task pipeline)
     participant GW as GatewayClient<br/>(WSS)
-    participant CR as Cloud Run<br/>(ADK Agent Graph)
+    participant LIVE as Cloud Run live voice service<br/>(ADK voice runtime)
+    participant MAIN as Cloud Run main service<br/>(WhatsApp send + webhook control)
     participant FS as Firestore
 
     Note over WA,FS: WhatsApp Call Setup
@@ -228,30 +239,31 @@ sequenceDiagram
     WA_SIP->>WA_SIP: Extract caller phone, mint opaque gateway user_id/session_id
     WA_SIP->>WA_SESS: Create WaSession + GatewayClient
     WA_SESS->>FS: Write call start record (wa_calls)
-    WA_SESS->>GW: connect() → WSS to Cloud Run
-    GW->>CR: WebSocket handshake
-    CR-->>GW: session_started {sessionId}
+    WA_SESS->>GW: connect() → WSS to live voice service
+    GW->>LIVE: WebSocket handshake
+    LIVE-->>GW: session_started {sessionId}
 
-    Note over WA,CR: Bidirectional Audio
+    Note over WA,LIVE: Bidirectional Audio
 
     par Inbound: Caller speaks
         WA->>WA_SIP: SRTP Opus frames (UDP)
         WA_SESS->>WA_SESS: SRTP unprotect → Opus decode → PCM16 16kHz
         WA_SESS->>GW: send_audio(PCM16 16kHz)
-        GW->>CR: Binary WebSocket frame
+        GW->>LIVE: Binary WebSocket frame
     and Outbound: AI responds
-        CR->>GW: Binary WebSocket frame (PCM16 24kHz)
+        LIVE->>GW: Binary WebSocket frame (PCM16 24kHz)
         GW->>WA_SESS: GatewayFrame(audio)
         WA_SESS->>WA_SESS: Opus encode → SRTP protect
         WA_SESS->>WA: SRTP Opus frames (UDP)
     end
 
     Note over WA,FS: Call Ends
-    GW->>CR: Close WebSocket
+    MAIN->>WA: WhatsApp follow-up / payment / utility messages
+    GW->>LIVE: Close WebSocket
     WA_SESS->>FS: Write call end record
 ```
 
-### Direct Mode (WA_GATEWAY_MODE=false, default) — Local Tool Handling
+### Fallback Direct Mode (WA_GATEWAY_MODE=false) — Local Tool Handling
 
 ```mermaid
 sequenceDiagram

@@ -39,45 +39,42 @@ Traditional e-commerce customer service forces customers into slow, text-only ch
 Ekaette is a **multimodal AI customer service agent** that handles the full trade-in lifecycle through natural conversation — voice or text:
 
 - **See**: Customer shows their device on camera or sends a photo via WhatsApp — AI identifies the product, assesses condition, and spots damage
-- **Hear**: Bidirectional audio streaming via Gemini Live API — sub-second voice responses with natural conversation flow
+- **Hear**: Bidirectional native-audio streaming via Vertex Gemini Live — with a dedicated live voice service for long-lived realtime sessions
 - **Value**: Automated condition grading with brand-specific diagnostic questionnaires and transparent itemized pricing deductions
 - **Negotiate**: Natural price negotiation with counter-offers — "I was quoted 550k but I want 500k" works on both voice and WhatsApp
 - **Book**: Appointment scheduling and pickup confirmation, all within the same conversation
 - **Remember**: Long-term memory across sessions — returning customers are greeted by name with context from prior interactions
 - **WhatsApp**: Full-featured WhatsApp Business channel — text, image, video, and voice note replies with typing indicators and silence nudges
-- **Phone**: PSTN phone calls via Africa's Talking SIP bridge — with `GATEWAY_MODE=true`, phone callers get the same full agent graph as web and WhatsApp, with G.711/Opus codec conversion
+- **Phone**: PSTN phone calls via Africa's Talking voice callback control plane plus a SIP bridge VM for codec conversion, denoise, callback prewarm, and explicit call control
 
-One codebase serves **6 industries** (electronics, hotel, automotive, fashion, telecom, aviation) with per-industry voice personas, pricing rubrics, and conversation styles. With gateway mode enabled, all channels — web, WhatsApp, and phone — share **one AI brain**: the same ADK agent graph, tools, session state, and memory.
+One codebase serves **6 industries** (electronics, hotel, automotive, fashion, telecom, aviation) with per-industry voice personas, pricing rubrics, and conversation styles. All channels still converge on **one AI brain** — the same ADK agent graph, tools, session state, and memory — but through channel-appropriate ingress paths.
 
 ---
 
 ## Architecture
 
-![Ekaette Architecture](docs/images/architecture.png)
-
-<details>
-<summary>View as Mermaid source</summary>
-
 ```mermaid
 graph TB
-    subgraph "Frontend — React 19 + Vite 7 + Tailwind v4"
-        UI["Web UI"]
-        WS["WebSocket Client"]
-        MIC["Microphone / Camera"]
+    subgraph "Client Layer"
+        WEB["Web / Mobile Web"]
+        PHONE["Phone Call"]
+        WA_CALL["WhatsApp Call"]
+        WA_MSG["WhatsApp Chat"]
     end
 
-    subgraph "WhatsApp Channel"
-        WA["WhatsApp Business API"]
-        TTS["Gemini TTS"]
+    subgraph "Channel Providers"
+        AT_HTTP["Africa's Talking<br/>Voice webhooks + XML control"]
+        AT_SIP["Africa's Talking<br/>SIP registrar + RTP"]
+        META["Meta WhatsApp<br/>Calls + webhooks"]
     end
 
-    subgraph "Phone Channel"
-        PHONE["PSTN / Africa's Talking"]
-        SIP_B["SIP Bridge<br/>(G.711/Opus ↔ PCM16)"]
+    subgraph "Cloud Run — Main HTTP Service"
+        CTRL["Public + Admin + Channel APIs<br/>AT voice callback, WhatsApp webhook,<br/>SMS, bootstrap, uploads"]
+        TEXT["Text Runtime<br/>WhatsApp / SMS / async ADK"]
     end
 
-    subgraph "Backend — Cloud Run (FastAPI + Python 3.13)"
-        GW["API Gateway + WebSocket"]
+    subgraph "Cloud Run — Live Voice Service"
+        WS["/ws Gateway + Session Init<br/>signed tokens, registry config,<br/>Runner.run_live streaming"]
         subgraph "Google ADK 1.26.0"
             ROOT["ekaette_router<br/>(Gemini 2.5 Flash Native Audio)"]
             VA["vision_agent<br/>(Gemini 3 Flash)"]
@@ -86,27 +83,37 @@ graph TB
             CA["catalog_agent"]
             SA["support_agent"]
         end
-        TR["Text Runner<br/>(WhatsApp + fallback)"]
+    end
+
+    subgraph "SIP Bridge VM"
+        SIP_B["AT + WhatsApp SIP bridge<br/>codec conversion, denoise,<br/>callback prewarm, explicit SIP BYE"]
     end
 
     subgraph "Google Cloud"
-        LIVE["Gemini Live API"]
-        G3F["Gemini 3 Flash<br/>(Standard API)"]
+        LIVE["Vertex Gemini Live"]
+        G3F["Gemini 3 Flash"]
         FS["Firestore"]
         CS["Cloud Storage"]
         MB["Memory Bank"]
         CT["Cloud Tasks"]
     end
 
-    UI --> WS
-    MIC --> WS
-    WS -->|"WSS"| GW
-    WA -->|"Webhook"| GW
-    PHONE --> SIP_B
-    SIP_B -->|"WSS (PCM16)"| GW
-    GW --> ROOT
-    GW --> TR
-    TR --> ROOT
+    WEB -->|"WSS /ws"| WS
+    WEB -->|"HTTP"| CTRL
+    PHONE -->|"PSTN"| AT_HTTP
+    AT_HTTP -->|"POST /api/v1/at/voice/callback"| CTRL
+    CTRL -->|"Dial XML (sip:...)"| AT_HTTP
+    AT_HTTP -->|"SIP INVITE / RTP"| AT_SIP
+    AT_SIP --> SIP_B
+    WA_CALL -->|"WhatsApp calling"| META
+    META --> SIP_B
+    WA_MSG -->|"Webhook / send"| META
+    META --> CTRL
+
+    SIP_B -->|"PCM16 over WSS"| WS
+    CTRL --> TEXT
+    WS --> ROOT
+    TEXT --> ROOT
     ROOT -->|"photo"| VA
     ROOT -->|"price"| VLA
     ROOT -->|"book"| BA
@@ -117,14 +124,10 @@ graph TB
     ROOT --> FS
     VA --> CS
     ROOT -->|"Memory"| MB
-    TR -->|"Voice reply"| TTS
-    TTS -->|"Audio"| WA
-    CT -->|"Nudge"| WA
+    CT -->|"Nudge jobs"| CTRL
 ```
 
-</details>
-
-**Single AI brain**: All channels (web, WhatsApp text, phone calls) converge to the same Cloud Run backend and ADK agent graph. The SIP bridge is a thin transport adapter — codec conversion and SIP signaling only — that connects as a WebSocket client to Cloud Run. The root agent uses `gemini-2.5-flash-native-audio` via the Live API for real-time voice I/O. Specialist agents use `gemini-3-flash` via the Standard API for reasoning-heavy tasks (vision analysis, pricing calculations). The WhatsApp text runner uses the same agent graph with a text-optimized model.
+**Reference deployment**: Ekaette uses a split architecture. The main Cloud Run service handles HTTP APIs, webhooks, AT XML call control, callback orchestration, and text channels. A dedicated live voice service handles long-lived `/ws` audio streams and ADK live sessions. The SIP bridge VM handles AT and WhatsApp media conversion, denoise, callback prewarm, and explicit SIP call control. All of that still converges on one ADK agent graph and shared memory layer.
 
 For the full architecture with all data flows, memory tiers, and transport layers, see [Core Platform Architecture](docs/architecture/01-core-platform.md).
 
@@ -147,11 +150,12 @@ Six specialized agents coordinated by Google ADK, with LLM-driven routing:
 
 ### Real-Time Voice Streaming
 
-Bidirectional PCM audio via Gemini Live API with:
+Bidirectional PCM audio via Vertex Gemini Live with:
 - 16kHz capture / 24kHz playback (separate AudioContexts — no echo feedback)
 - Barge-in support (interrupt the agent mid-sentence)
 - Voice Activity Detection (automatic + manual fallback for noisy environments)
 - Voice filler UX during agent transfers ("Let me take a closer look...")
+- Dedicated live voice service for long-lived `/ws` audio sessions
 - Session resumption tokens + context compression for conversations beyond 10 minutes
 
 ### WhatsApp Business Channel
@@ -192,9 +196,9 @@ Registry-driven multi-tenant architecture — switch industries at onboarding:
 | **Telecom** | Fenrir | Plan catalog, support, billing inquiries |
 | **Aviation** | Leda | Flight status, baggage policies (no booking) |
 
-### Direct-Live Transport Mode
+### Direct-Live Browser Transport
 
-Optional low-latency mode that fetches an ephemeral token from the backend and connects the browser directly to Gemini Live API — bypassing the backend WebSocket proxy for audio. Falls back automatically to backend-proxy if token generation fails.
+Optional low-latency browser mode fetches an ephemeral token from the backend and connects the web client directly to Gemini Live, bypassing the backend audio proxy for web voice only. Telephony channels still route through the dedicated live voice service and SIP bridge.
 
 ---
 
@@ -207,7 +211,7 @@ Optional low-latency mode that fetches an ephemeral token from the backend and c
 | [Python](https://python.org) | 3.13 | Runtime |
 | [FastAPI](https://fastapi.tiangolo.com) | 0.135 | Async API + WebSocket server |
 | [Google ADK](https://google.github.io/adk-docs/) | 1.26.0 | Multi-agent orchestration |
-| [Gemini Live API](https://ai.google.dev/gemini-api/docs/live) | 2.5 Flash | Real-time voice streaming |
+| [Vertex AI Gemini Live](https://cloud.google.com/vertex-ai/generative-ai/docs/live-api) | 2.5 Flash Native Audio | Real-time voice streaming |
 | [Gemini 3 Flash](https://ai.google.dev) | Preview | Vision + reasoning |
 | [Gemini TTS](https://ai.google.dev/gemini-api/docs/text-generation) | 2.5 Flash Preview | Voice note generation |
 | [google-genai](https://pypi.org/project/google-genai/) | 1.65.0 | Gemini SDK |
@@ -226,7 +230,8 @@ Optional low-latency mode that fetches an ephemeral token from the backend and c
 
 | Technology | Purpose |
 |---|---|
-| [Google Cloud Run](https://cloud.google.com/run) | Serverless container hosting (session affinity, 60min timeout) |
+| [Google Cloud Run](https://cloud.google.com/run) | Split main HTTP service + dedicated live voice service |
+| [Google Compute Engine](https://cloud.google.com/compute) | SIP bridge VM for AT/WhatsApp telephony media |
 | [Firestore](https://firebase.google.com/docs/firestore) | Sessions, configs, bookings, nudge state |
 | [Cloud Storage](https://cloud.google.com/storage) | Customer photos, ADK artifacts |
 | [Cloud Tasks](https://cloud.google.com/tasks) | Silence nudge scheduling |
@@ -371,7 +376,7 @@ terraform apply
 ```
 
 This provisions:
-- **Cloud Run** service with session affinity + 60min timeout
+- **Cloud Run** services for HTTP control-plane and live voice workloads
 - **Firestore** database (Native mode)
 - **Cloud Storage** bucket with lifecycle policies
 - **Artifact Registry** for Docker images
@@ -392,7 +397,7 @@ ekaette/
 │   │   ├── booking_agent/    # Appointment scheduling
 │   │   ├── catalog_agent/    # Product search
 │   │   └── support_agent/    # FAQ + Google Search grounding
-│   ├── api/v1/at/            # WhatsApp Business channel (webhook, TTS, media)
+│   ├── api/v1/at/            # AT voice/SMS + WhatsApp channel control APIs
 │   ├── configs/              # Registry-driven industry config loaders
 │   ├── memory/               # Memory Bank factory
 │   └── tools/                # Agent tool implementations
@@ -406,7 +411,8 @@ ekaette/
 ├── terraform/                # GCP Infrastructure as Code
 ├── tests/                    # Backend test suite
 │   └── fixtures/registry/    # Industry templates, companies, products, knowledge
-├── main.py                   # FastAPI application entry
+├── main.py                   # Main HTTP/control-plane FastAPI application
+├── main_live.py              # Dedicated live voice WebSocket application
 ├── Dockerfile                # Multi-stage build (Node + Python + uv)
 └── seed_data.py              # Firestore data seeding
 ```

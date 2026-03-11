@@ -1,41 +1,25 @@
 {
   "files": [
     {
-      "last_reviewed_commit": "33c87f1c39ea6527a95289d9c2c81fc6e8c7c896",
-      "last_reviewed_date": "2026-02-26",
+      "last_reviewed_commit": "fbbb202251385926d00510a6ff24d74efb8ef929",
+      "last_reviewed_date": "2026-03-11",
       "path": "Ekaette_Architecture.md",
-      "phase_marker": "phase7-cutover-plus-2026-addendum",
+      "phase_marker": "phase8-reference-architecture-refresh",
       "purpose": "Canonical architecture narrative (local ignored doc)",
-      "sha256": "521f3247a92c1f0743238d9ea167f4fa35d07054108dac995f086075cb2a8035"
+      "sha256": "a8b38afca78a902480dc5a119b17a4e642d64a8c1809b5af141ca07688ac0c94"
     },
     {
-      "last_reviewed_commit": "33c87f1c39ea6527a95289d9c2c81fc6e8c7c896",
-      "last_reviewed_date": "2026-02-26",
+      "last_reviewed_commit": "fbbb202251385926d00510a6ff24d74efb8ef929",
+      "last_reviewed_date": "2026-03-11",
       "path": "Ekaette_Architecture.html",
-      "phase_marker": "phase7-cutover-plus-2026-addendum",
+      "phase_marker": "phase8-reference-architecture-refresh",
       "purpose": "Rendered architecture reference (local ignored doc)",
-      "sha256": "744f3288be7c6d7ef573c84260fbb5fdbac9b6eec0bb093da19be8ad7cb3e57b"
-    },
-    {
-      "last_reviewed_commit": "33c87f1c39ea6527a95289d9c2c81fc6e8c7c896",
-      "last_reviewed_date": "2026-02-26",
-      "path": "Ekaette_Build_Plan_v3.md",
-      "phase_marker": "phase7-cutover-plus-2026-addendum",
-      "purpose": "Build and execution plan (local ignored doc)",
-      "sha256": "df9748bde171baa5e4888b29cdc7fb5e014c04201f8fcae4ba4b3e6f6574063b"
-    },
-    {
-      "last_reviewed_commit": "33c87f1c39ea6527a95289d9c2c81fc6e8c7c896",
-      "last_reviewed_date": "2026-02-26",
-      "path": "Ekaette_Setup_Guide.md",
-      "phase_marker": "phase7-cutover-plus-2026-addendum",
-      "purpose": "Operator setup guide (local ignored doc)",
-      "sha256": "97f05c9ce58785843b44f95de69a8071a2bf2187e5359415a1c67fc4705f7210"
+      "sha256": "4e894cb7cfb84f2acd6e6e8bdea621333ae31d7d8c52d04a7bb5552400d8b994"
     }
   ],
-  "generated_by": "scripts/check_local_docs.py",
-  "generated_date": "2026-02-26",
-  "last_reviewed_commit": "33c87f1c39ea6527a95289d9c2c81fc6e8c7c896",
-  "phase_marker": "phase7-cutover-plus-2026-addendum",
+  "generated_by": "scripts/refresh_local_docs_manifest.py",
+  "generated_date": "2026-03-11",
+  "last_reviewed_commit": "fbbb202251385926d00510a6ff24d74efb8ef929",
+  "phase_marker": "phase8-reference-architecture-refresh",
   "version": 1
 }

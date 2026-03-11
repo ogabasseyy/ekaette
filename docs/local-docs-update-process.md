@@ -12,8 +12,6 @@ Tracked controls:
 
 - `Ekaette_Architecture.md`
 - `Ekaette_Architecture.html`
-- `Ekaette_Build_Plan_v3.md`
-- `Ekaette_Setup_Guide.md`
 
 ## When To Run The Checker
 
@@ -29,28 +27,17 @@ Command:
 
 ## How To Refresh The Manifest After Intentional Doc Edits
 
-1. Edit the local ignored docs.
-2. Review changes for accuracy.
+1. Edit the local ignored markdown docs.
+2. Re-render local HTML artifacts.
 3. Recompute hashes and update `docs/local-docs-manifest.json`.
-4. Commit the manifest update (the local docs remain ignored).
+4. Commit the tracked manifest update (the local docs remain ignored).
 5. Re-run the checker to confirm a clean state.
 
-Example helper (manual hash refresh workflow):
+Commands:
 ```bash
-./.venv/bin/python - <<'PY'
-import hashlib, json, subprocess
-from pathlib import Path
-manifest = Path('docs/local-docs-manifest.json')
-data = json.loads(manifest.read_text())
-head = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
-for item in data['files']:
-    p = Path(item['path'])
-    item['sha256'] = hashlib.sha256(p.read_bytes()).hexdigest()
-    item['last_reviewed_commit'] = head
-    from datetime import date
-    item['last_reviewed_date'] = date.today().isoformat()
-manifest.write_text(json.dumps(data, indent=2, sort_keys=True) + '\n')
-PY
+./.venv/bin/python scripts/render_local_docs.py
+./.venv/bin/python scripts/refresh_local_docs_manifest.py
+./.venv/bin/python scripts/check_local_docs.py
 ```
 
 ## Release Checklist Integration

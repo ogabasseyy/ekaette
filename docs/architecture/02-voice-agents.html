@@ -23,25 +23,25 @@
     <p class="diagram-count">4 diagrams</p>
 
     <hr>
-    <h2>1. Voice Conversation Flow (Bidi-Streaming)</h2>
+    <h2>1. Voice Conversation Flow (Dedicated Live Voice Service)</h2>
     <div class="diagram-container">
         <pre class="mermaid">
 sequenceDiagram
-    participant C as Customer (Browser)
-    participant WS as WebSocket
-    participant RT as Realtime Module
+    participant C as Voice Client<br/>(Browser or SIP Bridge)
+    participant WS as /ws Gateway
+    participant RT as Realtime Module<br/>(session_init + stream_tasks)
     participant LRQ as LiveRequestQueue
     participant RUN as Runner.run_live()
     participant ROOT as ekaette_router
-    participant API as Gemini Live API
+    participant API as Vertex Gemini Live
 
-    Note over C,API: Session Initialization
+    Note over C,API: Same live path serves browser voice directly and AT/WhatsApp voice via the SIP bridge GatewayClient
     C->>WS: Connect /ws/{user_id}/{session_id}?tenantId=...&companyId=...
     WS->>RT: session_init.initialize_session()
     RT->>RT: Validate origin, tenant, company
     RT->>RT: Resolve registry config (template + capabilities)
     RT->>RT: Get/Create ADK Session
-    RT->>RT: Build RunConfig (BIDI, AUDIO, transcription, compression)
+    RT->>RT: Build RunConfig (BIDI, AUDIO, transcription,<br/>compression, affective dialog)
     RT->>LRQ: Create LiveRequestQueue()
     RT->>RUN: Start run_live(user_id, session_id, queue, config)
     RUN->>API: Connect to Live API (native audio model)
@@ -175,7 +175,7 @@ graph TB
         L1["Agent Transfer<br/>5-10 sec dead air"]
         L2["Tool Execution<br/>2-5 sec blocking"]
         L3["Audio Token Bloat<br/>~25 tok/sec accumulation"]
-        L4["Backend Proxy<br/>Extra network hop"]
+        L4["Long-lived Voice Streams<br/>Competing with short-lived HTTP ingress"]
         L5["Session Saves<br/>200ms per Firestore write"]
         L6["Thinking Overhead<br/>Default thinking budget"]
     end
@@ -184,7 +184,7 @@ graph TB
         M1["Response Latency Watchdog<br/>Server-side: 3s nudge + 15s follow-up<br/>Model-side: mandatory filler instructions<br/>Channel-aware: voice only, not text"]
         M2["NON_BLOCKING Functions<br/>behavior: NON_BLOCKING<br/>scheduling: WHEN_IDLE"]
         M3["Context Compression<br/>trigger: 80k tokens<br/>target: 40k sliding window"]
-        M4["Ephemeral Tokens<br/>Direct client-to-API WebSocket"]
+        M4["Dedicated Live Voice Service<br/>Keeps long-lived /ws audio off the main HTTP control plane"]
         M5["Async Session Saves<br/>asyncio background tasks"]
         M6["Thinking Budget Control<br/>Router: 256, Valuation: 2048"]
     end
