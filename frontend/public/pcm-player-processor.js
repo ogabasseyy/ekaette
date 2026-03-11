@@ -28,10 +28,10 @@ class PCMPlayerProcessor extends AudioWorkletProcessor {
     // Split buffering strategy:
     // - startup buffer is larger (smoother first response)
     // - rebuffer is smaller (faster recovery after a brief jitter underflow)
-    this.startupPrebufferSamples = Math.floor(24000 * 0.12); // ~120ms
+    this.startupPrebufferSamples = Math.floor(24000 * 0.08); // ~80ms
     this.rebufferSamples = Math.floor(24000 * 0.045); // ~45ms
     this.currentRebufferSamples = this.rebufferSamples;
-    this.maxRebufferSamples = Math.floor(24000 * 0.12); // cap ~120ms
+    this.maxRebufferSamples = Math.floor(24000 * 0.10); // cap ~100ms
     this.isBuffering = true;
     this.hasPlayedAudio = false;
     this.underrunCount = 0;

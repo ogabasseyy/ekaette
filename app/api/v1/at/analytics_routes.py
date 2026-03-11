@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Query
 
-from . import campaign_analytics
+from . import campaign_analytics, voice_analytics
 from .models import CampaignAnalyticsEventRequest
 
 router = APIRouter()
@@ -34,6 +34,32 @@ async def analytics_overview(
         "company_id": company_id,
         "summary": summary,
         "campaigns": campaigns,
+    }
+
+
+@router.get("/analytics/voice/overview")
+async def analytics_voice_overview(
+    tenant_id: str = Query(default="public", alias="tenantId"),
+    company_id: str = Query(default="ekaette-electronics", alias="companyId"),
+    days: int = Query(default=30, ge=1, le=365),
+    recent_calls_limit: int = Query(default=10, alias="recentCallsLimit", ge=1, le=100),
+) -> dict:
+    """Voice-operations overview for calls, transcripts, and callbacks."""
+    return {
+        "status": "ok",
+        "tenant_id": tenant_id,
+        "company_id": company_id,
+        "summary": voice_analytics.overview_snapshot(
+            tenant_id=tenant_id,
+            company_id=company_id,
+            days=days,
+        ),
+        "recent_calls": voice_analytics.list_recent_calls(
+            tenant_id=tenant_id,
+            company_id=company_id,
+            days=days,
+            limit=recent_calls_limit,
+        ),
     }
 
 

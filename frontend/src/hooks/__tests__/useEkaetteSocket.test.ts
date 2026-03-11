@@ -98,6 +98,26 @@ describe('useEkaetteSocket', () => {
     expect(result.current.state).toBe('connected')
   })
 
+  it('sends a neutral web voice session start marker once per session on connect', async () => {
+    const { result } = renderHook(() => useEkaetteSocket('user1', 'session1'))
+    act(() => {
+      result.current.connect()
+    })
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+      vi.advanceTimersByTime(1)
+    })
+
+    const ws = getLastSocket()
+    expect(ws.sent).toHaveLength(1)
+    expect(JSON.parse(String(ws.sent[0]))).toEqual({
+      type: 'text',
+      text: '[Web voice session connected]',
+    })
+  })
+
   it('rejects connect promise with typed timeout error when websocket never opens', async () => {
     const OriginalWebSocket = globalThis.WebSocket
 
@@ -419,12 +439,12 @@ describe('useEkaetteSocket', () => {
     act(() => {
       result.current.sendActivityStart()
     })
-    expect(ws.sent).toHaveLength(0)
+    expect(ws.sent).toHaveLength(1)
 
     act(() => {
       result.current.sendActivityEnd()
     })
-    expect(ws.sent).toHaveLength(0)
+    expect(ws.sent).toHaveLength(1)
 
     // Simulate backend capability handshake enabling manual VAD.
     act(() => {

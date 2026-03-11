@@ -18,6 +18,7 @@ const HEARTBEAT_TIMEOUT_MS = 15000
 const AUDIO_TX_BACKPRESSURE_BYTES = 256 * 1024
 const AUDIO_RX_GAP_SUSPECT_MS = 220
 const DEBUG_METRICS_FLUSH_MS = 200
+const WEB_VOICE_SESSION_START_MARKER = '[Web voice session connected]'
 const IS_TEST_ENV = import.meta.env.MODE === 'test'
 
 export type SocketConnectErrorCode = 'CONNECT_TIMEOUT' | 'CONNECT_FAILED' | 'CONNECT_CANCELLED'
@@ -62,6 +63,7 @@ interface UseEkaetteSocketReturn {
   debugMetrics: SocketDebugMetrics
   connect: (options?: ConnectOptions) => Promise<void>
   disconnect: () => void
+  prewarm: () => void
   sendAudio: (data: ArrayBuffer) => void
   sendText: (text: string) => void
   sendImage: (base64: string, mimeType: string) => void
@@ -217,9 +219,14 @@ export function useEkaetteSocket(
   const onAudioData = useRef<((data: ArrayBuffer) => void) | null>(null)
   const onSessionEnding = useRef<((reason: string) => void) | null>(null)
   const currentSessionIdRef = useRef(sessionId)
+  const sessionStartMarkerSentForSessionRef = useRef<string | null>(null)
   const manualVadEnabledRef = useRef(false)
   const shouldReconnectRef = useRef(true)
   const connectingRef = useRef(false)
+  const isPrewarmingRef = useRef(false)
+  // Buffer audio + messages during prewarm; flush on promote to 'connected'.
+  const prewarmAudioBufferRef = useRef<ArrayBuffer[]>([])
+  const prewarmMessageBufferRef = useRef<ServerMessage[]>([])
   const connectInternalRef = useRef<() => void>(() => {})
   const lastDirectInputTextRef = useRef('')
   const lastDirectOutputTextRef = useRef('')
@@ -515,7 +522,12 @@ export function useEkaetteSocket(
               wsRef.current.close()
             }
           }
-          appendMessage(setMessages, serverMessage)
+          // Buffer messages during prewarm; flush on promote.
+          if (isPrewarmingRef.current) {
+            prewarmMessageBufferRef.current.push(serverMessage)
+          } else {
+            appendMessage(setMessages, serverMessage)
+          }
         }
       } catch {
         // Ignore malformed/non-contract messages.
@@ -553,6 +565,10 @@ export function useEkaetteSocket(
     (data: ArrayBuffer | Blob) => {
       if (data instanceof ArrayBuffer) {
         trackRxAudioChunk(data.byteLength)
+        if (isPrewarmingRef.current) {
+          prewarmAudioBufferRef.current.push(data)
+          return
+        }
         onAudioData.current?.(data)
         return
       }
@@ -561,6 +577,10 @@ export function useEkaetteSocket(
         .arrayBuffer()
         .then(buffer => {
           trackRxAudioChunk(blobSize || buffer.byteLength)
+          if (isPrewarmingRef.current) {
+            prewarmAudioBufferRef.current.push(buffer)
+            return
+          }
           onAudioData.current?.(buffer)
         })
         .catch(() => {
@@ -780,7 +800,7 @@ export function useEkaetteSocket(
 
     shouldReconnectRef.current = true
     connectingRef.current = true
-    setState('connecting')
+    if (!isPrewarmingRef.current) setState('connecting')
 
     // Fetch ephemeral token to obtain optional wsToken for WS auth.
     try {
@@ -816,7 +836,23 @@ export function useEkaetteSocket(
         draft.heartbeatPending = 0
       }, true)
       startProxyHeartbeat()
-      setState('connected')
+      if (isPrewarmingRef.current) {
+        setState('prewarming')
+        // Don't send session start marker during prewarm — backend
+        // keeps the WS open but won't start the Live API session
+        // until connect() promotes and sends the marker.
+      } else {
+        setState('connected')
+        if (sessionStartMarkerSentForSessionRef.current !== currentSessionIdRef.current) {
+          ws.send(
+            JSON.stringify({
+              type: 'text',
+              text: WEB_VOICE_SESSION_START_MARKER,
+            }),
+          )
+          sessionStartMarkerSentForSessionRef.current = currentSessionIdRef.current
+        }
+      }
       resolvePendingConnect()
     }
 
@@ -1060,6 +1096,7 @@ export function useEkaetteSocket(
 
   useEffect(() => {
     currentSessionIdRef.current = sessionId
+    sessionStartMarkerSentForSessionRef.current = null
   }, [sessionId])
 
   useEffect(() => {
@@ -1071,10 +1108,37 @@ export function useEkaetteSocket(
       if (state === 'connected') {
         return Promise.resolve()
       }
+      // Promote prewarmed connection — WS already open, flush buffers and flip state.
+      if (
+        state === 'prewarming' &&
+        wsRef.current?.readyState === WebSocket.OPEN
+      ) {
+        isPrewarmingRef.current = false
+        setState('connected')
+        const ws = wsRef.current
+        if (sessionStartMarkerSentForSessionRef.current !== currentSessionIdRef.current) {
+          ws.send(JSON.stringify({ type: 'text', text: WEB_VOICE_SESSION_START_MARKER }))
+          sessionStartMarkerSentForSessionRef.current = currentSessionIdRef.current
+        }
+        // Flush buffered messages from prewarm phase.
+        const bufferedMessages = prewarmMessageBufferRef.current
+        prewarmMessageBufferRef.current = []
+        for (const msg of bufferedMessages) {
+          appendMessage(setMessages, msg)
+        }
+        // Flush buffered audio from prewarm phase.
+        const bufferedAudio = prewarmAudioBufferRef.current
+        prewarmAudioBufferRef.current = []
+        for (const chunk of bufferedAudio) {
+          onAudioData.current?.(chunk)
+        }
+        return Promise.resolve()
+      }
       if (pendingConnectRef.current) {
         return pendingConnectRef.current.promise
       }
 
+      isPrewarmingRef.current = false
       reconnectAttemptRef.current = 0
       rapidFailCountRef.current = 0
       const timeoutMs = connectOptions.timeoutMs ?? defaultConnectTimeoutMs
@@ -1087,12 +1151,39 @@ export function useEkaetteSocket(
 
   const disconnect = useCallback(() => {
     shouldReconnectRef.current = false
+    isPrewarmingRef.current = false
+    prewarmAudioBufferRef.current = []
+    prewarmMessageBufferRef.current = []
     setState('disconnected')
     rejectPendingConnect(
       new SocketConnectError('CONNECT_CANCELLED', 'Connection cancelled', { retryable: false }),
     )
     cleanup()
   }, [cleanup, rejectPendingConnect])
+
+  /**
+   * Pre-connect the WebSocket so the backend starts the Live API session
+   * and begins generating the greeting before the user clicks "Start Call".
+   * Sets state to 'prewarming' — UI treats this like 'disconnected'.
+   * Call connect() to promote to 'connected'.
+   */
+  const prewarm = useCallback(() => {
+    if (
+      demoMode ||
+      isPrewarmingRef.current ||
+      connectingRef.current ||
+      wsRef.current?.readyState === WebSocket.OPEN ||
+      wsRef.current?.readyState === WebSocket.CONNECTING
+    ) {
+      return
+    }
+    isPrewarmingRef.current = true
+    setState('prewarming')
+    void connectBackendProxy().catch(() => {
+      isPrewarmingRef.current = false
+      setState('disconnected')
+    })
+  }, [connectBackendProxy, demoMode])
 
   const sendJson = useCallback(
     (message: ClientMessage) => {
@@ -1274,6 +1365,7 @@ export function useEkaetteSocket(
     debugMetrics,
     connect,
     disconnect,
+    prewarm,
     sendAudio,
     sendText,
     sendImage,

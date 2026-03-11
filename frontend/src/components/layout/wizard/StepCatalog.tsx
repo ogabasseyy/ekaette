@@ -1,10 +1,10 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useWizardApi } from './useWizardApi'
 
 interface StepCatalogProps {
   companyId: string
   tenantId: string
-  onNext: () => void
+  onNext: (count: number) => void
   onBack: () => void
 }
 
@@ -18,57 +18,89 @@ export function StepCatalog({ companyId, tenantId, onNext, onBack }: StepCatalog
   const [productsJson, setProductsJson] = useState(DEFAULT_PRODUCTS_JSON)
   const [sourceUrl, setSourceUrl] = useState('')
   const [status, setStatus] = useState<string | null>(null)
+  const [productCount, setProductCount] = useState<number | null>(null)
   const [file, setFile] = useState<File | null>(null)
   const [fileInputKey, setFileInputKey] = useState(0)
-  const api = useWizardApi({ tenantId })
+  const { callJson, callFormData, runAction, busy, error } = useWizardApi({ tenantId })
   const companyUrl = `/api/v1/admin/companies/${encodeURIComponent(companyId)}`
 
+  const loadCatalogSummary = useCallback(async () => {
+    try {
+      const payload = await callJson(`${companyUrl}/export`, {
+        method: 'POST',
+        payload: { includeRuntimeData: true },
+      })
+      const counts =
+        payload.counts && typeof payload.counts === 'object'
+          ? (payload.counts as Record<string, unknown>)
+          : {}
+      setProductCount(typeof counts.products === 'number' ? counts.products : 0)
+    } catch {
+      setProductCount(null)
+    }
+  }, [callJson, companyUrl])
+
+  useEffect(() => {
+    void loadCatalogSummary()
+  }, [loadCatalogSummary])
+
   const importProducts = useCallback(async () => {
-    await api.runAction(async () => {
+    await runAction(async () => {
       const products = JSON.parse(productsJson)
-      const payload = await api.callJson(`${companyUrl}/products/import`, {
+      const payload = await callJson(`${companyUrl}/products/import`, {
         method: 'POST',
         idempotencyPrefix: 'wizard-products-import',
         payload: { products, data_tier: 'admin' },
       })
       const written = typeof payload.written === 'number' ? payload.written : '?'
       setStatus(`Imported ${written} products`)
+      await loadCatalogSummary()
     })
-  }, [api, companyUrl, productsJson])
+  }, [callJson, runAction, companyUrl, loadCatalogSummary, productsJson])
 
   const syncFromSheets = useCallback(async () => {
     if (!sourceUrl.trim()) return
-    await api.runAction(async () => {
-      const payload = await api.callJson(`${companyUrl}/inventory/sync`, {
+    await runAction(async () => {
+      const payload = await callJson(`${companyUrl}/inventory/sync`, {
         method: 'POST',
         idempotencyPrefix: 'wizard-inventory-sync',
         payload: { source_type: 'google_sheets', source_url: sourceUrl },
       })
       const written = typeof payload.written === 'number' ? payload.written : '?'
       setStatus(`Synced ${written} items from Google Sheets`)
+      await loadCatalogSummary()
     })
-  }, [api, companyUrl, sourceUrl])
+  }, [callJson, runAction, companyUrl, loadCatalogSummary, sourceUrl])
 
   const uploadFile = useCallback(async () => {
     if (!file) return
-    await api.runAction(async () => {
+    await runAction(async () => {
       const formData = new FormData()
       formData.append('file', file)
       formData.append('data_tier', 'admin')
-      const payload = await api.callFormData(`${companyUrl}/inventory/upload`, formData, {
+      const payload = await callFormData(`${companyUrl}/inventory/upload`, formData, {
         idempotencyPrefix: 'wizard-inventory-upload',
       })
       const written = typeof payload.written === 'number' ? payload.written : '?'
       setStatus(`Uploaded ${written} items`)
       setFile(null)
       setFileInputKey(key => key + 1)
+      await loadCatalogSummary()
     })
-  }, [api, companyUrl, file])
+  }, [callFormData, runAction, companyUrl, file, loadCatalogSummary])
 
   return (
     <>
       <div className="mt-5 space-y-4">
         <h2 className="font-semibold text-white">Product Catalog</h2>
+        <div className="rounded-lg border border-border/40 bg-card/30 px-4 py-2.5">
+          <p className="text-xs text-muted-foreground uppercase tracking-wider">Current catalog</p>
+          <p className="mt-1 text-sm text-white">
+            {productCount !== null
+              ? `${productCount} product${productCount === 1 ? '' : 's'} connected`
+              : 'Unable to load catalog summary'}
+          </p>
+        </div>
 
         <div className="space-y-2">
           <p className="text-xs text-muted-foreground uppercase tracking-wider">Import JSON</p>
@@ -81,7 +113,7 @@ export function StepCatalog({ companyId, tenantId, onNext, onBack }: StepCatalog
           />
           <button
             type="button"
-            disabled={api.busy}
+            disabled={busy}
             onClick={importProducts}
             className="rounded-full border border-primary/50 bg-primary/10 px-4 py-1.5 text-xs font-semibold text-primary transition hover:bg-primary/15 disabled:opacity-50"
           >
@@ -103,7 +135,7 @@ export function StepCatalog({ companyId, tenantId, onNext, onBack }: StepCatalog
           />
           <button
             type="button"
-            disabled={api.busy || !sourceUrl.trim()}
+            disabled={busy || !sourceUrl.trim()}
             onClick={syncFromSheets}
             className="rounded-full border border-primary/50 bg-primary/10 px-4 py-1.5 text-xs font-semibold text-primary transition hover:bg-primary/15 disabled:opacity-50"
           >
@@ -125,7 +157,7 @@ export function StepCatalog({ companyId, tenantId, onNext, onBack }: StepCatalog
             {file ? (
               <button
                 type="button"
-                disabled={api.busy}
+                disabled={busy}
                 onClick={uploadFile}
                 className="rounded-full border border-primary/50 bg-primary/10 px-4 py-1.5 text-xs font-semibold text-primary transition hover:bg-primary/15 disabled:opacity-50"
               >
@@ -135,9 +167,9 @@ export function StepCatalog({ companyId, tenantId, onNext, onBack }: StepCatalog
           </div>
         </div>
 
-        {api.error ? (
+        {error ? (
           <p className="text-xs text-destructive" role="alert">
-            {api.error}
+            {error}
           </p>
         ) : null}
         {status ? <p className="text-xs text-emerald-400">{status}</p> : null}
@@ -154,14 +186,14 @@ export function StepCatalog({ companyId, tenantId, onNext, onBack }: StepCatalog
         <div className="flex gap-2">
           <button
             type="button"
-            onClick={onNext}
+            onClick={() => onNext(productCount ?? 0)}
             className="rounded-full border border-border/50 bg-card/40 px-5 py-2 text-sm text-muted-foreground transition hover:text-white"
           >
             Skip
           </button>
           <button
             type="button"
-            onClick={onNext}
+            onClick={() => onNext(productCount ?? 0)}
             className="rounded-full bg-[color:var(--industry-accent)] px-5 py-2 font-semibold text-black text-sm transition hover:brightness-110"
           >
             Next

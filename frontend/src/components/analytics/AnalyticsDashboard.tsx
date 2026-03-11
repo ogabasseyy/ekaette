@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react'
 import { useAnalytics } from '../../hooks/useAnalytics'
+import { useVoiceAnalytics } from '../../hooks/useVoiceAnalytics'
 import { cn } from '../../lib/utils'
 import { NavBar } from '../layout/NavBar'
 import { CampaignDetail } from './CampaignDetail'
 import { CampaignTable } from './CampaignTable'
 import { KpiCards } from './KpiCards'
+import { VoiceOperationsSection } from './VoiceOperationsSection'
 
 const DAYS_OPTIONS = [7, 30, 90] as const
 const TENANT_STORAGE_KEY = 'ekaette:onboarding:tenantId'
@@ -76,6 +78,12 @@ export function AnalyticsDashboard() {
 
   const { summary, campaigns, selectedCampaign, loading, error, selectCampaign, clearSelection } =
     useAnalytics({ tenantId, companyId, days })
+  const {
+    summary: voiceSummary,
+    recentCalls,
+    loading: voiceLoading,
+    error: voiceError,
+  } = useVoiceAnalytics({ tenantId, companyId, days })
 
   return (
     <main className="app-shell min-h-screen">
@@ -85,10 +93,11 @@ export function AnalyticsDashboard() {
         {/* Header */}
         <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
           <div>
-            <p className="text-[0.65rem] uppercase tracking-[0.25em] text-primary">Analytics</p>
-            <h1 className="font-display text-2xl text-foreground sm:text-3xl">
-              Campaign Analytics
-            </h1>
+            <p className="text-[0.65rem] text-primary uppercase tracking-[0.25em]">Analytics</p>
+            <h1 className="font-display text-2xl text-foreground sm:text-3xl">Operations Dashboard</h1>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Track live voice performance, campaigns, and conversion activity in one view.
+            </p>
           </div>
 
           {/* Days filter pills */}
@@ -99,7 +108,7 @@ export function AnalyticsDashboard() {
                 type="button"
                 onClick={() => setDays(d)}
                 className={cn(
-                  'rounded-full border px-3 py-1 text-[0.65rem] font-semibold uppercase tracking-[0.15em] transition-colors',
+                  'rounded-full border px-3 py-1 font-semibold text-[0.65rem] uppercase tracking-[0.15em] transition-colors',
                   d === days
                     ? 'border-primary/40 bg-primary/15 text-primary'
                     : 'border-border/60 bg-card/30 text-muted-foreground hover:text-foreground',
@@ -124,6 +133,22 @@ export function AnalyticsDashboard() {
             {error}
           </div>
         )}
+
+        <VoiceOperationsSection
+          summary={voiceSummary}
+          recentCalls={recentCalls}
+          loading={voiceLoading}
+          error={voiceError}
+        />
+
+        <div className="flex flex-col gap-1">
+          <p className="text-[0.65rem] font-semibold uppercase tracking-[0.2em] text-primary">
+            Campaign Analytics
+          </p>
+          <h2 className="font-display text-xl text-foreground sm:text-2xl">
+            Messaging and conversion performance
+          </h2>
+        </div>
 
         {/* KPI cards */}
         {summary && <KpiCards summary={summary} />}

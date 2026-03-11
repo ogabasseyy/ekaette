@@ -5,8 +5,25 @@ import { parseCsv, useWizardApi } from './useWizardApi'
 interface StepKnowledgeProps {
   companyId: string
   tenantId: string
-  onNext: () => void
+  onNext: (count: number) => void
   onBack: () => void
+}
+
+function normalizeKnowledgeEntries(rawEntries: AdminKnowledgeEntry[]): AdminKnowledgeEntry[] {
+  const seen = new Set<string>()
+  const deduped: AdminKnowledgeEntry[] = []
+  for (const entry of rawEntries) {
+    const signature = [
+      entry.id?.trim().toLowerCase() || '',
+      entry.title?.trim().toLowerCase() || '',
+      entry.text?.trim().toLowerCase() || '',
+      entry.source?.trim().toLowerCase() || '',
+    ].join('::')
+    if (seen.has(signature)) continue
+    seen.add(signature)
+    deduped.push(entry)
+  }
+  return deduped
 }
 
 export function StepKnowledge({ companyId, tenantId, onNext, onBack }: StepKnowledgeProps) {
@@ -15,19 +32,27 @@ export function StepKnowledge({ companyId, tenantId, onNext, onBack }: StepKnowl
   const [file, setFile] = useState<File | null>(null)
   const [fileInputKey, setFileInputKey] = useState(0)
   const [entries, setEntries] = useState<AdminKnowledgeEntry[]>([])
+  const [loadingEntries, setLoadingEntries] = useState(true)
   const [status, setStatus] = useState<string | null>(null)
   const [showAllFormats, setShowAllFormats] = useState(false)
-  const api = useWizardApi({ tenantId })
+  const { callJson, callFormData, runAction, busy, error } = useWizardApi({ tenantId })
   const companyUrl = `/api/v1/admin/companies/${encodeURIComponent(companyId)}`
 
   const loadEntries = useCallback(async () => {
+    setLoadingEntries(true)
     try {
-      const payload = await api.callJson(`${companyUrl}/knowledge`)
-      setEntries(Array.isArray(payload.entries) ? (payload.entries as AdminKnowledgeEntry[]) : [])
+      const payload = await callJson(`${companyUrl}/knowledge`)
+      setEntries(
+        Array.isArray(payload.entries)
+          ? normalizeKnowledgeEntries(payload.entries as AdminKnowledgeEntry[])
+          : [],
+      )
     } catch {
       /* non-blocking */
+    } finally {
+      setLoadingEntries(false)
     }
-  }, [api, companyUrl])
+  }, [callJson, companyUrl])
 
   useEffect(() => {
     void loadEntries()
@@ -35,8 +60,8 @@ export function StepKnowledge({ companyId, tenantId, onNext, onBack }: StepKnowl
 
   const importText = useCallback(async () => {
     if (!text.trim()) return
-    await api.runAction(async () => {
-      await api.callJson(`${companyUrl}/knowledge/import-text`, {
+    await runAction(async () => {
+      await callJson(`${companyUrl}/knowledge/import-text`, {
         method: 'POST',
         idempotencyPrefix: 'wizard-knowledge-text',
         payload: { title, text, tags: parseCsv(title), source: 'wizard' },
@@ -45,16 +70,16 @@ export function StepKnowledge({ companyId, tenantId, onNext, onBack }: StepKnowl
       setText('')
       await loadEntries()
     })
-  }, [api, companyUrl, loadEntries, text, title])
+  }, [callJson, runAction, companyUrl, loadEntries, text, title])
 
   const importFile = useCallback(async () => {
     if (!file) return
-    await api.runAction(async () => {
+    await runAction(async () => {
       const formData = new FormData()
       formData.append('file', file)
       formData.append('title', title || file.name)
       formData.append('tags', title)
-      await api.callFormData(`${companyUrl}/knowledge/import-file`, formData, {
+      await callFormData(`${companyUrl}/knowledge/import-file`, formData, {
         idempotencyPrefix: 'wizard-knowledge-file',
       })
       setStatus('Knowledge file imported')
@@ -62,12 +87,12 @@ export function StepKnowledge({ companyId, tenantId, onNext, onBack }: StepKnowl
       setFileInputKey(key => key + 1)
       await loadEntries()
     })
-  }, [api, companyUrl, file, loadEntries, title])
+  }, [callFormData, runAction, companyUrl, file, loadEntries, title])
 
   const deleteEntry = useCallback(
     async (knowledgeId: string) => {
-      await api.runAction(async () => {
-        await api.callJson(`${companyUrl}/knowledge/${encodeURIComponent(knowledgeId)}`, {
+      await runAction(async () => {
+        await callJson(`${companyUrl}/knowledge/${encodeURIComponent(knowledgeId)}`, {
           method: 'DELETE',
           idempotencyPrefix: 'wizard-knowledge-delete',
         })
@@ -75,7 +100,7 @@ export function StepKnowledge({ companyId, tenantId, onNext, onBack }: StepKnowl
         await loadEntries()
       })
     },
-    [api, companyUrl, loadEntries],
+    [callJson, runAction, companyUrl, loadEntries],
   )
 
   return (
@@ -103,7 +128,7 @@ export function StepKnowledge({ companyId, tenantId, onNext, onBack }: StepKnowl
           <div className="flex flex-wrap gap-2">
             <button
               type="button"
-              disabled={api.busy || !text.trim()}
+              disabled={busy || !text.trim()}
               onClick={importText}
               className="rounded-full border border-primary/50 bg-primary/10 px-4 py-1.5 text-xs font-semibold text-primary transition hover:bg-primary/15 disabled:opacity-50"
             >
@@ -153,7 +178,7 @@ export function StepKnowledge({ companyId, tenantId, onNext, onBack }: StepKnowl
             {file ? (
               <button
                 type="button"
-                disabled={api.busy}
+                disabled={busy}
                 onClick={importFile}
                 className="rounded-full border border-primary/50 bg-primary/10 px-4 py-1.5 text-xs font-semibold text-primary transition hover:bg-primary/15 disabled:opacity-50"
               >
@@ -163,14 +188,22 @@ export function StepKnowledge({ companyId, tenantId, onNext, onBack }: StepKnowl
           </div>
         </div>
 
-        {api.error ? (
+        {error ? (
           <p className="text-xs text-destructive" role="alert">
-            {api.error}
+            {error}
           </p>
         ) : null}
         {status ? <p className="text-xs text-emerald-400">{status}</p> : null}
 
-        {entries.length > 0 ? (
+        {loadingEntries ? (
+          <div className="flex items-center gap-3 rounded-lg border border-border/40 bg-card/20 px-3 py-3 text-sm text-muted-foreground">
+            <span
+              aria-hidden="true"
+              className="size-4 animate-spin rounded-full border-2 border-primary/30 border-t-primary"
+            />
+            <span>Loading knowledge entries…</span>
+          </div>
+        ) : entries.length > 0 ? (
           <div className="space-y-1">
             <p className="text-xs text-muted-foreground uppercase tracking-wider">
               Existing entries ({entries.length})
@@ -210,14 +243,14 @@ export function StepKnowledge({ companyId, tenantId, onNext, onBack }: StepKnowl
         <div className="flex gap-2">
           <button
             type="button"
-            onClick={onNext}
+            onClick={() => onNext(entries.length)}
             className="rounded-full border border-border/50 bg-card/40 px-5 py-2 text-sm text-muted-foreground transition hover:text-white"
           >
             Skip
           </button>
           <button
             type="button"
-            onClick={onNext}
+            onClick={() => onNext(entries.length)}
             className="rounded-full bg-[color:var(--industry-accent)] px-5 py-2 font-semibold text-black text-sm transition hover:brightness-110"
           >
             Next

@@ -1,19 +1,25 @@
 import { useEffect, useState } from 'react'
 import type { IndustryTemplateMeta } from '../../../types'
+import type { WizardCounts } from '../VendorSetupWizard'
+import { useWizardApi } from './useWizardApi'
 
 interface StepLaunchProps {
   templateId: string
   companyId: string
   tenantId: string
   templates?: IndustryTemplateMeta[]
+  counts: WizardCounts
   onBack: () => void
   onLaunch: (selection: { templateId: string; companyId: string }) => void
 }
 
-interface SummaryCounts {
-  knowledge: number | null
-  connectors: number | null
-  products: number | null
+function CountValue({ value, loading }: { value: string; loading: boolean }) {
+  if (loading) {
+    return (
+      <span className="inline-block h-4 w-8 animate-pulse rounded bg-white/10" />
+    )
+  }
+  return <span className="text-sm font-medium text-white">{value}</span>
 }
 
 export function StepLaunch({
@@ -21,91 +27,81 @@ export function StepLaunch({
   companyId,
   tenantId,
   templates,
+  counts: wizardCounts,
   onBack,
   onLaunch,
 }: StepLaunchProps) {
-  const [counts, setCounts] = useState<SummaryCounts>({
-    knowledge: null,
-    connectors: null,
-    products: null,
-  })
+  const { callJson } = useWizardApi({ tenantId })
+  const [companyDisplayName, setCompanyDisplayName] = useState(companyId)
+  const [counts, setCounts] = useState<WizardCounts>(wizardCounts)
+  const [loading, setLoading] = useState(true)
 
   const template = templates?.find(t => t.id === templateId)
   const voice = template?.defaultVoice ?? 'Aoede'
   const title = template?.theme?.title ?? templateId
 
   useEffect(() => {
-    let disposed = false
-    const controller = new AbortController()
-
-    async function loadCounts() {
-      const companyUrl = `/api/v1/admin/companies/${encodeURIComponent(companyId)}`
-      const headers: Record<string, string> = {
-        Accept: 'application/json',
-        'Content-Type': 'application/json',
-        'x-tenant-id': tenantId,
-      }
-      const separator = companyUrl.includes('?') ? '&' : '?'
-      const tenantSuffix = `${separator}tenantId=${encodeURIComponent(tenantId)}`
-
+    async function loadSummary() {
       try {
-        const [knowledgeRes, companyRes] = await Promise.all([
-          fetch(`${companyUrl}/knowledge${tenantSuffix}`, { headers, signal: controller.signal }),
-          fetch(`${companyUrl}${tenantSuffix}`, { headers, signal: controller.signal }),
-        ])
+        const payload = await callJson(
+          `/api/v1/admin/companies/${encodeURIComponent(companyId)}/export`,
+          {
+            method: 'POST',
+            payload: { includeRuntimeData: true },
+          },
+        )
+        const countsPayload =
+          payload.counts && typeof payload.counts === 'object'
+            ? (payload.counts as Record<string, unknown>)
+            : {}
+        const companyPayload =
+          payload.company && typeof payload.company === 'object'
+            ? (payload.company as Record<string, unknown>)
+            : {}
+        const connectorsPayload =
+          companyPayload.connectors && typeof companyPayload.connectors === 'object'
+            ? (companyPayload.connectors as Record<string, unknown>)
+            : {}
 
-        if (disposed) return
-
-        let knowledgeCount: number | null = null
-        let connectorCount: number | null = null
-
-        if (knowledgeRes.ok) {
-          const data = (await knowledgeRes.json()) as Record<string, unknown>
-          const entries = data.entries
-          knowledgeCount = Array.isArray(entries) ? entries.length : 0
-        }
-
-        if (companyRes.ok) {
-          const data = (await companyRes.json()) as Record<string, unknown>
-          const company = data.company as Record<string, unknown> | undefined
-          const connectors = company?.connectors
-          connectorCount =
-            connectors && typeof connectors === 'object' ? Object.keys(connectors).length : 0
-        }
-
-        if (disposed) return
+        setCompanyDisplayName(
+          typeof companyPayload.displayName === 'string' && companyPayload.displayName.trim()
+            ? companyPayload.displayName
+            : companyId,
+        )
         setCounts({
-          knowledge: knowledgeCount,
-          connectors: connectorCount,
-          products: null,
+          knowledge: typeof countsPayload.knowledge === 'number' ? countsPayload.knowledge : 0,
+          connectors: Object.keys(connectorsPayload).length,
+          products: typeof countsPayload.products === 'number' ? countsPayload.products : 0,
         })
       } catch {
-        if (disposed || controller.signal.aborted) return
-        setCounts({
-          knowledge: null,
-          connectors: null,
-          products: null,
-        })
-        /* non-blocking — counts will show as "—" */
+        // Keep wizard counts on failure
+      } finally {
+        setLoading(false)
       }
     }
 
-    void loadCounts()
-    return () => {
-      disposed = true
-      controller.abort()
-    }
-  }, [companyId, tenantId])
+    void loadSummary()
+  }, [callJson, companyId])
 
   const summaryItems = [
-    { label: 'Industry', value: title },
-    { label: 'Company', value: companyId },
-    { label: 'Voice', value: voice },
+    { label: 'Industry', value: title, showLoading: false },
+    { label: 'Company', value: companyDisplayName, showLoading: loading },
+    { label: 'Voice', value: voice, showLoading: false },
     {
       label: 'Knowledge entries',
       value: counts.knowledge !== null ? String(counts.knowledge) : '—',
+      showLoading: loading && counts.knowledge === null,
     },
-    { label: 'Connectors', value: counts.connectors !== null ? String(counts.connectors) : '—' },
+    {
+      label: 'Connectors',
+      value: counts.connectors !== null ? String(counts.connectors) : '—',
+      showLoading: loading && counts.connectors === null,
+    },
+    {
+      label: 'Catalog items',
+      value: counts.products !== null ? String(counts.products) : '—',
+      showLoading: loading && counts.products === null,
+    },
   ]
 
   return (
@@ -120,7 +116,7 @@ export function StepLaunch({
               className="flex items-center justify-between rounded-lg border border-border/40 bg-card/30 px-4 py-2.5"
             >
               <span className="text-sm text-muted-foreground">{item.label}</span>
-              <span className="text-sm font-medium text-white">{item.value}</span>
+              <CountValue value={item.value} loading={item.showLoading} />
             </div>
           ))}
         </div>

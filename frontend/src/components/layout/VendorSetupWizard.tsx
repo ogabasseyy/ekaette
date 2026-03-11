@@ -40,15 +40,22 @@ const FALLBACK_OPTIONS: IndustryTemplateMeta[] = [
 const STEPS: WizardStepId[] = ['industry', 'knowledge', 'connectors', 'catalog', 'launch']
 
 // --- Wizard state machine ---
+export interface WizardCounts {
+  knowledge: number | null
+  connectors: number | null
+  products: number | null
+}
+
 interface WizardState {
   currentStep: number
   completedSteps: Set<number>
   templateId: string
   companyId: string
+  counts: WizardCounts
 }
 
 type WizardAction =
-  | { type: 'ADVANCE'; templateId?: string; companyId?: string }
+  | { type: 'ADVANCE'; templateId?: string; companyId?: string; counts?: Partial<WizardCounts> }
   | { type: 'GO_BACK' }
   | { type: 'GO_TO_STEP'; step: number }
 
@@ -64,6 +71,7 @@ function wizardReducer(state: WizardState, action: WizardAction): WizardState {
         completedSteps: nextCompleted,
         templateId: action.templateId ?? state.templateId,
         companyId: action.companyId ?? state.companyId,
+        counts: action.counts ? { ...state.counts, ...action.counts } : state.counts,
       }
     }
     case 'GO_BACK': {
@@ -143,6 +151,7 @@ function NormalWizard({
     completedSteps: new Set<number>(),
     templateId: initialTemplateId,
     companyId: initialCompanyId,
+    counts: { knowledge: null, connectors: null, products: null },
   })
 
   const tenantId = String(import.meta.env.VITE_TENANT_ID ?? 'public')
@@ -160,8 +169,8 @@ function NormalWizard({
     dispatch({ type: 'ADVANCE', templateId: selection.templateId, companyId: selection.companyId })
   }, [])
 
-  const handleAdvance = useCallback(() => {
-    dispatch({ type: 'ADVANCE' })
+  const handleAdvanceWithCounts = useCallback((counts?: Partial<WizardCounts>) => {
+    dispatch({ type: 'ADVANCE', counts })
   }, [])
 
   const handleBack = useCallback(() => {
@@ -212,7 +221,7 @@ function NormalWizard({
           <StepKnowledge
             companyId={state.companyId}
             tenantId={tenantId}
-            onNext={handleAdvance}
+            onNext={count => handleAdvanceWithCounts({ knowledge: count })}
             onBack={handleBack}
           />
         ) : null}
@@ -221,7 +230,7 @@ function NormalWizard({
           <StepConnectors
             companyId={state.companyId}
             tenantId={tenantId}
-            onNext={handleAdvance}
+            onNext={count => handleAdvanceWithCounts({ connectors: count })}
             onBack={handleBack}
           />
         ) : null}
@@ -230,7 +239,7 @@ function NormalWizard({
           <StepCatalog
             companyId={state.companyId}
             tenantId={tenantId}
-            onNext={handleAdvance}
+            onNext={count => handleAdvanceWithCounts({ products: count })}
             onBack={handleBack}
           />
         ) : null}
@@ -241,6 +250,7 @@ function NormalWizard({
             companyId={state.companyId}
             tenantId={tenantId}
             templates={templates}
+            counts={state.counts}
             onBack={handleBack}
             onLaunch={handleLaunch}
           />

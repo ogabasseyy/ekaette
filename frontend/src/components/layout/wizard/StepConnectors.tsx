@@ -71,7 +71,7 @@ function resolveStatus(
 interface StepConnectorsProps {
   companyId: string
   tenantId: string
-  onNext: () => void
+  onNext: (count: number) => void
   onBack: () => void
 }
 
@@ -86,30 +86,30 @@ export function StepConnectors({ companyId, tenantId, onNext, onBack }: StepConn
   const [actionStates, setActionStates] = useState<
     Record<string, { status: CardStatus; message: string | null }>
   >({})
-  const api = useWizardApi({ tenantId })
+  const { callJson, runAction, busy, error } = useWizardApi({ tenantId })
   const companyUrl = `/api/v1/admin/companies/${encodeURIComponent(companyId)}`
 
   // Load provider catalog
   const loadProviders = useCallback(async () => {
     try {
-      const payload = await api.callJson('/api/v1/admin/mcp/providers')
+      const payload = await callJson('/api/v1/admin/mcp/providers')
       if (Array.isArray(payload.providers)) setProviders(payload.providers as ProviderEntry[])
     } catch {
       /* non-blocking — cards will be empty */
     }
-  }, [api])
+  }, [callJson])
 
   // Load existing connectors from company detail
   const loadConnectors = useCallback(async () => {
     try {
-      const payload = await api.callJson(companyUrl)
+      const payload = await callJson(companyUrl)
       const detail = payload.company as AdminCompanyDetail | undefined
       const map = detail?.connectors ?? {}
       setConnectors(Object.entries(map).map(([id, entry]) => ({ ...entry, id })))
     } catch {
       /* non-blocking */
     }
-  }, [api, companyUrl])
+  }, [callJson, companyUrl])
 
   useEffect(() => {
     void loadProviders()
@@ -121,8 +121,8 @@ export function StepConnectors({ companyId, tenantId, onNext, onBack }: StepConn
     async (provider: ProviderEntry, secret?: string) => {
       const cid = connectorIdForProvider(provider.id)
       setActionStates(prev => ({ ...prev, [cid]: { status: 'connecting', message: null } }))
-      await api.runAction(async () => {
-        await api.callJson(`${companyUrl}/connectors`, {
+      await runAction(async () => {
+        await callJson(`${companyUrl}/connectors`, {
           method: 'POST',
           idempotencyPrefix: 'wizard-connector-create',
           payload: {
@@ -138,12 +138,12 @@ export function StepConnectors({ companyId, tenantId, onNext, onBack }: StepConn
         setSecretRef('')
         await loadConnectors()
       })
-      // On error, api.runAction sets api.error and we reflect it
-      if (api.error) {
-        setActionStates(prev => ({ ...prev, [cid]: { status: 'error', message: api.error } }))
+      // On error, runAction sets error and we reflect it
+      if (error) {
+        setActionStates(prev => ({ ...prev, [cid]: { status: 'error', message: error } }))
       }
     },
-    [api, companyUrl, loadConnectors],
+    [callJson, runAction, error, companyUrl, loadConnectors],
   )
 
   // Connect custom MCP server
@@ -151,9 +151,9 @@ export function StepConnectors({ companyId, tenantId, onNext, onBack }: StepConn
     const pid = customProviderId.trim() || 'custom'
     const cid = `custom-${pid}`
     setActionStates(prev => ({ ...prev, [cid]: { status: 'connecting', message: null } }))
-    await api.runAction(async () => {
+    await runAction(async () => {
       try {
-        await api.callJson(`${companyUrl}/connectors`, {
+        await callJson(`${companyUrl}/connectors`, {
           method: 'POST',
           idempotencyPrefix: 'wizard-connector-create',
           payload: {
@@ -171,26 +171,26 @@ export function StepConnectors({ companyId, tenantId, onNext, onBack }: StepConn
         setCustomProviderId('')
         setCustomSecret('')
         await loadConnectors()
-      } catch (error) {
+      } catch (err) {
         setActionStates(prev => ({
           ...prev,
           [cid]: {
             status: 'error',
-            message: error instanceof Error ? error.message : 'Connection failed',
+            message: err instanceof Error ? err.message : 'Connection failed',
           },
         }))
-        throw error
+        throw err
       }
     })
-  }, [api, companyUrl, customProviderId, customSecret, customUrl, loadConnectors])
+  }, [callJson, runAction, companyUrl, customProviderId, customSecret, customUrl, loadConnectors])
 
   // Test a connected connector
   const testConnector = useCallback(
     async (connectorId: string) => {
       setActionStates(prev => ({ ...prev, [connectorId]: { status: 'testing', message: null } }))
-      await api.runAction(async () => {
+      await runAction(async () => {
         try {
-          const result = await api.callJson(
+          const result = await callJson(
             `${companyUrl}/connectors/${encodeURIComponent(connectorId)}/test`,
             { method: 'POST', idempotencyPrefix: 'wizard-connector-test' },
           )
@@ -202,26 +202,26 @@ export function StepConnectors({ companyId, tenantId, onNext, onBack }: StepConn
               message: ok ? 'Test passed' : String(result.details ?? 'Test failed'),
             },
           }))
-        } catch (error) {
+        } catch (err) {
           setActionStates(prev => ({
             ...prev,
             [connectorId]: {
               status: 'error',
-              message: error instanceof Error ? error.message : 'Test failed',
+              message: err instanceof Error ? err.message : 'Test failed',
             },
           }))
-          throw error
+          throw err
         }
       })
     },
-    [api, companyUrl],
+    [callJson, runAction, companyUrl],
   )
 
   // Remove a connector
   const removeConnector = useCallback(
     async (connectorId: string) => {
-      await api.runAction(async () => {
-        await api.callJson(`${companyUrl}/connectors/${encodeURIComponent(connectorId)}`, {
+      await runAction(async () => {
+        await callJson(`${companyUrl}/connectors/${encodeURIComponent(connectorId)}`, {
           method: 'DELETE',
           idempotencyPrefix: 'wizard-connector-delete',
         })
@@ -233,7 +233,7 @@ export function StepConnectors({ companyId, tenantId, onNext, onBack }: StepConn
         await loadConnectors()
       })
     },
-    [api, companyUrl, loadConnectors],
+    [callJson, runAction, companyUrl, loadConnectors],
   )
 
   // Handle card click
@@ -266,9 +266,9 @@ export function StepConnectors({ companyId, tenantId, onNext, onBack }: StepConn
           </p>
         </div>
 
-        {api.error ? (
+        {error ? (
           <p className="text-xs text-destructive" role="alert">
-            {api.error}
+            {error}
           </p>
         ) : null}
 
@@ -363,7 +363,7 @@ export function StepConnectors({ companyId, tenantId, onNext, onBack }: StepConn
                     <div className="flex gap-2">
                       <button
                         type="button"
-                        disabled={api.busy || !secretRef.trim()}
+                        disabled={busy || !secretRef.trim()}
                         onClick={() => connectProvider(provider, secretRef.trim())}
                         className="rounded-full border border-primary/50 bg-primary/10 px-4 py-1.5 text-xs font-semibold text-primary transition hover:bg-primary/15 disabled:opacity-50"
                       >
@@ -456,7 +456,7 @@ export function StepConnectors({ companyId, tenantId, onNext, onBack }: StepConn
                 <div className="flex gap-2">
                   <button
                     type="button"
-                    disabled={api.busy || !customUrl.trim()}
+                    disabled={busy || !customUrl.trim()}
                     onClick={connectCustom}
                     className="rounded-full border border-primary/50 bg-primary/10 px-4 py-1.5 text-xs font-semibold text-primary transition hover:bg-primary/15 disabled:opacity-50"
                   >
@@ -534,14 +534,14 @@ export function StepConnectors({ companyId, tenantId, onNext, onBack }: StepConn
         <div className="flex gap-2">
           <button
             type="button"
-            onClick={onNext}
+            onClick={() => onNext(connectors.length)}
             className="rounded-full border border-border/50 bg-card/40 px-5 py-2 text-sm text-muted-foreground transition hover:text-white"
           >
             Skip
           </button>
           <button
             type="button"
-            onClick={onNext}
+            onClick={() => onNext(connectors.length)}
             className="rounded-full bg-[color:var(--industry-accent)] px-5 py-2 font-semibold text-black text-sm transition hover:brightness-110"
           >
             Next

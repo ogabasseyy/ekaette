@@ -49,3 +49,41 @@ export interface CampaignDetailResponse {
   status: string
   campaign: CampaignSnapshot | null
 }
+
+export interface VoiceAnalyticsSummary {
+  window_days: number
+  calls_total: number
+  calls_completed: number
+  avg_duration_seconds: number
+  transfers_total: number
+  transfer_rate: number
+  callback_requests_total: number
+  callback_triggered_total: number
+  transcript_coverage_rate: number
+}
+
+export interface VoiceCallSnapshot {
+  session_id: string
+  tenant_id: string
+  company_id: string
+  channel: string
+  status: string
+  started_at: string
+  updated_at: string
+  ended_at: string | null
+  duration_seconds: number
+  transfer_count: number
+  callback_requested: boolean
+  callback_triggered: boolean
+  transcript_messages_total: number
+  transcript_preview: string
+  agent_path: string[]
+}
+
+export interface VoiceAnalyticsOverviewResponse {
+  status: string
+  tenant_id: string
+  company_id: string
+  summary: VoiceAnalyticsSummary
+  recent_calls: VoiceCallSnapshot[]
+}

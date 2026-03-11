@@ -375,6 +375,27 @@ function App() {
   })
   const isConnected = socket.state === 'connected'
 
+  // Prewarm: connect WebSocket early so greeting starts generating before
+  // user clicks "Start Call". Saves ~5-7s of Live API cold-start latency.
+  // rerender-dependencies: use primitive deps, not the socket object.
+  const { prewarm, disconnect: socketDisconnect } = socket
+  const prewarmConfigKey = `${industry}:${companyId}`
+  const canPrewarm = !!(
+    industry &&
+    companyId &&
+    !demoModeEnabled &&
+    (onboardingConfigStatus === 'ready' || onboardingConfigStatus === 'compat')
+  )
+  useEffect(() => {
+    if (!canPrewarm) return
+    prewarm()
+    return () => {
+      // Tear down prewarmed WS only when config actually changes
+      // (industry/company switch before user clicks Start).
+      socketDisconnect()
+    }
+  }, [canPrewarm, prewarmConfigKey, prewarm, socketDisconnect])
+
   const pushDebugEvent = useCallback((kind: string, detail: string) => {
     if (!import.meta.env.DEV) return
     setDebugEvents(prev => {
@@ -893,10 +914,10 @@ function App() {
         demo.play()
         return
       }
-      const connectPromise = socket.connect()
       await audio.recoverAudioContexts()
-      await connectPromise
-      await audio.initPlayer()
+      const playerPromise = audio.initPlayer()
+      const connectPromise = socket.connect()
+      await Promise.all([playerPromise, connectPromise])
       await audio.startRecording()
     } catch (error) {
       if (isMountedRef.current) {

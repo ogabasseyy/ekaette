@@ -1,7 +1,11 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { AnalyticsOverviewResponse, CampaignSnapshot } from '../../../types/analytics'
+import type {
+  AnalyticsOverviewResponse,
+  CampaignSnapshot,
+  VoiceAnalyticsOverviewResponse,
+} from '../../../types/analytics'
 import { AnalyticsDashboard } from '../AnalyticsDashboard'
 
 vi.mock('../../../lib/navigation', () => ({
@@ -60,6 +64,42 @@ const MOCK_OVERVIEW: AnalyticsOverviewResponse = {
   campaigns: [MOCK_CAMPAIGN],
 }
 
+const MOCK_VOICE_OVERVIEW: VoiceAnalyticsOverviewResponse = {
+  status: 'ok',
+  tenant_id: 'public',
+  company_id: 'ekaette-electronics',
+  summary: {
+    window_days: 30,
+    calls_total: 12,
+    calls_completed: 10,
+    avg_duration_seconds: 87.5,
+    transfers_total: 4,
+    transfer_rate: 0.3333,
+    callback_requests_total: 3,
+    callback_triggered_total: 2,
+    transcript_coverage_rate: 0.75,
+  },
+  recent_calls: [
+    {
+      session_id: 'sess-1',
+      tenant_id: 'public',
+      company_id: 'ekaette-electronics',
+      channel: 'voice',
+      status: 'completed',
+      started_at: '2026-03-11T12:00:00+00:00',
+      updated_at: '2026-03-11T12:01:27+00:00',
+      ended_at: '2026-03-11T12:01:27+00:00',
+      duration_seconds: 87,
+      transfer_count: 1,
+      callback_requested: false,
+      callback_triggered: false,
+      transcript_messages_total: 4,
+      transcript_preview: 'Customer: I want to buy an iPhone 14.',
+      agent_path: ['ekaette_router', 'catalog_agent'],
+    },
+  ],
+}
+
 function mockAnalyticsFetch(options?: { overviewOk?: boolean; detailOk?: boolean }) {
   const overviewOk = options?.overviewOk ?? true
   const detailOk = options?.detailOk ?? true
@@ -86,6 +126,12 @@ function mockAnalyticsFetch(options?: { overviewOk?: boolean; detailOk?: boolean
       return Promise.resolve({
         ok: true,
         json: () => Promise.resolve(MOCK_OVERVIEW),
+      } as unknown as Response)
+    }
+    if (url.includes('/api/v1/at/analytics/voice/overview')) {
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve(MOCK_VOICE_OVERVIEW),
       } as unknown as Response)
     }
     if (url.includes('/api/v1/at/analytics/campaigns/')) {
@@ -116,7 +162,7 @@ describe('AnalyticsDashboard', () => {
   it('renders the page title', () => {
     global.fetch = mockAnalyticsFetch() as unknown as typeof fetch
     render(<AnalyticsDashboard />)
-    expect(screen.getByText('Campaign Analytics')).toBeInTheDocument()
+    expect(screen.getByText('Operations Dashboard')).toBeInTheDocument()
   })
 
   it('shows loading state while fetching', () => {
@@ -157,6 +203,19 @@ describe('AnalyticsDashboard', () => {
     await waitFor(() => {
       expect(screen.getByText('Weekend Promo')).toBeInTheDocument()
     })
+  })
+
+  it('renders voice operations metrics and recent calls', async () => {
+    global.fetch = mockAnalyticsFetch() as unknown as typeof fetch
+    render(<AnalyticsDashboard />)
+
+    await waitFor(() => {
+      expect(screen.getByText('Voice Operations')).toBeInTheDocument()
+    })
+
+    expect(screen.getByText('Calls')).toBeInTheDocument()
+    expect(screen.getByText('Transcript Coverage')).toBeInTheDocument()
+    expect(screen.getByText('Customer: I want to buy an iPhone 14.')).toBeInTheDocument()
   })
 
   it('clicking a campaign row shows campaign detail', async () => {

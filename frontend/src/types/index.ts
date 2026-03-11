@@ -188,7 +188,7 @@ export type ClientMessage =
 
 // ═══ Connection State ═══
 
-export type ConnectionState = 'disconnected' | 'connecting' | 'connected' | 'reconnecting'
+export type ConnectionState = 'disconnected' | 'prewarming' | 'connecting' | 'connected' | 'reconnecting'
 
 export type TransportMode = 'backend-proxy' | 'direct-live'
 
