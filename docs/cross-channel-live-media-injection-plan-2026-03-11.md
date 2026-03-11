@@ -284,7 +284,7 @@ Create a typed event model for media arriving from another channel.
 - `received_at`
 - `expires_at`
 - `media_reference`
-- `sequence_number` (optional)
+- `sequence_number` (monotonic counter within the conversation)
 
 ### Important rule
 
@@ -297,9 +297,9 @@ Never disguise channel metadata as ordinary user speech.
 ### Event semantics
 
 - `event_id` is the idempotency key for duplicate suppression
-- `expires_at` defaults to `received_at + MAX_EVENT_AGE_SECONDS`
-- `sequence_number` is optional and only needed if multiple media events arrive in quick succession
-- ordering should be FIFO within a conversation unless a later batching policy is introduced
+- `expires_at` defaults to `received_at + MAX_EVENT_AGE_SECONDS` (`300 seconds` in the initial rollout)
+- `sequence_number` ensures FIFO ordering within a conversation by incrementing a conversation-scoped counter
+- events are delivered in ascending `sequence_number` order unless a later batching policy explicitly overrides that
 
 ### Likely code touchpoints
 
@@ -338,14 +338,21 @@ On WhatsApp media receipt:
 - Validate webhook authenticity before any media fetch or event creation.
 - Accept only approved media kinds and MIME types for the rollout phase.
 - Apply size limits before inline injection:
-  - small and medium images are preferred
-  - oversized videos should fall back to the existing WhatsApp continuation path unless a later phase explicitly supports them
+  - small images: `<= 1 MB`
+  - medium images: `<= 5 MB`
+  - oversized media: `> 5 MB` falls back to the existing WhatsApp continuation path
+- Approved MIME types in the first rollout:
+  - `image/jpeg`
+  - `image/png`
+  - `image/webp`
+  - `video/mp4`
 - Prefetch or cache WhatsApp media immediately after webhook receipt because media URLs expire.
 - If media fetch fails, the payload is malformed, or the asset is too large:
   - log the failure
   - preserve the current WhatsApp continuation path
   - do not create a broken injection event
-- Apply per-conversation rate limiting for media injection attempts.
+- Apply per-conversation rate limiting for media injection attempts:
+  - maximum `3` injection attempts per conversation per `60 seconds`
 
 ### Use existing durable handoff work
 
@@ -398,7 +405,7 @@ The live session should receive:
 ### Delivery and timeout rules
 
 - Re-check live-session liveness immediately before injection.
-- Require a fast acceptance acknowledgment from the live-session bridge or handler.
+- Require acceptance acknowledgment from the live-session bridge or handler within `2 seconds`.
 - Use a bounded injection timeout, for example `5 seconds`.
 - Allow at most `1` retry after a fresh liveness and ownership check.
 - If injection times out, the session closes mid-flight, or acknowledgment never arrives:
@@ -465,6 +472,7 @@ The implementation should be generic enough to support AT later, but rollout sho
 - Maximum queue depth per active session: `3` events
 - Queue expiration: `60 seconds` from receipt
 - Delivery order: FIFO, one event at a time
+- Before delivery: verify the event `expires_at` has not passed; drop the event if it is already expired
 - Overflow behavior:
   - reject the newest event
   - keep already queued events intact

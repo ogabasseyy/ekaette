@@ -217,6 +217,7 @@ graph TB
 
     <h3>Security Considerations</h3>
     <p>Multiple ingress points exist across browser <code>/ws</code>, AT callbacks, WhatsApp webhooks, public APIs, and admin APIs. Each path needs independent authentication, authorization, and rate limiting.</p>
+    <p>AT and WhatsApp callback/webhook paths should verify provider signatures before accepting payloads into the control plane.</p>
     <p>SIP bridge to live voice service traffic relies on signed websocket tokens with explicit tenant/company/user claims, short expiry, and service-side validation. Service discovery stays explicit through environment-configured service URLs so rollback and region failover remain predictable.</p>
 
     <h3>Operational Considerations</h3>

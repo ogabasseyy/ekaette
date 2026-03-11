@@ -40,7 +40,7 @@ graph TB
             subgraph "Voice Gateway & Call Control"
                 GW_CLIENT["gateway_client.py<br/>GatewayClient WSS → live voice service<br/>reconnect + session tokens"]
                 PREWARM["callback prewarm<br/>warm live session before outbound callback"]
-                BYE["Explicit in-dialog SIP BYE<br/>after acknowledgement and audio drain"]
+                BYE["Explicit in-dialog SIP BYE<br/>after the acknowledgement and audio drain"]
             end
         end
     end
@@ -175,7 +175,7 @@ sequenceDiagram
         ATS->>CALLER: Caller hears AI response
     end
 
-    Note over SESS,LIVE: While the model speaks, the bridge suppresses loopback and can end callback legs with explicit SIP BYE after acknowledgement and audio drain
+    Note over SESS,LIVE: While the model speaks, the bridge suppresses loopback and can end callback legs with explicit SIP BYE after the acknowledgement and audio drain
 
     Note over CALLER,LIVE: Call Ends
     ATS->>SIP: SIP BYE or bridge originates BYE on callback legs

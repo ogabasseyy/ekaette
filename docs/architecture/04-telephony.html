@@ -54,7 +54,7 @@ graph TB
             subgraph "Voice Gateway &amp; Call Control"
                 GW_CLIENT["gateway_client.py<br/>GatewayClient WSS → live voice service<br/>reconnect + session tokens"]
                 PREWARM["callback prewarm<br/>warm live session before outbound callback"]
-                BYE["Explicit SIP BYE<br/>after acknowledgement and audio drain"]
+                BYE["Explicit SIP BYE<br/>after the acknowledgement and audio drain"]
             end
 
             subgraph "Codec Layer"

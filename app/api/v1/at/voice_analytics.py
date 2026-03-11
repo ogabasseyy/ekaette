@@ -205,10 +205,11 @@ def _filtered_sessions(
     days: int,
 ) -> list[VoiceSessionState]:
     cutoff = _utc_now() - timedelta(days=max(1, days))
+    sort_fallback_now = _utc_now()
     normalized_tenant = _normalize_scope(tenant_id, "public")
     normalized_company = _normalize_scope(company_id, "ekaette-electronics")
+    ranked_sessions: list[tuple[datetime, VoiceSessionState]] = []
     with _lock:
-        sessions: list[VoiceSessionState] = []
         for session in _sessions.values():
             if session.tenant_id != normalized_tenant:
                 continue
@@ -220,11 +221,11 @@ def _filtered_sessions(
                     "voice_analytics._filtered_sessions: unparseable updated_at for session_id=%s",
                     session.session_id,
                 )
-                parsed_updated = _utc_now()
+                parsed_updated = sort_fallback_now
             if parsed_updated >= cutoff:
-                sessions.append(session)
-    sessions.sort(key=lambda item: item.updated_at, reverse=True)
-    return sessions
+                ranked_sessions.append((parsed_updated, session))
+    ranked_sessions.sort(key=lambda item: item[0], reverse=True)
+    return [session for _, session in ranked_sessions]
 
 
 def list_recent_calls(

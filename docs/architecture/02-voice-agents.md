@@ -20,7 +20,7 @@ sequenceDiagram
     RT->>RT: Validate origin, tenant, company
     RT->>RT: Resolve registry config (template + capabilities)
     RT->>RT: Get/Create ADK Session
-    RT->>RT: Build RunConfig (BIDI, AUDIO, transcription,<br/>compression, affective dialog)
+    RT->>RT: Build RunConfig (BIDI, AUDIO, transcription,<br/>compression, Affective Dialog)
     RT->>LRQ: Create LiveRequestQueue()
     RT->>RUN: Start run_live(user_id, session_id, queue, config)
     RUN->>API: Connect to Live API (native audio model)
@@ -62,7 +62,7 @@ sequenceDiagram
 
 ### Affective Dialog
 
-`Affective dialog` in the Live `RunConfig` lets the native-audio model adapt prosody, pacing, and phrasing to the caller's emotional tone without changing routing, safety policy, or tool permissions.
+The Live `RunConfig`'s `Affective Dialog` setting lets the native-audio model adapt prosody, pacing, and phrasing to the caller's emotional tone without changing routing, safety policy, or tool permissions.
 
 In this architecture it should improve:
 - warmer or calmer spoken delivery when the caller sounds frustrated or uncertain
