@@ -159,8 +159,10 @@ async def request_media_via_whatsapp(
     if not normalized_summary:
         return {"status": "error", "detail": "No conversation summary provided"}
 
-    tenant_id = _get_state_value(state, "app:tenant_id", "public")
-    company_id = _get_state_value(state, "app:company_id", "ekaette-electronics")
+    tenant_id = _get_state_value(state, "app:tenant_id", "")
+    company_id = _get_state_value(state, "app:company_id", "")
+    if not tenant_id or not company_id:
+        return {"status": "error", "detail": "Missing tenant or company context"}
     voice_session_id = _get_state_value(state, "app:session_id", "")
     voice_user_id = _get_state_value(state, "app:user_id", "")
     db = _get_firestore_db()

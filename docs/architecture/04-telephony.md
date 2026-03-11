@@ -24,7 +24,7 @@ graph TB
 
                 subgraph "4-Task Pattern"
                     T1["1. _media_recv_loop<br/>UDP recvfrom → inbound_queue"]
-                    T2["2. _media_inbound_loop<br/>RTP/SRTP parse → codec decode →<br/>PCM16 16kHz → denoise / gain control"]
+                    T2["2. _media_inbound_loop<br/>RTP/SRTP parse → codec decode →<br/>PCM16 16kHz → denoise / gain normalization"]
                     T3["3. _gateway_bidi_loop<br/>PCM16 ↔ dedicated live voice service"]
                     T4["4. _media_outbound_loop<br/>PCM16 24kHz → codec encode → RTP send"]
                 end
@@ -40,7 +40,7 @@ graph TB
             subgraph "Voice Gateway & Call Control"
                 GW_CLIENT["gateway_client.py<br/>GatewayClient WSS → live voice service<br/>reconnect + session tokens"]
                 PREWARM["callback prewarm<br/>warm live session before outbound callback"]
-                BYE["Explicit in-dialog SIP BYE<br/>after acknowledgement audio drains"]
+                BYE["Explicit in-dialog SIP BYE<br/>after acknowledgement and audio drain"]
             end
         end
     end
@@ -175,7 +175,7 @@ sequenceDiagram
         ATS->>CALLER: Caller hears AI response
     end
 
-    Note over SESS,LIVE: While the model speaks, the bridge suppresses loopback and can end callback legs with explicit SIP BYE after acknowledgement drains
+    Note over SESS,LIVE: While the model speaks, the bridge suppresses loopback and can end callback legs with explicit SIP BYE after acknowledgement and audio drain
 
     Note over CALLER,LIVE: Call Ends
     ATS->>SIP: SIP BYE or bridge originates BYE on callback legs

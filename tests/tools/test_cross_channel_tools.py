@@ -89,6 +89,26 @@ async def test_request_media_via_whatsapp_returns_error_when_store_unavailable()
 
 
 @pytest.mark.asyncio
+async def test_request_media_via_whatsapp_requires_tenant_and_company_context():
+    from app.tools.cross_channel_tools import request_media_via_whatsapp
+
+    ctx = _MockContext(
+        state={
+            "user:caller_phone": "+2348012345678",
+        }
+    )
+
+    result = await request_media_via_whatsapp(
+        reason="trade_in_photo_requested",
+        summary="Customer wants to trade in an iPhone XR.",
+        tool_context=ctx,
+    )
+
+    assert result["status"] == "error"
+    assert "missing tenant or company context" in result["detail"].lower()
+
+
+@pytest.mark.asyncio
 async def test_load_and_consume_cross_channel_context_returns_pending_doc_and_marks_consumed():
     from app.tools.cross_channel_tools import load_and_consume_cross_channel_context
 
@@ -158,13 +178,14 @@ def test_extract_snapshot_data_requires_existing_doc():
 def test_validate_pending_context_requires_explicit_pending_status():
     from app.tools.cross_channel_tools import _validate_pending_context
 
-    data, terminal_status = _validate_pending_context(
-        {
-            "status": "",
-            "created_at": 4_102_444_800.0,
-            "conversation_summary": "Customer wants to trade in an iPhone XR.",
-        }
-    )
+    with patch("time.time", return_value=4_102_444_800.0):
+        data, terminal_status = _validate_pending_context(
+            {
+                "status": "",
+                "created_at": 4_102_444_800.0 - 60.0,
+                "conversation_summary": "Customer wants to trade in an iPhone XR.",
+            }
+        )
 
     assert data is None
     assert terminal_status is None

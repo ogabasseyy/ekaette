@@ -9,7 +9,7 @@
 - **Agent-per-capability:** Root orchestrator delegates to specialized sub-agents; each agent owns one domain
 - **Fail-closed config:** Missing registry data returns explicit errors, never silent defaults
 - **Split control plane / media plane:** The main Cloud Run service handles REST, webhooks, registry resolution, callback control, and text channels; a dedicated live voice service handles long-lived `/ws` audio streams
-- **Single AI brain:** Web voice, AT voice, WhatsApp calls, and text channels still converge on one ADK agent graph, but through service-specific ingress paths
+- **Unified AI routing:** Despite the split services, web voice, AT voice, WhatsApp calls, and text channels still converge on one ADK agent graph through service-specific ingress paths
 - **Voice transport specialization:** Web voice can connect directly to the live voice service; AT and WhatsApp calls use the SIP bridge VM for codec conversion, denoising, callback prewarm, and explicit SIP call control
 - **Privacy by design:** AI disclosure at first interaction (EU AI Act), NDPA-compliant consent, PII redaction pipeline across logs/sessions/transcripts, HMAC-signed WebSocket tokens
 
@@ -64,7 +64,7 @@ graph TB
             ADMIN_I["Infrastructure: auth, idempotency,<br/>policy, circuit breaker"]
         end
 
-        subgraph "Channel & Control APIs"
+        subgraph "Channel APIs & Text Runtime"
             AT_API["AT voice + SMS routes<br/>XML dial control,<br/>callback registration,<br/>post-call orchestration"]
             WA_API["WhatsApp webhook + send routes<br/>service window + Cloud Tasks"]
             TEXT["adk_text_adapter + Runner.run_async()<br/>WhatsApp/SMS text runtime"]
@@ -84,13 +84,13 @@ graph TB
             RUN_LIVE["Runner.run_live()<br/>(Voice — bidi streaming)"]
         end
 
-        subgraph "Multi-Agent Hierarchy (ADK)"
+        subgraph "Root Agents"
             ROOT["ekaette_router<br/>(Voice Root Agent)<br/>Model: gemini-2.5-flash-native-audio<br/>Real-time voice I/O,<br/>intent detection, agent routing"]
+            TEXT_ROOT["ekaette_router<br/>(Text Root Agent)<br/>Model: gemini-3-flash-preview"]
         end
     end
 
     subgraph "Shared ADK Sub-Agents"
-        TEXT_ROOT["ekaette_router<br/>(Text Root Agent)<br/>Model: gemini-3-flash-preview"]
         VA["vision_agent<br/>Image/video analysis,<br/>Visual Thinking"]
         VLA["valuation_agent<br/>Condition grading,<br/>price calculation"]
         BA["booking_agent<br/>Availability checking,<br/>reservation CRUD"]
@@ -145,6 +145,7 @@ graph TB
     SMS_C -->|"AT SMS webhook"| AT_API
 
     WS_EDGE --> SESS_INIT
+    SESS_INIT --> STREAM
     STREAM --> LRQ
     LRQ --> RUN_LIVE
     RUN_LIVE --> ROOT
@@ -217,6 +218,26 @@ graph TB
     class SIP_SVR,CALL_SESS,CODEC,GW_CLIENT sipbridge
     class PAYSTACK,TOPSHIP payments
 ```
+
+---
+
+## Security Considerations
+
+- Multiple ingress points exist: browser `/ws`, AT callbacks, WhatsApp webhooks, public APIs, and admin APIs. Each must remain independently authenticated, authorized, and rate-limited.
+- SIP bridge to live voice service traffic uses signed websocket tokens with explicit tenant/company/user claims, short expiry, and service-side validation.
+- Token lifecycle should cover issuance, short expiration, signing-key rotation, and rejection of stale JTIs where single-use semantics apply.
+- Service discovery should stay explicit through environment-configured service URLs so rollback and region failover remain predictable.
+
+## Operational Considerations
+
+- The split architecture introduces coordinated deploy and rollback requirements across the main HTTP service, live voice service, and SIP bridge VM.
+- Monitoring should treat the flow as distributed:
+  - ingress success
+  - websocket session health
+  - live-session latency
+  - callback and hangup correctness
+- The SIP bridge adds an extra hop to the live voice service, so latency budgets must include VM → Cloud Run → Vertex AI, not only caller → webhook timing.
+- Region cutovers and canaries should keep control-plane and live-service targets explicit so stale URLs do not silently reintroduce the old path.
 
 ---
 

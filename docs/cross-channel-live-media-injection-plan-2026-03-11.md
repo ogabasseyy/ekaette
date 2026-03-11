@@ -214,6 +214,37 @@ This is runtime state, not the durable source of truth.
 
 It should be rebuildable after restart.
 
+### Multi-instance considerations
+
+For local development and single-instance demos, an in-process registry is acceptable.
+
+For horizontally scaled deployments, 2026 best practice is:
+- keep Firestore conversation state as the durable source of truth
+- keep active live-session ownership in a shared fast registry layer (for example Redis/Memorystore, or a Firestore lease record if Redis is unavailable)
+- enforce one current owner per conversation with:
+  - `owner_instance_id`
+  - `owner_session_id`
+  - `lease_expires_at`
+  - `last_heartbeat_at`
+- reclaim ownership only after lease expiry, not on best-effort read races
+
+### Rebuild procedure
+
+On startup:
+1. Query durable conversations with `status=active`.
+2. Keep only records with recent `last_activity_at`.
+3. Reacquire ownership only when the previous lease is missing or expired.
+4. Anything ambiguous falls back to the existing durable WhatsApp continuation path.
+
+### Consistency expectation
+
+The registry is a fast routing/index layer, not a second source of truth.
+
+Operational guarantee:
+- at most one active owner per conversation
+- heartbeat-based stale entry cleanup
+- safe fallback to durable conversation state if ownership is unclear
+
 ### Likely code touchpoints
 
 - `app/api/v1/realtime/ws_stream.py`
@@ -238,6 +269,7 @@ Create a typed event model for media arriving from another channel.
 ### Event shape
 
 - `type=external_media_received`
+- `event_id`
 - `conversation_id`
 - `source_channel=whatsapp_chat`
 - `target_channel`
@@ -250,7 +282,9 @@ Create a typed event model for media arriving from another channel.
 - `provenance_text`
 - `handoff_summary`
 - `received_at`
+- `expires_at`
 - `media_reference`
+- `sequence_number` (optional)
 
 ### Important rule
 
@@ -259,6 +293,13 @@ Create a typed event model for media arriving from another channel.
 > The caller sent this image on WhatsApp during the current call.
 
 Never disguise channel metadata as ordinary user speech.
+
+### Event semantics
+
+- `event_id` is the idempotency key for duplicate suppression
+- `expires_at` defaults to `received_at + MAX_EVENT_AGE_SECONDS`
+- `sequence_number` is optional and only needed if multiple media events arrive in quick succession
+- ordering should be FIFO within a conversation unless a later batching policy is introduced
 
 ### Likely code touchpoints
 
@@ -291,6 +332,20 @@ On WhatsApp media receipt:
 5. If active eligible live session exists:
    - create `external_media_received` event
    - enqueue for live injection
+
+### Validation and intake rules
+
+- Validate webhook authenticity before any media fetch or event creation.
+- Accept only approved media kinds and MIME types for the rollout phase.
+- Apply size limits before inline injection:
+  - small and medium images are preferred
+  - oversized videos should fall back to the existing WhatsApp continuation path unless a later phase explicitly supports them
+- Prefetch or cache WhatsApp media immediately after webhook receipt because media URLs expire.
+- If media fetch fails, the payload is malformed, or the asset is too large:
+  - log the failure
+  - preserve the current WhatsApp continuation path
+  - do not create a broken injection event
+- Apply per-conversation rate limiting for media injection attempts.
 
 ### Use existing durable handoff work
 
@@ -339,6 +394,17 @@ The live session should receive:
 - controlled preamble / system metadata
 - media bytes or approved media reference
 - optional short summary from earlier handoff context
+
+### Delivery and timeout rules
+
+- Re-check live-session liveness immediately before injection.
+- Require a fast acceptance acknowledgment from the live-session bridge or handler.
+- Use a bounded injection timeout, for example `5 seconds`.
+- Allow at most `1` retry after a fresh liveness and ownership check.
+- If injection times out, the session closes mid-flight, or acknowledgment never arrives:
+  - record `media_injection_failed`
+  - fall back to the current WhatsApp continuation flow
+  - preserve the customer media/context instead of dropping it
 
 ### Important rule
 
@@ -394,6 +460,16 @@ Keep disabled:
 
 The implementation should be generic enough to support AT later, but rollout should stay scoped.
 
+### Queue policy
+
+- Maximum queue depth per active session: `3` events
+- Queue expiration: `60 seconds` from receipt
+- Delivery order: FIFO, one event at a time
+- Overflow behavior:
+  - reject the newest event
+  - keep already queued events intact
+  - send a short WhatsApp-side message asking the customer to wait for the assistant response before sending more media
+
 ### Likely code touchpoints
 
 - `app/api/v1/realtime/stream_tasks.py`
@@ -426,6 +502,18 @@ Make the feature diagnosable and safe before broad rollout.
 - conversation id
 - upload to spoken-response latency
 - fallback-used flag
+
+### Latency SLOs
+
+Track:
+- p50 upload-to-acknowledgement latency
+- p95 upload-to-acknowledgement latency
+- p99 upload-to-acknowledgement latency
+
+Initial target:
+- p95 of successful injections should produce a spoken acknowledgement within `3 seconds`
+
+Anything above that should be treated as a rollout-warning metric even if fallback still succeeds.
 
 ### Security and privacy
 

@@ -39,7 +39,7 @@ Traditional e-commerce customer service forces customers into slow, text-only ch
 Ekaette is a **multimodal AI customer service agent** that handles the full trade-in lifecycle through natural conversation — voice or text:
 
 - **See**: Customer shows their device on camera or sends a photo via WhatsApp — AI identifies the product, assesses condition, and spots damage
-- **Hear**: Bidirectional native-audio streaming via Vertex Gemini Live — with a dedicated live voice service for long-lived realtime sessions
+- **Hear**: Bidirectional native-audio streaming via Vertex Gemini Live — with a dedicated live voice service for long-lived real-time sessions
 - **Value**: Automated condition grading with brand-specific diagnostic questionnaires and transparent itemized pricing deductions
 - **Negotiate**: Natural price negotiation with counter-offers — "I was quoted 550k but I want 500k" works on both voice and WhatsApp
 - **Book**: Appointment scheduling and pickup confirmation, all within the same conversation

@@ -20,7 +20,13 @@ INLINE_LINK_RE = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
 
 def _render_inline(text: str) -> str:
     escaped = html.escape(text, quote=False)
-    escaped = INLINE_LINK_RE.sub(r'<a href="\2">\1</a>', escaped)
+
+    def replace_link(match: re.Match[str]) -> str:
+        link_text = match.group(1)
+        url = html.escape(match.group(2), quote=True)
+        return f'<a href="{url}">{link_text}</a>'
+
+    escaped = INLINE_LINK_RE.sub(replace_link, escaped)
     escaped = INLINE_BOLD_RE.sub(r"<strong>\1</strong>", escaped)
     escaped = INLINE_CODE_RE.sub(r"<code>\1</code>", escaped)
     return escaped
@@ -84,7 +90,7 @@ def render_markdown(markdown_text: str) -> tuple[str, bool]:
             lang = stripped[3:].strip()
             fence_lines: list[str] = []
             i += 1
-            while i < len(lines) and not lines[i].strip().startswith("```"):
+            while i < len(lines) and lines[i].strip() != "```":
                 fence_lines.append(lines[i])
                 i += 1
             content = "\n".join(fence_lines)
@@ -272,13 +278,13 @@ def build_html(title: str, body_html: str, has_mermaid: bool) -> str:
 
 
 def render_file(input_path: Path, output_path: Path) -> None:
-    raw = input_path.read_text()
+    raw = input_path.read_text(encoding="utf-8")
     body_html, has_mermaid = render_markdown(raw)
     title = input_path.stem.replace("_", " ")
     match = re.search(r"^#\s+(.+)$", raw, flags=re.MULTILINE)
     if match:
         title = match.group(1).strip()
-    output_path.write_text(build_html(title, body_html, has_mermaid))
+    output_path.write_text(build_html(title, body_html, has_mermaid), encoding="utf-8")
 
 
 DEFAULT_DOCS = {

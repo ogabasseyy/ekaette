@@ -197,7 +197,8 @@ class TestVoiceAnalytics:
             params={"tenantId": "public", "companyId": "ekaette-electronics", "days": 30},
         )
         assert overview.status_code == 200
-        summary = overview.json()["summary"]
-        recent_calls = overview.json()["recent_calls"]
+        payload = overview.json()
+        summary = payload["summary"]
+        recent_calls = payload["recent_calls"]
         assert summary["calls_total"] == 1
         assert [item["session_id"] for item in recent_calls] == ["sess-recent"]

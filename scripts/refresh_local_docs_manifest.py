@@ -38,7 +38,15 @@ def main() -> None:
 
     repo_root = Path(args.repo_root).resolve()
     manifest_path = repo_root / "docs" / "local-docs-manifest.json"
-    head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo_root, text=True).strip()
+    try:
+        head = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"],
+            cwd=repo_root,
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        raise SystemExit("Error: Unable to determine HEAD commit. Is this a git repository?")
     today = date.today().isoformat()
 
     files: list[dict[str, str]] = []
@@ -65,7 +73,7 @@ def main() -> None:
         "phase_marker": args.phase_marker,
         "version": 1,
     }
-    manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+    manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 if __name__ == "__main__":

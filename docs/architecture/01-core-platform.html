@@ -60,7 +60,7 @@ graph TB
             ADMIN_I["Infrastructure: auth, idempotency,<br/>policy, circuit breaker"]
         end
 
-        subgraph "Channel &amp; Control APIs"
+        subgraph "Channel APIs &amp; Text Runtime"
             AT_API["AT voice + SMS routes<br/>XML dial control,<br/>callback registration,<br/>post-call orchestration"]
             WA_API["WhatsApp webhook + send routes<br/>service window + Cloud Tasks"]
             TEXT["adk_text_adapter + Runner.run_async()<br/>WhatsApp/SMS text runtime"]
@@ -80,13 +80,13 @@ graph TB
             RUN_LIVE["Runner.run_live()<br/>(Voice — bidi streaming)"]
         end
 
-        subgraph "Multi-Agent Hierarchy (ADK)"
+        subgraph "Root Agents"
             ROOT["ekaette_router<br/>(Voice Root Agent)<br/>Model: gemini-2.5-flash-native-audio<br/>Real-time voice I/O,<br/>intent detection, agent routing"]
+            TEXT_ROOT["ekaette_router<br/>(Text Root Agent)<br/>Model: gemini-3-flash-preview"]
         end
     end
 
     subgraph "Shared ADK Sub-Agents"
-        TEXT_ROOT["ekaette_router<br/>(Text Root Agent)<br/>Model: gemini-3-flash-preview"]
         VA["vision_agent<br/>Image/video analysis,<br/>Visual Thinking"]
         VLA["valuation_agent<br/>Condition grading,<br/>price calculation"]
         BA["booking_agent<br/>Availability checking,<br/>reservation CRUD"]
@@ -141,6 +141,7 @@ graph TB
     SMS_C -->|"AT SMS webhook"| AT_API
 
     WS_EDGE --> SESS_INIT
+    SESS_INIT --> STREAM
     STREAM --> LRQ
     LRQ --> RUN_LIVE
     RUN_LIVE --> ROOT
@@ -213,6 +214,14 @@ graph TB
     class PAYSTACK,TOPSHIP payments
         </pre>
     </div>
+
+    <h3>Security Considerations</h3>
+    <p>Multiple ingress points exist across browser <code>/ws</code>, AT callbacks, WhatsApp webhooks, public APIs, and admin APIs. Each path needs independent authentication, authorization, and rate limiting.</p>
+    <p>SIP bridge to live voice service traffic relies on signed websocket tokens with explicit tenant/company/user claims, short expiry, and service-side validation. Service discovery stays explicit through environment-configured service URLs so rollback and region failover remain predictable.</p>
+
+    <h3>Operational Considerations</h3>
+    <p>The split architecture introduces coordinated deploy and rollback requirements across the main HTTP service, live voice service, and SIP bridge VM. Monitoring should treat the flow as distributed: ingress success, websocket session health, live-session latency, and callback/hangup correctness.</p>
+    <p>The SIP bridge adds an extra hop to the live voice service, so latency budgets must include VM → Cloud Run → Vertex AI, not only caller → webhook timing.</p>
 
     <hr>
     <h2>2. Backend Module Architecture</h2>

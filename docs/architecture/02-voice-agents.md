@@ -60,6 +60,20 @@ sequenceDiagram
     RT->>RT: after_agent_callback: save to Memory Bank (async)
 ```
 
+### Affective Dialog
+
+`Affective dialog` in the Live `RunConfig` lets the native-audio model adapt prosody, pacing, and phrasing to the caller's emotional tone without changing routing, safety policy, or tool permissions.
+
+In this architecture it should improve:
+- warmer or calmer spoken delivery when the caller sounds frustrated or uncertain
+- more natural acknowledgement language during transfers and callbacks
+- smoother voice UX without changing business logic
+
+It should not be treated as:
+- a replacement for routing rules
+- a safety or policy mechanism
+- permission to improvise outside the configured agent and tool boundaries
+
 ---
 
 ## Multi-Agent Transfer Flow (Image During Voice Call)

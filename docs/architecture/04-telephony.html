@@ -45,7 +45,7 @@ graph TB
 
                 subgraph "4-Task Pattern"
                     T1["1. _media_recv_loop<br/>UDP recvfrom → queue"]
-                    T2["2. _media_inbound_loop<br/>codec decode → PCM16 16kHz<br/>→ denoise / gain control"]
+                    T2["2. _media_inbound_loop<br/>codec decode → PCM16 16kHz<br/>→ denoise / gain normalization"]
                     T3["3. _gateway_bidi_loop<br/>PCM16 ↔ live voice service"]
                     T4["4. _media_outbound_loop<br/>PCM16 24kHz → codec encode"]
                 end
@@ -54,7 +54,7 @@ graph TB
             subgraph "Voice Gateway &amp; Call Control"
                 GW_CLIENT["gateway_client.py<br/>GatewayClient WSS → live voice service<br/>reconnect + session tokens"]
                 PREWARM["callback prewarm<br/>warm live session before outbound callback"]
-                BYE["Explicit SIP BYE<br/>after acknowledgement audio drains"]
+                BYE["Explicit SIP BYE<br/>after acknowledgement and audio drain"]
             end
 
             subgraph "Codec Layer"
@@ -175,7 +175,7 @@ sequenceDiagram
         ATS->>CALLER: Caller hears AI
     end
 
-    Note over CALLER,LIVE: Callback legs can end with an explicit bridge-originated SIP BYE after the acknowledgement drains
+    Note over CALLER,LIVE: Callback legs can end with an explicit bridge-originated SIP BYE after the acknowledgement and audio drain
     ATS->>SIP: SIP BYE or bridge-originated BYE
     GW->>LIVE: Close WebSocket
         </pre>
