@@ -14,6 +14,8 @@ from urllib.parse import urlparse
 
 import httpx
 
+from app.genai_clients import build_genai_client
+
 from .settings import (
     PAYSTACK_CUSTOMER_URL,
     PAYSTACK_DEDICATED_ACCOUNT_PROVIDERS_URL,
@@ -322,7 +324,7 @@ async def whatsapp_send_text(
 # ── Text-to-Speech (Gemini TTS) ──
 
 
-_TTS_MODEL = "gemini-2.5-flash-preview-tts"
+from app.configs.model_resolver import resolve_tts_model_id
 _TTS_VOICE = "Kore"  # Warm, friendly female voice
 
 _genai_client = None
@@ -332,16 +334,15 @@ def _get_genai_client():
     """Get or create the GenAI client."""
     global _genai_client
     if _genai_client is None:
-        from google import genai
-        _genai_client = genai.Client()
+        _genai_client = build_genai_client()
     return _genai_client
 
 
 async def text_to_speech(text: str) -> tuple[bytes, str]:
     """Convert text to audio using Gemini TTS.
 
-    Returns (ogg_bytes, mime_type). Uses gemini-2.5-flash-preview-tts
-    for fast generation with natural-sounding voice.
+    Returns (ogg_bytes, mime_type). Uses the TTS model resolved from
+    TTS_MODEL_ID env var for fast generation with natural-sounding voice.
     """
     if not text or not text.strip():
         raise ValueError("Text must not be empty for TTS")
@@ -350,7 +351,7 @@ async def text_to_speech(text: str) -> tuple[bytes, str]:
 
     client = _get_genai_client()
     response = await client.aio.models.generate_content(
-        model=_TTS_MODEL,
+        model=resolve_tts_model_id(),
         contents=text,
         config=types.GenerateContentConfig(
             response_modalities=["AUDIO"],

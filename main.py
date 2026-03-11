@@ -15,7 +15,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from google import genai
 from google.adk.agents.live_request_queue import LiveRequestQueue
 from google.adk.agents.run_config import RunConfig, StreamingMode
 from google.adk.runners import Runner
@@ -58,6 +57,7 @@ from app.configs.industry_loader import (  # noqa: E402
 from app.configs.model_resolver import get_live_model_candidates  # noqa: E402
 from app.configs.compaction_factory import create_app as create_adk_app  # noqa: E402
 from app.configs.session_factory import create_session_service, get_effective_app_name  # noqa: E402
+from app.genai_clients import build_genai_client, can_build_genai_client  # noqa: E402
 from app.memory.memory_factory import create_memory_service  # noqa: E402
 from app.observability import registry_log_context  # noqa: E402
 from app.tools.vision_tools import cache_latest_image  # noqa: E402
@@ -693,11 +693,8 @@ REALTIME_INPUT_CONFIG = (
 )
 
 TOKEN_CLIENT = (
-    genai.Client(
-        api_key=GEMINI_API_KEY,
-        http_options=types.HttpOptions(api_version="v1alpha"),
-    )
-    if GEMINI_API_KEY
+    build_genai_client(api_version="v1alpha", api_key=GEMINI_API_KEY)
+    if can_build_genai_client(api_key=GEMINI_API_KEY)
     else None
 )
 

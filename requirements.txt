@@ -33,5 +33,6 @@ phonenumbers==8.13.54
 
 # SIP/WA media runtime
 aiohttp==3.13.3
+aec-audio-processing==1.0.1
 opuslib_next==1.1.5
 pylibsrtp==1.0.0

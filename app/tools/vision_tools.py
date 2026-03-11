@@ -24,6 +24,7 @@ from pydantic import BaseModel, Field
 
 from app.configs import sanitize_log
 from app.configs.model_resolver import resolve_vision_model_id
+from app.genai_clients import build_genai_client
 
 logger = logging.getLogger(__name__)
 
@@ -109,11 +110,7 @@ def _get_genai_client() -> genai.Client:
     """Get or create the GenAI client for Standard API calls."""
     global _genai_client
     if _genai_client is None:
-        api_key = os.getenv("GOOGLE_API_KEY", "")
-        _genai_client = genai.Client(
-            api_key=api_key,
-            http_options=types.HttpOptions(api_version="v1alpha"),
-        )
+        _genai_client = build_genai_client(api_version="v1alpha")
     return _genai_client
 
 

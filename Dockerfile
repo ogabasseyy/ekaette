@@ -40,7 +40,7 @@ COPY --from=python-build /usr/local/bin /usr/local/bin
 WORKDIR /app
 
 # Copy backend code
-COPY main.py seed_data.py ./
+COPY main.py main_live.py seed_data.py ./
 COPY shared/ shared/
 COPY app/ app/
 
@@ -59,4 +59,4 @@ EXPOSE ${PORT}
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD python -c "import urllib.request,os; urllib.request.urlopen('http://localhost:'+os.environ.get('PORT','8080')+'/health')" || exit 1
 
-CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT}"]
+CMD ["sh", "-c", "uvicorn ${APP_MODULE:-main:app} --host 0.0.0.0 --port ${PORT}"]

@@ -50,3 +50,29 @@ def test_resolve_text_model_reads_env(monkeypatch):
 
     monkeypatch.setenv("TEXT_MODEL_ID", "gemini-2.5-flash")
     assert resolve_text_model_id() == "gemini-2.5-flash"
+
+
+# ─── TTS model resolver ───
+
+
+def test_resolve_tts_model_default(monkeypatch):
+    from app.configs.model_resolver import DEFAULT_TTS_MODEL_ID, resolve_tts_model_id
+
+    monkeypatch.delenv("TTS_MODEL_ID", raising=False)
+    result = resolve_tts_model_id()
+    assert result == DEFAULT_TTS_MODEL_ID
+    assert result == "gemini-2.5-flash-preview-tts"
+
+
+def test_resolve_tts_model_env_override(monkeypatch):
+    from app.configs.model_resolver import resolve_tts_model_id
+
+    monkeypatch.setenv("TTS_MODEL_ID", "gemini-2.5-flash-tts")
+    assert resolve_tts_model_id() == "gemini-2.5-flash-tts"
+
+
+def test_resolve_tts_model_strips_whitespace(monkeypatch):
+    from app.configs.model_resolver import resolve_tts_model_id
+
+    monkeypatch.setenv("TTS_MODEL_ID", "  gemini-2.5-flash-tts  ")
+    assert resolve_tts_model_id() == "gemini-2.5-flash-tts"

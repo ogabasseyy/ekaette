@@ -8,6 +8,7 @@ DEFAULT_LIVE_MODEL_ID = "gemini-2.5-flash-native-audio-preview-12-2025"
 DEFAULT_TEXT_MODEL_ID = "gemini-2.5-pro"
 DEFAULT_TEXT_FALLBACK_MODEL_ID = "gemini-2.5-flash"
 DEFAULT_VISION_MODEL_ID = "gemini-2.5-pro"
+DEFAULT_TTS_MODEL_ID = "gemini-2.5-flash-preview-tts"
 
 
 def _env_flag(name: str, default: str = "false") -> bool:
@@ -41,6 +42,11 @@ def resolve_text_model_id() -> str:
 def resolve_text_fallback_model_id() -> str:
     """Resolve fallback model for text channels when primary is unavailable."""
     return os.getenv("TEXT_FALLBACK_MODEL_ID", DEFAULT_TEXT_FALLBACK_MODEL_ID).strip() or DEFAULT_TEXT_FALLBACK_MODEL_ID
+
+
+def resolve_tts_model_id() -> str:
+    """TTS model for WhatsApp voice note replies."""
+    return os.getenv("TTS_MODEL_ID", DEFAULT_TTS_MODEL_ID).strip() or DEFAULT_TTS_MODEL_ID
 
 
 def resolve_vision_model_id() -> str:

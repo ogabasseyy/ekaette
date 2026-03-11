@@ -54,7 +54,7 @@ async def create_ephemeral_token(
     if TOKEN_CLIENT is None:
         return JSONResponse(
             status_code=500,
-            content={"error": "Server API key not configured"},
+            content={"error": "Server GenAI client not configured"},
         )
 
     expires_at = datetime.now(timezone.utc) + timedelta(seconds=TOKEN_TTL_SECONDS)
