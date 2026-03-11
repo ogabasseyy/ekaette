@@ -752,6 +752,13 @@ async def before_model_inject_config(
                 "If a tool result shows the code 'NGN', translate that aloud to "
                 "'naira' instead of saying the letters N-G-N."
             )
+            instruction_lines.append(
+                "CALL ENDING — On a phone call, when the conversation has naturally "
+                "concluded or the customer says goodbye, give one brief closing line "
+                "and then use end_call. Do not remain silent on the line after your "
+                "goodbye, and do not keep callback calls open after you have finished "
+                "helping the customer."
+            )
             if (
                 bool(_state_get(callback_context.state, "temp:callback_requested", False))
                 and not _is_callback_leg(callback_context.state)
@@ -1209,6 +1216,22 @@ async def after_tool_emit_messages(
         tool_context.state["temp:last_outbound_delivery_status"] = "success"
         tool_context.state["temp:last_outbound_delivery_channels"] = channel
         tool_context.state["temp:last_outbound_delivery_phone"] = phone
+        return None
+
+    if tool.name == "end_call":
+        status = str(effective_result.get("status", "")).strip().lower()
+        channel = _state_get(tool_context.state, "app:channel", "")
+        normalized_channel = channel.strip().lower() if isinstance(channel, str) else ""
+        if status == "ok" and normalized_channel == "voice":
+            reason = str(
+                effective_result.get("reason")
+                or args.get("reason")
+                or "conversation_complete"
+            ).strip() or "conversation_complete"
+            _queue_end_after_speaking_control(
+                tool_context.state,
+                reason=reason,
+            )
         return None
 
     if tool.name == "request_callback":

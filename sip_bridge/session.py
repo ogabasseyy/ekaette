@@ -497,9 +497,13 @@ class CallSession:
         if not self._end_after_speaking_idle_seen:
             return
 
+        # Do not require *new* audio after the hangup control arrives.
+        # The model may finish the callback acknowledgement and emit
+        # end_after_speaking immediately afterward, in which case the last
+        # outbound RTP frame was already sent just before the control
+        # message. Use actual RTP delivery timing as the source of truth.
         outbound_drained = (
-            self._end_after_speaking_audio_seen
-            and self._last_outbound_rtp_sent_at > 0
+            self._last_outbound_rtp_sent_at > 0
             and now - self._last_outbound_rtp_sent_at > 0.5
         )
         safety_timeout = (

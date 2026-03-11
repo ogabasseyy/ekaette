@@ -16,6 +16,7 @@ from app.agents.callbacks import (
 )
 from app.configs.model_resolver import resolve_live_model_id
 from app.tools.callback_tools import request_callback
+from app.tools.call_control_tools import end_call
 from app.tools.sms_messaging import send_sms_message
 from app.tools.wa_messaging import send_whatsapp_message
 from app.tools.knowledge_tools import (
@@ -148,6 +149,7 @@ def _tools_for_channel(channel: str) -> list[object]:
     tools = list(_BASE_TOOLS)
     if channel == "voice":
         tools.append(request_callback)
+        tools.append(end_call)
         tools.append(send_sms_message)
         tools.append(send_whatsapp_message)
     return tools

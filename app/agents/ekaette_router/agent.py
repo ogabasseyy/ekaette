@@ -24,6 +24,7 @@ from app.agents.callbacks import (
 )
 from app.agents.dedup import telemetry_after_agent
 from app.tools.callback_tools import request_callback
+from app.tools.call_control_tools import end_call
 from app.tools.global_lessons import classify_lesson_scope, submit_global_lesson
 from app.tools.sms_messaging import send_sms_message
 from app.tools.wa_messaging import send_whatsapp_message
@@ -443,6 +444,7 @@ def create_ekaette_router(model: str, *, channel: str = "voice") -> Agent:
     tools = [PreloadMemoryTool()]
     if channel == "voice":
         tools.append(request_callback)
+        tools.append(end_call)
         tools.append(send_sms_message)
         tools.append(send_whatsapp_message)
     return Agent(
@@ -452,7 +454,7 @@ def create_ekaette_router(model: str, *, channel: str = "voice") -> Agent:
         generate_content_config=_THINKING_CONFIG,
         tools=tools,
         sub_agents=[
-            create_vision_agent(model),
+            create_vision_agent(model, channel=channel),
             create_valuation_agent(model, channel=channel),
             create_booking_agent(model, channel=channel),
             create_catalog_agent(model, channel=channel),

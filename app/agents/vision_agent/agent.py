@@ -15,6 +15,7 @@ from app.agents.callbacks import (
     on_tool_error_emit,
 )
 from app.configs.model_resolver import resolve_live_model_id
+from app.tools.call_control_tools import end_call
 from app.tools.knowledge_tools import (
     get_company_profile_fact,
     query_company_system,
@@ -101,14 +102,19 @@ _CALLBACKS = dict(
 )
 
 
-def create_vision_agent(model: str) -> Agent:
+def create_vision_agent(model: str, *, channel: str = "voice") -> Agent:
     """Create a vision agent with the specified model."""
+    if channel not in ("voice", "text"):
+        raise ValueError(f"Invalid channel: {channel!r}. Must be 'voice' or 'text'.")
+    tools = list(_TOOLS)
+    if channel == "voice":
+        tools.append(end_call)
     return Agent(
         name="vision_agent",
         model=model,
         description="Analyzes photos and videos of devices for identification, condition grading, and visual inspection.",
         instruction=_INSTRUCTION,
-        tools=_TOOLS,
+        tools=tools,
         **_CALLBACKS,
     )
 

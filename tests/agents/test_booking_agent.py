@@ -17,6 +17,7 @@ class TestBookingAgentTools:
         assert "check_payment_status" in tool_names
         assert "create_order_record" in tool_names
         assert "track_order_delivery" in tool_names
+        assert "end_call" in tool_names
         assert "send_sms_message" in tool_names
         assert "send_whatsapp_message" in tool_names
 
@@ -36,6 +37,7 @@ class TestBookingAgentTools:
             getattr(tool, "name", getattr(tool, "__name__", str(tool)))
             for tool in agent.tools
         }
+        assert "end_call" not in tool_names
         assert "send_sms_message" not in tool_names
         assert "send_whatsapp_message" not in tool_names
 

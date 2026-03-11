@@ -747,6 +747,35 @@ class TestAfterToolEmitMessages:
         assert message["type"] == "call_control"
         assert message["action"] == "end_after_speaking"
 
+    @pytest.mark.asyncio
+    async def test_end_call_queues_end_after_speaking_on_voice(self):
+        tool = SimpleNamespace(name="end_call")
+        ctx = SimpleNamespace(
+            state={"app:channel": "voice"},
+            agent_name="ekaette_router",
+        )
+        result = {"status": "ok", "reason": "goodbye_complete"}
+
+        await after_tool_emit_messages(tool, {"reason": "goodbye_complete"}, ctx, result)
+
+        message = ctx.state["temp:last_server_message"]
+        assert message["type"] == "call_control"
+        assert message["action"] == "end_after_speaking"
+        assert message["reason"] == "goodbye_complete"
+
+    @pytest.mark.asyncio
+    async def test_end_call_does_not_queue_on_text_channel(self):
+        tool = SimpleNamespace(name="end_call")
+        ctx = SimpleNamespace(
+            state={"app:channel": "text"},
+            agent_name="ekaette_router",
+        )
+        result = {"status": "ok", "reason": "goodbye_complete"}
+
+        await after_tool_emit_messages(tool, {"reason": "goodbye_complete"}, ctx, result)
+
+        assert "temp:last_server_message" not in ctx.state
+
 
 class TestQuestionnaireWiring:
     """Phase 5: Wiring tests for questionnaire tool + callback integration."""

@@ -141,6 +141,7 @@ class TestEkaetteRouterAgent:
             getattr(tool, "name", getattr(tool, "__name__", str(tool)))
             for tool in ekaette_router.tools
         }
+        assert "end_call" in tool_names
         assert "send_whatsapp_message" in tool_names
         assert "send_sms_message" in tool_names
 
@@ -152,6 +153,7 @@ class TestEkaetteRouterAgent:
             getattr(tool, "name", getattr(tool, "__name__", str(tool)))
             for tool in agent.tools
         }
+        assert "end_call" not in tool_names
         assert "send_sms_message" not in tool_names
         assert "send_whatsapp_message" not in tool_names
 
@@ -164,6 +166,7 @@ class TestEkaetteRouterAgent:
                 getattr(tool, "name", getattr(tool, "__name__", str(tool)))
                 for tool in getattr(sub_agent, "tools", [])
             }
+            assert "end_call" not in tool_names
             assert "send_sms_message" not in tool_names
             assert "send_whatsapp_message" not in tool_names
 
@@ -179,6 +182,8 @@ class TestEkaetteRouterAgent:
             }
             for sub_agent in agent.sub_agents
         }
+        for agent_name in {"vision_agent", "valuation_agent", "booking_agent", "catalog_agent", "support_agent"}:
+            assert "end_call" in tool_names_by_agent[agent_name]
         for agent_name in {"valuation_agent", "booking_agent", "catalog_agent", "support_agent"}:
             assert "send_sms_message" in tool_names_by_agent[agent_name]
             assert "send_whatsapp_message" in tool_names_by_agent[agent_name]

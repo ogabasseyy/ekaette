@@ -1381,6 +1381,45 @@ class TestCallbackEndAfterSpeaking:
         assert s._shutdown.is_set() is True
         assert hangups == ["safety timeout"]
 
+    @pytest.mark.asyncio
+    async def test_call_control_end_after_speaking_hangs_up_when_audio_finished_before_control(self):
+        from sip_bridge.gateway_client import GatewayFrame
+
+        s = CallSession(call_id="c1", tenant_id="public", company_id="acme")
+        hangups: list[str] = []
+        s.request_hangup = lambda reason: hangups.append(reason)
+        s._last_outbound_rtp_sent_at = time.monotonic()
+        mock_client = MockGatewayClient()
+        mock_client._frames_to_yield = [
+            GatewayFrame(
+                is_audio=False,
+                text_data=json.dumps(
+                    {
+                        "type": "call_control",
+                        "action": "end_after_speaking",
+                        "reason": "callback_acknowledged",
+                    }
+                ),
+            ),
+            GatewayFrame(
+                is_audio=False,
+                text_data=json.dumps({"type": "agent_status", "status": "idle"}),
+            ),
+        ]
+        s.gateway_client = mock_client
+
+        await s._gateway_recv_loop()
+
+        assert s._end_after_speaking_pending is True
+        assert s._end_after_speaking_audio_seen is False
+        assert s._end_after_speaking_idle_seen is True
+
+        s._last_outbound_rtp_sent_at = time.monotonic() - 0.6
+        s._maybe_finish_end_after_speaking()
+
+        assert s._shutdown.is_set() is True
+        assert hangups == ["outbound audio drained"]
+
 
 class TestInputDenoise:
     def test_webrtc_apm_processes_20ms_frame_in_two_10ms_chunks(self):
