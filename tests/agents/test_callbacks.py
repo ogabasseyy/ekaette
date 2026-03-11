@@ -471,7 +471,8 @@ class TestCallbackLegGuards:
         )
         result = await before_tool_capability_guard_and_log(tool, {}, ctx)
         assert isinstance(result, dict)
-        assert result["status"] == "already_on_callback"
+        assert result["status"] == "error"
+        assert result["error"] == "already_on_callback"
 
     @pytest.mark.asyncio
     async def test_capability_guard_allows_request_callback_on_normal_session(self):

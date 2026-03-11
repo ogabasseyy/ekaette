@@ -817,6 +817,7 @@ class TestServerHandleInviteGateway:
 
         record = next(iter(server._prewarmed_callbacks.values()))
         assert record.session.callback_post_answer_grace_sec > 0.0
+        assert record.session.connect_greeting_text == "[Callback call connected]"
         for task in created_tasks:
             task.cancel()
 

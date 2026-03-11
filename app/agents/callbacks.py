@@ -908,7 +908,8 @@ async def before_tool_capability_guard(
             tool_context.agent_name,
         )
         return {
-            "status": "already_on_callback",
+            "status": "error",
+            "error": "already_on_callback",
             "detail": "You are already on a callback call. Do not request another callback.",
         }
 

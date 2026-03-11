@@ -1154,7 +1154,7 @@ class CallSession:
                         if self._end_after_speaking_pending:
                             self._end_after_speaking_idle_seen = True
                             self._end_after_speaking_deadline = time.monotonic() + (
-                                2.0 if self._end_after_speaking_audio_seen else 1.0
+                                0.75 if self._end_after_speaking_audio_seen else 0.5
                             )
                 elif msg_type == "agent_transfer":
                     session_id = msg.get("sessionId", "")
@@ -1180,7 +1180,7 @@ class CallSession:
                         self._end_after_speaking_pending = True
                         self._end_after_speaking_audio_seen = False
                         self._end_after_speaking_idle_seen = False
-                        self._end_after_speaking_deadline = time.monotonic() + 20.0
+                        self._end_after_speaking_deadline = time.monotonic() + 6.0
                         logger.info(
                             "Received call_control end_after_speaking call_id=%s reason=%s",
                             self.call_id,

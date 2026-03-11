@@ -82,14 +82,11 @@ _CALLBACK_POST_ANSWER_GRACE_SEC = max(
 )
 _SIP_T1_SEC = max(0.1, _read_float_env("SIP_T1_SECONDS", 0.5))
 _BYE_MAX_ATTEMPTS = max(1, _read_int_env("SIP_BYE_MAX_ATTEMPTS", 4))
-_CALLBACK_CONNECT_GREETING_TEXT = (
-    "[The customer requested a callback and has just answered. "
-    "Start speaking immediately, introduce yourself as ehkaitay, "
-    "say you are calling them back, and continue naturally.]"
-)
 # Note: this seed is forwarded through the gateway as a normal text turn, so it
 # must stay neutral. Instruction-like phrasing causes the router to treat the
-# opening seed as customer intent and transfer before the caller speaks.
+# opening seed as customer intent and transfer before the caller speaks or
+# generate multiple callback greetings during prewarm.
+_CALLBACK_CONNECT_GREETING_TEXT = "[Callback call connected]"
 _INBOUND_CONNECT_GREETING_TEXT = "[Phone call connected]"
 
 
