@@ -56,6 +56,14 @@ def _read_float_env(name: str, default: float) -> float:
         return default
 
 
+def _read_int_env(name: str, default: int) -> int:
+    raw_value = os.getenv(name, str(default))
+    try:
+        return int(raw_value)
+    except (TypeError, ValueError):
+        return default
+
+
 _PREANSWER_READY_TIMEOUT_SEC = max(
     0.0,
     _read_float_env("SIP_PREANSWER_READY_TIMEOUT_SEC", 6.0),
@@ -72,6 +80,8 @@ _CALLBACK_POST_ANSWER_GRACE_SEC = max(
     0.0,
     _read_float_env("SIP_OUTBOUND_CALLBACK_POST_ANSWER_GRACE_MS", 1000.0) / 1000.0,
 )
+_SIP_T1_SEC = max(0.1, _read_float_env("SIP_T1_SECONDS", 0.5))
+_BYE_MAX_ATTEMPTS = max(1, _read_int_env("SIP_BYE_MAX_ATTEMPTS", 4))
 _CALLBACK_CONNECT_GREETING_TEXT = (
     "[The customer requested a callback and has just answered. "
     "Start speaking immediately, introduce yourself as ehkaitay, "
@@ -117,6 +127,9 @@ class PendingByeTransaction:
     cseq: int
     reason: str
     remote_addr: tuple[str, int]
+    request_bytes: bytes
+    attempt_count: int = 1
+    retry_handle: asyncio.TimerHandle | None = None
 
 
 @dataclass
@@ -182,6 +195,9 @@ class SIPServer:
             self._callback_prewarm_task.cancel()
         if self._registrar and self._registrar.registered:
             self._registrar.send_unregister()
+        for pending in self._pending_byes.values():
+            if pending.retry_handle is not None:
+                pending.retry_handle.cancel()
         for session in self._active_sessions.values():
             session.shutdown()
         for record in self._prewarmed_callbacks.values():
@@ -561,11 +577,56 @@ class SIPServer:
     def handle_bye(self, call_id: str) -> None:
         """End a call session on BYE."""
         self._dialogs.pop(call_id, None)
-        self._pending_byes.pop(call_id, None)
+        self._clear_pending_bye(call_id)
         session = self._active_sessions.pop(call_id, None)
         if session:
             session.shutdown()
             logger.info("SIP BYE", extra={"call_id": call_id})
+
+    def _clear_pending_bye(self, call_id: str) -> PendingByeTransaction | None:
+        pending = self._pending_byes.pop(call_id, None)
+        if pending is not None and pending.retry_handle is not None:
+            pending.retry_handle.cancel()
+        return pending
+
+    def _schedule_bye_retry(self, call_id: str) -> None:
+        pending = self._pending_byes.get(call_id)
+        if pending is None:
+            return
+        if pending.attempt_count >= _BYE_MAX_ATTEMPTS:
+            self._clear_pending_bye(call_id)
+            logger.warning(
+                "SIP BYE timed out call_id=%s reason=%s remote=%s attempts=%d",
+                call_id,
+                pending.reason,
+                pending.remote_addr,
+                pending.attempt_count,
+            )
+            return
+        if pending.retry_handle is not None:
+            pending.retry_handle.cancel()
+        delay = _SIP_T1_SEC * (2 ** (pending.attempt_count - 1))
+        loop = asyncio.get_running_loop()
+        pending.retry_handle = loop.call_later(delay, self._retry_pending_bye, call_id)
+
+    def _retry_pending_bye(self, call_id: str) -> None:
+        pending = self._pending_byes.get(call_id)
+        if pending is None:
+            return
+        transport = self._transport
+        if transport is None:
+            self._clear_pending_bye(call_id)
+            return
+        transport.sendto(pending.request_bytes, pending.remote_addr)
+        pending.attempt_count += 1
+        logger.info(
+            "SIP BYE retransmit call_id=%s reason=%s remote=%s attempt=%d",
+            call_id,
+            pending.reason,
+            pending.remote_addr,
+            pending.attempt_count,
+        )
+        self._schedule_bye_retry(call_id)
 
     def request_hangup(self, call_id: str, *, reason: str = "normal") -> None:
         """Originate SIP BYE for an active dialog and stop the local session."""
@@ -598,12 +659,15 @@ class SIPServer:
             via_host=self.config.sip_public_ip,
             via_port=self.config.sip_port,
         )
-        transport.sendto(bye_request.encode("utf-8"), dialog.remote_addr)
+        request_bytes = bye_request.encode("utf-8")
+        transport.sendto(request_bytes, dialog.remote_addr)
         self._pending_byes[call_id] = PendingByeTransaction(
             cseq=dialog.next_local_cseq,
             reason=reason,
             remote_addr=dialog.remote_addr,
+            request_bytes=request_bytes,
         )
+        self._schedule_bye_retry(call_id)
         logger.info(
             "SIP BYE sent call_id=%s reason=%s remote=%s",
             call_id,
@@ -640,7 +704,7 @@ class SIPProtocol(asyncio.DatagramProtocol):
                         status_code = 0
                     if pending is not None:
                         if status_code >= 200:
-                            self.server._pending_byes.pop(call_id, None)
+                            pending = self.server._clear_pending_bye(call_id) or pending
                         log_fn = logger.info if 200 <= status_code < 300 else logger.warning
                         log_fn(
                             "SIP BYE acknowledged call_id=%s status=%s reason=%s remote=%s",
@@ -821,6 +885,8 @@ class SIPProtocol(asyncio.DatagramProtocol):
         self.server._dialogs[call_id] = ActiveSIPDialog(
             remote_addr=addr,
             request_uri=request_uri,
+            # For a UAS-originated BYE: our To becomes the local From, and the
+            # caller's original From becomes the remote To.
             local_from_header=dialog_to_header,
             remote_to_header=headers.get("From", ""),
             call_id=call_id,

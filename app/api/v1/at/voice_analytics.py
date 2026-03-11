@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+import logging
 import threading
 from typing import Any
+
+
+logger = logging.getLogger(__name__)
 
 
 def _utc_now() -> datetime:
@@ -30,16 +34,6 @@ def _parse_iso(value: str | None) -> datetime | None:
 def _normalize_scope(value: str, default: str) -> str:
     normalized = (value or "").strip()
     return normalized or default
-
-
-def _coerce_bool(value: object) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, (int, float)):
-        return bool(value)
-    if isinstance(value, str):
-        return value.strip().lower() in {"1", "true", "yes", "on"}
-    return False
 
 
 @dataclass(slots=True)
@@ -80,12 +74,19 @@ def start_session(
     started_at: float | None = None,
     caller_phone: str = "",
 ) -> None:
-    if not session_id.strip():
+    normalized_session_id = session_id.strip()
+    if not normalized_session_id:
+        logger.warning("voice_analytics.start_session skipped empty session_id")
         return
     now_iso = _to_iso(started_at)
     with _lock:
-        _sessions[session_id] = VoiceSessionState(
-            session_id=session_id.strip(),
+        if normalized_session_id in _sessions:
+            logger.warning(
+                "voice_analytics.start_session overwriting existing session_id=%s",
+                normalized_session_id,
+            )
+        _sessions[normalized_session_id] = VoiceSessionState(
+            session_id=normalized_session_id,
             tenant_id=_normalize_scope(tenant_id, "public"),
             company_id=_normalize_scope(company_id, "ekaette-electronics"),
             channel=_normalize_scope(channel, "voice"),
@@ -178,6 +179,8 @@ def mark_callback_triggered(
     phone: str,
 ) -> None:
     normalized_phone = (phone or "").strip()
+    if not normalized_phone:
+        return
     normalized_tenant = _normalize_scope(tenant_id, "public")
     normalized_company = _normalize_scope(company_id, "ekaette-electronics")
     with _lock:
@@ -201,12 +204,14 @@ def _filtered_sessions(
     company_id: str,
     days: int,
 ) -> list[VoiceSessionState]:
+    cutoff = _utc_now() - timedelta(days=max(1, days))
     with _lock:
         sessions = [
             session
             for session in _sessions.values()
             if session.tenant_id == _normalize_scope(tenant_id, "public")
             and session.company_id == _normalize_scope(company_id, "ekaette-electronics")
+            and (_parse_iso(session.updated_at) or _utc_now()) >= cutoff
         ]
     sessions.sort(key=lambda item: item.updated_at, reverse=True)
     return sessions
@@ -232,6 +237,7 @@ def list_recent_calls(
             "updated_at": session.updated_at,
             "ended_at": session.ended_at,
             "duration_seconds": int(round(session.duration_seconds)),
+            "caller_phone": session.caller_phone,
             "transfer_count": session.transfer_count,
             "callback_requested": session.callback_requested,
             "callback_triggered": session.callback_triggered,
@@ -253,8 +259,8 @@ def overview_snapshot(
     calls_completed = sum(1 for session in sessions if session.status == "completed")
     total_duration = sum(session.duration_seconds for session in sessions)
     transfers_total = sum(session.transfer_count for session in sessions)
-    callback_requests_total = sum(1 for session in sessions if _coerce_bool(session.callback_requested))
-    callback_triggered_total = sum(1 for session in sessions if _coerce_bool(session.callback_triggered))
+    callback_requests_total = sum(1 for session in sessions if session.callback_requested)
+    callback_triggered_total = sum(1 for session in sessions if session.callback_triggered)
     transcript_sessions = sum(1 for session in sessions if session.transcript_messages_total > 0)
 
     avg_duration = (total_duration / calls_total) if calls_total else 0.0

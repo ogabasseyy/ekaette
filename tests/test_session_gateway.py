@@ -10,7 +10,7 @@ import asyncio
 import json
 import logging
 import time
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -1112,6 +1112,7 @@ class TestServerDoneCallback:
             cseq=2,
             reason="callback_registered",
             remote_addr=("1.2.3.4", 5060),
+            request_bytes=b"BYE",
         )
 
         with caplog.at_level(logging.INFO):
@@ -1127,6 +1128,40 @@ class TestServerDoneCallback:
 
         assert "SIP BYE acknowledged" in caplog.text
         assert "call-bye-1" not in server._pending_byes
+
+    def test_request_hangup_schedules_bye_retransmission(self, monkeypatch):
+        from sip_bridge.server import ActiveSIPDialog, SIPServer
+
+        server = SIPServer(config=self._make_config())
+        transport = MagicMock()
+        server._transport = transport
+        server._dialogs["call-bye-2"] = ActiveSIPDialog(
+            remote_addr=("1.2.3.4", 5060),
+            request_uri="sip:+2348012345678@example.com",
+            local_from_header="<sip:service@example.com>;tag=local",
+            remote_to_header="<sip:+2348012345678@example.com>;tag=remote",
+            call_id="call-bye-2",
+            next_local_cseq=2,
+            contact_uri="<sip:service@example.com>",
+        )
+        scheduled: list[tuple[float, object, tuple[object, ...], MagicMock]] = []
+
+        class _FakeLoop:
+            def call_later(self, delay, callback, *args):
+                handle = MagicMock()
+                scheduled.append((delay, callback, args, handle))
+                return handle
+
+        monkeypatch.setattr("sip_bridge.server.asyncio.get_running_loop", lambda: _FakeLoop())
+
+        server.request_hangup("call-bye-2", reason="callback_registered")
+
+        assert transport.sendto.call_count == 1
+        assert scheduled
+        delay, callback, args, _handle = scheduled[0]
+        assert delay > 0
+        callback(*args)
+        assert transport.sendto.call_count == 2
 
 
 # ---------------------------------------------------------------------------

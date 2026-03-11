@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 import pytest
@@ -31,8 +32,15 @@ class TestVoiceAnalytics:
     def test_voice_overview_returns_call_metrics_and_recent_calls(
         self,
         voice_analytics_client: TestClient,
+        monkeypatch,
     ) -> None:
         from app.api.v1.at import voice_analytics
+
+        monkeypatch.setattr(
+            voice_analytics,
+            "_utc_now",
+            lambda: datetime.fromtimestamp(1_700_000_130.0, tz=timezone.utc),
+        )
 
         voice_analytics.start_session(
             session_id="sess-voice-001",
@@ -107,13 +115,22 @@ class TestVoiceAnalytics:
         assert recent_calls[0]["session_id"] == "sess-voice-002"
         assert recent_calls[1]["session_id"] == "sess-voice-001"
         assert recent_calls[1]["transcript_preview"].startswith("Customer: I want to buy")
+        assert recent_calls[1]["caller_phone"] == "+2348011111111"
+        # agent_path always starts at the root router before any specialist handoff.
         assert recent_calls[1]["agent_path"] == ["ekaette_router", "catalog_agent"]
 
     def test_voice_overview_is_scoped_by_company(
         self,
         voice_analytics_client: TestClient,
+        monkeypatch,
     ) -> None:
         from app.api.v1.at import voice_analytics
+
+        monkeypatch.setattr(
+            voice_analytics,
+            "_utc_now",
+            lambda: datetime.fromtimestamp(1_700_000_130.0, tz=timezone.utc),
+        )
 
         voice_analytics.start_session(
             session_id="sess-a",
@@ -140,3 +157,47 @@ class TestVoiceAnalytics:
         assert overview.status_code == 200
         summary = overview.json()["summary"]
         assert summary["calls_total"] == 1
+
+    def test_voice_overview_respects_requested_time_window(
+        self,
+        voice_analytics_client: TestClient,
+        monkeypatch,
+    ) -> None:
+        from app.api.v1.at import voice_analytics
+
+        current_time = datetime.fromisoformat("2026-03-11T12:00:00+00:00")
+        monkeypatch.setattr(voice_analytics, "_utc_now", lambda: current_time)
+
+        voice_analytics.start_session(
+            session_id="sess-recent",
+            tenant_id="public",
+            company_id="ekaette-electronics",
+            channel="voice",
+            started_at=current_time.timestamp() - 3600,
+        )
+        voice_analytics.end_session(
+            session_id="sess-recent",
+            ended_at=current_time.timestamp() - 1800,
+        )
+
+        voice_analytics.start_session(
+            session_id="sess-old",
+            tenant_id="public",
+            company_id="ekaette-electronics",
+            channel="voice",
+            started_at=current_time.timestamp() - (40 * 24 * 3600),
+        )
+        voice_analytics.end_session(
+            session_id="sess-old",
+            ended_at=current_time.timestamp() - (40 * 24 * 3600) + 60,
+        )
+
+        overview = voice_analytics_client.get(
+            "/api/v1/at/analytics/voice/overview",
+            params={"tenantId": "public", "companyId": "ekaette-electronics", "days": 30},
+        )
+        assert overview.status_code == 200
+        summary = overview.json()["summary"]
+        recent_calls = overview.json()["recent_calls"]
+        assert summary["calls_total"] == 1
+        assert [item["session_id"] for item in recent_calls] == ["sess-recent"]

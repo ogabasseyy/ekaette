@@ -146,3 +146,25 @@ async def test_load_and_consume_cross_channel_context_returns_none_for_expired_d
     mock_doc.update.assert_called_once()
     update_payload = mock_doc.update.call_args.args[0]
     assert update_payload["status"] == "expired"
+
+
+def test_extract_snapshot_data_requires_existing_doc():
+    from app.tools.cross_channel_tools import _extract_snapshot_data
+
+    snapshot = SimpleNamespace(exists=False, to_dict=lambda: {"status": "pending"})
+    assert _extract_snapshot_data(snapshot) is None
+
+
+def test_validate_pending_context_requires_explicit_pending_status():
+    from app.tools.cross_channel_tools import _validate_pending_context
+
+    data, terminal_status = _validate_pending_context(
+        {
+            "status": "",
+            "created_at": 4_102_444_800.0,
+            "conversation_summary": "Customer wants to trade in an iPhone XR.",
+        }
+    )
+
+    assert data is None
+    assert terminal_status is None

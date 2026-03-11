@@ -93,3 +93,6 @@ class TestCheckPaymentStatusDemoMode:
             mock_verify.return_value = {"payment": {"status": "success", "tenant_id": "public", "company_id": "ekaette-electronics"}, "processed": True}
             result = await check_payment_status("ref-live-001", tool_context=ctx)
         assert result["source"] == "gateway"
+        assert result["status"] == "ok"
+        assert result["payment"]["status"] == "success"
+        assert result["reference"] == "ref-live-001"

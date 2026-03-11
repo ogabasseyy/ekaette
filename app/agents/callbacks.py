@@ -1347,10 +1347,7 @@ async def after_tool_emit_messages(
     return None
 
 
-_KNOWN_AGENT_NAMES = frozenset({
-    "vision_agent", "valuation_agent", "booking_agent",
-    "catalog_agent", "support_agent",
-})
+_KNOWN_AGENT_NAMES = frozenset(KNOWN_SUB_AGENT_NAMES)
 
 
 async def on_tool_error_emit(

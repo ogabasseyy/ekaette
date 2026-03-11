@@ -237,10 +237,11 @@ async def _handle_media_message(
     if isinstance(handoff_context, dict):
         summary = str(handoff_context.get("conversation_summary", "") or "").strip()
         reason = str(handoff_context.get("pending_reason", "") or "").strip()
+        source_channel = str(handoff_context.get("source_channel", "") or "").strip() or "voice call"
         if summary:
             context_prefix = (
                 "[Cross-channel handoff context for assistant use only]\n"
-                f"Previous channel: voice call\n"
+                f"Previous channel: {source_channel}\n"
                 f"Handoff reason: {reason or 'media_followup'}\n"
                 f"Conversation summary: {summary}\n"
                 "Continue from this context and do not ask the customer to repeat it.\n"

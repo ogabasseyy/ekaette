@@ -531,6 +531,18 @@ async def initialize_session(
                 session_id=resolved_session_id,
             )
             if created_session is None:
+                try:
+                    await websocket.send_text(json.dumps({
+                        "type": "error",
+                        "code": "SESSION_STATE_INCONSISTENT",
+                        "message": "Session state inconsistency detected",
+                    }))
+                    await websocket.close(code=1011)
+                except Exception:
+                    logger.debug(
+                        "Session inconsistency websocket error reporting failed",
+                        exc_info=True,
+                    )
                 raise RuntimeError(
                     f"Session {resolved_session_id} reported as existing but get_session returned None"
                 )

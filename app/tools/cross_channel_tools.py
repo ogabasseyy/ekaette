@@ -100,7 +100,7 @@ def _media_request_message(summary: str) -> str:
 def _extract_snapshot_data(snapshot: Any) -> dict[str, Any] | None:
     if snapshot is None:
         return None
-    exists = getattr(snapshot, "exists", True)
+    exists = getattr(snapshot, "exists", False)
     if exists is False:
         return None
     to_dict = getattr(snapshot, "to_dict", None)
@@ -112,7 +112,7 @@ def _extract_snapshot_data(snapshot: Any) -> dict[str, Any] | None:
 
 def _validate_pending_context(data: dict[str, Any]) -> tuple[dict[str, Any] | None, str | None]:
     status = str(data.get("status", "") or "").strip().lower()
-    if status and status != "pending":
+    if status != "pending":
         return None, None
 
     created_at = data.get("created_at")
@@ -130,6 +130,13 @@ def _validate_pending_context(data: dict[str, Any]) -> tuple[dict[str, Any] | No
         return None, None
 
     return data, None
+
+
+def _get_state_value(state: Any, key: str, default: str) -> str:
+    getter = getattr(state, "get", None)
+    if callable(getter):
+        return str(getter(key, default) or default).strip()
+    return default
 
 
 async def request_media_via_whatsapp(
@@ -152,15 +159,10 @@ async def request_media_via_whatsapp(
     if not normalized_summary:
         return {"status": "error", "detail": "No conversation summary provided"}
 
-    tenant_id = str(getattr(state, "get", lambda *_: "public")("app:tenant_id", "public") or "public").strip()
-    company_id = str(
-        getattr(state, "get", lambda *_: "ekaette-electronics")(
-            "app:company_id",
-            "ekaette-electronics",
-        ) or "ekaette-electronics"
-    ).strip()
-    voice_session_id = str(getattr(state, "get", lambda *_: "")("app:session_id", "") or "").strip()
-    voice_user_id = str(getattr(state, "get", lambda *_: "")("app:user_id", "") or "").strip()
+    tenant_id = _get_state_value(state, "app:tenant_id", "public")
+    company_id = _get_state_value(state, "app:company_id", "ekaette-electronics")
+    voice_session_id = _get_state_value(state, "app:session_id", "")
+    voice_user_id = _get_state_value(state, "app:user_id", "")
     db = _get_firestore_db()
     if db is None:
         return {"status": "error", "detail": "Cross-channel context store unavailable"}
@@ -240,6 +242,10 @@ def _consume_pending_context_sync(db: Any, tenant_id: str, company_id: str, phon
         return None
 
     def _fallback_consume() -> dict[str, Any] | None:
+        logger.warning(
+            "Using non-transactional fallback for cross-channel consume; "
+            "race conditions possible under high concurrency"
+        )
         snapshot = doc_ref.get()
         data = _extract_snapshot_data(snapshot)
         if data is None:
@@ -253,7 +259,11 @@ def _consume_pending_context_sync(db: Any, tenant_id: str, company_id: str, phon
                     logger.debug("Cross-channel expiry update skipped", exc_info=True)
             return None
         consumed_at = time.time()
-        doc_ref.update({"status": "consumed", "consumed_at": consumed_at})
+        try:
+            doc_ref.update({"status": "consumed", "consumed_at": consumed_at})
+        except Exception:
+            logger.warning("Cross-channel consume update failed", exc_info=True)
+            return None
         valid_data["status"] = "consumed"
         valid_data["consumed_at"] = consumed_at
         return valid_data

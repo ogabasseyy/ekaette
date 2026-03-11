@@ -105,7 +105,12 @@ def install_tool_response_scheduling_patch() -> bool:
         base_flow_cls = getattr(base_flow_mod, "BaseLlmFlow", None)
         original_run_live = getattr(base_flow_cls, "run_live", None) if base_flow_cls else None
         if not callable(original) or not callable(original_run_live):
-            logger.warning("Tool scheduling patch skipped: build response hook unavailable")
+            logger.warning(
+                "Tool scheduling patch skipped: required hooks unavailable "
+                "(build_response=%s, run_live=%s)",
+                callable(original),
+                callable(original_run_live),
+            )
             return False
         _ORIGINAL_BUILD_RESPONSE_EVENT = original
         _ORIGINAL_RUN_LIVE = original_run_live
@@ -215,19 +220,19 @@ def install_tool_response_scheduling_patch() -> bool:
                                         await llm_connection.close()
                                         base_flow_mod.logger.debug("Live connection closed.")
                                         transfer_to_agent = event.actions.transfer_to_agent
-                                        if transfer_to_agent:
-                                            base_flow_mod.logger.debug(
-                                                "Transferring to agent: %s",
-                                                transfer_to_agent,
-                                            )
-                                            agent_to_run = self._get_agent_to_run(
-                                                invocation_context, transfer_to_agent
-                                            )
-                                            async with base_flow_mod.Aclosing(
-                                                agent_to_run.run_live(invocation_context)
-                                            ) as child_agen:
-                                                async for item in child_agen:
-                                                    yield item
+                                        base_flow_mod.logger.debug(
+                                            "Transferring to agent: %s",
+                                            transfer_to_agent,
+                                        )
+                                        agent_to_run = self._get_agent_to_run(
+                                            invocation_context, transfer_to_agent
+                                        )
+                                        async with base_flow_mod.Aclosing(
+                                            agent_to_run.run_live(invocation_context)
+                                        ) as child_agen:
+                                            async for item in child_agen:
+                                                yield item
+                                        return
                                     if _event_requests_task_completion(event):
                                         await base_flow_mod.asyncio.sleep(
                                             base_flow_mod.DEFAULT_TASK_COMPLETION_DELAY
