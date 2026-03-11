@@ -130,6 +130,7 @@ def create_catalog_agent(model: str, *, channel: str = "voice") -> Agent:
     return Agent(
         name="catalog_agent",
         model=model,
+        description="Searches product catalog for availability, pricing, and recommendations from store inventory.",
         instruction=_INSTRUCTION,
         tools=_tools_for_channel(channel),
         **_CALLBACKS,

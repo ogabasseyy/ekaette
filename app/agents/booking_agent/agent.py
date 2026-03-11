@@ -121,6 +121,8 @@ _INSTRUCTION_TEMPLATE = """You handle delivery quotes, purchase finalization, an
       or says they do not have time to continue, use request_callback and confirm
       you will call them back on this same number, then wrap up the call warmly.
     - If tool results contain the currency code "NGN", always say "naira" to the customer instead.
+    - After an order is confirmed and recorded, let the customer know they can
+      call back anytime to check the status of their order or delivery.
     - Keep momentum: after every step, ask one clear next-step question.
     - Be warm and helpful; keep transitions concise.
     """
@@ -171,6 +173,7 @@ def create_booking_agent(model: str, *, channel: str = "voice") -> Agent:
     return Agent(
         name="booking_agent",
         model=model,
+        description="Schedules appointments, reservations, pickups, and manages booking modifications.",
         instruction=instruction,
         tools=_tools_for_channel(channel),
         **_CALLBACKS,

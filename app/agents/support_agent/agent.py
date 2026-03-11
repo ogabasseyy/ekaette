@@ -165,6 +165,7 @@ def create_support_agent(model: str, *, channel: str = "voice") -> Agent:
     return Agent(
         name="support_agent",
         model=model,
+        description="Answers general questions, FAQs, product comparisons, order tracking, and public knowledge queries.",
         instruction=instruction,
         tools=_tools_for_channel(channel),
         **_CALLBACKS,

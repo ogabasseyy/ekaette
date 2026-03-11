@@ -106,6 +106,7 @@ def create_vision_agent(model: str) -> Agent:
     return Agent(
         name="vision_agent",
         model=model,
+        description="Analyzes photos and videos of devices for identification, condition grading, and visual inspection.",
         instruction=_INSTRUCTION,
         tools=_TOOLS,
         **_CALLBACKS,
