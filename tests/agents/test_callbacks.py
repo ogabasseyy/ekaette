@@ -481,6 +481,39 @@ class TestCallbackLegGuards:
             state={
                 "app:session_id": "sip-inbound-abc123",
                 "app:capabilities": ["outbound_messaging"],
+                "temp:last_user_turn": "Please call me back later.",
+            },
+            agent_name="ekaette_router",
+        )
+        result = await before_tool_capability_guard_and_log(tool, {"reason": "Please call me back later."}, ctx)
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_capability_guard_blocks_request_callback_without_user_intent(self):
+        tool = SimpleNamespace(name="request_callback")
+        ctx = SimpleNamespace(
+            state={
+                "app:session_id": "wa-abc123",
+                "app:capabilities": ["outbound_messaging"],
+                "app:channel": "voice",
+                "temp:last_user_turn": "",
+            },
+            agent_name="ekaette_router",
+        )
+        result = await before_tool_capability_guard_and_log(tool, {}, ctx)
+        assert isinstance(result, dict)
+        assert result["status"] == "error"
+        assert result["error"] == "callback_intent_required"
+
+    @pytest.mark.asyncio
+    async def test_capability_guard_allows_request_callback_from_last_user_turn_intent(self):
+        tool = SimpleNamespace(name="request_callback")
+        ctx = SimpleNamespace(
+            state={
+                "app:session_id": "wa-abc123",
+                "app:capabilities": ["outbound_messaging"],
+                "app:channel": "voice",
+                "temp:last_user_turn": "Can you call me back please?",
             },
             agent_name="ekaette_router",
         )

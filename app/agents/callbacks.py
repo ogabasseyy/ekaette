@@ -78,6 +78,30 @@ def looks_like_callback_promise(text: str) -> bool:
     return any(p.search(normalized) for p in _CALLBACK_PROMISE_PATTERNS)
 
 
+def _request_callback_has_explicit_intent(
+    state: State,
+    args: dict[str, Any],
+) -> bool:
+    """Return True when request_callback is backed by real user intent.
+
+    This prevents voice startup/attach turns from invoking request_callback
+    before the caller has actually asked for one. We accept either:
+    - a callback-like latest user turn captured in session state
+    - a callback-like explicit tool reason argument
+    """
+    latest_user_raw = _state_get(state, "temp:last_user_turn", "")
+    latest_user = latest_user_raw.strip() if isinstance(latest_user_raw, str) else ""
+    if latest_user and looks_like_callback_request(latest_user):
+        return True
+
+    reason_raw = args.get("reason", "")
+    reason = reason_raw.strip() if isinstance(reason_raw, str) else ""
+    if reason and looks_like_callback_request(reason):
+        return True
+
+    return False
+
+
 def _is_callback_leg(state: State, *, session_id_override: str = "") -> bool:
     """Return True when the current session is an outbound callback leg.
 
@@ -979,6 +1003,27 @@ async def before_tool_capability_guard(
             "status": "error",
             "error": "already_on_callback",
             "detail": "You are already on a callback call. Do not request another callback.",
+        }
+
+    if tool.name == "request_callback" and not _request_callback_has_explicit_intent(
+        tool_context.state,
+        args,
+    ):
+        latest_user_raw = _state_get(tool_context.state, "temp:last_user_turn", "")
+        latest_user = latest_user_raw.strip() if isinstance(latest_user_raw, str) else ""
+        logger.warning(
+            "Blocked request_callback without explicit user intent agent=%s latest_user=%r args=%s",
+            tool_context.agent_name,
+            latest_user[:160],
+            sorted(args.keys()),
+        )
+        return {
+            "status": "error",
+            "error": "callback_intent_required",
+            "detail": (
+                "Callback request blocked. The customer has not explicitly asked for a callback yet. "
+                "First greet and help the caller. Only request a callback after the caller clearly asks for one."
+            ),
         }
 
     required_cap = TOOL_CAPABILITY_MAP.get(tool.name)
