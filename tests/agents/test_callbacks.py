@@ -609,6 +609,40 @@ class TestCallbackLegGuards:
         assert result is None
 
     @pytest.mark.asyncio
+    async def test_transfer_allowed_when_last_agent_turn_exists_in_state(self):
+        tool = SimpleNamespace(name="transfer_to_agent")
+        ctx = SimpleNamespace(
+            state={
+                "app:channel": "voice",
+                "temp:last_agent_turn": "Hello, this is ehkaitay from Ogabassey Gadgets.",
+            },
+            agent_name="ekaette_router",
+        )
+        result = await before_tool_capability_guard_and_log(
+            tool, {"agent_name": "support_agent"}, ctx
+        )
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_transfer_allowed_when_last_agent_turn_exists_only_in_session_state(self):
+        tool = SimpleNamespace(name="transfer_to_agent")
+        ctx = SimpleNamespace(
+            state={
+                "app:channel": "voice",
+            },
+            session=SimpleNamespace(
+                state={
+                    "temp:last_agent_turn": "Hello, this is ehkaitay from Ogabassey Gadgets.",
+                }
+            ),
+            agent_name="ekaette_router",
+        )
+        result = await before_tool_capability_guard_and_log(
+            tool, {"agent_name": "support_agent"}, ctx
+        )
+        assert result is None
+
+    @pytest.mark.asyncio
     async def test_transfer_allowed_on_text_channel_without_greeting(self):
         tool = SimpleNamespace(name="transfer_to_agent")
         ctx = SimpleNamespace(

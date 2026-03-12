@@ -204,6 +204,13 @@ def _is_greeted_state(state: Any, *, session: Any = None) -> bool:
     session_state = getattr(session, "state", None)
     if session_state is not None and bool(_state_get(session_state, "temp:greeted", False)):
         return True
+    last_agent_turn = _state_get(state, "temp:last_agent_turn", "")
+    if isinstance(last_agent_turn, str) and last_agent_turn.strip():
+        return True
+    if session_state is not None:
+        session_last_agent_turn = _state_get(session_state, "temp:last_agent_turn", "")
+        if isinstance(session_last_agent_turn, str) and session_last_agent_turn.strip():
+            return True
     try:
         turn_count = int(_state_get(state, "temp:model_turn_count", 0) or 0)
     except (TypeError, ValueError):
