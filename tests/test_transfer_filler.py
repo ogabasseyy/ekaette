@@ -344,6 +344,37 @@ class TestVoiceCallbackIntentRegistration:
         )
         assert ctx.session_state["temp:callback_requested"] is True
 
+    @pytest.mark.asyncio
+    async def test_agent_callback_promise_queues_end_after_speaking(self):
+        ctx = _make_ctx(_FakeWebSocket())
+        ctx.session_state.update(
+            {
+                "app:channel": "voice",
+                "user:caller_phone": "+2348012345678",
+            }
+        )
+
+        with patch(
+            "app.api.v1.at.service_voice.register_callback_request"
+        ) as mock_register:
+            mock_register.return_value = {"status": "pending", "phone": "+2348012345678"}
+            await _run_downstream_events(
+                _make_live_event(
+                    output_transcription=SimpleNamespace(
+                        text="No problem at all, I will call you back shortly on this same number.",
+                        finished=True,
+                    )
+                ),
+                ctx=ctx,
+            )
+
+        mock_register.assert_called_once()
+        assert ctx.session_state["temp:callback_requested"] is True
+        message = ctx.session_state["temp:last_server_message"]
+        assert message["type"] == "call_control"
+        assert message["action"] == "end_after_speaking"
+        assert message["reason"] == "callback_registered"
+
 
 # ─── Stream tasks: watchdog arming / clearing / nudge ──────────────
 

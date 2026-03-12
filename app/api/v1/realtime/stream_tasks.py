@@ -511,6 +511,29 @@ async def downstream_task(
             return None
         return raw_message
 
+    def _queue_session_server_message(payload: dict[str, Any]) -> None:
+        raw = _session_get("temp:server_message_seq", 0)
+        try:
+            current = int(raw)
+        except (TypeError, ValueError):
+            current = 0
+        message = dict(payload)
+        message["id"] = current + 1
+        _session_set("temp:server_message_seq", current + 1)
+        _session_set("temp:last_server_message", message)
+
+    def _queue_end_after_speaking(reason: str) -> None:
+        if bool(_session_get("temp:call_end_after_speaking_requested", False)):
+            return
+        _session_set("temp:call_end_after_speaking_requested", True)
+        _queue_session_server_message(
+            {
+                "type": "call_control",
+                "action": "end_after_speaking",
+                "reason": reason,
+            }
+        )
+
     current_agent_raw = _session_get("temp:active_agent", "ekaette_router")
     current_agent = current_agent_raw if isinstance(current_agent_raw, str) else "ekaette_router"
 
@@ -665,6 +688,7 @@ async def downstream_task(
         status = str(result.get("status", "")).strip().lower() if isinstance(result, dict) else ""
         if status in {"pending", "queued", "cooldown"}:
             _session_set("temp:callback_requested", True)
+            _queue_end_after_speaking("callback_registered")
             logger.info(
                 "Queued callback from agent promise phone=%s tenant_id=%s "
                 "company_id=%s status=%s",

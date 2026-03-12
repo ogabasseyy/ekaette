@@ -116,6 +116,8 @@ class TestEkaetteRouterAgent:
         from app.agents.ekaette_router.agent import ekaette_router
         instruction = ekaette_router.instruction
         assert "virtual assistant" in instruction.lower(), "Instruction should disclose assistant nature"
+        assert "nigerian virtual assistant" in instruction.lower()
+        assert "nigerian english is your natural default spoken style" in instruction.lower()
         assert "personal name is ehkaitay" in instruction.lower()
         assert "not a generic phrase like 'our company'" in instruction.lower()
 
