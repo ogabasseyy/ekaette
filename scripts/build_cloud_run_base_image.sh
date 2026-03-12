@@ -30,8 +30,7 @@ ensure_repository() {
 ensure_repository
 
 if gcloud artifacts docker images describe "${BASE_IMAGE_URI}" \
-  --project "${PROJECT}" \
-  --location "${REGION}" >/dev/null 2>&1; then
+  --project "${PROJECT}" >/dev/null 2>&1; then
   echo "Reusing existing runtime base image:"
   echo "${BASE_IMAGE_URI}"
   exit 0
@@ -40,10 +39,25 @@ fi
 echo "Building reusable runtime base image..."
 echo "Base image URI: ${BASE_IMAGE_URI}"
 
+BUILD_CONFIG="$(mktemp "${TMPDIR:-/tmp}/ekaette-base-build-XXXXXX.yaml")"
+trap 'rm -f "${BUILD_CONFIG}"' EXIT
+cat >"${BUILD_CONFIG}" <<EOF
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -f
+      - Dockerfile.base
+      - -t
+      - ${BASE_IMAGE_URI}
+      - .
+images:
+  - ${BASE_IMAGE_URI}
+EOF
+
 gcloud builds submit "${ROOT_DIR}" \
   --project "${PROJECT}" \
   --region "${REGION}" \
-  --tag "${BASE_IMAGE_URI}" \
-  --file "${ROOT_DIR}/Dockerfile.base"
+  --config "${BUILD_CONFIG}"
 
 echo "${BASE_IMAGE_URI}"

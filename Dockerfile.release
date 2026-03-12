@@ -1,5 +1,6 @@
 # Thin release image built on top of the prebuilt runtime base image.
 
+ARG BASE_IMAGE
 FROM node:24-slim@sha256:b4687aef2571c632a1953695ce4d61d6462a7eda471fe6e272eebf0418f276ba AS frontend-build
 WORKDIR /app/frontend
 RUN corepack enable && corepack prepare pnpm@latest --activate
@@ -8,7 +9,6 @@ RUN pnpm install --frozen-lockfile
 COPY frontend/ .
 RUN pnpm run build
 
-ARG BASE_IMAGE
 FROM ${BASE_IMAGE}
 
 WORKDIR /app
