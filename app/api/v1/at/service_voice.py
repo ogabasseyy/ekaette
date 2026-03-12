@@ -54,6 +54,18 @@ _CALLBACK_PREWARM_POLL_SECONDS = max(
     0.1,
     _read_float_env("AT_CALLBACK_PREWARM_POLL_SECONDS", 0.25),
 )
+_CALLBACK_ATTACH_TIMEOUT_SECONDS = max(
+    1.0,
+    _read_float_env("AT_CALLBACK_ATTACH_TIMEOUT_SECONDS", 6.0),
+)
+_CALLBACK_ATTACH_POLL_SECONDS = max(
+    0.1,
+    _read_float_env("AT_CALLBACK_ATTACH_POLL_SECONDS", 0.5),
+)
+_CALLBACK_ATTACH_RETRY_MAX = max(
+    0,
+    int(_read_float_env("AT_CALLBACK_ATTACH_RETRY_MAX", 1)),
+)
 _CALLBACK_OVERRIDE_SOURCES = frozenset({
     "manual_callback_request",
     "voice_ai_auto_callback",
@@ -372,6 +384,36 @@ async def _wait_for_callback_prewarm(
     )
 
 
+async def _wait_for_callback_attach(
+    *,
+    phone: str,
+    tenant_id: str,
+    company_id: str,
+    timeout_seconds: float | None = None,
+) -> bool:
+    """Wait for the VM to attach the prewarmed callback session to a real leg.
+
+    A successful attach clears the prewarm reservation, so the reservation
+    disappearing is the durable signal that the outbound callback leg really
+    reached the SIP bridge.
+    """
+    deadline = time.monotonic() + (timeout_seconds or _CALLBACK_ATTACH_TIMEOUT_SECONDS)
+    while time.monotonic() < deadline:
+        payload = await asyncio.to_thread(
+            get_callback_prewarm,
+            tenant_id=tenant_id,
+            company_id=company_id,
+            phone=phone,
+        )
+        if payload is None:
+            return True
+        status = str(payload.get("status", "")).strip().lower() if isinstance(payload, dict) else ""
+        if status == "failed":
+            return False
+        await asyncio.sleep(_CALLBACK_ATTACH_POLL_SECONDS)
+    return False
+
+
 async def trigger_callback(
     *,
     phone: str,
@@ -426,10 +468,66 @@ async def trigger_callback(
         phone=normalized_phone,
     )
 
-    try:
-        provider_result = await providers.make_call(from_=AT_VIRTUAL_NUMBER, to=[normalized_phone])
-    except Exception:
-        logger.warning("Outbound callback placement failed", exc_info=True)
+    async def _place_outbound_callback() -> dict[str, object]:
+        return await providers.make_call(from_=AT_VIRTUAL_NUMBER, to=[normalized_phone])
+
+    provider_result: dict[str, object] | None = None
+    attach_confirmed = False
+    for attempt in range(_CALLBACK_ATTACH_RETRY_MAX + 1):
+        if attempt > 0:
+            logger.warning(
+                "Retrying outbound callback placement phone=%s attempt=%d",
+                normalized_phone,
+                attempt + 1,
+            )
+            mark_outbound_callback_hint(
+                tenant_id=tenant_id,
+                company_id=company_id,
+                phone=normalized_phone,
+            )
+        try:
+            provider_result = await _place_outbound_callback()
+        except Exception:
+            logger.warning("Outbound callback placement failed", exc_info=True)
+            await asyncio.to_thread(
+                clear_callback_prewarm,
+                tenant_id=tenant_id,
+                company_id=company_id,
+                phone=normalized_phone,
+            )
+            payload = {
+                "tenant_id": tenant_id,
+                "company_id": company_id,
+                "phone": normalized_phone,
+                "source": source,
+                "reason": reason.strip()[:240],
+                "status": "failed",
+                "updated_at": time.time(),
+                "cooldown_until": cooldown_until,
+            }
+            _save_callback_request(tenant_id, company_id, normalized_phone, payload)
+            return {"status": "error", "detail": "Voice provider unavailable", "phone": normalized_phone}
+
+        logger.info(
+            "Outbound callback provider queued phone=%s attempt=%d result=%r",
+            normalized_phone,
+            attempt + 1,
+            provider_result,
+        )
+        attach_confirmed = await _wait_for_callback_attach(
+            phone=normalized_phone,
+            tenant_id=tenant_id,
+            company_id=company_id,
+        )
+        if attach_confirmed:
+            break
+
+    if not attach_confirmed:
+        logger.warning(
+            "Outbound callback leg did not attach after provider acceptance phone=%s attempts=%d",
+            normalized_phone,
+            _CALLBACK_ATTACH_RETRY_MAX + 1,
+        )
         await asyncio.to_thread(
             clear_callback_prewarm,
             tenant_id=tenant_id,
@@ -445,9 +543,15 @@ async def trigger_callback(
             "status": "failed",
             "updated_at": time.time(),
             "cooldown_until": cooldown_until,
+            "detail": "Callback leg did not attach",
+            "provider_result": provider_result or {},
         }
         _save_callback_request(tenant_id, company_id, normalized_phone, payload)
-        return {"status": "error", "detail": "Voice provider unavailable", "phone": normalized_phone}
+        return {
+            "status": "error",
+            "detail": "Callback leg did not attach",
+            "phone": normalized_phone,
+        }
 
     payload = {
         "tenant_id": tenant_id,

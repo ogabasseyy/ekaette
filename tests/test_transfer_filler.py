@@ -101,10 +101,10 @@ class TestChannelGatingInCallbacks:
         await before_model_inject_config(callback_context, llm_request)
 
         system_instruction = str(llm_request.config.system_instruction)
-        assert "VOICE STYLE" in system_instruction
+        assert "NIGERIAN ACCENT AND PERSONA (MANDATORY)" in system_instruction
         assert "Nigerian English" in system_instruction
-        assert "CRITICAL latency policy" in system_instruction
-        assert "tool call or agent transfer" in system_instruction
+        assert "NIGERIAN PACING (NO SILENCE)" in system_instruction
+        assert "BEFORE any tool call or" in system_instruction
 
     @pytest.mark.asyncio
     async def test_no_latency_policy_for_text_channel(self):

@@ -451,6 +451,7 @@ class TestServiceVoice:
         mock_get_prewarm.side_effect = [
             {"status": "warming", "phone": "+2348012345678"},
             {"status": "ready", "phone": "+2348012345678"},
+            None,
         ]
         mock_make_call.return_value = {"status": "Queued"}
 
@@ -468,7 +469,7 @@ class TestServiceVoice:
 
         assert result["status"] == "queued"
         mock_request_prewarm.assert_called_once()
-        assert mock_get_prewarm.call_count >= 2
+        assert mock_get_prewarm.call_count >= 3
         mock_make_call.assert_awaited_once()
         mock_mark_hint.assert_called_once_with(
             tenant_id="public",
@@ -512,6 +513,135 @@ class TestServiceVoice:
         mock_request_prewarm.assert_called_once()
         mock_clear_prewarm.assert_called_once()
         mock_make_call.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @patch("app.api.v1.at.service_voice.mark_outbound_callback_hint")
+    @patch("app.api.v1.at.providers.make_call", new_callable=AsyncMock)
+    @patch("app.api.v1.at.service_voice.request_callback_prewarm")
+    async def test_trigger_callback_retries_when_attach_times_out_then_succeeds(
+        self,
+        mock_request_prewarm,
+        mock_make_call: AsyncMock,
+        mock_mark_hint,
+        monkeypatch,
+    ) -> None:
+        from app.api.v1.at import service_voice
+
+        service_voice._CALLBACK_REQUESTS_LOCAL.clear()
+        monkeypatch.delenv("GOOGLE_CLOUD_PROJECT", raising=False)
+        monkeypatch.delenv("FIRESTORE_EMULATOR_HOST", raising=False)
+        monkeypatch.setattr(
+            service_voice,
+            "_wait_for_callback_prewarm",
+            AsyncMock(return_value={"status": "ready", "phone": "+2348012345678"}),
+        )
+        monkeypatch.setattr(
+            service_voice,
+            "_wait_for_callback_attach",
+            AsyncMock(side_effect=[False, True]),
+        )
+        mock_make_call.return_value = {"status": "Queued", "sessionId": "ATVId_retry"}
+
+        result = await service_voice.trigger_callback(
+            phone="+2348012345678",
+            tenant_id="public",
+            company_id="ekaette-electronics",
+            source="manual_callback_request",
+        )
+
+        assert result["status"] == "queued"
+        assert mock_make_call.await_count == 2
+        assert mock_mark_hint.call_count == 2
+        mock_request_prewarm.assert_not_called()
+
+    @pytest.mark.asyncio
+    @patch("app.api.v1.at.service_voice.clear_callback_prewarm")
+    @patch("app.api.v1.at.service_voice.mark_outbound_callback_hint")
+    @patch("app.api.v1.at.providers.make_call", new_callable=AsyncMock)
+    @patch("app.api.v1.at.service_voice.request_callback_prewarm")
+    async def test_trigger_callback_fails_when_attach_never_happens(
+        self,
+        mock_request_prewarm,
+        mock_make_call: AsyncMock,
+        mock_mark_hint,
+        mock_clear_prewarm,
+        monkeypatch,
+    ) -> None:
+        from app.api.v1.at import service_voice
+
+        service_voice._CALLBACK_REQUESTS_LOCAL.clear()
+        monkeypatch.delenv("GOOGLE_CLOUD_PROJECT", raising=False)
+        monkeypatch.delenv("FIRESTORE_EMULATOR_HOST", raising=False)
+        monkeypatch.setattr(
+            service_voice,
+            "_wait_for_callback_prewarm",
+            AsyncMock(return_value={"status": "ready", "phone": "+2348012345678"}),
+        )
+        monkeypatch.setattr(
+            service_voice,
+            "_wait_for_callback_attach",
+            AsyncMock(return_value=False),
+        )
+        monkeypatch.setattr(service_voice, "_CALLBACK_ATTACH_RETRY_MAX", 1)
+        mock_make_call.return_value = {"status": "Queued", "sessionId": "ATVId_fail"}
+
+        result = await service_voice.trigger_callback(
+            phone="+2348012345678",
+            tenant_id="public",
+            company_id="ekaette-electronics",
+            source="manual_callback_request",
+        )
+
+        assert result["status"] == "error"
+        assert result["detail"] == "Callback leg did not attach"
+        assert mock_make_call.await_count == 2
+        assert mock_mark_hint.call_count == 2
+        mock_clear_prewarm.assert_called_once()
+        mock_request_prewarm.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_wait_for_callback_attach_returns_true_when_reservation_clears(
+        self,
+        monkeypatch,
+    ) -> None:
+        from app.api.v1.at import service_voice
+
+        monkeypatch.setattr(
+            service_voice,
+            "get_callback_prewarm",
+            lambda **_kwargs: None,
+        )
+
+        result = await service_voice._wait_for_callback_attach(
+            phone="+2348012345678",
+            tenant_id="public",
+            company_id="ekaette-electronics",
+            timeout_seconds=0.2,
+        )
+
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_wait_for_callback_attach_returns_false_for_failed_reservation(
+        self,
+        monkeypatch,
+    ) -> None:
+        from app.api.v1.at import service_voice
+
+        monkeypatch.setattr(
+            service_voice,
+            "get_callback_prewarm",
+            lambda **_kwargs: {"status": "failed", "phone": "+2348012345678"},
+        )
+
+        result = await service_voice._wait_for_callback_attach(
+            phone="+2348012345678",
+            tenant_id="public",
+            company_id="ekaette-electronics",
+            timeout_seconds=0.2,
+        )
+
+        assert result is False
 
     def test_register_callback_request_returns_error_when_persistence_fails(
         self,
