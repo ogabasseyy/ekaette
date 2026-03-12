@@ -140,39 +140,46 @@ def _load_callback_request(tenant_id: str, company_id: str, phone: str) -> dict[
 
     with _CALLBACK_REQUESTS_LOCK:
         local = _CALLBACK_REQUESTS_LOCAL.get(key)
-        if isinstance(local, dict):
-            cooldown_until = float(local.get("cooldown_until", 0.0) or 0.0)
-            if cooldown_until and cooldown_until <= now and local.get("status") == "queued":
-                _CALLBACK_REQUESTS_LOCAL.pop(key, None)
-            else:
-                return dict(local)
 
-    if not _uses_firestore():
+    if _uses_firestore():
+        try:
+            snap = _callback_doc_ref(key).get()
+        except Exception:
+            logger.warning("Callback request read failed", exc_info=True)
+        else:
+            if not snap.exists:
+                with _CALLBACK_REQUESTS_LOCK:
+                    _CALLBACK_REQUESTS_LOCAL.pop(key, None)
+                return None
+
+            data = snap.to_dict() or {}
+            if not isinstance(data, dict):
+                return None
+
+            cooldown_until = float(data.get("cooldown_until", 0.0) or 0.0)
+            if cooldown_until and cooldown_until <= now and data.get("status") == "queued":
+                logger.info(
+                    "Expiring stale queued callback request tenant_id=%s company_id=%s phone=%s",
+                    tenant_id,
+                    company_id,
+                    _normalized_phone(phone),
+                )
+                _delete_callback_request(tenant_id, company_id, phone)
+                return None
+
+            with _CALLBACK_REQUESTS_LOCK:
+                _CALLBACK_REQUESTS_LOCAL[key] = dict(data)
+            return data
+
+    if not isinstance(local, dict):
         return None
 
-    try:
-        snap = _callback_doc_ref(key).get()
-    except Exception:
-        logger.warning("Callback request read failed", exc_info=True)
+    cooldown_until = float(local.get("cooldown_until", 0.0) or 0.0)
+    if cooldown_until and cooldown_until <= now and local.get("status") == "queued":
+        with _CALLBACK_REQUESTS_LOCK:
+            _CALLBACK_REQUESTS_LOCAL.pop(key, None)
         return None
-
-    if not snap.exists:
-        return None
-
-    data = snap.to_dict() or {}
-    if not isinstance(data, dict):
-        return None
-    cooldown_until = float(data.get("cooldown_until", 0.0) or 0.0)
-    if cooldown_until and cooldown_until <= now and data.get("status") == "queued":
-        logger.info(
-            "Expiring stale queued callback request tenant_id=%s company_id=%s phone=%s",
-            tenant_id,
-            company_id,
-            _normalized_phone(phone),
-        )
-        _delete_callback_request(tenant_id, company_id, phone)
-        return None
-    return data
+    return dict(local)
 
 
 def _save_callback_request(

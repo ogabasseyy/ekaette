@@ -55,3 +55,12 @@ class TestBookingAgentTools:
         instruction = booking_agent.instruction.lower()
         assert "sms or whatsapp" in instruction
         assert "send_sms_message" in instruction
+
+    def test_booking_instruction_mentions_single_optional_accessory_upsell(self):
+        from app.agents.booking_agent.agent import booking_agent
+
+        instruction = booking_agent.instruction.lower()
+        assert "offer one brief relevant accessory upsell" in instruction
+        assert "before delivery fee or payment" in instruction
+        assert "only offer it once per purchase flow" in instruction
+        assert "screen protector or case" in instruction

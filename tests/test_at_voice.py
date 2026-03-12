@@ -584,6 +584,48 @@ class TestServiceVoice:
         assert result is None
         assert key not in service_voice._CALLBACK_REQUESTS_LOCAL
 
+    def test_load_callback_request_prefers_firestore_over_stale_local_cache(
+        self,
+        monkeypatch,
+    ) -> None:
+        from app.api.v1.at import service_voice
+
+        class _FakeSnapshot:
+            exists = True
+
+            def to_dict(self):
+                return {
+                    "status": "pending",
+                    "phone": "+2348012345678",
+                    "source": "voice_ai_request",
+                    "cooldown_until": 0.0,
+                }
+
+        class _FakeDocRef:
+            def get(self):
+                return _FakeSnapshot()
+
+        service_voice._CALLBACK_REQUESTS_LOCAL.clear()
+        key = service_voice._callback_key("public", "ekaette-electronics", "+2348012345678")
+        service_voice._CALLBACK_REQUESTS_LOCAL[key] = {
+            "status": "failed",
+            "phone": "+2348012345678",
+            "source": "flash_callback",
+            "cooldown_until": time.time() + 1800,
+        }
+        monkeypatch.setattr(service_voice, "_uses_firestore", lambda: True)
+        monkeypatch.setattr(service_voice, "_callback_doc_ref", lambda _key: _FakeDocRef())
+
+        result = service_voice._load_callback_request(
+            "public",
+            "ekaette-electronics",
+            "+2348012345678",
+        )
+
+        assert result is not None
+        assert result["status"] == "pending"
+        assert service_voice._CALLBACK_REQUESTS_LOCAL[key]["status"] == "pending"
+
     def test_register_callback_request_overrides_queued_cooldown_for_explicit_voice_request(
         self,
         monkeypatch,

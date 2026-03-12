@@ -2,8 +2,8 @@
 # Deploy Ekaette backend to Cloud Run.
 #
 # Usage:
-#   ./scripts/deploy_cloud_run.sh            # build + deploy + set env vars
-#   ./scripts/deploy_cloud_run.sh --env-only # update service config/env vars only
+#   SERVICE=ekaette-east-canary ./scripts/deploy_cloud_run.sh
+#   SERVICE=ekaette-east-canary ./scripts/deploy_cloud_run.sh --env-only
 #
 # This is the canonical Cloud Run deployment entrypoint. Keep Cloud Run config,
 # release gates, and .env-to-YAML export logic here so deploy behavior does not drift.
@@ -37,7 +37,7 @@ ENV_YAML="$(mktemp "${TMPDIR:-/tmp}/ekaette-cloudrun-env-XXXXXX")"
 ENV_ONLY=0
 
 usage() {
-  echo "Usage: $0 [--env-only]" >&2
+  echo "Usage: SERVICE=<service> [REGION=<region>] $0 [--env-only]" >&2
   exit 1
 }
 
@@ -48,6 +48,18 @@ if [[ "${1:-}" == "--env-only" ]]; then
   ENV_ONLY=1
 elif [[ $# -eq 1 ]]; then
   usage
+fi
+
+if [[ -z "${SERVICE+x}" && -z "${SERVICE_NAME+x}" ]]; then
+  cat >&2 <<'EOF'
+Refusing to deploy without an explicit SERVICE.
+
+Use one of:
+  ./scripts/deploy_cloud_run_main.sh
+  ./scripts/deploy_cloud_run_live.sh
+or set SERVICE=<name> explicitly before running deploy_cloud_run.sh.
+EOF
+  exit 2
 fi
 
 if [[ -z "${PYTHON_BIN}" ]]; then

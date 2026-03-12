@@ -344,7 +344,8 @@ docker run -p 8080:8080 --env-file .env ekaette
 
 ```bash
 # Uses .env for env vars, runs release gates before deploy
-ALLOW_UNAUTHENTICATED=1 bash scripts/deploy_cloud_run.sh
+./scripts/deploy_cloud_run_main.sh
+./scripts/deploy_cloud_run_live.sh
 ```
 
 Or manually:

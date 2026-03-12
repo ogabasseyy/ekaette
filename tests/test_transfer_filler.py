@@ -895,6 +895,27 @@ class TestWatchdogClearingInDownstream:
         assert ctx.session_state["temp:greeted"] is True
 
     @pytest.mark.asyncio
+    async def test_session_server_message_fallback_emits_call_control_without_state_delta(self):
+        ctx = _make_ctx(_FakeWebSocket())
+        ctx.session_state["temp:last_server_message"] = {
+            "id": 7,
+            "type": "call_control",
+            "action": "end_after_speaking",
+            "reason": "callback_acknowledged",
+        }
+
+        websocket, _, _ = await _run_downstream_events(
+            _make_live_event(turn_complete=True),
+            ctx=ctx,
+        )
+
+        assert {
+            "type": "call_control",
+            "action": "end_after_speaking",
+            "reason": "callback_acknowledged",
+        } in websocket.sent_texts
+
+    @pytest.mark.asyncio
     async def test_audio_output_marks_session_greeted(self):
         ctx = _make_ctx(_FakeWebSocket())
 

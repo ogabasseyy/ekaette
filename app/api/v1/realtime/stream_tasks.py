@@ -503,6 +503,14 @@ async def downstream_task(
         except Exception:
             logger.debug("Failed to persist session key %s", key, exc_info=True)
 
+    def _latest_server_message_from_session() -> dict[str, Any] | None:
+        raw_message = _session_get("temp:last_server_message", None)
+        if not isinstance(raw_message, dict):
+            return None
+        if not isinstance(raw_message.get("type"), str):
+            return None
+        return raw_message
+
     current_agent_raw = _session_get("temp:active_agent", "ekaette_router")
     current_agent = current_agent_raw if isinstance(current_agent_raw, str) else "ekaette_router"
 
@@ -1003,6 +1011,8 @@ async def downstream_task(
                     # Structured ServerMessages from callbacks/state delta
                     state_delta = event.actions.state_delta if event.actions else None
                     structured = extract_server_message_from_state_delta_fn(state_delta)
+                    if not structured:
+                        structured = _latest_server_message_from_session()
                     if structured:
                         raw_id = structured.get("id", 0)
                         try:

@@ -753,6 +753,13 @@ async def before_model_inject_config(
                 "'naira' instead of saying the letters N-G-N."
             )
             instruction_lines.append(
+                "CALLBACK PRIORITY — If the customer asks to be called back, says they "
+                "do not have enough airtime, or says they do not have time to continue, "
+                "use request_callback immediately. Do NOT ask what they want to discuss "
+                "on the callback, do NOT ask follow-up questions, and do NOT continue to "
+                "other topics once the callback has been registered."
+            )
+            instruction_lines.append(
                 "CALL ENDING — On a phone call, when the conversation has naturally "
                 "concluded or the customer says goodbye, give one brief closing line "
                 "and then use end_call. Do not remain silent on the line after your "
