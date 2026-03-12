@@ -111,7 +111,7 @@ class WaSession:
     gemini_api_key: str = ""
     gemini_model_id: str = ""
     gemini_system_instruction: str = ""
-    gemini_voice: str = "Aoede"
+    gemini_voice: str = "Kore"
     gemini_session: Any = None
     # Gateway mode (Cloud Run WebSocket)
     gateway_client: GatewayClient | None = None
@@ -206,8 +206,8 @@ class WaSession:
             # Direct mode: connect to Gemini Live
             try:
                 sys_instruct = (
-                    "You are the virtual assistant named ehkaitay. "
-                    "Your name is ehkaitay — always say it exactly like that. "
+                    "You are the virtual assistant named ehkaitay, pronounced 'eh-KAI-tay'. "
+                    "The middle syllable is exactly 'kai', rhyming with 'sky'. "
                     "You are answering a WhatsApp call. Greet the caller warmly and ask how you can help. "
                     "Always speak in English. "
                     "Be helpful, concise, and professional. Keep responses short for phone conversation."

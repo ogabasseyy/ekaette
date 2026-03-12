@@ -359,6 +359,8 @@ class SIPServer:
                 session_id_override=f"sip-callback-{prewarm_id}",
             ),
             delay_answer_until_ready=True,
+            prime_outbound_on_answer=True,
+            defer_connect_greeting_until_answer=True,
             callback_post_answer_grace_sec=_CALLBACK_POST_ANSWER_GRACE_SEC,
             connect_greeting_text=_CALLBACK_CONNECT_GREETING_TEXT,
         )
@@ -396,7 +398,7 @@ class SIPServer:
         )
 
     async def _await_callback_prewarm_ready(self, record: PrewarmedCallbackSession) -> None:
-        """Mark a prewarm reservation ready once outbound Ekaette audio is buffered."""
+        """Mark a prewarm reservation ready once the live session can accept the call leg."""
         timeout = max(
             0.5,
             min(record.expires_at - time.time(), _CALLBACK_PREWARM_READY_TIMEOUT_SEC),
@@ -425,11 +427,12 @@ class SIPServer:
         else:
             detail = "Callback prewarm timed out"
         logger.warning(
-            "Callback prewarm failed phone=%s detail=%s first_audio_ready=%s startup_failed=%s",
+            "Callback prewarm failed phone=%s detail=%s first_audio_ready=%s startup_failed=%s gateway_started=%s",
             record.phone,
             detail,
             record.session._first_outbound_audio_ready.is_set(),
             record.session.startup_failed,
+            record.session._gateway_session_started.is_set(),
         )
         await asyncio.to_thread(
             update_callback_prewarm_status,

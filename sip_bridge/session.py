@@ -123,7 +123,7 @@ class CallSession:
     gemini_api_key: str = ""
     gemini_model_id: str = ""
     gemini_system_instruction: str = ""
-    gemini_voice: str = "Aoede"
+    gemini_voice: str = "Kore"
     gemini_session: Any = None
 
     # Gateway mode (Cloud Run WebSocket)
@@ -152,6 +152,8 @@ class CallSession:
     _model_speech_end_time: float = 0.0
     # Guard against re-greeting on gateway reconnect
     _gateway_greeting_sent: bool = False
+    _gateway_session_started: asyncio.Event = field(default_factory=asyncio.Event)
+    _gateway_greeting_send_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     _greeting_lock_active: bool = False
     _greeting_lock_pending_release: bool = False
     _greeting_lock_safety_deadline: float = 0.0
@@ -163,6 +165,7 @@ class CallSession:
     _end_after_speaking_deadline: float = 0.0
     delay_answer_until_ready: bool = False
     prime_outbound_on_answer: bool = False
+    defer_connect_greeting_until_answer: bool = False
     _media_send_enabled: asyncio.Event = field(default_factory=asyncio.Event)
     _first_outbound_audio_ready: asyncio.Event = field(default_factory=asyncio.Event)
     _startup_failed: asyncio.Event = field(default_factory=asyncio.Event)
@@ -259,10 +262,22 @@ class CallSession:
         while time.monotonic() < deadline:
             if self._first_outbound_audio_ready.is_set():
                 return True
+            if (
+                self.defer_connect_greeting_until_answer
+                and self.gateway_client is not None
+                and self._gateway_session_started.is_set()
+            ):
+                return True
             if self._startup_failed.is_set() or self._shutdown.is_set():
                 return False
             await asyncio.sleep(0.05)
-        return self._first_outbound_audio_ready.is_set()
+        if self._first_outbound_audio_ready.is_set():
+            return True
+        return (
+            self.defer_connect_greeting_until_answer
+            and self.gateway_client is not None
+            and self._gateway_session_started.is_set()
+        )
 
     @property
     def startup_failed(self) -> bool:
@@ -280,6 +295,19 @@ class CallSession:
                 time.monotonic() + self.callback_post_answer_grace_sec
             )
         self._media_send_enabled.set()
+        if (
+            self.defer_connect_greeting_until_answer
+            and self.gateway_client is not None
+            and not self._gateway_greeting_sent
+        ):
+            try:
+                asyncio.get_running_loop().create_task(self._send_gateway_connect_greeting())
+            except RuntimeError:
+                logger.debug(
+                    "Unable to schedule deferred gateway greeting call_id=%s",
+                    self.call_id,
+                    exc_info=True,
+                )
 
     def _callback_post_answer_grace_active(self) -> bool:
         """Return True while callback speech should still be held briefly after answer."""
@@ -308,6 +336,36 @@ class CallSession:
                 int(_CALLBACK_MEDIA_PRIME_MS),
                 self.call_id,
             )
+
+    async def _send_gateway_connect_greeting(self) -> None:
+        """Send the connect greeting exactly once once the gateway session is ready."""
+        gateway_client = self.gateway_client
+        if gateway_client is None:
+            return
+        async with self._gateway_greeting_send_lock:
+            if self._gateway_greeting_sent:
+                return
+            try:
+                await asyncio.wait_for(self._gateway_session_started.wait(), timeout=2.0)
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "Gateway connect greeting deferred but session_started not seen call_id=%s",
+                    self.call_id,
+                )
+                return
+            if self._gateway_greeting_sent:
+                return
+            self._gateway_greeting_sent = True
+            self._greeting_lock_active = True
+            try:
+                await gateway_client.send_text(json.dumps({
+                    "type": "text",
+                    "text": self.connect_greeting_text,
+                }))
+            except Exception:
+                logger.warning("Failed to send gateway greeting", exc_info=True)
+                self._gateway_greeting_sent = False
+                return
 
     async def run(self) -> None:
         """Run the four concurrent tasks. Cancels all on first failure."""
@@ -356,8 +414,8 @@ class CallSession:
             # Direct mode: connect to Gemini Live
             try:
                 sys_instruct = self.gemini_system_instruction or (
-                    "You are the virtual assistant named Ekaitay. "
-                    "Your name is Ekaitay — always say it exactly like that. "
+                    "You are the virtual assistant named ehkaitay, pronounced 'eh-KAI-tay'. "
+                    "The middle syllable is exactly 'kai', rhyming with 'sky'. "
                     "You are answering a phone call. Greet the caller warmly and ask how you can help. "
                     "Be helpful, concise, and professional. Keep responses short for phone conversation."
                 )
@@ -1080,18 +1138,17 @@ class CallSession:
                     canonical_id = msg.get("sessionId", "")
                     if canonical_id:
                         gateway_client.remember_canonical_session_id(canonical_id)
+                    self._gateway_session_started.set()
                     logger.info("Gateway session started: %s", canonical_id)
                     # Trigger AI greeting only on first connect, not on reconnect
                     if not self._gateway_greeting_sent:
-                        self._gateway_greeting_sent = True
-                        self._greeting_lock_active = True
-                        try:
-                            await gateway_client.send_text(json.dumps({
-                                "type": "text",
-                                "text": self.connect_greeting_text,
-                            }))
-                        except Exception:
-                            logger.warning("Failed to send gateway greeting", exc_info=True)
+                        if self.defer_connect_greeting_until_answer and not self._answered():
+                            logger.info(
+                                "Deferring gateway greeting until answer call_id=%s",
+                                self.call_id,
+                            )
+                        else:
+                            await self._send_gateway_connect_greeting()
                     else:
                         logger.info("Gateway reconnected — skipping duplicate greeting")
                 elif msg_type == "transcription":

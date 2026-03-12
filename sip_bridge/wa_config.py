@@ -79,13 +79,13 @@ class WhatsAppBridgeConfig:
             ),
             system_instruction=os.getenv(
                 "WA_SYSTEM_INSTRUCTION",
-                "You are the virtual assistant named ehkaitay. "
-                "Your name is ehkaitay — always say it exactly like that. "
+                "You are the virtual assistant named ehkaitay, pronounced 'eh-KAI-tay'. "
+                "The middle syllable is exactly 'kai', rhyming with 'sky'. "
                 "You are answering a phone call. Greet the caller warmly and ask how you can help. "
                 "Always speak in English. "
                 "Be helpful, concise, and professional. Keep responses short for phone conversation.",
             ),
-            gemini_voice=os.getenv("WA_GEMINI_VOICE", "Aoede"),
+            gemini_voice=os.getenv("WA_GEMINI_VOICE", "Kore"),
             company_id=os.getenv("WA_COMPANY_ID", "ekaette-electronics"),
             tenant_id=os.getenv("WA_TENANT_ID", "public"),
             health_port=int(os.getenv("WA_HEALTH_PORT", "8082")),

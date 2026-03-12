@@ -197,6 +197,7 @@ class TestCallSessionGatewayMode:
 
         await s._gateway_recv_loop()
         assert mock_client.canonical_session_id == "canonical-xyz"
+        assert s._gateway_session_started.is_set() is True
         assert s._greeting_lock_active is True
 
     @pytest.mark.asyncio
@@ -215,6 +216,29 @@ class TestCallSessionGatewayMode:
 
         waiter = asyncio.create_task(s.wait_until_answer_ready(0.2))
         emitter = asyncio.create_task(_emit_ready())
+        result = await waiter
+        await emitter
+
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_wait_until_answer_ready_returns_when_gateway_session_started_for_deferred_callback(self):
+        """Deferred callback greeting sessions can become answer-ready before speech starts."""
+        s = CallSession(
+            call_id="c1",
+            tenant_id="public",
+            company_id="acme",
+            delay_answer_until_ready=True,
+            defer_connect_greeting_until_answer=True,
+        )
+        s.gateway_client = MockGatewayClient()
+
+        async def _emit_started():
+            await asyncio.sleep(0.01)
+            s._gateway_session_started.set()
+
+        waiter = asyncio.create_task(s.wait_until_answer_ready(0.2))
+        emitter = asyncio.create_task(_emit_started())
         result = await waiter
         await emitter
 
@@ -248,6 +272,31 @@ class TestCallSessionGatewayMode:
         assert s._media_send_enabled.is_set() is True
         assert s._callback_post_answer_release_at >= before + 0.35
         assert s._callback_post_answer_grace_active() is True
+
+    @pytest.mark.asyncio
+    async def test_mark_answered_sends_deferred_gateway_greeting_once(self):
+        """Deferred callback greeting should be sent once the SIP leg answers."""
+        s = CallSession(
+            call_id="c1",
+            tenant_id="public",
+            company_id="acme",
+            delay_answer_until_ready=True,
+            defer_connect_greeting_until_answer=True,
+            connect_greeting_text="[Callback call connected]",
+        )
+        mock_client = MockGatewayClient()
+        s.gateway_client = mock_client
+        s._gateway_session_started.set()
+
+        s.mark_answered()
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+
+        mock_client.send_text.assert_awaited_once()
+        payload = mock_client.send_text.await_args.args[0]
+        assert json.loads(payload)["text"] == "[Callback call connected]"
+        assert s._gateway_greeting_sent is True
+        assert s._greeting_lock_active is True
 
     def test_mark_answered_enables_postanswer_agent_suppression_when_greeting_finished_preanswer(self):
         """If the callback greeting completed before answer, suppress repeat agent audio until user speaks."""
@@ -353,7 +402,38 @@ class TestCallSessionGatewayMode:
 
         await s._gateway_recv_loop()
         assert s._model_speaking is False
+        assert s._gateway_session_started.is_set() is True
         assert s._greeting_lock_active is True
+
+    @pytest.mark.asyncio
+    async def test_gateway_recv_loop_session_started_defers_callback_greeting_until_answer(self):
+        """Callback prewarm should not speak before the outbound leg answers."""
+        from sip_bridge.gateway_client import GatewayFrame
+
+        s = CallSession(
+            call_id="c1",
+            tenant_id="public",
+            company_id="acme",
+            defer_connect_greeting_until_answer=True,
+            connect_greeting_text="[Callback call connected]",
+        )
+        mock_client = MockGatewayClient()
+        mock_client._frames_to_yield = [
+            GatewayFrame(
+                is_audio=False,
+                text_data=json.dumps({
+                    "type": "session_started",
+                    "sessionId": "canonical-xyz",
+                }),
+            ),
+        ]
+        s.gateway_client = mock_client
+
+        await s._gateway_recv_loop()
+
+        mock_client.send_text.assert_not_awaited()
+        assert s._gateway_session_started.is_set() is True
+        assert s._gateway_greeting_sent is False
 
     @pytest.mark.asyncio
     async def test_gateway_recv_loop_handles_agent_status_idle(self):
@@ -816,6 +896,8 @@ class TestServerHandleInviteGateway:
             asyncio.create_task = original_create_task  # type: ignore[assignment]
 
         record = next(iter(server._prewarmed_callbacks.values()))
+        assert record.session.prime_outbound_on_answer is True
+        assert record.session.defer_connect_greeting_until_answer is True
         assert record.session.callback_post_answer_grace_sec > 0.0
         assert record.session.connect_greeting_text == "[Callback call connected]"
         for task in created_tasks:

@@ -65,8 +65,8 @@ async def query_text(
         contents=[user_message],
         config=types.GenerateContentConfig(
             system_instruction=(
-                "You are the virtual assistant named ehkaitay. "
-                "Your name is ehkaitay — always say it exactly like that. "
+                "You are the virtual assistant named ehkaitay, pronounced 'eh-KAI-tay'. "
+                "The middle syllable is exactly 'kai', rhyming with 'sky'. "
                 "Do not mention internal business IDs, slugs, or platform names. "
                 f"{cfg['system_suffix']}"
             ),
