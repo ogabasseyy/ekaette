@@ -24,7 +24,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
 LOCAL_INDUSTRY_CONFIGS: dict[str, dict[str, Any]] = {
     "electronics": {
         "name": "Electronics & Gadgets",
-        "voice": "Aoede",
+        "voice": "Kore",
         "greeting": "Welcome! I can help you with device trade-ins, swaps, and purchases.",
     },
     "hotel": {
@@ -39,10 +39,22 @@ LOCAL_INDUSTRY_CONFIGS: dict[str, dict[str, Any]] = {
     },
     "fashion": {
         "name": "Fashion & Retail",
-        "voice": "Kore",
+        "voice": "Aoede",
         "greeting": "Hey there! Let me help you find your perfect style.",
     },
 }
+
+
+def default_voice_for_industry(industry: str, fallback: str = "Aoede") -> str:
+    """Return the canonical default voice for an industry."""
+    key = (industry or "").strip().lower()
+    voice_map = {
+        "electronics": "Kore",
+        "hotel": "Puck",
+        "automotive": "Charon",
+        "fashion": "Aoede",
+    }
+    return voice_map.get(key, fallback)
 
 
 def _fallback_config_for(industry: str) -> dict[str, Any]:
@@ -64,12 +76,12 @@ def _legacy_config_from_registry_template(
 ) -> dict[str, Any]:
     """Project a registry template into the legacy industry_config shape."""
     name = template.get("label") or template.get("name") or template_id.title()
-    voice = template.get("default_voice") or "Aoede"
+    voice = template.get("default_voice") or default_voice_for_industry(template_id)
     greeting = template.get("greeting_policy") or DEFAULT_CONFIG["greeting"]
     if not isinstance(name, str) or not name.strip():
         name = template_id.title()
     if not isinstance(voice, str) or not voice.strip():
-        voice = "Aoede"
+        voice = default_voice_for_industry(template_id)
     if not isinstance(greeting, str) or not greeting.strip():
         greeting = DEFAULT_CONFIG["greeting"]
     return {
@@ -184,7 +196,7 @@ def build_session_state(
     state: dict[str, Any] = {
         "app:industry": industry,
         "app:industry_config": config,
-        "app:voice": config.get("voice", "Aoede"),
+        "app:voice": config.get("voice", default_voice_for_industry(industry)),
         "app:greeting": config.get("greeting", DEFAULT_CONFIG["greeting"]),
     }
 

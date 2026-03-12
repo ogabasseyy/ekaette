@@ -29,6 +29,15 @@ from app.configs import validate_registry_schema_version
 logger = logging.getLogger(__name__)
 
 
+def _default_voice_for_template_id(template_id: str | None, fallback: str = "Aoede") -> str:
+    key = (template_id or "").strip().lower()
+    if key == "electronics":
+        return "Kore"
+    if key == "fashion":
+        return "Aoede"
+    return fallback
+
+
 class RegistryMismatchError(Exception):
     """Raised when a company's industry_template_id doesn't match the resolved template."""
 
@@ -242,7 +251,10 @@ async def resolve_registry_config(
     ui_overrides = _dict_or_empty(company.get("ui_overrides"))
     voice = _string_or_default(
         ui_overrides.get("voice"),
-        _string_or_default(template.get("default_voice"), "Aoede"),
+        _string_or_default(
+            template.get("default_voice"),
+            _default_voice_for_template_id(str(template.get("id", "") or "")),
+        ),
     )
 
     # Resolve theme: template default (company theme overrides could be added later)
@@ -415,7 +427,10 @@ def _normalize_onboarding_template(raw: Any, doc_id: str) -> dict[str, Any] | No
     )
     category = _string_or_default(raw.get("category"), template_id)
     description = _string_or_default(raw.get("description"), "")
-    default_voice = _string_or_default(raw.get("default_voice"), "Aoede")
+    default_voice = _string_or_default(
+        raw.get("default_voice"),
+        _default_voice_for_template_id(template_id),
+    )
     theme = _dict_or_empty(raw.get("theme"))
     capabilities = _list_of_strings(raw.get("capabilities", []))
     status = _string_or_default(raw.get("status"), "active").lower()
@@ -607,7 +622,10 @@ def _build_onboarding_config_compat(tenant_id: str) -> dict[str, Any]:
             "label": config.get("name", industry_id.title()),
             "category": industry_id,
             "description": theme.get("hint", ""),
-            "defaultVoice": config.get("voice", "Aoede"),
+            "defaultVoice": config.get(
+                "voice",
+                _default_voice_for_template_id(industry_id),
+            ),
             "theme": dict(theme),
             "capabilities": list(_LOCAL_INDUSTRY_CAPABILITIES.get(industry_id, [])),
             "status": "active",

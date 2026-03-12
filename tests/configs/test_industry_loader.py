@@ -31,7 +31,7 @@ class TestLoadIndustryConfig:
         mock_db.collection.assert_called_once_with("industry_configs")
         mock_collection.document.assert_called_once_with("electronics")
         assert config["name"] == "Electronics & Gadgets"
-        assert config["voice"] == "Aoede"
+        assert config["voice"] == "Kore"
         assert "pricing" in config
 
     @pytest.mark.asyncio
@@ -107,7 +107,7 @@ class TestLoadIndustryConfig:
         electronics = await load_industry_config(None, "electronics")
         hotel = await load_industry_config(None, "hotel")
 
-        assert electronics["voice"] == "Aoede"
+        assert electronics["voice"] == "Kore"
         assert hotel["voice"] == "Puck"
 
     @pytest.mark.asyncio
@@ -198,7 +198,7 @@ class TestInjectConfigToSessionState:
 
         state = build_session_state(sample_electronics_config, "electronics")
 
-        assert state["app:voice"] == "Aoede"
+        assert state["app:voice"] == "Kore"
 
     def test_includes_greeting(self, sample_electronics_config):
         """Greeting should be accessible from state."""

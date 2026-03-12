@@ -73,7 +73,7 @@ ELECTRONICS_TEMPLATE = {
     "label": "Electronics & Gadgets",
     "category": "retail",
     "description": "Trade-ins, valuation, negotiation, pickup booking.",
-    "default_voice": "Aoede",
+    "default_voice": "Kore",
     "greeting_policy": "Welcome! I can help you with device trade-ins, swaps, and purchases.",
     "theme": {
         "accent": "oklch(74% 0.21 158)",
@@ -159,7 +159,7 @@ class TestLoadIndustryTemplate:
         result = await load_industry_template(db, "electronics")
         assert result["id"] == "electronics"
         assert result["label"] == "Electronics & Gadgets"
-        assert result["default_voice"] == "Aoede"
+        assert result["default_voice"] == "Kore"
         assert "catalog_lookup" in result["capabilities"]
 
     @pytest.mark.asyncio
@@ -276,7 +276,7 @@ class TestResolveRegistryConfig:
         assert config.template_category == "retail"
         assert config.template_label == "Electronics & Gadgets"
         assert "catalog_lookup" in config.capabilities
-        assert config.voice == "Aoede"
+        assert config.voice == "Kore"
         assert config.theme["title"] == "Electronics Trade Desk"
         assert config.greeting == ELECTRONICS_TEMPLATE["greeting_policy"]
         assert isinstance(config.registry_version, str)
@@ -399,7 +399,7 @@ class TestResolveRegistryConfig:
 
         config = await resolve_registry_config(db, "public", "ekaette-electronics")
         assert config is not None
-        assert config.voice == "Aoede"
+        assert config.voice == "Kore"
         assert config.theme == {}
         assert config.greeting == ""
         assert config.capabilities == []
@@ -445,7 +445,7 @@ class TestResolvedRegistryConfig:
             template_category="retail",
             template_label="Electronics & Gadgets",
             capabilities=["catalog_lookup"],
-            voice="Aoede",
+            voice="Kore",
             theme={"accent": "oklch(74% 0.21 158)", "title": "Test"},
             greeting="Welcome!",
             connector_manifest={"crm": {"provider": "mock"}},
@@ -457,7 +457,7 @@ class TestResolvedRegistryConfig:
         assert config.template_category == "retail"
         assert config.template_label == "Electronics & Gadgets"
         assert config.capabilities == ["catalog_lookup"]
-        assert config.voice == "Aoede"
+        assert config.voice == "Kore"
         assert config.theme["accent"] == "oklch(74% 0.21 158)"
         assert config.greeting == "Welcome!"
         assert config.connector_manifest == {"crm": {"provider": "mock"}}
@@ -483,7 +483,7 @@ class TestBuildSessionStateFromRegistry:
             template_category="electronics",
             template_label="Electronics & Gadgets",
             capabilities=["catalog_lookup", "valuation_tradein"],
-            voice="Aoede",
+            voice="Kore",
             theme={"accent": "oklch(74% 0.21 158)", "title": "Electronics Trade Desk"},
             greeting="Welcome!",
             connector_manifest={},
@@ -495,7 +495,7 @@ class TestBuildSessionStateFromRegistry:
         assert state["app:industry"] == "electronics"
         assert isinstance(state["app:industry_config"], dict)
         assert state["app:company_id"] == "ekaette-electronics"
-        assert state["app:voice"] == "Aoede"
+        assert state["app:voice"] == "Kore"
         assert state["app:greeting"] == "Welcome!"
         assert state["app:industry_config"]["name"] == "Electronics & Gadgets"
 
@@ -621,7 +621,7 @@ class TestIndustryLoaderCompatibility:
         # db=None triggers local fallback
         config = await load_industry_config(None, "electronics")
         assert config["name"] == "Electronics & Gadgets"
-        assert config["voice"] == "Aoede"
+        assert config["voice"] == "Kore"
 
     @pytest.mark.asyncio
     async def test_unknown_industry_gets_default(self):

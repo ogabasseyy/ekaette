@@ -50,6 +50,16 @@ def reset_rate_limit_state(main_module):
     main_module._rate_limit_buckets.clear()
 
 
+@pytest.fixture(autouse=True)
+def disable_ws_auth_for_legacy_contracts(main_module, monkeypatch):
+    from app.api.v1.public import settings as public_settings
+    from app.api.v1.public import ws_auth
+
+    monkeypatch.setattr(main_module, "WS_TOKEN_SECRET", "")
+    monkeypatch.setattr(public_settings, "WS_TOKEN_SECRET", "")
+    monkeypatch.setattr(ws_auth, "_WS_TOKEN_SECRET", "")
+
+
 class _FakeAsyncAuthTokens:
     def __init__(self):
         self.last_config = None
@@ -115,7 +125,7 @@ class TestBuildSessionStateCharacterization:
         config = state["app:industry_config"]
         assert isinstance(config, dict)
         assert config["name"] == "Electronics & Gadgets"
-        assert config["voice"] == "Aoede"
+        assert config["voice"] == "Kore"
 
     def test_voice_defaults_to_aoede(self):
         from app.configs.industry_loader import build_session_state
@@ -124,10 +134,10 @@ class TestBuildSessionStateCharacterization:
         assert state["app:voice"] == "Aoede"
 
     @pytest.mark.parametrize("industry,expected_voice", [
-        ("electronics", "Aoede"),
+        ("electronics", "Kore"),
         ("hotel", "Puck"),
         ("automotive", "Charon"),
-        ("fashion", "Kore"),
+        ("fashion", "Aoede"),
     ])
     def test_voice_per_industry(self, industry, expected_voice):
         from app.configs.industry_loader import build_session_state, LOCAL_INDUSTRY_CONFIGS
@@ -148,7 +158,13 @@ class TestBuildCompanySessionStateCharacterization:
             profile={"name": "Test Store", "overview": "A store"},
             knowledge=[{"id": "k1", "title": "FAQ", "text": "Help text", "tags": ["faq"]}],
         )
-        expected_keys = {"app:company_id", "app:company_name", "app:company_profile", "app:company_knowledge"}
+        expected_keys = {
+            "app:company_id",
+            "app:company_name",
+            "app:company_profile",
+            "app:company_knowledge",
+            "app:company_spoken_name",
+        }
         assert expected_keys == set(state.keys()), (
             f"build_company_session_state keys changed. Expected {expected_keys}, got {set(state.keys())}"
         )
@@ -198,10 +214,10 @@ class TestLocalIndustryConfigsCharacterization:
         }
 
     @pytest.mark.parametrize("industry,expected_name,expected_voice", [
-        ("electronics", "Electronics & Gadgets", "Aoede"),
+        ("electronics", "Electronics & Gadgets", "Kore"),
         ("hotel", "Hotels & Hospitality", "Puck"),
         ("automotive", "Automotive", "Charon"),
-        ("fashion", "Fashion & Retail", "Kore"),
+        ("fashion", "Fashion & Retail", "Aoede"),
     ])
     def test_each_industry_has_name_voice_greeting(self, industry, expected_name, expected_voice):
         from app.configs.industry_loader import LOCAL_INDUSTRY_CONFIGS
@@ -249,13 +265,13 @@ class TestVoiceForIndustryCharacterization:
     """Characterize _voice_for_industry — the hardcoded voice map."""
 
     @pytest.mark.parametrize("industry,expected", [
-        ("electronics", "Aoede"),
+        ("electronics", "Kore"),
         ("hotel", "Puck"),
         ("automotive", "Charon"),
-        ("fashion", "Kore"),
+        ("fashion", "Aoede"),
         ("unknown", "Aoede"),
         ("", "Aoede"),
-        ("ELECTRONICS", "Aoede"),
+        ("ELECTRONICS", "Kore"),
         ("  Hotel  ", "Puck"),
     ])
     def test_voice_mapping(self, industry, expected):
@@ -333,7 +349,8 @@ class TestBeforeModelInjectConfigCharacterization:
         req2 = LlmRequest(model="test", contents=[])
         await before_model_inject_config(ctx2, req2)
         assert "Hello!" not in req2.config.system_instruction
-        assert "Do NOT greet again" in req2.config.system_instruction
+        assert "CONVERSATION CONTINUITY — STRICT RULES" in req2.config.system_instruction
+        assert "A greeting has already been delivered" in req2.config.system_instruction
 
     @pytest.mark.asyncio
     async def test_no_op_when_no_config(self):

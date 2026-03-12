@@ -12,7 +12,7 @@ class TestLocalIndustryConfigs:
 
         assert "electronics" in LOCAL_INDUSTRY_CONFIGS
         config = LOCAL_INDUSTRY_CONFIGS["electronics"]
-        assert config["voice"] == "Aoede"
+        assert config["voice"] == "Kore"
         assert "trade-in" in config["greeting"].lower() or "device" in config["greeting"].lower()
 
     def test_hotel_config_exists(self):
@@ -36,7 +36,7 @@ class TestLocalIndustryConfigs:
 
         assert "fashion" in LOCAL_INDUSTRY_CONFIGS
         config = LOCAL_INDUSTRY_CONFIGS["fashion"]
-        assert config["voice"] == "Kore"
+        assert config["voice"] == "Aoede"
         assert "style" in config["greeting"].lower() or "fashion" in config["greeting"].lower()
 
 
@@ -54,10 +54,10 @@ class TestConfigSwitchVoiceMapping:
         from app.configs.industry_loader import LOCAL_INDUSTRY_CONFIGS
 
         expected_map = {
-            "electronics": "Aoede",
+            "electronics": "Kore",
             "hotel": "Puck",
             "automotive": "Charon",
-            "fashion": "Kore",
+            "fashion": "Aoede",
         }
         for industry, expected_voice in expected_map.items():
             assert LOCAL_INDUSTRY_CONFIGS[industry]["voice"] == expected_voice
@@ -72,7 +72,7 @@ class TestConfigSwitchSessionState:
         config = LOCAL_INDUSTRY_CONFIGS["electronics"]
         state = build_session_state(config, "electronics")
         assert state["app:industry"] == "electronics"
-        assert state["app:voice"] == "Aoede"
+        assert state["app:voice"] == "Kore"
         assert state["app:industry_config"] == config
 
     def test_build_state_for_hotel(self):
@@ -97,7 +97,7 @@ class TestConfigSwitchSessionState:
         config = LOCAL_INDUSTRY_CONFIGS["fashion"]
         state = build_session_state(config, "fashion")
         assert state["app:industry"] == "fashion"
-        assert state["app:voice"] == "Kore"
+        assert state["app:voice"] == "Aoede"
 
     def test_fallback_returns_default_for_unknown(self):
         from app.configs.industry_loader import _fallback_config_for, DEFAULT_CONFIG
@@ -116,4 +116,4 @@ class TestConfigSwitchSessionState:
         from app.configs.industry_loader import _fallback_config_for
 
         config = _fallback_config_for("fashion")
-        assert config["voice"] == "Kore"
+        assert config["voice"] == "Aoede"

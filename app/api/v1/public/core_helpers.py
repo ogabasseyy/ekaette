@@ -51,10 +51,10 @@ def usage_int(usage: object, *names: str) -> int:
 
 def voice_for_industry(industry: str) -> str:
     voice_map = {
-        "electronics": "Aoede",
+        "electronics": "Kore",
         "hotel": "Puck",
         "automotive": "Charon",
-        "fashion": "Kore",
+        "fashion": "Aoede",
     }
     key = (industry or "").strip().lower()
     return voice_map.get(key, "Aoede")

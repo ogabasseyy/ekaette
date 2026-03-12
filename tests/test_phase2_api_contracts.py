@@ -52,6 +52,16 @@ def reset_rate_limit_state(main_module):
     main_module._rate_limit_buckets.clear()
 
 
+@pytest.fixture(autouse=True)
+def disable_ws_auth_for_phase2_contracts(main_module, monkeypatch):
+    from app.api.v1.public import settings as public_settings
+    from app.api.v1.public import ws_auth
+
+    monkeypatch.setattr(main_module, "WS_TOKEN_SECRET", "")
+    monkeypatch.setattr(public_settings, "WS_TOKEN_SECRET", "")
+    monkeypatch.setattr(ws_auth, "_WS_TOKEN_SECRET", "")
+
+
 class _FakeAsyncAuthTokens:
     def __init__(self):
         self.last_config = None
@@ -430,7 +440,7 @@ class TestSessionStartedCanonicalFields:
                 return SimpleNamespace(id=kwargs.get("session_id", "session_1"), state=kwargs.get("state", {}))
 
         async def _fake_load_industry_config(_db, industry):
-            return {"name": "Electronics & Gadgets", "voice": "Aoede", "greeting": "Welcome!"}
+            return {"name": "Electronics & Gadgets", "voice": "Kore", "greeting": "Welcome!"}
 
         async def _fake_load_company_profile(_db, company_id, **kwargs):
             return {
@@ -695,7 +705,7 @@ class TestVoiceResolution:
         config = main_module._native_audio_live_config("fashion", voice_override=None)
         speech_config = config["speech_config"]
         voice_name = speech_config.voice_config.prebuilt_voice_config.voice_name
-        assert voice_name == "Kore"
+        assert voice_name == "Aoede"
 
     def test_session_started_voice_matches_state(
         self, app, main_module, monkeypatch
@@ -862,7 +872,7 @@ class TestBuildOnboardingConfig:
         electronics = next(t for t in config["templates"] if t["id"] == "electronics")
 
         assert electronics["label"] == "Electronics & Gadgets"
-        assert electronics["defaultVoice"] == "Aoede"
+        assert electronics["defaultVoice"] == "Kore"
         assert isinstance(electronics["theme"], dict)
         assert "accent" in electronics["theme"]
         assert electronics["status"] == "active"

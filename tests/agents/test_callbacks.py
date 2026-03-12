@@ -209,7 +209,7 @@ class TestBeforeModelInjectConfig:
         await before_model_inject_config(callback_context, llm_request)
 
         system_instruction = str(llm_request.config.system_instruction)
-        assert "VOICE STYLE" in system_instruction
+        assert "NIGERIAN ACCENT AND PERSONA" in system_instruction
         assert "Nigerian English" in system_instruction
         assert "Pidgin" in system_instruction
 
