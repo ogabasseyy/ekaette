@@ -440,7 +440,7 @@ class TestSessionStartedCanonicalFields:
                 return SimpleNamespace(id=kwargs.get("session_id", "session_1"), state=kwargs.get("state", {}))
 
         async def _fake_load_industry_config(_db, industry):
-            return {"name": "Electronics & Gadgets", "voice": "Kore", "greeting": "Welcome!"}
+            return {"name": "Electronics & Gadgets", "voice": "Aoede", "greeting": "Welcome!"}
 
         async def _fake_load_company_profile(_db, company_id, **kwargs):
             return {
@@ -872,7 +872,7 @@ class TestBuildOnboardingConfig:
         electronics = next(t for t in config["templates"] if t["id"] == "electronics")
 
         assert electronics["label"] == "Electronics & Gadgets"
-        assert electronics["defaultVoice"] == "Kore"
+        assert electronics["defaultVoice"] == "Aoede"
         assert isinstance(electronics["theme"], dict)
         assert "accent" in electronics["theme"]
         assert electronics["status"] == "active"

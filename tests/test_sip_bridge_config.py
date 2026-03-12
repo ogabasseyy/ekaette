@@ -38,7 +38,7 @@ class TestBridgeConfigDefaults:
 
         with patch.dict("os.environ", {}, clear=True):
             cfg = BridgeConfig.from_env()
-        assert cfg.gemini_voice == "Kore"
+        assert cfg.gemini_voice == "Aoede"
 
     def test_default_tenant(self) -> None:
         from sip_bridge.config import BridgeConfig

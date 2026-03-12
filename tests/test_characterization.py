@@ -125,7 +125,7 @@ class TestBuildSessionStateCharacterization:
         config = state["app:industry_config"]
         assert isinstance(config, dict)
         assert config["name"] == "Electronics & Gadgets"
-        assert config["voice"] == "Kore"
+        assert config["voice"] == "Aoede"
 
     def test_voice_defaults_to_aoede(self):
         from app.configs.industry_loader import build_session_state
@@ -134,7 +134,7 @@ class TestBuildSessionStateCharacterization:
         assert state["app:voice"] == "Aoede"
 
     @pytest.mark.parametrize("industry,expected_voice", [
-        ("electronics", "Kore"),
+        ("electronics", "Aoede"),
         ("hotel", "Puck"),
         ("automotive", "Charon"),
         ("fashion", "Aoede"),
@@ -214,7 +214,7 @@ class TestLocalIndustryConfigsCharacterization:
         }
 
     @pytest.mark.parametrize("industry,expected_name,expected_voice", [
-        ("electronics", "Electronics & Gadgets", "Kore"),
+        ("electronics", "Electronics & Gadgets", "Aoede"),
         ("hotel", "Hotels & Hospitality", "Puck"),
         ("automotive", "Automotive", "Charon"),
         ("fashion", "Fashion & Retail", "Aoede"),
@@ -265,13 +265,13 @@ class TestVoiceForIndustryCharacterization:
     """Characterize _voice_for_industry — the hardcoded voice map."""
 
     @pytest.mark.parametrize("industry,expected", [
-        ("electronics", "Kore"),
+        ("electronics", "Aoede"),
         ("hotel", "Puck"),
         ("automotive", "Charon"),
         ("fashion", "Aoede"),
         ("unknown", "Aoede"),
         ("", "Aoede"),
-        ("ELECTRONICS", "Kore"),
+        ("ELECTRONICS", "Aoede"),
         ("  Hotel  ", "Puck"),
     ])
     def test_voice_mapping(self, industry, expected):

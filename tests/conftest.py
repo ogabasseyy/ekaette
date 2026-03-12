@@ -53,7 +53,7 @@ def sample_electronics_config():
     """Sample electronics industry config for tests."""
     return {
         "name": "Electronics & Gadgets",
-        "voice": "Kore",
+        "voice": "Aoede",
         "greeting": "Welcome! I can help you with device trade-ins, swaps, and purchases.",
         "rubric": {
             "categories": ["screen", "body", "battery", "functionality"],
@@ -119,7 +119,7 @@ def make_session_state(
             industry,
             {
                 "name": industry.title(),
-                "voice": "Kore" if industry == "electronics" else "Aoede",
+                "voice": "Aoede" if industry == "electronics" else "Aoede",
                 "greeting": f"Welcome to {industry}.",
             },
         )

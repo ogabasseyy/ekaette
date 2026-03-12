@@ -51,7 +51,7 @@ def usage_int(usage: object, *names: str) -> int:
 
 def voice_for_industry(industry: str) -> str:
     voice_map = {
-        "electronics": "Kore",
+        "electronics": "Aoede",
         "hotel": "Puck",
         "automotive": "Charon",
         "fashion": "Aoede",

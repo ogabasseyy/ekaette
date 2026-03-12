@@ -12,7 +12,7 @@ class TestLocalIndustryConfigs:
 
         assert "electronics" in LOCAL_INDUSTRY_CONFIGS
         config = LOCAL_INDUSTRY_CONFIGS["electronics"]
-        assert config["voice"] == "Kore"
+        assert config["voice"] == "Aoede"
         assert "trade-in" in config["greeting"].lower() or "device" in config["greeting"].lower()
 
     def test_hotel_config_exists(self):
@@ -41,20 +41,26 @@ class TestLocalIndustryConfigs:
 
 
 class TestConfigSwitchVoiceMapping:
-    """Each industry should map to a distinct voice persona."""
+    """Each industry should map to the intended default voice persona."""
 
-    def test_all_industries_have_unique_voices(self):
+    def test_all_industries_have_expected_voices(self):
         from app.configs.industry_loader import LOCAL_INDUSTRY_CONFIGS
 
-        voices = [cfg["voice"] for cfg in LOCAL_INDUSTRY_CONFIGS.values()]
-        assert len(voices) == len(set(voices)), "Voice personas should be unique per industry"
+        expected_map = {
+            "electronics": "Aoede",
+            "hotel": "Puck",
+            "automotive": "Charon",
+            "fashion": "Aoede",
+        }
+        actual_map = {industry: cfg["voice"] for industry, cfg in LOCAL_INDUSTRY_CONFIGS.items()}
+        assert actual_map == expected_map
 
     def test_voice_map_matches_local_configs(self):
         """main.py voice map should match LOCAL_INDUSTRY_CONFIGS voices."""
         from app.configs.industry_loader import LOCAL_INDUSTRY_CONFIGS
 
         expected_map = {
-            "electronics": "Kore",
+            "electronics": "Aoede",
             "hotel": "Puck",
             "automotive": "Charon",
             "fashion": "Aoede",
@@ -72,7 +78,7 @@ class TestConfigSwitchSessionState:
         config = LOCAL_INDUSTRY_CONFIGS["electronics"]
         state = build_session_state(config, "electronics")
         assert state["app:industry"] == "electronics"
-        assert state["app:voice"] == "Kore"
+        assert state["app:voice"] == "Aoede"
         assert state["app:industry_config"] == config
 
     def test_build_state_for_hotel(self):

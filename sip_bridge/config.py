@@ -73,7 +73,7 @@ class BridgeConfig:
                 "Always speak in English. "
                 "Be helpful, concise, and professional. Keep responses short for phone conversation.",
             ),
-            gemini_voice=os.getenv("SIP_GEMINI_VOICE", "Kore"),
+            gemini_voice=os.getenv("SIP_GEMINI_VOICE", "Aoede"),
             company_id=os.getenv("SIP_COMPANY_ID", "ekaette-electronics"),
             tenant_id=os.getenv("SIP_TENANT_ID", "public"),
             health_port=_read_int_env("SIP_HEALTH_PORT", "8081"),

@@ -24,7 +24,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
 LOCAL_INDUSTRY_CONFIGS: dict[str, dict[str, Any]] = {
     "electronics": {
         "name": "Electronics & Gadgets",
-        "voice": "Kore",
+        "voice": "Aoede",
         "greeting": "Welcome! I can help you with device trade-ins, swaps, and purchases.",
     },
     "hotel": {
@@ -49,7 +49,7 @@ def default_voice_for_industry(industry: str, fallback: str = "Aoede") -> str:
     """Return the canonical default voice for an industry."""
     key = (industry or "").strip().lower()
     voice_map = {
-        "electronics": "Kore",
+        "electronics": "Aoede",
         "hotel": "Puck",
         "automotive": "Charon",
         "fashion": "Aoede",

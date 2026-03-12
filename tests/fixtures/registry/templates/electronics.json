@@ -4,7 +4,7 @@
   "label": "Electronics & Gadgets",
   "category": "retail",
   "description": "Trade-ins, valuation, negotiation, pickup booking.",
-  "default_voice": "Kore",
+  "default_voice": "Aoede",
   "greeting_policy": "Welcome! I can help you with device trade-ins, swaps, and purchases.",
   "theme": {
     "accent": "oklch(74% 0.21 158)",

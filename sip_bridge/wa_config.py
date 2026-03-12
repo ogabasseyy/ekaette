@@ -85,7 +85,7 @@ class WhatsAppBridgeConfig:
                 "Always speak in English. "
                 "Be helpful, concise, and professional. Keep responses short for phone conversation.",
             ),
-            gemini_voice=os.getenv("WA_GEMINI_VOICE", "Kore"),
+            gemini_voice=os.getenv("WA_GEMINI_VOICE", "Aoede"),
             company_id=os.getenv("WA_COMPANY_ID", "ekaette-electronics"),
             tenant_id=os.getenv("WA_TENANT_ID", "public"),
             health_port=int(os.getenv("WA_HEALTH_PORT", "8082")),

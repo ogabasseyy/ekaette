@@ -32,10 +32,23 @@ logger = logging.getLogger(__name__)
 def _default_voice_for_template_id(template_id: str | None, fallback: str = "Aoede") -> str:
     key = (template_id or "").strip().lower()
     if key == "electronics":
-        return "Kore"
+        return "Aoede"
     if key == "fashion":
         return "Aoede"
     return fallback
+
+
+def _canonical_template_voice(template_id: str | None, template_default_voice: Any) -> str:
+    """Return the canonical default voice for a template.
+
+    For electronics we intentionally pin the canonical voice to Aoede, even if
+    older registry data still contains a stale default_voice value.
+    """
+    key = (template_id or "").strip().lower()
+    canonical_default = _default_voice_for_template_id(key)
+    if key == "electronics":
+        return canonical_default
+    return _string_or_default(template_default_voice, canonical_default)
 
 
 class RegistryMismatchError(Exception):
@@ -251,9 +264,9 @@ async def resolve_registry_config(
     ui_overrides = _dict_or_empty(company.get("ui_overrides"))
     voice = _string_or_default(
         ui_overrides.get("voice"),
-        _string_or_default(
+        _canonical_template_voice(
+            str(template.get("id", "") or ""),
             template.get("default_voice"),
-            _default_voice_for_template_id(str(template.get("id", "") or "")),
         ),
     )
 
@@ -427,10 +440,7 @@ def _normalize_onboarding_template(raw: Any, doc_id: str) -> dict[str, Any] | No
     )
     category = _string_or_default(raw.get("category"), template_id)
     description = _string_or_default(raw.get("description"), "")
-    default_voice = _string_or_default(
-        raw.get("default_voice"),
-        _default_voice_for_template_id(template_id),
-    )
+    default_voice = _canonical_template_voice(template_id, raw.get("default_voice"))
     theme = _dict_or_empty(raw.get("theme"))
     capabilities = _list_of_strings(raw.get("capabilities", []))
     status = _string_or_default(raw.get("status"), "active").lower()
