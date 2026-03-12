@@ -1001,6 +1001,8 @@ class TestOnToolErrorEmit:
         tool_context.state["temp:last_user_turn"] = "Do you have iPhone 14?"
         tool_context.state["temp:last_agent_turn"] = "Let me check that for you."
         tool_context.state["temp:recent_customer_context"] = "Customer wants a phone."
+        tool_context.state["app:channel"] = "voice"
+        tool_context.state["temp:greeted"] = True
         err = ValueError("Tool 'catalog_agent' not found.")
 
         await on_tool_error_emit(
@@ -1010,3 +1012,19 @@ class TestOnToolErrorEmit:
         assert tool_context.actions.transfer_to_agent == "catalog_agent"
         assert tool_context.state["temp:pending_handoff_target_agent"] == "catalog_agent"
         assert tool_context.state["temp:pending_handoff_latest_user"] == "Do you have iPhone 14?"
+
+    @pytest.mark.asyncio
+    async def test_hallucinated_agent_name_before_greeting_does_not_transfer(self):
+        tool = BaseTool(name="catalog_agent", description="Tool not found")
+        tool_context = self._make_tool_context()
+        tool_context.state["app:channel"] = "voice"
+        err = ValueError("Tool 'catalog_agent' not found.")
+
+        result = await on_tool_error_emit(
+            tool=tool, args={}, tool_context=tool_context, error=err,
+        )
+
+        assert isinstance(result, dict)
+        assert result["error"] == "greeting_required"
+        assert tool_context.actions.transfer_to_agent is None
+        assert "temp:pending_handoff_target_agent" not in tool_context.state

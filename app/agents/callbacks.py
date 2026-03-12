@@ -1006,6 +1006,55 @@ async def before_tool_capability_guard(
     }
 
 
+def _guard_transfer_before_greeting(
+    *,
+    state: Any,
+    session: Any,
+    agent_name: str,
+    target_agent: str,
+) -> dict[str, Any] | None:
+    """Return an actionable error when voice transfer is attempted before greeting."""
+    channel = _state_get(state, "app:channel", "")
+    is_voice = isinstance(channel, str) and channel.strip().lower() == "voice"
+    already_greeted = _is_greeted_state(state, session=session)
+    if not is_voice or already_greeted:
+        return None
+
+    blocked_count = int(state.get("temp:greeting_block_count", 0))
+    blocked_count += 1
+    state["temp:greeting_block_count"] = blocked_count
+    if blocked_count >= 3:
+        logger.warning(
+            "greeting_guard_bypass agent=%s target=%s after %d blocked attempts",
+            agent_name,
+            target_agent,
+            blocked_count,
+        )
+        state["temp:greeted"] = True
+        session_state = getattr(session, "state", None)
+        if session_state is not None:
+            try:
+                session_state["temp:greeted"] = True
+            except Exception:
+                logger.debug("Failed to set temp:greeted on session state", exc_info=True)
+        return None
+
+    logger.warning(
+        "transfer_blocked_before_greeting agent=%s target=%s attempt=%d",
+        agent_name,
+        target_agent,
+        blocked_count,
+    )
+    return {
+        "error": "greeting_required",
+        "detail": (
+            "Transfer blocked. You have not greeted the caller yet. "
+            "You MUST speak your greeting aloud to the customer NOW. "
+            "Say your greeting first, then you may transfer."
+        ),
+    }
+
+
 async def before_tool_agent_transfer_guard(
     tool: BaseTool,
     args: dict[str, Any],
@@ -1023,48 +1072,14 @@ async def before_tool_agent_transfer_guard(
     # the Live connection when it sees ANY function_response named
     # "transfer_to_agent" — even blocked ones.  We patch that in
     # app/agents/tool_scheduling.py so this guard works safely.
-    channel = _state_get(tool_context.state, "app:channel", "")
-    is_voice = isinstance(channel, str) and channel.strip().lower() == "voice"
-    already_greeted = _is_greeted_state(
-        tool_context.state,
+    guard_result = _guard_transfer_before_greeting(
+        state=tool_context.state,
         session=getattr(tool_context, "session", None),
+        agent_name=tool_context.agent_name,
+        target_agent=target_agent,
     )
-    if is_voice and not already_greeted:
-        # Count blocked attempts. After 3 blocks the model clearly won't greet
-        # on its own — let it transfer rather than loop forever.
-        blocked_count = int(tool_context.state.get("temp:greeting_block_count", 0))
-        blocked_count += 1
-        tool_context.state["temp:greeting_block_count"] = blocked_count
-        if blocked_count >= 3:
-            logger.warning(
-                "greeting_guard_bypass agent=%s target=%s after %d blocked attempts",
-                tool_context.agent_name,
-                target_agent,
-                blocked_count,
-            )
-            tool_context.state["temp:greeted"] = True
-            session_state = getattr(getattr(tool_context, "session", None), "state", None)
-            if session_state is not None:
-                try:
-                    session_state["temp:greeted"] = True
-                except Exception:
-                    logger.debug("Failed to set temp:greeted on session state", exc_info=True)
-            # Fall through to normal transfer handling
-        else:
-            logger.warning(
-                "transfer_blocked_before_greeting agent=%s target=%s attempt=%d",
-                tool_context.agent_name,
-                target_agent,
-                blocked_count,
-            )
-            return {
-                "error": "greeting_required",
-                "detail": (
-                    "Transfer blocked. You have not greeted the caller yet. "
-                    "You MUST speak your greeting aloud to the customer NOW. "
-                    "Say your greeting first, then you may transfer."
-                ),
-            }
+    if guard_result is not None:
+        return guard_result
 
     enabled_agents = resolve_enabled_agents_from_state(tool_context.state)
     if enabled_agents is None or target_agent in enabled_agents:
@@ -1491,6 +1506,14 @@ async def on_tool_error_emit(
             payload["error"] = "agent_not_enabled"
             payload["tool"] = tool.name
             return payload
+        guard_result = _guard_transfer_before_greeting(
+            state=tool_context.state,
+            session=getattr(tool_context, "session", None),
+            agent_name=tool_context.agent_name,
+            target_agent=tool.name,
+        )
+        if guard_result is not None:
+            return guard_result
         latest_user_raw = _state_get(tool_context.state, "temp:last_user_turn", "")
         latest_agent_raw = _state_get(tool_context.state, "temp:last_agent_turn", "")
         recent_customer_raw = _state_get(tool_context.state, "temp:recent_customer_context", "")
