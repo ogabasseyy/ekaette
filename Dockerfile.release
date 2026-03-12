@@ -1,0 +1,24 @@
+# Thin release image built on top of the prebuilt runtime base image.
+
+FROM node:24-slim@sha256:b4687aef2571c632a1953695ce4d61d6462a7eda471fe6e272eebf0418f276ba AS frontend-build
+WORKDIR /app/frontend
+RUN corepack enable && corepack prepare pnpm@latest --activate
+COPY frontend/package.json frontend/pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile
+COPY frontend/ .
+RUN pnpm run build
+
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+
+WORKDIR /app
+
+COPY --chown=appuser:appuser main.py main_live.py seed_data.py ./
+COPY --chown=appuser:appuser shared/ shared/
+COPY --chown=appuser:appuser app/ app/
+COPY --from=frontend-build --chown=appuser:appuser /app/frontend/dist frontend/dist
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD python -c "import urllib.request,os; urllib.request.urlopen('http://localhost:'+os.environ.get('PORT','8080')+'/health')" || exit 1
+
+CMD ["sh", "-c", "uvicorn ${APP_MODULE:-main:app} --host 0.0.0.0 --port ${PORT}"]
