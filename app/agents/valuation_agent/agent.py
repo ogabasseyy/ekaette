@@ -84,6 +84,9 @@ _INSTRUCTION = """You assess item condition, calculate trade-in value, and handl
          and a concise summary of the conversation. Tell the customer: "I'll send you a
          WhatsApp message now — just reply there with a quick video or some photos of your
          device and I'll take it from there." Do NOT ask them to describe it verbally.
+         This is the first substantive step for voice swap calls. Do NOT ask catalog,
+         availability, brand new / certified pre-owned, storage, or pricing questions
+         until after the customer has sent the media and the vision results are available.
        - On WhatsApp / text channels: say "To give you an accurate trade-in value, please
          send me a clear photo or short video of your device right here in this chat."
          Wait for the media before continuing.

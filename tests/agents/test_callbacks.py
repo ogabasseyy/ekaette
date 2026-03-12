@@ -1095,3 +1095,21 @@ class TestOnToolErrorEmit:
         assert result["error"] == "greeting_required"
         assert tool_context.actions.transfer_to_agent is None
         assert "temp:pending_handoff_target_agent" not in tool_context.state
+
+    @pytest.mark.asyncio
+    async def test_hallucinated_agent_name_never_bypasses_greeting_after_retries(self):
+        tool = BaseTool(name="valuation_agent", description="Tool not found")
+        tool_context = self._make_tool_context()
+        tool_context.state["app:channel"] = "voice"
+        err = ValueError("Tool 'valuation_agent' not found.")
+
+        for attempt in range(3):
+            result = await on_tool_error_emit(
+                tool=tool, args={}, tool_context=tool_context, error=err,
+            )
+            assert isinstance(result, dict)
+            assert result["error"] == "greeting_required"
+            assert tool_context.actions.transfer_to_agent is None
+            assert "temp:pending_handoff_target_agent" not in tool_context.state
+            assert tool_context.state["temp:greeting_block_count"] == attempt + 1
+        assert not bool(tool_context.state.get("temp:greeted", False))

@@ -1075,21 +1075,6 @@ def _guard_transfer_before_greeting(
     blocked_count = int(state.get("temp:greeting_block_count", 0))
     blocked_count += 1
     state["temp:greeting_block_count"] = blocked_count
-    if blocked_count >= 3:
-        logger.warning(
-            "greeting_guard_bypass agent=%s target=%s after %d blocked attempts",
-            agent_name,
-            target_agent,
-            blocked_count,
-        )
-        state["temp:greeted"] = True
-        session_state = getattr(session, "state", None)
-        if session_state is not None:
-            try:
-                session_state["temp:greeted"] = True
-            except Exception:
-                logger.debug("Failed to set temp:greeted on session state", exc_info=True)
-        return None
 
     logger.warning(
         "transfer_blocked_before_greeting agent=%s target=%s attempt=%d",
