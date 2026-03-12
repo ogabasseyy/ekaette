@@ -1097,19 +1097,69 @@ class TestOnToolErrorEmit:
         assert "temp:pending_handoff_target_agent" not in tool_context.state
 
     @pytest.mark.asyncio
+    async def test_hallucinated_agent_name_after_first_user_turn_transfers_without_greeted_flag(self):
+        tool = BaseTool(name="valuation_agent", description="Tool not found")
+        tool_context = self._make_tool_context()
+        tool_context.state["app:channel"] = "voice"
+        tool_context.state["temp:last_user_turn"] = "I want to swap my iPhone XR for an iPhone 14."
+        err = ValueError("Tool 'valuation_agent' not found.")
+
+        result = await on_tool_error_emit(
+            tool=tool, args={}, tool_context=tool_context, error=err,
+        )
+
+        assert isinstance(result, dict)
+        assert "transfer_to_agent" in result.get("hint", "")
+        assert tool_context.actions.transfer_to_agent == "valuation_agent"
+        assert tool_context.state["temp:pending_handoff_target_agent"] == "valuation_agent"
+
+    @pytest.mark.asyncio
     async def test_hallucinated_agent_name_never_bypasses_greeting_after_retries(self):
         tool = BaseTool(name="valuation_agent", description="Tool not found")
         tool_context = self._make_tool_context()
         tool_context.state["app:channel"] = "voice"
         err = ValueError("Tool 'valuation_agent' not found.")
 
-        for attempt in range(3):
+        first = await on_tool_error_emit(
+            tool=tool, args={}, tool_context=tool_context, error=err,
+        )
+        assert isinstance(first, dict)
+        assert first["error"] == "greeting_required"
+        assert tool_context.actions.transfer_to_agent is None
+        assert "temp:pending_handoff_target_agent" not in tool_context.state
+        assert tool_context.state["temp:greeting_block_count"] == 1
+
+        for _ in range(2):
             result = await on_tool_error_emit(
                 tool=tool, args={}, tool_context=tool_context, error=err,
             )
             assert isinstance(result, dict)
-            assert result["error"] == "greeting_required"
+            assert result["error"] == "routing_retry_suppressed"
             assert tool_context.actions.transfer_to_agent is None
             assert "temp:pending_handoff_target_agent" not in tool_context.state
-            assert tool_context.state["temp:greeting_block_count"] == attempt + 1
+            assert tool_context.state["temp:greeting_block_count"] == 1
         assert not bool(tool_context.state.get("temp:greeted", False))
+
+    @pytest.mark.asyncio
+    async def test_hallucinated_agent_name_is_suppressed_after_first_same_turn_attempt(self):
+        tool = BaseTool(name="catalog_agent", description="Tool not found")
+        tool_context = self._make_tool_context()
+        tool_context.state["app:channel"] = "voice"
+        tool_context.state["temp:last_user_turn"] = "Do you have iPhone 14?"
+        tool_context.state["temp:greeted"] = True
+        err = ValueError("Tool 'catalog_agent' not found.")
+
+        first = await on_tool_error_emit(
+            tool=tool, args={}, tool_context=tool_context, error=err,
+        )
+        assert "transfer_to_agent" in first.get("hint", "")
+        assert tool_context.actions.transfer_to_agent == "catalog_agent"
+
+        tool_context.actions.transfer_to_agent = None
+        second = await on_tool_error_emit(
+            tool=tool, args={}, tool_context=tool_context, error=err,
+        )
+
+        assert isinstance(second, dict)
+        assert second["error"] == "routing_retry_suppressed"
+        assert tool_context.actions.transfer_to_agent is None

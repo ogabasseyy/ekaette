@@ -204,6 +204,13 @@ def _is_greeted_state(state: Any, *, session: Any = None) -> bool:
     session_state = getattr(session, "state", None)
     if session_state is not None and bool(_state_get(session_state, "temp:greeted", False)):
         return True
+    last_user_turn = _state_get(state, "temp:last_user_turn", "")
+    if isinstance(last_user_turn, str) and last_user_turn.strip():
+        return True
+    if session_state is not None:
+        session_last_user_turn = _state_get(session_state, "temp:last_user_turn", "")
+        if isinstance(session_last_user_turn, str) and session_last_user_turn.strip():
+            return True
     last_agent_turn = _state_get(state, "temp:last_agent_turn", "")
     if isinstance(last_agent_turn, str) and last_agent_turn.strip():
         return True
@@ -225,6 +232,13 @@ def _is_greeted_state(state: Any, *, session: Any = None) -> bool:
         if session_turn_count > 0:
             return True
     return False
+
+
+def _hallucinated_transfer_signature(state: Any, target_agent: str) -> str:
+    latest_user_raw = _state_get(state, "temp:last_user_turn", "")
+    latest_user = latest_user_raw.strip() if isinstance(latest_user_raw, str) else ""
+    turn_marker = latest_user or "<no-user-turn>"
+    return f"{target_agent}::{turn_marker}"
 
 
 def _maybe_inject_caller_phone(tool_context: Any) -> None:
@@ -1533,6 +1547,36 @@ async def on_tool_error_emit(
 
     # Hallucinated sub-agent name as direct function call
     if tool.name in _KNOWN_AGENT_NAMES:
+        signature = _hallucinated_transfer_signature(tool_context.state, tool.name)
+        previous_signature = str(
+            _state_get(tool_context.state, "temp:last_hallucinated_handoff_signature", "") or ""
+        )
+        previous_attempts_raw = _state_get(
+            tool_context.state, "temp:last_hallucinated_handoff_attempts", 0
+        )
+        try:
+            previous_attempts = int(previous_attempts_raw or 0)
+        except (TypeError, ValueError):
+            previous_attempts = 0
+        current_attempts = previous_attempts + 1 if previous_signature == signature else 1
+        tool_context.state["temp:last_hallucinated_handoff_signature"] = signature
+        tool_context.state["temp:last_hallucinated_handoff_attempts"] = current_attempts
+        if current_attempts > 1:
+            logger.warning(
+                "Suppressing repeated hallucinated sub-agent recovery agent=%s target=%s signature=%s attempt=%d",
+                tool_context.agent_name,
+                tool.name,
+                signature,
+                current_attempts,
+            )
+            tool_context.actions.transfer_to_agent = None
+            return {
+                "error": "routing_retry_suppressed",
+                "detail": (
+                    "Do not retry the same agent handoff again for this turn. "
+                    "Respond directly to the caller or ask one short clarifying question."
+                ),
+            }
         enabled_agents = resolve_enabled_agents_from_state(tool_context.state)
         if enabled_agents is not None and tool.name not in enabled_agents:
             payload = _agent_not_enabled_payload(
