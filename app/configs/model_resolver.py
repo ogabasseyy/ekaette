@@ -4,11 +4,17 @@ from __future__ import annotations
 
 import os
 
-DEFAULT_LIVE_MODEL_ID = "gemini-2.5-flash-native-audio-preview-12-2025"
+from dotenv import load_dotenv
+
+# Agent modules resolve model IDs at import time, so the project .env must be
+# loaded before any module-level singletons capture those values.
+load_dotenv()
+
+DEFAULT_LIVE_MODEL_ID = "gemini-live-2.5-flash-native-audio"
 DEFAULT_TEXT_MODEL_ID = "gemini-2.5-pro"
 DEFAULT_TEXT_FALLBACK_MODEL_ID = "gemini-2.5-flash"
 DEFAULT_VISION_MODEL_ID = "gemini-2.5-pro"
-DEFAULT_TTS_MODEL_ID = "gemini-2.5-flash-preview-tts"
+DEFAULT_TTS_MODEL_ID = "gemini-2.5-flash-tts"
 
 
 def _env_flag(name: str, default: str = "false") -> bool:
@@ -67,4 +73,3 @@ def get_live_model_candidates() -> list[str]:
     if not candidates:
         candidates.append(DEFAULT_LIVE_MODEL_ID)
     return candidates
-

@@ -22,6 +22,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from app.channels import adk_text_adapter
+from app.api.v1.realtime.live_media_bridge import enqueue_media_for_active_live_session
 from app.configs import sanitize_log
 from app.tools.cross_channel_tools import load_and_consume_cross_channel_context
 from shared.phone_identity import normalize_phone
@@ -246,6 +247,21 @@ async def _handle_media_message(
                 f"Conversation summary: {summary}\n"
                 "Continue from this context and do not ask the customer to repeat it.\n"
             )
+
+    live_queue_result = await enqueue_media_for_active_live_session(
+        from_=from_,
+        tenant_id=tenant_id,
+        company_id=company_id,
+        media_bytes=media_bytes,
+        mime_type=resolved_mime,
+        media_type=media_type,
+        caption=caption,
+        handoff_context=handoff_context if isinstance(handoff_context, dict) else None,
+    )
+    if isinstance(live_queue_result, dict):
+        reply_text = str(live_queue_result.get("reply_text", "") or "").strip()
+        if reply_text:
+            return reply_text[:WA_MAX_CHARS]
 
     if runner is not None:
         result = await adk_text_adapter.send_media_message(

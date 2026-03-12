@@ -11,6 +11,7 @@ import logging
 import os
 import time
 from collections import deque
+from types import SimpleNamespace
 from typing import Any
 
 from fastapi import WebSocketDisconnect
@@ -549,6 +550,19 @@ async def downstream_task(
             }
         )
 
+    def _queue_immediate_callback_ack_prompt() -> None:
+        prompt = (
+            "[System: The callback has already been queued. "
+            "Respond immediately with one short acknowledgement, "
+            "ask no follow-up question, and then end the call.]"
+        )
+        try:
+            (types_mod,) = bind_runtime_values("types")
+            content = types_mod.Content(parts=[types_mod.Part(text=prompt)])
+        except Exception:
+            content = SimpleNamespace(parts=[SimpleNamespace(text=prompt)])
+        live_request_queue.send_content(content)
+
     async def _emit_end_after_speaking(reason: str) -> None:
         message = _queue_end_after_speaking(reason)
         if not message:
@@ -665,6 +679,7 @@ async def downstream_task(
         status = str(result.get("status", "")).strip().lower() if isinstance(result, dict) else ""
         if status in {"pending", "queued", "cooldown"}:
             _session_set("temp:callback_requested", True)
+            _queue_immediate_callback_ack_prompt()
             logger.info(
                 "Queued callback from live voice transcript phone=%s tenant_id=%s "
                 "company_id=%s status=%s",

@@ -29,6 +29,7 @@ def test_build_genai_client_uses_vertex_explicitly(monkeypatch):
     client = build_genai_client(api_version="v1alpha")
 
     assert client._api_client.vertexai is True
+    assert client._api_client._http_options.api_version == "v1"
 
 
 def test_build_genai_client_uses_api_key_when_vertex_disabled(monkeypatch):
@@ -38,6 +39,7 @@ def test_build_genai_client_uses_api_key_when_vertex_disabled(monkeypatch):
     client = build_genai_client(api_version="v1alpha")
 
     assert client._api_client.vertexai is None
+    assert client._api_client._http_options.api_version == "v1alpha"
 
 
 def test_build_genai_client_rejects_empty_explicit_api_key(monkeypatch):

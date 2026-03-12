@@ -17,6 +17,15 @@ def use_vertex_ai_backend() -> bool:
     return _env_flag("GOOGLE_GENAI_USE_VERTEXAI", "false")
 
 
+def _normalized_api_version(api_version: str | None, *, use_vertex: bool) -> str | None:
+    normalized = api_version.strip() if isinstance(api_version, str) else None
+    if not normalized:
+        return None
+    if use_vertex and normalized == "v1alpha":
+        return "v1"
+    return normalized
+
+
 def can_build_genai_client(*, prefer_vertex: bool | None = None, api_key: str | None = None) -> bool:
     """Return True when the current env can construct a usable GenAI client."""
     # Explicit api_key means we can always build a Gemini Developer client.
@@ -43,7 +52,8 @@ def build_genai_client(
     if api_key is not None and not api_key.strip():
         raise ValueError("api_key must be non-empty if provided")
     use_vertex = use_vertex_ai_backend() if prefer_vertex is None else prefer_vertex
-    http_options = types.HttpOptions(api_version=api_version) if api_version else None
+    normalized_api_version = _normalized_api_version(api_version, use_vertex=use_vertex)
+    http_options = types.HttpOptions(api_version=normalized_api_version) if normalized_api_version else None
     # Explicit api_key overrides Vertex preference — caller wants Gemini Developer API
     # (e.g. TOKEN_CLIENT for auth_tokens.create which is Gemini-API-only).
     if api_key and api_key.strip():

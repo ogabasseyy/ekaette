@@ -22,7 +22,7 @@ WA_TLS_CERTFILE=<path-to-fullchain.pem>
 WA_TLS_KEYFILE=<path-to-privkey.pem>
 
 # Gemini Live model
-LIVE_MODEL_ID=gemini-2.5-flash-native-audio-preview-12-2025
+LIVE_MODEL_ID=gemini-live-2.5-flash-native-audio
 WA_GEMINI_VOICE=Aoede
 WA_SYSTEM_INSTRUCTION=You are Ekaette, the virtual assistant. Be helpful, concise, and professional.
 

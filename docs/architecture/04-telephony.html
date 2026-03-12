@@ -1,445 +1,511 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Ekaette — Telephony &amp; Channel Integration</title>
-    <script src="https://cdn.jsdelivr.net/npm/mermaid@11.12.3/dist/mermaid.min.js" integrity="sha384-jFhLSLFn4m565eRAS0CDMWubMqOtfZWWbE8kqgGdU+VHbJ3B2G/4X8u+0BM8MtdU" crossorigin="anonymous"></script>
-    <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 1200px; margin: 0 auto; padding: 20px; background: #f5f5f5; }
-        h1 { color: #1a1a2e; border-bottom: 3px solid #16213e; padding-bottom: 10px; }
-        h2 { color: #16213e; margin-top: 40px; }
-        .breadcrumb { font-size: 14px; color: #666; margin-bottom: 8px; }
-        .breadcrumb a { color: #1565C0; text-decoration: none; }
-        .breadcrumb a:hover { text-decoration: underline; }
-        .diagram-container { background: white; border-radius: 12px; padding: 24px; margin: 20px 0; box-shadow: 0 2px 8px rgba(0,0,0,0.1); overflow-x: auto; }
-        .diagram-count { color: #666; font-size: 14px; }
-        hr { border: none; border-top: 2px solid #e0e0e0; margin: 40px 0; }
-    </style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Telephony &amp; Channel Integration</title>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@11.12.3/dist/mermaid.min.js" integrity="sha384-jFhLSLFn4m565eRAS0CDMWubMqOtfZWWbE8kqgGdU+VHbJ3B2G/4X8u+0BM8MtdU" crossorigin="anonymous"></script>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 32px 20px 60px;
+      background: #f5f5f5;
+      color: #1a1a1a;
+      line-height: 1.65;
+    }
+    main {
+      background: #fff;
+      border-radius: 16px;
+      padding: 28px 32px;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+    }
+    h1, h2, h3, h4 {
+      color: #16213e;
+    }
+    h1 {
+      border-bottom: 3px solid #16213e;
+      padding-bottom: 12px;
+      margin-top: 0;
+    }
+    code {
+      background: #f0f4f8;
+      padding: 0.12rem 0.35rem;
+      border-radius: 6px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.95em;
+    }
+    pre {
+      background: #0f172a;
+      color: #e2e8f0;
+      padding: 16px;
+      border-radius: 12px;
+      overflow-x: auto;
+    }
+    pre code {
+      background: transparent;
+      padding: 0;
+      color: inherit;
+    }
+    blockquote {
+      margin: 0;
+      padding: 12px 16px;
+      border-left: 4px solid #1565c0;
+      background: #edf4ff;
+      border-radius: 8px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 18px 0;
+      background: #fff;
+    }
+    th, td {
+      border: 1px solid #d8dee9;
+      padding: 10px 12px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th {
+      background: #edf2f7;
+    }
+    a {
+      color: #1565c0;
+      text-decoration: none;
+    }
+    a:hover {
+      text-decoration: underline;
+    }
+    hr {
+      border: none;
+      border-top: 1px solid #e2e8f0;
+      margin: 28px 0;
+    }
+  </style>
 </head>
 <body>
-    <p class="breadcrumb"><a href="../../Ekaette_Architecture.html">&larr; Architecture Index</a></p>
-    <h1>Telephony &amp; Channel Integration</h1>
-    <p class="diagram-count">9 diagrams</p>
+  <main>
+<h1>Telephony &amp; Channel Integration</h1>
+<blockquote>Part of <a href="../../Ekaette_Architecture.md">Ekaette System Architecture</a></blockquote>
+<h2>SIP Bridge Architecture (Reference Deployment)</h2>
+<pre class="mermaid">graph TB
+    subgraph &quot;GCE VM: ekaette-sip (&lt;reserved-static-ip&gt;)&quot;
+        subgraph &quot;sip_bridge/ — Standalone Python Process&quot;
+            MAIN[&quot;main.py&lt;br/&gt;Entry point, signal handlers,&lt;br/&gt;config validation&quot;]
+            CONFIG[&quot;config.py&lt;br/&gt;BridgeConfig (frozen dataclass)&lt;br/&gt;All config from env vars&quot;]
 
-    <hr>
-    <h2>1. SIP Bridge Architecture (Reference Deployment)</h2>
-    <div class="diagram-container">
-        <pre class="mermaid">
-graph TB
-    subgraph "GCE VM: ekaette-sip"
-        subgraph "sip_bridge/ — Standalone Python Process"
-            MAIN["main.py<br/>Entry point, signal handlers"]
-            CONFIG["config.py<br/>BridgeConfig (frozen dataclass)"]
-
-            subgraph "SIP Signaling Layer"
-                SERVER["server.py<br/>SIPServer + SIPProtocol<br/>UDP :6060"]
-                REGISTER["sip_register.py<br/>SIP REGISTER client"]
-                AUTH["sip_auth.py<br/>Digest auth (RFC 2617)"]
-                DIALOG["sip_dialog.py<br/>INVITE parser, SDP negotiation"]
+            subgraph &quot;SIP Signaling Layer&quot;
+                SERVER[&quot;server.py&lt;br/&gt;SIPServer + SIPProtocol&lt;br/&gt;UDP :6060, session lifecycle&quot;]
+                REGISTER[&quot;sip_register.py&lt;br/&gt;SIP REGISTER client&lt;br/&gt;Periodic re-registration&quot;]
+                AUTH[&quot;sip_auth.py&lt;br/&gt;Digest auth (RFC 2617)&lt;br/&gt;MD5/SHA-256 challenge-response&quot;]
+                DIALOG[&quot;sip_dialog.py&lt;br/&gt;INVITE parser, SDP negotiation,&lt;br/&gt;G.711 SDP answer builder&quot;]
             end
 
-            subgraph "Media Pipeline (per call)"
-                SESS["session.py — CallSession"]
-                WA_S["wa_session.py — WaSession"]
+            subgraph &quot;Media Pipeline (per call)&quot;
+                SESS[&quot;session.py — CallSession&lt;br/&gt;4-task asyncio.TaskGroup&quot;]
+                WA_S[&quot;wa_session.py — WaSession&lt;br/&gt;4-task asyncio.TaskGroup&quot;]
 
-                subgraph "4-Task Pattern"
-                    T1["1. _media_recv_loop<br/>UDP recvfrom → queue"]
-                    T2["2. _media_inbound_loop<br/>codec decode → PCM16 16kHz<br/>→ denoise / gain normalization"]
-                    T3["3. _gateway_bidi_loop<br/>PCM16 ↔ live voice service"]
-                    T4["4. _media_outbound_loop<br/>PCM16 24kHz → codec encode"]
+                subgraph &quot;4-Task Pattern&quot;
+                    T1[&quot;1. _media_recv_loop&lt;br/&gt;UDP recvfrom → inbound_queue&quot;]
+                    T2[&quot;2. _media_inbound_loop&lt;br/&gt;RTP/SRTP parse → codec decode →&lt;br/&gt;PCM16 16kHz → denoise / gain normalization&quot;]
+                    T3[&quot;3. _gateway_bidi_loop&lt;br/&gt;PCM16 ↔ dedicated live voice service&quot;]
+                    T4[&quot;4. _media_outbound_loop&lt;br/&gt;PCM16 24kHz → codec encode → RTP send&quot;]
                 end
             end
 
-            subgraph "Voice Gateway &amp; Call Control"
-                GW_CLIENT["gateway_client.py<br/>GatewayClient WSS → live voice service<br/>reconnect + session tokens"]
-                PREWARM["callback prewarm<br/>warm live session before outbound callback"]
-                BYE["Explicit SIP BYE<br/>after the acknowledgement and audio drain"]
+            subgraph &quot;Codec Layer&quot;
+                RTP[&quot;rtp.py&lt;br/&gt;RTPPacket parse/serialize,&lt;br/&gt;RTPTimer (20ms pacing)&quot;]
+                CODEC_B[&quot;codec_bridge.py&lt;br/&gt;Abstract CodecBridge,&lt;br/&gt;G711CodecBridge&quot;]
+                AUDIO[&quot;audio_codec.py&lt;br/&gt;G.711 μ-law ↔ PCM16,&lt;br/&gt;resample 8k↔16k↔24k&quot;]
+                SRTP_CTX[&quot;srtp_context.py&lt;br/&gt;SRTP protect/unprotect&quot;]
             end
 
-            subgraph "Codec Layer"
-                RTP["rtp.py<br/>RTPPacket, RTPTimer"]
-                CODEC_B["codec_bridge.py<br/>G711CodecBridge"]
-                AUDIO["audio_codec.py<br/>G.711 μ-law, resample"]
-                SRTP_CTX["srtp_context.py<br/>SRTP protect/unprotect"]
+            subgraph &quot;Voice Gateway &amp; Call Control&quot;
+                GW_CLIENT[&quot;gateway_client.py&lt;br/&gt;GatewayClient WSS → live voice service&lt;br/&gt;reconnect + session tokens&quot;]
+                PREWARM[&quot;callback prewarm&lt;br/&gt;warm live session before outbound callback&quot;]
+                BYE[&quot;Explicit in-dialog SIP BYE&lt;br/&gt;after the acknowledgement and audio drain&quot;]
             end
         end
     end
 
-    subgraph "External"
-        AT["Africa's Talking<br/>voice callback + SIP registrar"]
-        MAIN_HTTP["Cloud Run main service<br/>AT/WA webhooks, XML call control,<br/>text channels, callback orchestration"]
-        LIVE_HTTP["Cloud Run live voice service<br/>/ws only, Runner.run_live,<br/>voice ADK graph"]
-        GEMINI["Vertex Gemini Live"]
-        FSTORE["Firestore (wa_calls)"]
+    subgraph &quot;External&quot;
+        AT[&quot;Africa&#x27;s Talking&lt;br/&gt;voice callback + SIP registrar&quot;]
+        MAIN_HTTP[&quot;Cloud Run main service&lt;br/&gt;AT/WA webhooks, XML call control,&lt;br/&gt;text channels, callback orchestration&quot;]
+        LIVE_HTTP[&quot;Cloud Run live voice service&lt;br/&gt;/ws only, Runner.run_live,&lt;br/&gt;voice ADK graph&quot;]
+        GEMINI[&quot;Vertex Gemini Live&lt;br/&gt;native audio&quot;]
+        FSTORE[&quot;Firestore&lt;br/&gt;(wa_calls collection)&quot;]
     end
 
-    MAIN --> CONFIG
-    MAIN --> SERVER
-    SERVER --> REGISTER
-    REGISTER --> AUTH
-    SERVER --> DIALOG
-    SERVER -->|"creates per call"| SESS
-    SERVER -->|"creates per call"| WA_S
-    SESS --> T1
-    SESS --> T2
-    SESS --> T3
-    SESS --> T4
-    T1 --> RTP
-    T2 --> CODEC_B
-    CODEC_B --> AUDIO
-    T4 --> RTP
-    WA_S --> SRTP_CTX
-    PREWARM --> GW_CLIENT
-    BYE --> SERVER
-    REGISTER -->|"REGISTER/401/200"| AT
-    MAIN_HTTP -->|"Dial XML / callback jobs"| AT
-    T3 -->|"PCM16 via WSS"| GW_CLIENT
-    GW_CLIENT -->|"WSS"| LIVE_HTTP
-    LIVE_HTTP -->|"Live API"| GEMINI
-    WA_S --> FSTORE
+    MAIN --&gt; CONFIG
+    MAIN --&gt; SERVER
+    SERVER --&gt; REGISTER
+    REGISTER --&gt; AUTH
+    SERVER --&gt; DIALOG
+    SERVER --&gt;|&quot;creates per call&quot;| SESS
+    SERVER --&gt;|&quot;creates per call&quot;| WA_S
+
+    SESS --&gt; T1
+    SESS --&gt; T2
+    SESS --&gt; T3
+    SESS --&gt; T4
+
+    T1 --&gt; RTP
+    T2 --&gt; CODEC_B
+    CODEC_B --&gt; AUDIO
+    T4 --&gt; RTP
+
+    WA_S --&gt; SRTP_CTX
+    PREWARM --&gt; GW_CLIENT
+    BYE --&gt; SERVER
+
+    REGISTER --&gt;|&quot;REGISTER/401/200&quot;| AT
+    MAIN_HTTP --&gt;|&quot;Dial XML / callback jobs&quot;| AT
+    T3 --&gt;|&quot;PCM16 via WSS&quot;| GW_CLIENT
+    GW_CLIENT --&gt;|&quot;WSS&quot;| LIVE_HTTP
+    LIVE_HTTP --&gt;|&quot;Live API&quot;| GEMINI
+    WA_S --&gt; FSTORE
 
     classDef entry fill:#E3F2FD,stroke:#1565C0,stroke-width:2px
     classDef signaling fill:#FFF8E1,stroke:#F57F17,stroke-width:2px
     classDef media fill:#E1F5FE,stroke:#0277BD,stroke-width:2px
     classDef codec fill:#E8F5E9,stroke:#2E7D32,stroke-width:2px
     classDef external fill:#FCE4EC,stroke:#C62828,stroke-width:2px
-    classDef gateway fill:#F3E5F5,stroke:#6A1B9A,stroke-width:2px
+
     class MAIN,CONFIG entry
     class SERVER,REGISTER,AUTH,DIALOG signaling
     class SESS,WA_S,T1,T2,T3,T4 media
     class RTP,CODEC_B,AUDIO,SRTP_CTX codec
-    class AT,MAIN_HTTP,LIVE_HTTP,GEMINI,FSTORE external
-    class GW_CLIENT gateway
-        </pre>
-    </div>
-
-    <hr>
-    <h2>2. Split Telephony Control Plane + Shared AI Brain</h2>
-    <p>The reference deployment keeps one ADK agent brain for every channel, but deliberately separates short-lived HTTP control traffic from long-lived voice media streams.</p>
-    <p><strong>Main HTTP service:</strong> webhooks, XML call control, text channels, callback orchestration.<br><strong>Live voice service:</strong> long-lived <code>/ws</code> audio streams and <code>Runner.run_live()</code> sessions.<br><strong>SIP bridge VM:</strong> codec conversion, denoise, callback prewarm, explicit SIP <code>BYE</code>.</p>
-
-    <hr>
-    <h2>3. Inbound Phone Call — AT Control Plane + SIP Media Plane</h2>
-    <div class="diagram-container">
-        <pre class="mermaid">
-sequenceDiagram
+    class AT,MAIN_HTTP,LIVE_HTTP,GEMINI,FSTORE external</pre>
+<hr>
+<h2>Split Telephony Control Plane + Shared AI Brain</h2>
+<p>The reference deployment uses a deliberate split:</p>
+<pre><code class="language-text">Main HTTP service:       Webhooks, XML call control, text channels, callback orchestration
+Live voice service:      Long-lived /ws audio streams and Runner.run_live voice sessions
+SIP bridge VM:           Codec conversion, denoise, callback prewarm, explicit BYE</code></pre>
+<p>This keeps one ADK agent brain for all channels while separating short-lived HTTP control traffic from long-lived voice media streams.</p>
+<p>Key implementation:</p>
+<ul>
+<li><code>voice.py</code> + <code>service_voice.py</code>: AT webhook returns <code>&lt;Dial sip:...&gt;</code> XML and manages callbacks</li>
+<li><code>gateway_client.py</code>: WebSocket client connecting to the live voice service <code>/ws/{user_id}/{session_id}</code></li>
+<li><code>caller_phone</code> travels in the signed WS auth token → stored as <code>user:caller_phone</code> in ADK session state</li>
+<li><code>send_whatsapp_message</code> is exposed only on voice-channel agents for during-call follow-up</li>
+<li>The direct-to-Gemini bridge remains as a fallback path, but the reference deployment keeps telephony on the split Cloud Run services</li>
+</ul>
+<hr>
+<h2>Inbound Phone Call Flow</h2>
+<h3>Reference Deployment — AT Control Plane + SIP Media Plane</h3>
+<pre class="mermaid">sequenceDiagram
     participant CALLER as Caller (Phone)
-    participant ATC as Africa's Talking<br/>(voice callback)
-    participant MAIN as Cloud Run main service<br/>(/api/v1/at/voice/callback)
-    participant ATS as Africa's Talking<br/>(SIP registrar)
-    participant SIP as SIPServer<br/>(GCE VM :6060)
-    participant SESS as CallSession<br/>(4-task pipeline)
-    participant GW as GatewayClient<br/>(WSS)
-    participant LIVE as Cloud Run live voice service<br/>(ADK voice runtime)
+    participant ATC as Africa&#x27;s Talking&lt;br/&gt;(voice callback)
+    participant MAIN as Cloud Run main service&lt;br/&gt;(/api/v1/at/voice/callback)
+    participant ATS as Africa&#x27;s Talking&lt;br/&gt;(SIP registrar)
+    participant SIP as SIPServer&lt;br/&gt;(GCE VM :6060)
+    participant SESS as CallSession&lt;br/&gt;(4-task pipeline)
+    participant GW as GatewayClient&lt;br/&gt;(WSS)
+    participant LIVE as Cloud Run live voice service&lt;br/&gt;(ADK voice runtime)
 
     Note over CALLER,LIVE: SIP Registration (on startup)
-    SIP->>ATS: SIP REGISTER (UDP)
-    ATS->>SIP: 401 Unauthorized (nonce challenge)
-    SIP->>SIP: Compute digest auth (MD5/SHA-256)
-    SIP->>ATS: SIP REGISTER (with Authorization)
-    ATS->>SIP: 200 OK (registered)
+    SIP-&gt;&gt;ATS: SIP REGISTER (UDP)
+    ATS-&gt;&gt;SIP: 401 Unauthorized (nonce challenge)
+    SIP-&gt;&gt;SIP: Compute digest auth (MD5/SHA-256)
+    SIP-&gt;&gt;ATS: SIP REGISTER (with Authorization)
+    ATS-&gt;&gt;SIP: 200 OK (registered)
     Note over SIP,ATS: Re-registers at 80% of expiry
 
     Note over CALLER,LIVE: Inbound Call
-    CALLER->>ATC: Dial service number
-    ATC->>MAIN: POST /api/v1/at/voice/callback (isActive=1)
-    MAIN-->>ATC: XML Dial sip:...
-    ATC->>ATS: Execute Dial to SIP endpoint
-    ATS->>SIP: SIP INVITE (SDP: G.711, port X)
-    SIP->>ATS: 100 Trying
-    SIP->>SIP: Allocate RTP port, extract caller phone from From header
-    SIP->>SIP: Derive namespaced gateway IDs from tenant/company + caller/call context
-    SIP->>SESS: Create CallSession + GatewayClient
+    CALLER-&gt;&gt;ATC: Dial &lt;service-number&gt;
+    ATC-&gt;&gt;MAIN: POST /api/v1/at/voice/callback (isActive=1)
+    MAIN--&gt;&gt;ATC: XML Dial sip:...
+    ATC-&gt;&gt;ATS: Execute Dial to SIP endpoint
+    ATS-&gt;&gt;SIP: SIP INVITE (SDP: G.711 μ-law, port X)
+    SIP-&gt;&gt;ATS: 100 Trying
+    SIP-&gt;&gt;SIP: Allocate RTP port, extract caller phone from From header
+    SIP-&gt;&gt;SIP: Derive namespaced gateway IDs from tenant/company + caller/call context
+    SIP-&gt;&gt;SESS: Create CallSession + GatewayClient
 
     Note over SIP,LIVE: Live voice path comes up before the AT leg is answered
-    SESS->>GW: connect() → WSS to live voice service /ws/{user_id}/{session_id}?token=...
-    GW->>LIVE: WebSocket handshake
-    LIVE-->>GW: session_started {sessionId}
-    SIP->>ATS: 200 OK (SDP: G.711, port Y)
-    ATS->>SIP: ACK
+    SESS-&gt;&gt;GW: connect() → WSS to live voice service /ws/{user_id}/{session_id}?token=...
+    GW-&gt;&gt;LIVE: WebSocket handshake
+    LIVE--&gt;&gt;GW: session_started {sessionId}
+    SIP-&gt;&gt;ATS: 200 OK (SDP: G.711 μ-law, port Y)
+    ATS-&gt;&gt;SIP: ACK
 
     Note over CALLER,LIVE: Bidirectional Audio (4 concurrent tasks)
 
-    par Caller speaks
-        CALLER->>ATC: Voice audio
-        ATS->>SIP: RTP G.711 frames
-        SESS->>SESS: G.711 decode → resample 8k→16k<br/>→ denoise / gain normalization
-        SESS->>GW: send_audio(PCM16 16kHz)
-        GW->>LIVE: Binary WebSocket frame
-    and AI responds
-        LIVE->>GW: Binary WebSocket frame (PCM16 24kHz)
-        GW->>SESS: GatewayFrame(audio)
-        SESS->>SESS: Resample 24k→8k→G.711→RTP
-        SESS->>ATS: RTP audio frames
-        ATS->>CALLER: Caller hears AI
+    par Task 1+2: Caller speaks
+        CALLER-&gt;&gt;ATC: Voice audio
+        ATS-&gt;&gt;SIP: RTP G.711 μ-law frames
+        SESS-&gt;&gt;SESS: G.711 decode → resample 8k→16k&lt;br/&gt;→ denoise / gain normalization
+        SESS-&gt;&gt;GW: send_audio(PCM16 16kHz)
+        GW-&gt;&gt;LIVE: Binary WebSocket frame
+    and Task 3+4: AI responds
+        LIVE-&gt;&gt;GW: Binary WebSocket frame (PCM16 24kHz)
+        GW-&gt;&gt;SESS: GatewayFrame(audio)
+        SESS-&gt;&gt;SESS: Resample 24k→8k → G.711 encode → RTP
+        SESS-&gt;&gt;ATS: RTP audio frames
+        ATS-&gt;&gt;CALLER: Caller hears AI response
     end
 
-    Note over CALLER,LIVE: Callback legs can end with an explicit bridge-originated SIP BYE after the acknowledgement and audio drain
-    ATS->>SIP: SIP BYE or bridge-originated BYE
-    GW->>LIVE: Close WebSocket
-        </pre>
-    </div>
+    Note over SESS,LIVE: While the model speaks, the bridge suppresses loopback and can end callback legs with explicit SIP BYE after the acknowledgement and audio drain
 
-    <hr>
-    <h2>4. Inbound Phone Call — Fallback Direct Mode (Hardcoded Prompt)</h2>
-    <div class="diagram-container">
-        <pre class="mermaid">
-sequenceDiagram
+    Note over CALLER,LIVE: Call Ends
+    ATS-&gt;&gt;SIP: SIP BYE or bridge originates BYE on callback legs
+    SESS-&gt;&gt;SESS: Shutdown signal → cancel all tasks
+    GW-&gt;&gt;LIVE: Close WebSocket</pre>
+<h3>Fallback Direct Mode (GATEWAY_MODE=false) — Hardcoded Prompt</h3>
+<pre class="mermaid">sequenceDiagram
     participant CALLER as Caller (Phone)
-    participant AT as Africa's Talking
+    participant AT as Africa&#x27;s Talking
     participant SESS as CallSession
     participant GEMINI as Gemini Live API
 
-    SESS->>GEMINI: Connect Gemini Live (4-line system instruction)
-    GEMINI-->>SESS: WebSocket connected
-    SESS->>GEMINI: send_client_content("[Call connected]")
-    GEMINI->>SESS: Audio greeting (PCM16 24kHz)
+    Note over CALLER,GEMINI: Simplified — SIP registration and signaling same as above
+
+    SESS-&gt;&gt;GEMINI: Connect Gemini Live (dict config, 4-line system instruction)
+    GEMINI--&gt;&gt;SESS: WebSocket connected
+
+    Note over SESS,GEMINI: Proactive Greeting (Pipecat Pattern)
+    SESS-&gt;&gt;GEMINI: send_client_content(&quot;[Call connected]&quot;, turn_complete=True)
+    GEMINI-&gt;&gt;SESS: Audio response (PCM16 24kHz greeting)
 
     par Caller speaks
-        CALLER->>AT: Voice audio
-        AT->>SESS: RTP G.711 frames
-        SESS->>GEMINI: send_realtime_input(PCM16 16kHz)
+        CALLER-&gt;&gt;AT: Voice audio
+        AT-&gt;&gt;SESS: RTP G.711 frames
+        SESS-&gt;&gt;GEMINI: send_realtime_input(audio=Blob, PCM16 16kHz)
     and AI responds
-        GEMINI->>SESS: PCM16 24kHz chunks
-        SESS->>AT: RTP audio frames
-        AT->>CALLER: Caller hears AI
+        GEMINI-&gt;&gt;SESS: PCM16 24kHz audio chunks
+        SESS-&gt;&gt;AT: RTP audio frames
+        AT-&gt;&gt;CALLER: Caller hears AI response
     end
 
     Note over CALLER,GEMINI: Call Ends
-    SESS->>GEMINI: Close WebSocket
-        </pre>
-    </div>
-    <p><em>Note: Phone CallSession does not write Firestore call records (unlike WaSession which persists to <code>wa_calls</code>).</em></p>
-
-    <hr>
-    <h2>5. WhatsApp Call — Shared Live Voice Service</h2>
-    <div class="diagram-container">
-        <pre class="mermaid">
-sequenceDiagram
+    SESS-&gt;&gt;GEMINI: Close WebSocket</pre>
+<blockquote><strong>Note:</strong> Phone CallSession does not write Firestore call records (unlike WaSession which persists to <code>wa_calls</code>). Phone call persistence is planned but not yet implemented.</blockquote>
+<hr>
+<h2>WhatsApp Call Flow (Opus/SRTP)</h2>
+<h3>WhatsApp Voice — Shared Live Voice Service</h3>
+<pre class="mermaid">sequenceDiagram
     participant WA as WhatsApp Caller
-    participant WA_SIP as WaSipClient<br/>(GCE VM)
-    participant WA_SESS as WaSession<br/>(4-task pipeline)
-    participant GW as GatewayClient<br/>(WSS)
-    participant LIVE as Cloud Run live voice service<br/>(ADK voice runtime)
-    participant MAIN as Cloud Run main service<br/>(WhatsApp send + webhook control)
+    participant WA_SIP as WaSipClient&lt;br/&gt;(GCE VM)
+    participant WA_SESS as WaSession&lt;br/&gt;(4-task pipeline)
+    participant GW as GatewayClient&lt;br/&gt;(WSS)
+    participant LIVE as Cloud Run live voice service&lt;br/&gt;(ADK voice runtime)
+    participant MAIN as Cloud Run main service&lt;br/&gt;(WhatsApp send + webhook control)
     participant FS as Firestore
 
     Note over WA,FS: WhatsApp Call Setup
-    WA->>WA_SIP: WhatsApp call signaling
-    WA_SIP->>WA_SIP: Negotiate Opus codec, SRTP keys (SDES)
-    WA_SIP->>WA_SIP: Extract caller phone, mint opaque gateway user_id/session_id
-    WA_SIP->>WA_SESS: Create WaSession + GatewayClient
-    WA_SESS->>FS: Write call start record (wa_calls)
-    WA_SESS->>GW: connect() → WSS to live voice service
-    GW->>LIVE: WebSocket handshake
-    LIVE-->>GW: session_started {sessionId}
+    WA-&gt;&gt;WA_SIP: WhatsApp call signaling
+    WA_SIP-&gt;&gt;WA_SIP: Negotiate Opus codec, SRTP keys (SDES)
+    WA_SIP-&gt;&gt;WA_SIP: Extract caller phone, mint opaque gateway user_id/session_id
+    WA_SIP-&gt;&gt;WA_SESS: Create WaSession + GatewayClient
+    WA_SESS-&gt;&gt;FS: Write call start record (wa_calls)
+    WA_SESS-&gt;&gt;GW: connect() → WSS to live voice service
+    GW-&gt;&gt;LIVE: WebSocket handshake
+    LIVE--&gt;&gt;GW: session_started {sessionId}
 
     Note over WA,LIVE: Bidirectional Audio
 
-    par Caller speaks
-        WA->>WA_SIP: SRTP Opus frames
-        WA_SESS->>WA_SESS: SRTP unprotect→Opus decode→PCM16 16kHz
-        WA_SESS->>GW: send_audio(PCM16 16kHz)
-        GW->>LIVE: Binary WebSocket frame
-    and AI responds
-        LIVE->>GW: Binary frame (PCM16 24kHz)
-        GW->>WA_SESS: GatewayFrame(audio)
-        WA_SESS->>WA_SESS: Opus encode→SRTP protect
-        WA_SESS->>WA: SRTP Opus frames
+    par Inbound: Caller speaks
+        WA-&gt;&gt;WA_SIP: SRTP Opus frames (UDP)
+        WA_SESS-&gt;&gt;WA_SESS: SRTP unprotect → Opus decode → PCM16 16kHz
+        WA_SESS-&gt;&gt;GW: send_audio(PCM16 16kHz)
+        GW-&gt;&gt;LIVE: Binary WebSocket frame
+    and Outbound: AI responds
+        LIVE-&gt;&gt;GW: Binary WebSocket frame (PCM16 24kHz)
+        GW-&gt;&gt;WA_SESS: GatewayFrame(audio)
+        WA_SESS-&gt;&gt;WA_SESS: Opus encode → SRTP protect
+        WA_SESS-&gt;&gt;WA: SRTP Opus frames (UDP)
     end
 
     Note over WA,FS: Call Ends
-    MAIN->>WA: WhatsApp follow-up / payment / utility messages
-    GW->>LIVE: Close WebSocket
-    WA_SESS->>FS: Write call end record
-        </pre>
-    </div>
-
-    <hr>
-    <h2>6. WhatsApp Call — Fallback Direct Mode (Local Tool Handling)</h2>
-    <div class="diagram-container">
-        <pre class="mermaid">
-sequenceDiagram
+    MAIN-&gt;&gt;WA: WhatsApp follow-up / payment / utility messages
+    GW-&gt;&gt;LIVE: Close WebSocket
+    WA_SESS-&gt;&gt;FS: Write call end record</pre>
+<h3>Fallback Direct Mode (WA_GATEWAY_MODE=false) — Local Tool Handling</h3>
+<pre class="mermaid">sequenceDiagram
     participant WA as WhatsApp Caller
     participant WA_SIP as WaSipClient
     participant WA_SESS as WaSession
     participant GEMINI as Gemini Live API
     participant FS as Firestore
 
-    WA_SIP->>WA_SESS: Create WaSession
-    WA_SESS->>FS: Write call start record
-    WA_SESS->>GEMINI: Connect Gemini Live (proactive_audio, SEND_WA_MESSAGE_TOOL)
-    WA_SESS->>GEMINI: send_client_content("[Call connected]")
-    GEMINI->>WA_SESS: Audio greeting (PCM16 24kHz)
+    WA_SIP-&gt;&gt;WA_SESS: Create WaSession(call_id, srtp_ctx, codec_bridge)
+    WA_SESS-&gt;&gt;FS: Write call start record (wa_calls)
+    WA_SESS-&gt;&gt;GEMINI: Connect Gemini Live (v1alpha, proactive_audio=True, SEND_WA_MESSAGE_TOOL)
+
+    Note over WA_SESS,GEMINI: Proactive Greeting
+    WA_SESS-&gt;&gt;GEMINI: send_client_content(&quot;[Call connected]&quot;, turn_complete=True)
+    GEMINI-&gt;&gt;WA_SESS: Audio greeting (PCM16 24kHz)
 
     par Caller speaks
-        WA->>WA_SESS: SRTP Opus→PCM16 16kHz
-        WA_SESS->>GEMINI: send_realtime_input(audio)
+        WA-&gt;&gt;WA_SESS: SRTP Opus → PCM16 16kHz
+        WA_SESS-&gt;&gt;GEMINI: send_realtime_input(audio=Blob)
     and AI responds
-        GEMINI->>WA_SESS: PCM16 24kHz
-        WA_SESS->>WA: Opus encode→SRTP→UDP
+        GEMINI-&gt;&gt;WA_SESS: PCM16 24kHz
+        WA_SESS-&gt;&gt;WA: Opus encode → SRTP → UDP
     end
 
     Note over WA,FS: Call Ends
-    WA_SESS->>GEMINI: Close WebSocket
-    WA_SESS->>FS: Write call end record
-        </pre>
-    </div>
-
-    <hr>
-    <h2>7. WhatsApp Text/Image → ADK Agent Graph</h2>
-    <div class="diagram-container">
-        <pre class="mermaid">
-sequenceDiagram
+    WA_SESS-&gt;&gt;GEMINI: Close WebSocket
+    WA_SESS-&gt;&gt;FS: Write call end record</pre>
+<hr>
+<h2>WhatsApp Text/Image → ADK Agent Graph</h2>
+<p>WhatsApp text and image messages now route through the full ADK agent hierarchy via <code>app/channels/adk_text_adapter.py</code>. This gives WhatsApp users access to all 5 sub-agents (vision, valuation, booking, catalog, support), session state, tools, and memory — the same capabilities as the voice WebSocket channel.</p>
+<pre class="mermaid">sequenceDiagram
     participant USER as WhatsApp User
     participant META as Meta Cloud API
-    participant CR as Cloud Run<br/>(FastAPI)
+    participant CR as Cloud Run&lt;br/&gt;(FastAPI)
     participant CT as Cloud Tasks
-    participant ADAPTER as adk_text_adapter<br/>(app/channels/)
-    participant RUNNER as ADK Runner<br/>(run_async)
-    participant ROOT as ekaette_router<br/>(Root Agent)
-    participant SUB as Sub-Agents<br/>(vision, valuation,<br/>booking, catalog, support)
-    participant FS as Firestore<br/>(Sessions + State)
+    participant ADAPTER as adk_text_adapter&lt;br/&gt;(app/channels/)
+    participant RUNNER as ADK Runner&lt;br/&gt;(run_async)
+    participant ROOT as ekaette_router&lt;br/&gt;(Root Agent)
+    participant SUB as Sub-Agents&lt;br/&gt;(vision, valuation,&lt;br/&gt;booking, catalog, support)
+    participant FS as Firestore&lt;br/&gt;(Sessions + State)
 
     Note over USER,FS: Inbound Text Message
-    USER->>META: "I want to swap my iPhone 14"
-    META->>CR: POST /whatsapp/webhook<br/>(HMAC verified)
-    CR->>CT: Enqueue Cloud Task<br/>(deterministic task ID)
-    CT->>CR: POST /whatsapp/process
+    USER-&gt;&gt;META: &quot;I want to swap my iPhone 14&quot;
+    META-&gt;&gt;CR: POST /whatsapp/webhook&lt;br/&gt;(HMAC verified)
+    CR-&gt;&gt;CT: Enqueue Cloud Task&lt;br/&gt;(deterministic task ID)
+    CT-&gt;&gt;CR: POST /whatsapp/process
 
-    CR->>ADAPTER: send_text_message(user_id, text)
-    ADAPTER->>FS: Get or create session<br/>(phone number → session ID)
-    ADAPTER->>RUNNER: runner.run_async(new_message)
-    RUNNER->>ROOT: Route to appropriate agent
-    ROOT->>SUB: Transfer to valuation_agent
-    SUB-->>ROOT: Trade-in assessment result
-    ROOT-->>RUNNER: Text response
-    RUNNER-->>ADAPTER: Collect text events
-    ADAPTER-->>CR: {text, session_id, channel}
-    CR->>META: WhatsApp reply message
-    META->>USER: "I can help with that! Your iPhone 14..."
+    CR-&gt;&gt;ADAPTER: send_text_message(user_id, text)
+    ADAPTER-&gt;&gt;FS: Get or create session&lt;br/&gt;(phone number → session ID)
+    ADAPTER-&gt;&gt;RUNNER: runner.run_async(new_message)
+    RUNNER-&gt;&gt;ROOT: Route to appropriate agent
+    ROOT-&gt;&gt;SUB: Transfer to valuation_agent
+    SUB--&gt;&gt;ROOT: Trade-in assessment result
+    ROOT--&gt;&gt;RUNNER: Text response
+    RUNNER--&gt;&gt;ADAPTER: Collect text events
+    ADAPTER--&gt;&gt;CR: {text, session_id, channel}
+    CR-&gt;&gt;META: WhatsApp reply message
+    META-&gt;&gt;USER: &quot;I can help with that! Your iPhone 14...&quot;
 
     Note over USER,FS: Inbound Image Message
-    USER->>META: Photo of device + "Check this"
-    META->>CR: POST /whatsapp/webhook
-    CR->>CT: Enqueue Cloud Task
-    CT->>CR: POST /whatsapp/process
+    USER-&gt;&gt;META: 📷 Photo of device + &quot;Check this&quot;
+    META-&gt;&gt;CR: POST /whatsapp/webhook
+    CR-&gt;&gt;CT: Enqueue Cloud Task
+    CT-&gt;&gt;CR: POST /whatsapp/process
 
-    CR->>CR: Download image via Media API
-    CR->>ADAPTER: send_image_message(image_bytes, caption)
-    ADAPTER->>RUNNER: runner.run_async(image + text content)
-    RUNNER->>ROOT: Route to vision_agent
-    ROOT->>SUB: vision_agent → analyze_device_image_tool
-    SUB->>SUB: Gemini 3 Flash (Standard API)<br/>Structured analysis
-    SUB-->>ROOT: DeviceAnalysis result
-    ROOT->>SUB: valuation_agent → grade_and_value_tool
-    SUB-->>ROOT: Trade-in offer
-    ROOT-->>RUNNER: Text response with valuation
-    RUNNER-->>ADAPTER: Collect text events
-    ADAPTER-->>CR: {text, session_id}
-    CR->>META: WhatsApp reply
-    META->>USER: "I can see an iPhone 14 Pro in Good condition..."
-        </pre>
-    </div>
-
-    <hr>
-    <h2>8. SMS Text Bridge Flow</h2>
-    <div class="diagram-container">
-        <pre class="mermaid">
-sequenceDiagram
+    CR-&gt;&gt;CR: Download image via Media API
+    CR-&gt;&gt;ADAPTER: send_image_message(image_bytes, caption)
+    ADAPTER-&gt;&gt;RUNNER: runner.run_async(image + text content)
+    RUNNER-&gt;&gt;ROOT: Route to vision_agent
+    ROOT-&gt;&gt;SUB: vision_agent → analyze_device_image_tool
+    SUB-&gt;&gt;SUB: VISION_MODEL (Standard API)&lt;br/&gt;Structured analysis
+    SUB--&gt;&gt;ROOT: DeviceAnalysis result
+    ROOT-&gt;&gt;SUB: valuation_agent → grade_and_value_tool
+    SUB--&gt;&gt;ROOT: Trade-in offer
+    ROOT--&gt;&gt;RUNNER: Text response with valuation
+    RUNNER--&gt;&gt;ADAPTER: Collect text events
+    ADAPTER--&gt;&gt;CR: {text, session_id}
+    CR-&gt;&gt;META: WhatsApp reply
+    META-&gt;&gt;USER: &quot;I can see an iPhone 14 Pro in Good condition...&quot;</pre>
+<h3>Key Design Decisions</h3>
+<ul>
+<li><strong>Session continuity</strong>: Phone number → deterministic session ID via SHA-256 hash.</li>
+</ul>
+<p>Same user maintains multi-turn conversation state across messages.</p>
+<ul>
+<li><strong>Graceful fallback</strong>: If ADK Runner is not initialized (early startup, tests),</li>
+</ul>
+<p>falls back to <code>bridge_text.py</code> (standalone Gemini, no agents).</p>
+<ul>
+<li><strong>Channel limits</strong>: WhatsApp 4096 chars, SMS 160 chars — enforced by adapter.</li>
+<li><strong>No audio overhead</strong>: Uses <code>Runner.run_async()</code> (text mode, <code>StreamingMode.NONE</code>)</li>
+</ul>
+<p>instead of <code>Runner.run_live()</code> (bidi streaming). Faster, cheaper.</p>
+<hr>
+<h2>SMS Text Bridge Flow</h2>
+<p>SMS currently uses <code>bridge_text.py</code> (standalone Gemini). Future: route through <code>adk_text_adapter</code> for full agent capabilities (same pattern as WhatsApp).</p>
+<pre class="mermaid">sequenceDiagram
     participant USER as User (Phone)
-    participant AT as Africa's Talking
-    participant CR as Cloud Run (FastAPI)
-    participant GEMINI as Gemini (Text API)
-    participant ANALYTICS as Campaign Analytics
+    participant AT as Africa&#x27;s Talking
+    participant CR as Cloud Run&lt;br/&gt;(FastAPI)
+    participant GEMINI as Gemini&lt;br/&gt;(Text API)
+    participant ANALYTICS as Campaign Analytics&lt;br/&gt;(In-memory)
 
     Note over USER,ANALYTICS: Inbound SMS → AI Response
-    USER->>AT: SMS to virtual DID
-    AT->>CR: POST /api/v1/at/sms/callback
-    CR->>CR: Deduplicate by message ID
-    CR->>GEMINI: Bridge text to Gemini
-    GEMINI->>CR: AI text response
-    CR->>CR: Truncate to 160 chars
-    CR->>AT: providers.send_sms(reply)
-    AT->>USER: SMS reply
-    CR->>ANALYTICS: Record inbound reply event
+    USER-&gt;&gt;AT: SMS to virtual DID
+    AT-&gt;&gt;CR: POST /api/v1/at/sms/callback&lt;br/&gt;{from, to, text, id}
+    CR-&gt;&gt;CR: Deduplicate by message ID
+    CR-&gt;&gt;GEMINI: Bridge text to Gemini (text model)
+    GEMINI-&gt;&gt;CR: AI text response
+    CR-&gt;&gt;CR: Truncate to 160 chars
+    CR-&gt;&gt;AT: providers.send_sms(reply)
+    AT-&gt;&gt;USER: SMS reply
+    CR-&gt;&gt;ANALYTICS: Record inbound reply event
 
     Note over USER,ANALYTICS: Outbound SMS Campaign
-    CR->>AT: providers.send_sms(recipients[], message)
-    AT->>USER: Bulk SMS delivery
-    CR->>ANALYTICS: Record sent/delivered/failed
-        </pre>
-    </div>
-
-    <hr>
-    <h2>9. AT Channel Module Architecture</h2>
-    <div class="diagram-container">
-        <pre class="mermaid">
-graph TB
-    subgraph "app/api/v1/at/ — Africa's Talking Channel"
+    CR-&gt;&gt;AT: POST providers.send_sms(recipients[], message)
+    AT-&gt;&gt;USER: Bulk SMS delivery
+    CR-&gt;&gt;ANALYTICS: Record sent/delivered/failed counts</pre>
+<hr>
+<h2>AT Channel Module Architecture</h2>
+<pre class="mermaid">graph TB
+    subgraph &quot;app/api/v1/at/ — Africa&#x27;s Talking Channel&quot;
         direction TB
-        INIT["__init__.py<br/>Router composition,<br/>AT SDK initialization"]
+        INIT[&quot;__init__.py&lt;br/&gt;Router composition,&lt;br/&gt;AT SDK initialization&quot;]
 
-        subgraph "Voice"
-            V_ROUTES["voice.py<br/>POST /voice/callback (AT webhook)<br/>POST /voice/call (outbound)<br/>POST /voice/campaign (bulk)<br/>POST /voice/transfer"]
-            V_SVC["service_voice.py<br/>XML builder (Dial/Say),<br/>DID → tenant resolution,<br/>call lifecycle logging"]
+        subgraph &quot;Voice&quot;
+            V_ROUTES[&quot;voice.py&lt;br/&gt;POST /voice/callback (AT webhook)&lt;br/&gt;POST /voice/call (outbound)&lt;br/&gt;POST /voice/campaign (bulk)&lt;br/&gt;POST /voice/transfer&quot;]
+            V_SVC[&quot;service_voice.py&lt;br/&gt;XML builder (Dial/Say),&lt;br/&gt;DID → tenant resolution,&lt;br/&gt;call lifecycle logging&quot;]
         end
 
-        subgraph "SMS"
-            S_ROUTES["sms.py<br/>POST /sms/callback (AT webhook)<br/>POST /sms/send (outbound)<br/>POST /sms/campaign (bulk)"]
+        subgraph &quot;SMS&quot;
+            S_ROUTES[&quot;sms.py&lt;br/&gt;POST /sms/callback (AT webhook)&lt;br/&gt;POST /sms/send (outbound)&lt;br/&gt;POST /sms/campaign (bulk)&quot;]
         end
 
-        subgraph "Payments (Paystack)"
-            P_ROUTES["payments.py<br/>POST /payments/paystack/initialize<br/>POST /payments/paystack/virtual-accounts<br/>POST /payments/paystack/webhook<br/>GET /payments/paystack/verify/{ref}"]
-            P_SVC["service_payments.py<br/>Transaction lifecycle,<br/>VA provisioning,<br/>webhook HMAC verification,<br/>SMS/WhatsApp notifications"]
+        subgraph &quot;Payments (Paystack)&quot;
+            P_ROUTES[&quot;payments.py&lt;br/&gt;POST /payments/paystack/initialize&lt;br/&gt;POST /payments/paystack/virtual-accounts&lt;br/&gt;POST /payments/paystack/webhook&lt;br/&gt;GET /payments/paystack/verify/{ref}&quot;]
+            P_SVC[&quot;service_payments.py&lt;br/&gt;Transaction lifecycle,&lt;br/&gt;VA provisioning,&lt;br/&gt;webhook HMAC verification,&lt;br/&gt;SMS/WhatsApp notifications&quot;]
         end
 
-        subgraph "Shipping (Topship)"
-            SH_ROUTES["shipping.py<br/>POST /shipping/topship/quote<br/>POST /shipping/orders<br/>GET /shipping/orders/{id}/tracking"]
+        subgraph &quot;Shipping (Topship)&quot;
+            SH_ROUTES[&quot;shipping.py&lt;br/&gt;POST /shipping/topship/quote&lt;br/&gt;POST /shipping/orders&lt;br/&gt;GET /shipping/orders/{id}/tracking&quot;]
         end
 
-        subgraph "Analytics"
-            A_ROUTES["analytics_routes.py<br/>GET /analytics/overview<br/>GET /analytics/campaigns<br/>POST /analytics/events"]
-            A_SVC["campaign_analytics.py<br/>In-memory campaign state,<br/>KPI computation,<br/>event deduplication"]
+        subgraph &quot;Analytics&quot;
+            A_ROUTES[&quot;analytics_routes.py&lt;br/&gt;GET /analytics/overview&lt;br/&gt;GET /analytics/campaigns&lt;br/&gt;POST /analytics/events&quot;]
+            A_SVC[&quot;campaign_analytics.py&lt;br/&gt;In-memory campaign state,&lt;br/&gt;KPI computation,&lt;br/&gt;event deduplication&quot;]
         end
 
-        subgraph "WhatsApp"
-            WA_ROUTES["whatsapp.py<br/>GET/POST /whatsapp/webhook<br/>POST /whatsapp/process<br/>POST /whatsapp/send"]
-            WA_SVC["service_whatsapp.py<br/>ADK adapter routing,<br/>bridge_text fallback,<br/>service window, idempotency"]
+        subgraph &quot;WhatsApp&quot;
+            WA_ROUTES[&quot;whatsapp.py&lt;br/&gt;GET/POST /whatsapp/webhook&lt;br/&gt;POST /whatsapp/process&lt;br/&gt;POST /whatsapp/send&quot;]
+            WA_SVC[&quot;service_whatsapp.py&lt;br/&gt;ADK adapter routing,&lt;br/&gt;bridge_text fallback,&lt;br/&gt;service window, idempotency&quot;]
         end
 
-        subgraph "Infrastructure"
-            SETTINGS["settings.py<br/>ATSettings (pydantic-settings)<br/>Feature flags, AT creds,<br/>Paystack keys, retention"]
-            MODELS["models.py<br/>Request/response DTOs"]
-            PROVIDERS["providers.py<br/>AT SDK wrappers,<br/>Paystack httpx client,<br/>WhatsApp Cloud API client"]
-            HEALTH["health.py<br/>GET /health, GET /readiness"]
+        subgraph &quot;Infrastructure&quot;
+            SETTINGS[&quot;settings.py&lt;br/&gt;ATSettings (pydantic-settings)&lt;br/&gt;Feature flags, AT creds,&lt;br/&gt;Paystack keys, retention&quot;]
+            MODELS[&quot;models.py&lt;br/&gt;Request/response DTOs&quot;]
+            PROVIDERS[&quot;providers.py&lt;br/&gt;AT SDK wrappers,&lt;br/&gt;Paystack httpx client,&lt;br/&gt;WhatsApp Cloud API client&quot;]
+            HEALTH[&quot;health.py&lt;br/&gt;GET /health, GET /readiness&quot;]
         end
     end
 
-    subgraph "app/channels/ — Channel Adapters"
-        ADAPTER["adk_text_adapter.py<br/>Runner.run_async() bridge,<br/>session bootstrap,<br/>text/image routing"]
+    subgraph &quot;app/channels/ — Channel Adapters&quot;
+        ADAPTER[&quot;adk_text_adapter.py&lt;br/&gt;Runner.run_async() bridge,&lt;br/&gt;session bootstrap,&lt;br/&gt;text/image routing&quot;]
     end
 
-    INIT --> V_ROUTES
-    INIT --> S_ROUTES
-    INIT --> WA_ROUTES
-    INIT --> P_ROUTES
-    INIT --> SH_ROUTES
-    INIT --> A_ROUTES
-    INIT --> HEALTH
+    INIT --&gt; V_ROUTES
+    INIT --&gt; S_ROUTES
+    INIT --&gt; WA_ROUTES
+    INIT --&gt; P_ROUTES
+    INIT --&gt; SH_ROUTES
+    INIT --&gt; A_ROUTES
+    INIT --&gt; HEALTH
 
-    V_ROUTES --> V_SVC
-    V_ROUTES --> PROVIDERS
-    V_ROUTES --> A_SVC
-    S_ROUTES --> PROVIDERS
-    S_ROUTES --> A_SVC
-    WA_ROUTES --> WA_SVC
-    WA_SVC -->|"ADK path"| ADAPTER
-    WA_SVC -->|"Fallback"| PROVIDERS
-    P_ROUTES --> P_SVC
-    P_SVC --> PROVIDERS
-    P_SVC --> A_SVC
+    V_ROUTES --&gt; V_SVC
+    V_ROUTES --&gt; PROVIDERS
+    V_ROUTES --&gt; A_SVC
+    S_ROUTES --&gt; PROVIDERS
+    S_ROUTES --&gt; A_SVC
+    WA_ROUTES --&gt; WA_SVC
+    WA_SVC --&gt;|&quot;ADK path&quot;| ADAPTER
+    WA_SVC --&gt;|&quot;Fallback&quot;| PROVIDERS
+    P_ROUTES --&gt; P_SVC
+    P_SVC --&gt; PROVIDERS
+    P_SVC --&gt; A_SVC
 
     classDef router fill:#E3F2FD,stroke:#1565C0,stroke-width:2px
     classDef service fill:#E8F5E9,stroke:#2E7D32,stroke-width:2px
@@ -449,12 +515,10 @@ graph TB
     class V_ROUTES,S_ROUTES,WA_ROUTES,P_ROUTES,SH_ROUTES,A_ROUTES,HEALTH router
     class V_SVC,WA_SVC,P_SVC,A_SVC service
     class SETTINGS,MODELS,PROVIDERS,INIT infra
-    class ADAPTER adapter
-        </pre>
-    </div>
-
-    <script>
-        mermaid.initialize({ startOnLoad: true, theme: 'default', securityLevel: 'loose' });
-    </script>
+    class ADAPTER adapter</pre>
+  </main>
+  <script>
+  mermaid.initialize({ startOnLoad: true, theme: 'default', securityLevel: 'loose' });
+</script>
 </body>
 </html>

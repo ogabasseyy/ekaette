@@ -61,7 +61,7 @@ def test_resolve_tts_model_default(monkeypatch):
     monkeypatch.delenv("TTS_MODEL_ID", raising=False)
     result = resolve_tts_model_id()
     assert result == DEFAULT_TTS_MODEL_ID
-    assert result == "gemini-2.5-flash-preview-tts"
+    assert result == "gemini-2.5-flash-tts"
 
 
 def test_resolve_tts_model_env_override(monkeypatch):

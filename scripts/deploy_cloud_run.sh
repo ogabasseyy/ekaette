@@ -229,6 +229,44 @@ if [[ "${SESSION_AFFINITY}" != "1" ]]; then
   SESSION_AFFINITY_FLAG=(--no-session-affinity)
 fi
 
+run_source_deploy() {
+  local start_ts now elapsed heartbeat_interval deploy_pid
+  heartbeat_interval=30
+  start_ts="$(date +%s)"
+
+  echo "Building and deploying ${SERVICE}..."
+  echo "Note: after 'Uploading sources... done', Cloud Build may continue quietly for several minutes."
+  echo "Do not interrupt the deploy early unless it clearly exceeds your normal build time."
+
+  gcloud run deploy "${SERVICE}" \
+    --source "${ROOT_DIR}" \
+    --project "${PROJECT}" \
+    --region "${REGION}" \
+    --port="${PORT}" \
+    --timeout="${TIMEOUT}" \
+    --memory="${MEMORY}" \
+    --cpu="${CPU}" \
+    --concurrency="${CONCURRENCY}" \
+    --min-instances="${MIN_INSTANCES}" \
+    --cpu-throttling \
+    "${SESSION_AFFINITY_FLAG[@]}" \
+    --env-vars-file="${ENV_YAML}" \
+    "${DEPLOY_AUTH_FLAG[@]}" \
+    --quiet &
+  deploy_pid=$!
+
+  while kill -0 "${deploy_pid}" 2>/dev/null; do
+    sleep "${heartbeat_interval}"
+    if kill -0 "${deploy_pid}" 2>/dev/null; then
+      now="$(date +%s)"
+      elapsed=$((now - start_ts))
+      echo "Deploy still running after ${elapsed}s. If source upload already finished, Cloud Build is likely still building/pushing the image." >&2
+    fi
+  done
+
+  wait "${deploy_pid}"
+}
+
 if [[ "${ENV_ONLY}" == "1" ]]; then
   echo "Updating Cloud Run service config and env vars only (no rebuild)..."
   gcloud run services update "${SERVICE}" \
@@ -246,22 +284,7 @@ if [[ "${ENV_ONLY}" == "1" ]]; then
     "${UPDATE_AUTH_FLAG[@]}" \
     --quiet
 else
-  echo "Building and deploying ${SERVICE}..."
-  gcloud run deploy "${SERVICE}" \
-    --source "${ROOT_DIR}" \
-    --project "${PROJECT}" \
-    --region "${REGION}" \
-    --port="${PORT}" \
-    --timeout="${TIMEOUT}" \
-    --memory="${MEMORY}" \
-    --cpu="${CPU}" \
-    --concurrency="${CONCURRENCY}" \
-    --min-instances="${MIN_INSTANCES}" \
-    --cpu-throttling \
-    "${SESSION_AFFINITY_FLAG[@]}" \
-    --env-vars-file="${ENV_YAML}" \
-    "${DEPLOY_AUTH_FLAG[@]}" \
-    --quiet
+  run_source_deploy
 fi
 
 if [[ "${ENABLE_CROSS_CHANNEL_CONTEXT_TTL:-1}" == "1" ]]; then

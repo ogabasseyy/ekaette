@@ -13,6 +13,14 @@ logger = logging.getLogger(__name__)
 async def request_callback(reason: str = "", tool_context=None) -> dict:
     """Queue a callback to the current caller after the active call ends."""
     state = getattr(tool_context, "state", {})
+    session_id = str(getattr(state, "get", lambda *_: "")("app:session_id", "") or "").strip()
+    if session_id.startswith("sip-callback-"):
+        logger.info("request_callback blocked on callback leg session_id=%s", session_id)
+        return {
+            "status": "error",
+            "error": "already_on_callback",
+            "detail": "A callback is already in progress for this caller.",
+        }
     caller_phone = resolve_caller_phone_from_context(tool_context)
     if not caller_phone:
         logger.warning("request_callback failed: no caller phone in live context")

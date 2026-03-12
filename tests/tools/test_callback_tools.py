@@ -169,6 +169,26 @@ class TestRequestCallbackTool:
             trigger_after_hangup=True,
         )
 
+    @pytest.mark.asyncio
+    async def test_rejects_request_callback_on_callback_leg(self):
+        from app.tools.callback_tools import request_callback
+
+        ctx = SimpleNamespace(
+            state={
+                "user:caller_phone": "+2348012345678",
+                "app:tenant_id": "public",
+                "app:company_id": "ekaette-electronics",
+                "app:session_id": "sip-callback-abc123",
+            }
+        )
+
+        with patch("app.tools.callback_tools.service_voice.register_callback_request") as mock_register:
+            result = await request_callback("Low airtime", ctx)
+
+        assert result["status"] == "error"
+        assert result["error"] == "already_on_callback"
+        mock_register.assert_not_called()
+
 
 class TestBeforeToolCallerPhoneInjection:
     """Verify that the before_tool_callback injects caller phone from the

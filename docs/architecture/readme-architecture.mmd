@@ -24,7 +24,7 @@ graph TB
         GW["Live Voice Gateway<br/>/ws session auth + streaming"]
         subgraph "Google ADK 1.25.1"
             ROOT["ekaette_router<br/>(Gemini 2.5 Flash Native Audio)"]
-            VA["vision_agent<br/>(Gemini 3 Flash)"]
+            VA["vision_agent<br/>(Live API + VISION_MODEL tools)"]
             VLA["valuation_agent"]
             BA["booking_agent"]
             CA["catalog_agent"]
@@ -34,7 +34,7 @@ graph TB
 
     subgraph "Google Cloud"
         LIVE["Gemini Live API"]
-        G3F["Gemini 3 Flash<br/>(Standard API)"]
+        G3F["VISION_MODEL<br/>(Standard API)"]
         FS["Firestore"]
         CS["Cloud Storage"]
         MB["Memory Bank"]

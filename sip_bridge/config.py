@@ -8,7 +8,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
-_DEFAULT_LIVE_MODEL_ID = "gemini-2.5-flash-native-audio-preview-12-2025"
+_DEFAULT_LIVE_MODEL_ID = "gemini-live-2.5-flash-native-audio"
 _DISALLOWED_LIVE_MODEL_IDS = frozenset({"gemini-3-flash-preview"})
 
 

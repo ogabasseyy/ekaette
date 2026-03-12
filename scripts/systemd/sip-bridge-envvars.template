@@ -20,7 +20,7 @@ SIP_PASSWORD=<at-sip-password>
 SIP_REGISTER_INTERVAL=300
 
 # Gemini Live model
-LIVE_MODEL_ID=gemini-2.5-flash-native-audio-preview-12-2025
+LIVE_MODEL_ID=gemini-live-2.5-flash-native-audio
 SIP_GEMINI_VOICE=Aoede
 SIP_SYSTEM_INSTRUCTION=You are the virtual assistant named ehkaitay.
 

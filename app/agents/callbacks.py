@@ -78,13 +78,20 @@ def looks_like_callback_promise(text: str) -> bool:
     return any(p.search(normalized) for p in _CALLBACK_PROMISE_PATTERNS)
 
 
-def _is_callback_leg(state: State) -> bool:
+def _is_callback_leg(state: State, *, session_id_override: str = "") -> bool:
     """Return True when the current session is an outbound callback leg.
 
     Callback sessions are created by the SIP bridge with session IDs
     prefixed ``sip-callback-``.  On a callback leg the agent must NOT
     call ``request_callback`` again (that would create an infinite loop).
+
+    ``session_id_override`` allows callers with access to the ADK Session
+    object (e.g. ``tool_context.session.id``) to pass the authoritative
+    session ID directly, bypassing state-lookup timing issues.
     """
+    # Prefer the authoritative session ID from the ADK session object.
+    if isinstance(session_id_override, str) and session_id_override.strip().startswith("sip-callback-"):
+        return True
     session_id = _state_get(state, "app:session_id", "")
     if isinstance(session_id, str) and session_id.strip().startswith("sip-callback-"):
         return True
@@ -692,13 +699,16 @@ async def before_model_inject_config(
         instruction_lines.append(outbound_line)
         has_runtime_context = True
 
-    if _is_callback_leg(callback_context.state):
+    _cb_session_obj = getattr(callback_context, "session", None)
+    _cb_session_id = getattr(_cb_session_obj, "id", "") if _cb_session_obj else ""
+    if _is_callback_leg(callback_context.state, session_id_override=str(_cb_session_id or "")):
         instruction_lines.append(
             "CALLBACK LEG — YOU ARE CALLING THE CUSTOMER BACK: "
             "This is an outbound callback that the customer previously requested. "
-            "Do NOT call request_callback — you are already on the callback. "
-            "Greet the customer warmly, remind them why you are calling back, "
-            "and continue helping with their original request."
+            "Do NOT call request_callback — you are ALREADY on the callback. "
+            "Your FIRST words must be a warm greeting: 'Hi, this is ehkaitay calling you back!' "
+            "Then remind them briefly why you are calling and continue helping. "
+            "NEVER call request_callback on this call — it will fail and waste time."
         )
         has_runtime_context = True
 
@@ -762,13 +772,14 @@ async def before_model_inject_config(
             )
             if (
                 bool(_state_get(callback_context.state, "temp:callback_requested", False))
-                and not _is_callback_leg(callback_context.state)
+                and not _is_callback_leg(callback_context.state, session_id_override=str(_cb_session_id or ""))
             ):
                 instruction_lines.append(
-                    "CALLBACK WRAP-UP: A callback has already been registered. Be a polite host: "
-                    "give one brief warm confirmation that you will call them back on this same "
-                    "number shortly, then close the conversation. Do NOT ask follow-up questions "
-                    "or start new topics."
+                    "CALLBACK WRAP-UP (MANDATORY): A callback has already been registered. "
+                    "Say ONE brief warm sentence confirming you will call them back on this "
+                    "same number shortly, then IMMEDIATELY call end_call. Example: "
+                    "'No wahala, I'll ring you right back — talk soon!' then call end_call. "
+                    "Do NOT ask follow-up questions, do NOT start new topics, do NOT keep talking."
                 )
 
     if not instruction_lines:
@@ -796,6 +807,10 @@ async def after_model_valuation_sanity(
     llm_response: LlmResponse,
 ) -> None:
     """Soft checks for valuation responses to reduce pricing drift."""
+    # Resolve authoritative session ID for callback-leg detection.
+    _am_so = getattr(callback_context, "session", None)
+    _am_session_id = str(getattr(_am_so, "id", "") or "") if _am_so else ""
+
     # Lock greeting only after the first real model response, so agent transfers
     # before speaking do not accidentally suppress the initial greeting.
     # In native-audio mode the response may contain only audio inline_data
@@ -817,7 +832,7 @@ async def after_model_valuation_sanity(
         and _state_get(callback_context.state, "app:channel", "") == "voice"
         and _response_commits_to_callback(text)
         and not bool(_state_get(callback_context.state, "temp:callback_requested", False))
-        and not _is_callback_leg(callback_context.state)
+        and not _is_callback_leg(callback_context.state, session_id_override=_am_session_id)
     ):
         caller_phone = resolve_caller_phone_from_context(callback_context)
         tenant_id = _state_get(callback_context.state, "app:tenant_id", "public")
@@ -861,7 +876,7 @@ async def after_model_valuation_sanity(
         and _state_get(callback_context.state, "app:channel", "") == "voice"
         and _response_commits_to_callback(text)
         and bool(_state_get(callback_context.state, "temp:callback_requested", False))
-        and not _is_callback_leg(callback_context.state)
+        and not _is_callback_leg(callback_context.state, session_id_override=_am_session_id)
     ):
         _queue_end_after_speaking_control(
             callback_context.state,
@@ -910,10 +925,18 @@ async def before_tool_capability_guard(
     (backward-compatible / compat mode).
     """
     # Hard-block request_callback on callback legs to prevent infinite loops.
-    if tool.name == "request_callback" and _is_callback_leg(tool_context.state):
+    # Use session.id from the ADK session object as the authoritative source
+    # because app:session_id in state may not yet be populated when the model
+    # fires its first tool call on a fresh callback session.
+    _session_obj = getattr(tool_context, "session", None)
+    _adk_session_id = getattr(_session_obj, "id", "") if _session_obj else ""
+    if tool.name == "request_callback" and _is_callback_leg(
+        tool_context.state, session_id_override=str(_adk_session_id or ""),
+    ):
         logger.warning(
-            "Blocked request_callback on callback leg agent=%s",
+            "Blocked request_callback on callback leg agent=%s session_id=%s",
             tool_context.agent_name,
+            _adk_session_id,
         )
         return {
             "status": "error",
@@ -1249,7 +1272,11 @@ async def after_tool_emit_messages(
                     logger.debug("Voice analytics callback request skipped", exc_info=True)
             channel = _state_get(tool_context.state, "app:channel", "")
             normalized_channel = channel.strip().lower() if isinstance(channel, str) else ""
-            if normalized_channel == "voice" and not _is_callback_leg(tool_context.state):
+            _at_so = getattr(tool_context, "session", None)
+            _at_sid = str(getattr(_at_so, "id", "") or "") if _at_so else ""
+            if normalized_channel == "voice" and not _is_callback_leg(
+                tool_context.state, session_id_override=_at_sid,
+            ):
                 _queue_end_after_speaking_control(
                     tool_context.state,
                     reason="callback_registered",

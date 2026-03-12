@@ -124,7 +124,7 @@ graph TB
 
     subgraph "AI Models"
         G25["Gemini 2.5 Flash<br/>Native Audio<br/>(Live API)"]
-        G3F["Gemini 3 Flash Preview<br/>(Standard API)"]
+        G3F["VISION_MODEL<br/>(Standard API)"]
     end
 
     WEB -->|"WSS /ws"| WS_EDGE

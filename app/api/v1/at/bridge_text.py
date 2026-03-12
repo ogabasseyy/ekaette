@@ -11,7 +11,7 @@ import logging
 from google import genai
 from google.genai import types
 
-from app.configs.model_resolver import resolve_live_model_id
+from app.configs.model_resolver import resolve_text_model_id
 from app.genai_clients import build_genai_client
 
 logger = logging.getLogger(__name__)
@@ -58,7 +58,7 @@ async def query_text(
     """Text → Gemini Standard API → response text. Supports SMS and WhatsApp channels."""
     cfg = _CHANNEL_CONFIG.get(channel, _CHANNEL_CONFIG["sms"])
     client = _get_genai_client()
-    resolved_model = (model or "").strip() or resolve_live_model_id()
+    resolved_model = (model or "").strip() or resolve_text_model_id()
     response = await asyncio.to_thread(
         client.models.generate_content,
         model=resolved_model,

@@ -21,7 +21,7 @@ def _make_config(**overrides) -> BridgeConfig:
         sip_public_ip="34.69.236.219",
         sip_allowed_peers=frozenset(),
         gemini_api_key="test-key",
-        live_model_id="gemini-2.5-flash-native-audio-preview-12-2025",
+        live_model_id="gemini-live-2.5-flash-native-audio",
         system_instruction="Test",
         gemini_voice="Aoede",
         company_id="ekaette-electronics",

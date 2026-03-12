@@ -344,7 +344,7 @@ sequenceDiagram
     ADAPTER->>RUNNER: runner.run_async(image + text content)
     RUNNER->>ROOT: Route to vision_agent
     ROOT->>SUB: vision_agent → analyze_device_image_tool
-    SUB->>SUB: Gemini 3 Flash (Standard API)<br/>Structured analysis
+    SUB->>SUB: VISION_MODEL (Standard API)<br/>Structured analysis
     SUB-->>ROOT: DeviceAnalysis result
     ROOT->>SUB: valuation_agent → grade_and_value_tool
     SUB-->>ROOT: Trade-in offer

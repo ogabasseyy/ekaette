@@ -980,7 +980,7 @@ export function useEkaetteSocket(
     const ai = new GoogleGenAI({ apiKey: tokenPayload.token })
     const selectedModel =
       tokenPayload.model ??
-      String(import.meta.env.VITE_LIVE_MODEL_ID ?? 'gemini-2.5-flash-native-audio-preview-12-2025')
+      String(import.meta.env.VITE_LIVE_MODEL_ID ?? 'gemini-live-2.5-flash-native-audio')
     const speechLanguageCode =
       String(import.meta.env.VITE_SPEECH_LANGUAGE_CODE ?? 'en-US').trim() || 'en-US'
 

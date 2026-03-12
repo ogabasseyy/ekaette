@@ -428,6 +428,12 @@ async def trigger_callback(
         return {"status": "error", "detail": "No callback phone"}
 
     cooldown_until = time.time() + _callback_cooldown_seconds()
+    logger.info(
+        "trigger_callback starting prewarm wait phone=%s tenant_id=%s company_id=%s",
+        normalized_phone,
+        tenant_id,
+        company_id,
+    )
     prewarm_payload = await _wait_for_callback_prewarm(
         phone=normalized_phone,
         tenant_id=tenant_id,
@@ -438,10 +444,23 @@ async def trigger_callback(
         if isinstance(prewarm_payload, dict)
         else ""
     )
+    logger.info(
+        "trigger_callback prewarm result phone=%s status=%s",
+        normalized_phone,
+        prewarm_status or "(none/empty)",
+    )
     if prewarm_status != "ready":
         detail = "Callback voice session unavailable"
         if isinstance(prewarm_payload, dict):
             detail = str(prewarm_payload.get("detail", "")).strip() or detail
+        logger.warning(
+            "Callback prewarm not ready phone=%s prewarm_status=%s detail=%s "
+            "prewarm_payload=%r",
+            normalized_phone,
+            prewarm_status or "(empty)",
+            detail,
+            prewarm_payload,
+        )
         await asyncio.to_thread(
             clear_callback_prewarm,
             tenant_id=tenant_id,

@@ -375,6 +375,35 @@ class TestVoiceCallbackIntentRegistration:
         assert message["action"] == "end_after_speaking"
         assert message["reason"] == "callback_registered"
 
+    @pytest.mark.asyncio
+    async def test_finished_user_transcription_prompts_immediate_callback_ack(self):
+        ctx = _make_ctx(_FakeWebSocket())
+        ctx.session_state.update(
+            {
+                "app:channel": "voice",
+                "user:caller_phone": "+2348012345678",
+            }
+        )
+
+        with patch(
+            "app.api.v1.at.service_voice.register_callback_request"
+        ) as mock_register:
+            mock_register.return_value = {"status": "pending", "phone": "+2348012345678"}
+            _, queue, _ = await _run_downstream_events(
+                _make_live_event(
+                    input_transcription=SimpleNamespace(
+                        text="Please call me back, I don't have airtime.",
+                        finished=True,
+                    )
+                ),
+                ctx=ctx,
+            )
+
+        assert any(
+            "callback has already been queued" in (content.parts[0].text or "").lower()
+            for content in queue.sent
+        )
+
 
 # ─── Stream tasks: watchdog arming / clearing / nudge ──────────────
 

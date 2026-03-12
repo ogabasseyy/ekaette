@@ -50,6 +50,7 @@ class SendSMSRequest(BaseModel):
 
     to: str = Field(min_length=1)
     message: str = Field(min_length=1)
+    sender_id: str | None = None
     tenant_id: str = "public"
     company_id: str = "ekaette-electronics"
     campaign_id: str | None = None
@@ -61,6 +62,7 @@ class CampaignSMSRequest(BaseModel):
 
     to: list[str] = Field(min_length=1)
     message: str = Field(min_length=1)
+    sender_id: str | None = None
     tenant_id: str = "public"
     company_id: str = "ekaette-electronics"
     campaign_id: str | None = None

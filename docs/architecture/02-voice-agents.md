@@ -82,8 +82,8 @@ It should not be treated as:
 sequenceDiagram
     participant C as Customer
     participant ROOT as ekaette_router<br/>(Live API Voice)
-    participant VA as vision_agent<br/>(Gemini 3 Flash)
-    participant VLA as valuation_agent<br/>(Gemini 3 Flash)
+    participant VA as vision_agent<br/>(Live API Voice + vision tools)
+    participant VLA as valuation_agent<br/>(Live API Voice)
     participant FS as Firestore
     participant CS as Cloud Storage
 
@@ -99,7 +99,8 @@ sequenceDiagram
     Note over ROOT: Audio transcription enabled automatically
 
     VA->>CS: Fetch images
-    VA->>VA: Gemini 3 Flash Vision + Visual Thinking
+    VA->>VA: Live model narrates + calls analyze_device_image_tool
+    VA->>VA: VISION_MODEL (Standard API) analyzes media
     Note over VA: Zooms into screen scratch<br/>Crops corner dent<br/>Annotates damage areas
     VA->>VA: Result: iPhone 14 Pro, Good condition
 

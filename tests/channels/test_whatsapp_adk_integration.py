@@ -170,6 +170,47 @@ class TestHandleImageMessageADK:
         assert mock_send.call_args.kwargs["context_prefix"] == ""
 
     @pytest.mark.asyncio
+    async def test_image_queues_into_active_live_session_when_enabled(self):
+        """When a matching live voice session exists, media should be injected there."""
+        from app.api.v1.at import service_whatsapp
+
+        with patch(
+            "app.api.v1.at.service_whatsapp._get_adk_runner_and_service",
+            return_value=(MagicMock(), MagicMock(), "ekaette", None, ""),
+        ), patch(
+            "app.api.v1.at.providers.whatsapp_download_media",
+            new_callable=AsyncMock,
+            return_value=(b"fake-jpeg", "image/jpeg"),
+        ), patch(
+            "app.api.v1.at.service_whatsapp.load_and_consume_cross_channel_context",
+            new_callable=AsyncMock,
+            return_value={
+                "pending_reason": "trade_in_photo_requested",
+                "conversation_summary": "Customer wants to continue a trade-in valuation.",
+            },
+        ), patch(
+            "app.api.v1.at.service_whatsapp.enqueue_media_for_active_live_session",
+            new_callable=AsyncMock,
+            return_value={
+                "status": "queued",
+                "reply_text": "I’ve received your photo and I’m checking it on the call now.",
+            },
+        ) as mock_enqueue, patch(
+            "app.channels.adk_text_adapter.send_media_message",
+            new_callable=AsyncMock,
+        ) as mock_send:
+            reply = await service_whatsapp.handle_image_message(
+                from_="2348001234567",
+                media_id="media-123",
+                mime_type="image/jpeg",
+                caption="Check this phone",
+            )
+
+        assert reply == "I’ve received your photo and I’m checking it on the call now."
+        mock_enqueue.assert_called_once()
+        mock_send.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_image_falls_back_when_no_runner(self):
         """When runner is not available, falls back to direct Gemini vision call."""
         from app.api.v1.at import service_whatsapp

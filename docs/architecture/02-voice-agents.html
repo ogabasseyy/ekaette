@@ -1,214 +1,276 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Ekaette — Voice &amp; Agent Flows</title>
-    <script src="https://cdn.jsdelivr.net/npm/mermaid@11.12.3/dist/mermaid.min.js" integrity="sha384-jFhLSLFn4m565eRAS0CDMWubMqOtfZWWbE8kqgGdU+VHbJ3B2G/4X8u+0BM8MtdU" crossorigin="anonymous"></script>
-    <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 1200px; margin: 0 auto; padding: 20px; background: #f5f5f5; }
-        h1 { color: #1a1a2e; border-bottom: 3px solid #16213e; padding-bottom: 10px; }
-        h2 { color: #16213e; margin-top: 40px; }
-        .breadcrumb { font-size: 14px; color: #666; margin-bottom: 8px; }
-        .breadcrumb a { color: #1565C0; text-decoration: none; }
-        .breadcrumb a:hover { text-decoration: underline; }
-        .diagram-container { background: white; border-radius: 12px; padding: 24px; margin: 20px 0; box-shadow: 0 2px 8px rgba(0,0,0,0.1); overflow-x: auto; }
-        .diagram-count { color: #666; font-size: 14px; }
-        hr { border: none; border-top: 2px solid #e0e0e0; margin: 40px 0; }
-    </style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Voice &amp; Agent Flows</title>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@11.12.3/dist/mermaid.min.js" integrity="sha384-jFhLSLFn4m565eRAS0CDMWubMqOtfZWWbE8kqgGdU+VHbJ3B2G/4X8u+0BM8MtdU" crossorigin="anonymous"></script>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 32px 20px 60px;
+      background: #f5f5f5;
+      color: #1a1a1a;
+      line-height: 1.65;
+    }
+    main {
+      background: #fff;
+      border-radius: 16px;
+      padding: 28px 32px;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+    }
+    h1, h2, h3, h4 {
+      color: #16213e;
+    }
+    h1 {
+      border-bottom: 3px solid #16213e;
+      padding-bottom: 12px;
+      margin-top: 0;
+    }
+    code {
+      background: #f0f4f8;
+      padding: 0.12rem 0.35rem;
+      border-radius: 6px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.95em;
+    }
+    pre {
+      background: #0f172a;
+      color: #e2e8f0;
+      padding: 16px;
+      border-radius: 12px;
+      overflow-x: auto;
+    }
+    pre code {
+      background: transparent;
+      padding: 0;
+      color: inherit;
+    }
+    blockquote {
+      margin: 0;
+      padding: 12px 16px;
+      border-left: 4px solid #1565c0;
+      background: #edf4ff;
+      border-radius: 8px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 18px 0;
+      background: #fff;
+    }
+    th, td {
+      border: 1px solid #d8dee9;
+      padding: 10px 12px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th {
+      background: #edf2f7;
+    }
+    a {
+      color: #1565c0;
+      text-decoration: none;
+    }
+    a:hover {
+      text-decoration: underline;
+    }
+    hr {
+      border: none;
+      border-top: 1px solid #e2e8f0;
+      margin: 28px 0;
+    }
+  </style>
 </head>
 <body>
-    <p class="breadcrumb"><a href="../../Ekaette_Architecture.html">&larr; Architecture Index</a></p>
-    <h1>Voice &amp; Agent Flows</h1>
-    <p class="diagram-count">4 diagrams</p>
-
-    <hr>
-    <h2>1. Voice Conversation Flow (Dedicated Live Voice Service)</h2>
-    <div class="diagram-container">
-        <pre class="mermaid">
-sequenceDiagram
-    participant C as Voice Client<br/>(Browser or SIP Bridge)
+  <main>
+<h1>Voice &amp; Agent Flows</h1>
+<blockquote>Part of <a href="../../Ekaette_Architecture.md">Ekaette System Architecture</a></blockquote>
+<h2>Voice Conversation Flow (Dedicated Live Voice Service)</h2>
+<pre class="mermaid">sequenceDiagram
+    participant C as Voice Client&lt;br/&gt;(Browser or SIP Bridge)
     participant WS as /ws Gateway
-    participant RT as Realtime Module<br/>(session_init + stream_tasks)
+    participant RT as Realtime Module&lt;br/&gt;(session_init + stream_tasks)
     participant LRQ as LiveRequestQueue
     participant RUN as Runner.run_live()
     participant ROOT as ekaette_router
     participant API as Vertex Gemini Live
 
     Note over C,API: Same live path serves browser voice directly and AT/WhatsApp voice via the SIP bridge GatewayClient
-    C->>WS: Connect /ws/{user_id}/{session_id}?tenantId=...&companyId=...
-    WS->>RT: session_init.initialize_session()
-    RT->>RT: Validate origin, tenant, company
-    RT->>RT: Resolve registry config (template + capabilities)
-    RT->>RT: Get/Create ADK Session
-    RT->>RT: Build RunConfig (BIDI, AUDIO, transcription,<br/>compression, Affective Dialog)
-    RT->>LRQ: Create LiveRequestQueue()
-    RT->>RUN: Start run_live(user_id, session_id, queue, config)
-    RUN->>API: Connect to Live API (native audio model)
-    RUN->>RUN: PreloadMemoryTool: fetch past memories
+    C-&gt;&gt;WS: Connect /ws/{user_id}/{session_id}?tenantId=...&amp;companyId=...
+    WS-&gt;&gt;RT: session_init.initialize_session()
+    RT-&gt;&gt;RT: Validate origin, tenant, company
+    RT-&gt;&gt;RT: Resolve registry config (template + capabilities)
+    RT-&gt;&gt;RT: Get/Create ADK Session
+    RT-&gt;&gt;RT: Build RunConfig (BIDI, AUDIO, transcription,&lt;br/&gt;compression, Affective Dialog)
+    RT-&gt;&gt;LRQ: Create LiveRequestQueue()
+    RT-&gt;&gt;RUN: Start run_live(user_id, session_id, queue, config)
+    RUN-&gt;&gt;API: Connect to Live API (native audio model)
+    RUN-&gt;&gt;RUN: PreloadMemoryTool: fetch past memories
 
     Note over C,API: Bidi-Streaming (concurrent tasks)
 
     par upstream_task: Customer speaks
-        C->>WS: Audio blob (PCM 16kHz)
-        WS->>RT: receive audio
-        RT->>LRQ: send_realtime(audio_blob)
-        LRQ->>RUN: Buffered audio
-        RUN->>ROOT: Process input
-        ROOT->>API: Stream audio to Live API
+        C-&gt;&gt;WS: Audio blob (PCM 16kHz)
+        WS-&gt;&gt;RT: receive audio
+        RT-&gt;&gt;LRQ: send_realtime(audio_blob)
+        LRQ-&gt;&gt;RUN: Buffered audio
+        RUN-&gt;&gt;ROOT: Process input
+        ROOT-&gt;&gt;API: Stream audio to Live API
     and downstream_task: Agent responds
-        API->>ROOT: Streaming audio response (PCM 24kHz)
-        ROOT->>RUN: yield Event (audio chunks)
-        RUN->>RT: Event stream
-        RT->>WS: Send audio binary frames
-        WS->>C: Play audio via AudioWorklet
-    and keepalive_task
-        RT->>C: Periodic ping (25s)
-    and silence_nudge_task: Engagement & Filler
-        RT->>RUN: Customer silence nudge (30s timeout)
-        RT->>RUN: Response latency nudge (3s/15s filler during transfers)
+        API-&gt;&gt;ROOT: Streaming audio response (PCM 24kHz)
+        ROOT-&gt;&gt;RUN: yield Event (audio chunks)
+        RUN-&gt;&gt;RT: Event stream
+        RT-&gt;&gt;WS: Send audio binary frames
+        WS-&gt;&gt;C: Play audio via AudioWorklet
+    and keepalive_task: Connection health
+        RT-&gt;&gt;C: Periodic ping (25s interval)
+    and silence_nudge_task: Engagement &amp; Filler
+        RT-&gt;&gt;RUN: Customer silence nudge (30s timeout)
+        RT-&gt;&gt;RUN: Response latency nudge (3s/15s filler during transfers)
     end
 
     Note over C,API: Customer interrupts (barge-in)
-    C->>WS: New audio (interruption)
-    API-->>ROOT: [cancelled generation discarded]
-    ROOT->>API: Process new input immediately
+    C-&gt;&gt;WS: New audio (interruption)
+    API--&gt;&gt;ROOT: [cancelled generation discarded]
+    ROOT-&gt;&gt;API: Process new input immediately
 
     Note over C,API: Disconnect
-    C->>WS: Disconnect
-    RT->>LRQ: close()
-    RUN->>API: Disconnect Live API
-    RT->>RT: after_agent_callback: save to Memory Bank (async)
-        </pre>
-    </div>
-
-    <h3>Affective Dialog</h3>
-    <p>The Live <code>RunConfig</code>'s <code>Affective Dialog</code> setting lets the native-audio model adapt prosody, pacing, and phrasing to the caller's emotional tone without changing routing, safety policy, or tool permissions.</p>
-    <p>In this architecture it improves spoken warmth and acknowledgement quality, but it is not a replacement for routing rules or safety controls.</p>
-
-    <hr>
-    <h2>2. Multi-Agent Transfer Flow (Image During Voice Call)</h2>
-    <div class="diagram-container">
-        <pre class="mermaid">
-sequenceDiagram
+    C-&gt;&gt;WS: Disconnect
+    RT-&gt;&gt;LRQ: close()
+    RUN-&gt;&gt;API: Disconnect Live API
+    RT-&gt;&gt;RT: after_agent_callback: save to Memory Bank (async)</pre>
+<h3>Affective Dialog</h3>
+<p>The Live <code>RunConfig</code>'s <code>Affective Dialog</code> setting lets the native-audio model adapt prosody, pacing, and phrasing to the caller's emotional tone without changing routing, safety policy, or tool permissions.</p>
+<p>In this architecture it should improve:</p>
+<ul>
+<li>warmer or calmer spoken delivery when the caller sounds frustrated or uncertain</li>
+<li>more natural acknowledgement language during transfers and callbacks</li>
+<li>smoother voice UX without changing business logic</li>
+</ul>
+<p>It should not be treated as:</p>
+<ul>
+<li>a replacement for routing rules</li>
+<li>a safety or policy mechanism</li>
+<li>permission to improvise outside the configured agent and tool boundaries</li>
+</ul>
+<hr>
+<h2>Multi-Agent Transfer Flow (Image During Voice Call)</h2>
+<pre class="mermaid">sequenceDiagram
     participant C as Customer
-    participant ROOT as ekaette_router<br/>(Live API Voice)
-    participant VA as vision_agent<br/>(Gemini 3 Flash)
-    participant VLA as valuation_agent<br/>(Gemini 3 Flash)
+    participant ROOT as ekaette_router&lt;br/&gt;(Live API Voice)
+    participant VA as vision_agent&lt;br/&gt;(Live API Voice + vision tools)
+    participant VLA as valuation_agent&lt;br/&gt;(Live API Voice)
     participant FS as Firestore
     participant CS as Cloud Storage
 
-    C->>ROOT: "I want to swap my phone"
-    ROOT->>C: "Sure! Please send me photos of your device"
+    C-&gt;&gt;ROOT: &quot;I want to swap my phone&quot;
+    ROOT-&gt;&gt;C: &quot;Sure! Please send me photos of your device&quot;
 
-    C->>ROOT: [3 photos uploaded via WebSocket]
-    ROOT->>CS: Store images in Cloud Storage
-    ROOT->>ROOT: Detect intent: visual analysis needed
+    C-&gt;&gt;ROOT: [3 photos uploaded via WebSocket]
+    ROOT-&gt;&gt;CS: Store images in Cloud Storage
+    ROOT-&gt;&gt;ROOT: Detect intent: visual analysis needed
 
     Note over ROOT,VA: ADK Agent Transfer
-    ROOT->>VA: Transfer with context + image references
+    ROOT-&gt;&gt;VA: Transfer with context + image references
+    Note over ROOT: Audio transcription enabled automatically
 
-    VA->>CS: Fetch images
-    VA->>VA: Gemini 3 Flash Vision + Visual Thinking
-    Note over VA: Zooms into screen scratch<br/>Crops corner dent<br/>Annotates damage areas
-    VA->>VA: Result: iPhone 14 Pro, Good condition
-    VA->>ROOT: Transfer back with analysis
+    VA-&gt;&gt;CS: Fetch images
+    VA-&gt;&gt;VA: Live model narrates + calls analyze_device_image_tool
+    VA-&gt;&gt;VA: VISION_MODEL (Standard API) analyzes media
+    Note over VA: Zooms into screen scratch&lt;br/&gt;Crops corner dent&lt;br/&gt;Annotates damage areas
+    VA-&gt;&gt;VA: Result: iPhone 14 Pro, Good condition
 
-    ROOT->>VLA: Transfer with vision results
-    VLA->>FS: Load electronics pricing rubric
-    VLA->>VLA: Grade: Screen 7/10, Body 6/10, Battery 8/10
-    VLA->>VLA: Calculate: N185,000 trade-in value
-    VLA->>ROOT: Transfer back with valuation
+    VA-&gt;&gt;ROOT: Transfer back with analysis
 
-    ROOT->>C: "Your iPhone 14 Pro is in Good condition.<br/>I can offer N185,000 for the trade-in."
+    ROOT-&gt;&gt;VLA: Transfer with vision results
+    VLA-&gt;&gt;FS: Load electronics pricing rubric
+    VLA-&gt;&gt;VLA: Grade: Screen 7/10, Body 6/10, Battery 8/10
+    VLA-&gt;&gt;VLA: Calculate: N185,000 trade-in value
+    VLA-&gt;&gt;ROOT: Transfer back with valuation
 
-    C->>ROOT: "Yes, tomorrow afternoon"
-    Note over ROOT: Routes to booking_agent...
-        </pre>
-    </div>
+    ROOT-&gt;&gt;C: &quot;Your iPhone 14 Pro is in Good condition.&lt;br/&gt;I can offer N185,000 for the trade-in.&lt;br/&gt;Would you like to schedule a swap appointment?&quot;
 
-    <hr>
-    <h2>3. Learning Layer Flow (Memory Bank)</h2>
-    <div class="diagram-container">
-        <pre class="mermaid">
-sequenceDiagram
+    C-&gt;&gt;ROOT: &quot;Yes, tomorrow afternoon&quot;
+    Note over ROOT: Routes to booking_agent...</pre>
+<hr>
+<h2>Learning Layer Flow (Memory Bank)</h2>
+<pre class="mermaid">sequenceDiagram
     participant C as Customer
     participant ROOT as ekaette_router
-    participant MB as Memory Bank<br/>(Agent Engine)
-    participant GEMINI as Gemini<br/>(Extraction)
+    participant MB as Memory Bank&lt;br/&gt;(Agent Engine)
+    participant GEMINI as Gemini&lt;br/&gt;(Extraction)
 
     Note over C,GEMINI: Session 1: New Customer
-    C->>ROOT: "Hi, I want to swap my iPhone 14 Pro"
-    ROOT->>MB: PreloadMemoryTool.search_memory()
-    MB-->>ROOT: (no memories found)
-    ROOT->>C: "Welcome! Send me photos of your device"
+    C-&gt;&gt;ROOT: &quot;Hi, I want to swap my iPhone 14 Pro&quot;
+    ROOT-&gt;&gt;MB: PreloadMemoryTool.search_memory()
+    MB--&gt;&gt;ROOT: (no memories found)
+
+    ROOT-&gt;&gt;C: &quot;Welcome! Send me photos of your device&quot;
     Note over C,ROOT: ...vision, valuation, booking flow...
-    ROOT->>C: "Booked! Pickup tomorrow at 10 AM at Lekki"
+    ROOT-&gt;&gt;C: &quot;Booked! Pickup tomorrow at 10 AM at Lekki&quot;
 
     Note over ROOT,GEMINI: After session ends (async)
-    ROOT->>GEMINI: after_agent_callback: add_events_to_memory()
-    GEMINI->>GEMINI: Extract key facts
-    GEMINI->>MB: Store memories (scoped to user_id)
+    ROOT-&gt;&gt;GEMINI: after_agent_callback: add_events_to_memory()
+    GEMINI-&gt;&gt;GEMINI: Extract key facts:&lt;br/&gt;Customer name: Chidi,&lt;br/&gt;Traded iPhone 14 Pro Good N185K,&lt;br/&gt;Prefers morning pickups,&lt;br/&gt;Located in Lekki
+    GEMINI-&gt;&gt;MB: Store memories (scoped to user_id)
 
-    Note over C,GEMINI: Session 2: Returning Customer
-    C->>ROOT: "Hi, I'm back!"
-    ROOT->>MB: PreloadMemoryTool.search_memory()
-    MB-->>ROOT: Memories: Chidi, iPhone 14 Pro, Lekki
-    ROOT->>C: "Welcome back Chidi!"
+    Note over C,GEMINI: Session 2: Returning Customer (days later)
+    C-&gt;&gt;ROOT: &quot;Hi, I&#x27;m back!&quot;
+    ROOT-&gt;&gt;MB: PreloadMemoryTool.search_memory()
+    MB--&gt;&gt;ROOT: Memories:&lt;br/&gt;Chidi traded iPhone 14 Pro,&lt;br/&gt;Prefers morning pickups,&lt;br/&gt;Lekki location
+
+    ROOT-&gt;&gt;C: &quot;Welcome back Chidi!&lt;br/&gt;Looking to swap something else today?&quot;
 
     Note over C,GEMINI: Session 3: Updated info
-    C->>ROOT: "I moved to Victoria Island now"
-    ROOT->>MB: after_agent_callback
-    MB->>GEMINI: Consolidation check
-    GEMINI->>MB: UPDATE: Lekki to Victoria Island
+    C-&gt;&gt;ROOT: &quot;I moved to Victoria Island now&quot;
+    ROOT-&gt;&gt;MB: after_agent_callback
+    MB-&gt;&gt;GEMINI: Consolidation check
+    GEMINI-&gt;&gt;MB: UPDATE memory:&lt;br/&gt;Lekki -&gt; Victoria Island&lt;br/&gt;(contradiction resolved)
 
     Note over C,GEMINI: Session 4: Cross-Channel Continuity (Phone → WhatsApp)
-    C->>ROOT: [WhatsApp text: photos + "Here are the photos"]
-    ROOT->>MB: PreloadMemoryTool.search_memory(user_id=phone-{hash})
-    MB-->>ROOT: Memories from phone call:<br/>Chidi wants iPhone 14 Pro swap
-    ROOT->>C: "Hi Chidi! I can see your iPhone photos.<br/>Let me analyze them for the trade-in we discussed."
-        </pre>
-    </div>
-
-    <hr>
-    <h2>4. Latency Mitigation Architecture</h2>
-    <div class="diagram-container">
-        <pre class="mermaid">
-graph TB
-    subgraph "Latency Sources"
-        L1["Agent Transfer<br/>5-10 sec dead air"]
-        L2["Tool Execution<br/>2-5 sec blocking"]
-        L3["Audio Token Bloat<br/>~25 tok/sec accumulation"]
-        L4["Long-lived Voice Streams<br/>Competing with short-lived HTTP ingress"]
-        L5["Session Saves<br/>200ms per Firestore write"]
-        L6["Thinking Overhead<br/>Default thinking budget"]
+    C-&gt;&gt;ROOT: [WhatsApp text: photos + &quot;Here are the photos&quot;]
+    ROOT-&gt;&gt;MB: PreloadMemoryTool.search_memory(user_id=phone-{hash})
+    MB--&gt;&gt;ROOT: Memories from phone call:&lt;br/&gt;Chidi wants iPhone 14 Pro swap
+    ROOT-&gt;&gt;C: &quot;Hi Chidi! I can see your iPhone photos.&lt;br/&gt;Let me analyze them for the trade-in we discussed.&quot;</pre>
+<hr>
+<h2>Latency Mitigation Architecture</h2>
+<pre class="mermaid">graph TB
+    subgraph &quot;Latency Sources&quot;
+        L1[&quot;Agent Transfer&lt;br/&gt;5-10 sec dead air&quot;]
+        L2[&quot;Tool Execution&lt;br/&gt;2-5 sec blocking&quot;]
+        L3[&quot;Audio Token Bloat&lt;br/&gt;~25 tok/sec accumulation&quot;]
+        L4[&quot;Long-lived Voice Streams&lt;br/&gt;Competing with short-lived HTTP ingress&quot;]
+        L5[&quot;Session Saves&lt;br/&gt;200ms per Firestore write&quot;]
+        L6[&quot;Thinking Overhead&lt;br/&gt;Default thinking budget&quot;]
     end
 
-    subgraph "Mitigations"
-        M1["Response Latency Watchdog<br/>Server-side: 3s nudge + 15s follow-up<br/>Model-side: mandatory filler instructions<br/>Channel-aware: voice only, not text"]
-        M2["NON_BLOCKING Functions<br/>behavior: NON_BLOCKING<br/>scheduling: WHEN_IDLE"]
-        M3["Context Compression<br/>trigger: 80k tokens<br/>target: 40k sliding window"]
-        M4["Dedicated Live Voice Service<br/>Keeps long-lived /ws audio off the main HTTP control plane"]
-        M5["Async Session Saves<br/>asyncio background tasks"]
-        M6["Thinking Budget Control<br/>Router: 256, Valuation: 2048"]
+    subgraph &quot;Mitigations&quot;
+        M1[&quot;Response Latency Watchdog&lt;br/&gt;Server-side: 3s nudge + 15s follow-up&lt;br/&gt;Model-side: mandatory filler instructions&lt;br/&gt;Channel-aware: voice only, not text&quot;]
+        M2[&quot;NON_BLOCKING Functions&lt;br/&gt;behavior: NON_BLOCKING&lt;br/&gt;scheduling: WHEN_IDLE&quot;]
+        M3[&quot;Context Compression&lt;br/&gt;trigger: 80k tokens&lt;br/&gt;target: 40k sliding window&quot;]
+        M4[&quot;Dedicated Live Voice Service&lt;br/&gt;Keeps long-lived /ws audio off the main HTTP control plane&quot;]
+        M5[&quot;Async Session Saves&lt;br/&gt;asyncio background tasks&lt;br/&gt;Never block audio stream&quot;]
+        M6[&quot;Thinking Budget Control&lt;br/&gt;Router: 256 (fast)&lt;br/&gt;Valuation: 2048 (accurate)&quot;]
     end
 
-    L1 --> M1
-    L2 --> M2
-    L3 --> M3
-    L4 --> M4
-    L5 --> M5
-    L6 --> M6
+    L1 --&gt; M1
+    L2 --&gt; M2
+    L3 --&gt; M3
+    L4 --&gt; M4
+    L5 --&gt; M5
+    L6 --&gt; M6
 
     classDef danger fill:#FFEBEE,stroke:#C62828,stroke-width:2px
     classDef fix fill:#E8F5E9,stroke:#2E7D32,stroke-width:2px
-    class L1,L2,L3,L4,L5,L6 danger
-    class M1,M2,M3,M4,M5,M6 fix
-        </pre>
-    </div>
 
-    <script>
-        mermaid.initialize({ startOnLoad: true, theme: 'default', securityLevel: 'loose' });
-    </script>
+    class L1,L2,L3,L4,L5,L6 danger
+    class M1,M2,M3,M4,M5,M6 fix</pre>
+  </main>
+  <script>
+  mermaid.initialize({ startOnLoad: true, theme: 'default', securityLevel: 'loose' });
+</script>
 </body>
 </html>
