@@ -521,17 +521,55 @@ async def downstream_task(
         message["id"] = current + 1
         _session_set("temp:server_message_seq", current + 1)
         _session_set("temp:last_server_message", message)
+        return message
 
-    def _queue_end_after_speaking(reason: str) -> None:
+    def _queue_end_after_speaking(reason: str) -> dict[str, Any] | None:
         if bool(_session_get("temp:call_end_after_speaking_requested", False)):
-            return
+            return None
         _session_set("temp:call_end_after_speaking_requested", True)
-        _queue_session_server_message(
+        return _queue_session_server_message(
             {
                 "type": "call_control",
                 "action": "end_after_speaking",
                 "reason": reason,
             }
+        )
+
+    async def _emit_end_after_speaking(reason: str) -> None:
+        message = _queue_end_after_speaking(reason)
+        if not message:
+            return
+        payload = {k: v for k, v in message.items() if k != "id"}
+        await websocket.send_text(json.dumps(payload))
+        nonlocal last_structured_message_id
+        try:
+            last_structured_message_id = max(last_structured_message_id, int(message.get("id", 0)))
+        except (TypeError, ValueError):
+            pass
+
+    def _looks_like_callback_closing(text: str) -> bool:
+        normalized = " ".join((text or "").lower().split())
+        if not normalized or "?" in normalized:
+            return False
+        callback_markers = (
+            "call you back",
+            "call back shortly",
+            "same number",
+            "callback",
+            "we will call",
+            "we'll call",
+        )
+        farewell_markers = (
+            "have a great day",
+            "goodbye",
+            "bye.",
+            " bye",
+            "take care",
+            "speak soon",
+            "talk soon",
+        )
+        return any(marker in normalized for marker in callback_markers) or any(
+            marker in normalized for marker in farewell_markers
         )
 
     current_agent_raw = _session_get("temp:active_agent", "ekaette_router")
@@ -977,6 +1015,18 @@ async def downstream_task(
                                         and pending_target.strip() == current_agent
                                     ):
                                         _clear_pending_handoff()
+                                    session_id_for_close = _session_get("app:session_id", "")
+                                    if (
+                                        bool(_session_get("temp:callback_requested", False))
+                                        and not (
+                                            isinstance(session_id_for_close, str)
+                                            and session_id_for_close.strip().startswith("sip-callback-")
+                                        )
+                                        and _looks_like_callback_closing(text)
+                                    ):
+                                        await _emit_end_after_speaking(
+                                            "callback_acknowledged"
+                                        )
 
                     # Interrupted -> finalize + clear playback
                     if event.interrupted:

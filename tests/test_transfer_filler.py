@@ -947,6 +947,60 @@ class TestWatchdogClearingInDownstream:
         } in websocket.sent_texts
 
     @pytest.mark.asyncio
+    async def test_finished_callback_ack_emits_end_after_speaking_directly(self):
+        ctx = _make_ctx(_FakeWebSocket())
+        ctx.session_state.update(
+            {
+                "app:channel": "voice",
+                "app:session_id": "sip-test-123",
+                "temp:callback_requested": True,
+            }
+        )
+
+        websocket, _, _ = await _run_downstream_events(
+            _make_live_event(
+                output_transcription=SimpleNamespace(
+                    text="No problem at all. We will call you back shortly on this same number. Have a great day.",
+                    finished=True,
+                )
+            ),
+            ctx=ctx,
+        )
+
+        assert {
+            "type": "call_control",
+            "action": "end_after_speaking",
+            "reason": "callback_acknowledged",
+        } in websocket.sent_texts
+
+    @pytest.mark.asyncio
+    async def test_callback_follow_up_question_does_not_emit_end_after_speaking(self):
+        ctx = _make_ctx(_FakeWebSocket())
+        ctx.session_state.update(
+            {
+                "app:channel": "voice",
+                "app:session_id": "sip-test-123",
+                "temp:callback_requested": True,
+            }
+        )
+
+        websocket, _, _ = await _run_downstream_events(
+            _make_live_event(
+                output_transcription=SimpleNamespace(
+                    text="I can definitely call you back. Is there something you wanted to discuss when I call?",
+                    finished=True,
+                )
+            ),
+            ctx=ctx,
+        )
+
+        assert {
+            "type": "call_control",
+            "action": "end_after_speaking",
+            "reason": "callback_acknowledged",
+        } not in websocket.sent_texts
+
+    @pytest.mark.asyncio
     async def test_audio_output_marks_session_greeted(self):
         ctx = _make_ctx(_FakeWebSocket())
 
