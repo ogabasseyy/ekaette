@@ -563,9 +563,15 @@ async def initialize_session(
                 session_state_ref["app:session_id"] = resolved_session_id
 
     # Collect the final session state for voice + canonical fields.
+    # Use the live session.state directly (not a copy) so that stream_tasks
+    # _session_set() writes (temp:greeted, temp:last_user_turn, etc.) are
+    # immediately visible to ADK callbacks via tool_context.state.
     if session is not None:
-        session_state = dict(getattr(session, "state", {}) or {})
-        session_state.update(resumed_state_updates)
+        session_state = getattr(session, "state", None)
+        if not isinstance(session_state, dict):
+            session_state = {}
+        if resumed_state_updates:
+            session_state.update(resumed_state_updates)
     else:
         session_state = initial_state
 

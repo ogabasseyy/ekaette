@@ -815,10 +815,16 @@ async def after_model_valuation_sanity(
     # before speaking do not accidentally suppress the initial greeting.
     # In native-audio mode the response may contain only audio inline_data
     # (no text parts), so we check _response_has_content as well.
+    # Belt-and-suspenders: track model turn count and mark greeted after the
+    # second turn — in native-audio mode, audio isn't in LlmResponse, so
+    # has_content may be False even though the greeting was delivered.
     text = _response_text(llm_response)
     has_content = text or _response_has_content(llm_response)
-    if has_content and not bool(callback_context.state.get("temp:greeted", False)):
-        callback_context.state["temp:greeted"] = True
+    _turn_count = int(_state_get(callback_context.state, "temp:model_turn_count", 0)) + 1
+    callback_context.state["temp:model_turn_count"] = _turn_count
+    if not bool(callback_context.state.get("temp:greeted", False)):
+        if has_content or _turn_count > 1:
+            callback_context.state["temp:greeted"] = True
     pending_target = _state_get(callback_context.state, "temp:pending_handoff_target_agent", "")
     if (
         has_content
