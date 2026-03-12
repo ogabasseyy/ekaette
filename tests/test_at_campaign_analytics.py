@@ -75,15 +75,117 @@ class TestCampaignAnalytics:
         summary = overview.json()["summary"]
         assert summary["campaigns_total"] == 1
         assert summary["total_sent"] == 2
-        assert summary["total_delivered"] == 1
+        assert summary["total_delivered"] == 0
         assert summary["total_failed"] == 1
 
         campaign_resp = analytics_client.get(f"/api/v1/at/analytics/campaigns/{campaign_id}")
         campaign = campaign_resp.json()["campaign"]
         assert campaign["campaign_name"] == "Weekend Promo"
         assert campaign["sent_total"] == 2
-        assert campaign["delivered_total"] == 1
+        assert campaign["delivered_total"] == 0
         assert campaign["failed_total"] == 1
+
+    @patch("app.api.v1.at.providers.send_sms", new_callable=AsyncMock)
+    def test_sms_delivery_report_updates_analytics(
+        self,
+        mock_send: AsyncMock,
+        analytics_client: TestClient,
+    ) -> None:
+        mock_send.return_value = {
+            "SMSMessageData": {
+                "Recipients": [
+                    {
+                        "number": "+2348011111111",
+                        "status": "Success",
+                        "messageId": "ATXid_test_789",
+                    }
+                ]
+            }
+        }
+
+        resp = analytics_client.post(
+            "/api/v1/at/sms/campaign",
+            json={
+                "to": ["+2348011111111"],
+                "message": "Weekend promo: 5% off",
+                "tenant_id": "public",
+                "company_id": "ekaette-electronics",
+                "campaign_name": "Weekend Promo",
+            },
+        )
+        assert resp.status_code == 200
+        campaign_id = resp.json().get("campaign_id")
+        assert isinstance(campaign_id, str) and campaign_id
+
+        dlr = analytics_client.post(
+            "/api/v1/at/sms/delivery-report",
+            data={
+                "messageId": "ATXid_test_789",
+                "status": "Success",
+                "phoneNumber": "+2348011111111",
+            },
+        )
+        assert dlr.status_code == 200
+        assert dlr.json()["campaign_id"] == campaign_id
+
+        campaign_resp = analytics_client.get(f"/api/v1/at/analytics/campaigns/{campaign_id}")
+        campaign = campaign_resp.json()["campaign"]
+        assert campaign["delivered_total"] == 1
+
+    @patch("app.api.v1.at.providers.send_sms", new_callable=AsyncMock)
+    def test_sms_delivery_report_uses_campaign_scope_from_message_id(
+        self,
+        mock_send: AsyncMock,
+        analytics_client: TestClient,
+    ) -> None:
+        from app.api.v1.at import campaign_analytics
+
+        mock_send.return_value = {
+            "SMSMessageData": {
+                "Recipients": [
+                    {
+                        "number": "+2348011111111",
+                        "status": "Success",
+                        "messageId": "ATXid_scope_123",
+                    }
+                ]
+            }
+        }
+
+        send_resp = analytics_client.post(
+            "/api/v1/at/sms/campaign",
+            json={
+                "to": ["+2348011111111"],
+                "message": "Store update",
+                "tenant_id": "tenant-baci",
+                "company_id": "baci-technologies",
+                "campaign_id": "cmp-baci-sms-001",
+                "campaign_name": "Store Update",
+            },
+        )
+        assert send_resp.status_code == 200
+
+        dlr_campaign_id = campaign_analytics.record_delivery_report(
+            tenant_id="public",
+            company_id="ekaette-electronics",
+            recipient="+2348011111111",
+            status="delivered",
+            message_id="ATXid_scope_123",
+        )
+        assert dlr_campaign_id == "cmp-baci-sms-001"
+
+        snapshot = campaign_analytics.campaign_snapshot("cmp-baci-sms-001")
+        assert snapshot is not None
+        assert snapshot["tenant_id"] == "tenant-baci"
+        assert snapshot["company_id"] == "baci-technologies"
+        assert snapshot["delivered_total"] == 1
+
+        default_overview = analytics_client.get(
+            "/api/v1/at/analytics/overview",
+            params={"tenantId": "public", "companyId": "ekaette-electronics"},
+        )
+        assert default_overview.status_code == 200
+        assert default_overview.json()["summary"]["campaigns_total"] == 0
 
     @patch("app.api.v1.at.providers.send_sms", new_callable=AsyncMock)
     @patch("app.api.v1.at.bridge_text.query_text", new_callable=AsyncMock)

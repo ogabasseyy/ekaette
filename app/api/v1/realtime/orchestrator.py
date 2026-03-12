@@ -7,6 +7,7 @@ import logging
 
 from fastapi import WebSocketDisconnect
 
+from app.api.v1.realtime.live_media_bridge import active_live_media_task
 from app.api.v1.realtime.models import SessionInitContext
 from app.api.v1.realtime.stream_tasks import (
     create_initial_silence_state,
@@ -17,6 +18,18 @@ from app.api.v1.realtime.stream_tasks import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _log_background_task_failure(task: asyncio.Task[object]) -> None:
+    if task.cancelled():
+        return
+    try:
+        exc = task.exception()
+    except Exception:
+        logger.error("Background task failure could not be inspected", exc_info=True)
+        return
+    if exc is not None and not isinstance(exc, WebSocketDisconnect):
+        logger.error("Background task %s failed: %s", task.get_name(), exc, exc_info=exc)
 
 
 async def run_stream_loop(ctx: SessionInitContext, live_request_queue) -> None:
@@ -42,6 +55,11 @@ async def run_stream_loop(ctx: SessionInitContext, live_request_queue) -> None:
             silence_nudge_task(live_request_queue, session_alive, silence_state),
             name="silence_nudge_task",
         )
+        live_media = asyncio.create_task(
+            active_live_media_task(ctx, live_request_queue, session_alive, silence_state),
+            name="active_live_media_task",
+        )
+        live_media.add_done_callback(_log_background_task_failure)
         streaming_tasks = {upstream, downstream}
 
         # The bidi session should end when either streaming side finishes:
@@ -56,9 +74,9 @@ async def run_stream_loop(ctx: SessionInitContext, live_request_queue) -> None:
             if exc and not isinstance(exc, WebSocketDisconnect):
                 raise exc
 
-        for task in pending | {keepalive, nudge}:
+        for task in pending | {keepalive, nudge, live_media}:
             task.cancel()
-        remaining = pending | {keepalive, nudge}
+        remaining = pending | {keepalive, nudge, live_media}
         if remaining:
             await asyncio.gather(*remaining, return_exceptions=True)
     except WebSocketDisconnect:

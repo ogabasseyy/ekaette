@@ -48,6 +48,7 @@ _campaigns: dict[str, CampaignState] = {}
 _events: list[dict[str, Any]] = []
 _seen_event_ids: dict[str, float] = {}
 _recipient_last_campaign: dict[tuple[str, str, str], str] = {}
+_message_id_campaign: dict[str, str] = {}
 
 
 def _now_iso() -> str:
@@ -64,6 +65,10 @@ def _normalize_channel(channel: str) -> CampaignChannel:
 def _normalize_recipient(recipient: str) -> str:
     cleaned = _PHONE_CLEAN_RE.sub("", (recipient or "").strip())
     return cleaned.lower()
+
+
+def _normalize_message_id(message_id: str) -> str:
+    return (message_id or "").strip()
 
 
 def _build_campaign_id(channel: str) -> str:
@@ -174,6 +179,21 @@ def _extract_recipient_statuses(provider_result: dict[str, Any]) -> dict[str, st
     return statuses
 
 
+def _index_provider_message_ids(provider_result: dict[str, Any], campaign_id: str) -> None:
+    sms_data = provider_result.get("SMSMessageData")
+    sms_recipients = sms_data.get("Recipients") if isinstance(sms_data, dict) else None
+    if not isinstance(sms_recipients, list):
+        return
+
+    with _lock:
+        for item in sms_recipients:
+            if not isinstance(item, dict):
+                continue
+            message_id = _normalize_message_id(str(item.get("messageId") or ""))
+            if message_id:
+                _message_id_campaign[message_id] = campaign_id
+
+
 def _append_event(event: dict[str, Any]) -> None:
     with _lock:
         _events.append(event)
@@ -187,6 +207,17 @@ def _update_recipient_index(tenant_id: str, company_id: str, recipients: list[st
             normalized_recipient = _normalize_recipient(recipient)
             if normalized_recipient:
                 _recipient_last_campaign[(tenant_id, company_id, normalized_recipient)] = campaign_id
+
+
+def _campaign_scope_for_id(campaign_id: str) -> tuple[str, str] | None:
+    normalized_campaign_id = (campaign_id or "").strip()
+    if not normalized_campaign_id:
+        return None
+    with _lock:
+        state = _campaigns.get(normalized_campaign_id)
+        if state is None:
+            return None
+        return state.tenant_id, state.company_id
 
 
 def _compute_kpis(state: CampaignState) -> dict[str, float]:
@@ -330,26 +361,23 @@ def record_outbound_campaign(
     normalized_recipients = [recipient for recipient in recipients if _normalize_recipient(recipient)]
     status_map = _extract_recipient_statuses(provider_result)
 
-    delivered = 0
     failed = 0
     for recipient in normalized_recipients:
         normalized_recipient = _normalize_recipient(recipient)
-        status = status_map.get(normalized_recipient, "success")
+        status = status_map.get(normalized_recipient, "")
         if _status_failed(status):
             failed += 1
-        elif _status_success(status) or not status:
-            delivered += 1
 
     now = _now_iso()
     with _lock:
         state.updated_at = now
         state.sent_total += len(normalized_recipients)
-        state.delivered_total += delivered
         state.failed_total += failed
         for recipient in normalized_recipients:
             state.recipients.add(_normalize_recipient(recipient))
 
     _update_recipient_index(state.tenant_id, state.company_id, normalized_recipients, state.campaign_id)
+    _index_provider_message_ids(provider_result, state.campaign_id)
 
     _append_event(
         {
@@ -360,7 +388,7 @@ def record_outbound_campaign(
             "company_id": state.company_id,
             "campaign_id": state.campaign_id,
             "sent": len(normalized_recipients),
-            "delivered": delivered,
+            "delivered": 0,
             "failed": failed,
         }
     )
@@ -483,6 +511,68 @@ def record_event(
     return state.campaign_id
 
 
+def resolve_campaign_for_delivery_report(
+    *,
+    tenant_id: str,
+    company_id: str,
+    recipient: str | None = None,
+    message_id: str | None = None,
+) -> str:
+    normalized_message_id = _normalize_message_id(message_id or "")
+    if normalized_message_id:
+        with _lock:
+            campaign_id = _message_id_campaign.get(normalized_message_id, "")
+        if campaign_id:
+            return campaign_id
+
+    normalized_recipient = _normalize_recipient(recipient or "")
+    if normalized_recipient:
+        with _lock:
+            return _recipient_last_campaign.get((tenant_id, company_id, normalized_recipient), "")
+    return ""
+
+
+def record_delivery_report(
+    *,
+    tenant_id: str,
+    company_id: str,
+    recipient: str,
+    status: str,
+    message_id: str | None = None,
+    event_id: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> str | None:
+    """Apply an SMS delivery report to the matching outbound campaign when known."""
+    event_type = (status or "").strip().lower()
+    if event_type not in {"delivered", "failed"}:
+        return None
+
+    resolved_campaign_id = resolve_campaign_for_delivery_report(
+        tenant_id=tenant_id,
+        company_id=company_id,
+        recipient=recipient,
+        message_id=message_id,
+    )
+    if not resolved_campaign_id:
+        return None
+
+    resolved_scope = _campaign_scope_for_id(resolved_campaign_id)
+    if resolved_scope is not None:
+        tenant_id, company_id = resolved_scope
+
+    return record_event(
+        event_type=event_type,
+        channel="sms",
+        tenant_id=tenant_id,
+        company_id=company_id,
+        campaign_id=resolved_campaign_id,
+        recipient=recipient,
+        reference=message_id,
+        event_id=event_id,
+        metadata=metadata,
+    )
+
+
 def list_known_contacts(
     *,
     tenant_id: str,
@@ -531,3 +621,4 @@ def reset_state() -> None:
         _events.clear()
         _seen_event_ids.clear()
         _recipient_last_campaign.clear()
+        _message_id_campaign.clear()
