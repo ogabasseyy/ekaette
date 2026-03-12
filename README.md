@@ -342,6 +342,15 @@ docker run -p 8080:8080 --env-file .env ekaette
 
 ### Cloud Run (deploy script)
 
+Fastest recommended release flow:
+
+```bash
+# Build one image, deploy it to both east-region services
+./scripts/deploy_cloud_run_release.sh
+```
+
+Service-specific deploys are still available when needed:
+
 ```bash
 # Uses .env for env vars, runs release gates before deploy
 ./scripts/deploy_cloud_run_main.sh

@@ -25,6 +25,7 @@ RUN_DOCS_CHECK="${RUN_DOCS_CHECK:-0}"
 RELEASE_GATE_STRICT="${RELEASE_GATE_STRICT:-1}"
 SESSION_AFFINITY="${SESSION_AFFINITY:-1}"
 APP_MODULE="${APP_MODULE:-}"
+IMAGE_URI="${IMAGE_URI:-${IMAGE:-}}"
 WA_SERVICE_TARGET_SERVICE="${WA_SERVICE_TARGET_SERVICE:-}"
 WA_SERVICE_TARGET_REGION="${WA_SERVICE_TARGET_REGION:-${REGION}}"
 WA_SERVICE_API_BASE_URL_OVERRIDE="${WA_SERVICE_API_BASE_URL_OVERRIDE:-}"
@@ -37,7 +38,7 @@ ENV_YAML="$(mktemp "${TMPDIR:-/tmp}/ekaette-cloudrun-env-XXXXXX")"
 ENV_ONLY=0
 
 usage() {
-  echo "Usage: SERVICE=<service> [REGION=<region>] $0 [--env-only]" >&2
+  echo "Usage: SERVICE=<service> [REGION=<region>] [IMAGE_URI=<image>] $0 [--env-only]" >&2
   exit 1
 }
 
@@ -267,6 +268,30 @@ run_source_deploy() {
   wait "${deploy_pid}"
 }
 
+run_image_deploy() {
+  if [[ -z "${IMAGE_URI}" ]]; then
+    echo "IMAGE_URI is required for image-based deploys." >&2
+    exit 1
+  fi
+
+  echo "Deploying prebuilt image ${IMAGE_URI} to ${SERVICE}..."
+  gcloud run deploy "${SERVICE}" \
+    --image "${IMAGE_URI}" \
+    --project "${PROJECT}" \
+    --region "${REGION}" \
+    --port="${PORT}" \
+    --timeout="${TIMEOUT}" \
+    --memory="${MEMORY}" \
+    --cpu="${CPU}" \
+    --concurrency="${CONCURRENCY}" \
+    --min-instances="${MIN_INSTANCES}" \
+    --cpu-throttling \
+    "${SESSION_AFFINITY_FLAG[@]}" \
+    --env-vars-file="${ENV_YAML}" \
+    "${DEPLOY_AUTH_FLAG[@]}" \
+    --quiet
+}
+
 if [[ "${ENV_ONLY}" == "1" ]]; then
   echo "Updating Cloud Run service config and env vars only (no rebuild)..."
   gcloud run services update "${SERVICE}" \
@@ -283,6 +308,8 @@ if [[ "${ENV_ONLY}" == "1" ]]; then
     --env-vars-file="${ENV_YAML}" \
     "${UPDATE_AUTH_FLAG[@]}" \
     --quiet
+elif [[ -n "${IMAGE_URI}" ]]; then
+  run_image_deploy
 else
   run_source_deploy
 fi

@@ -1,0 +1,12 @@
+.gcloudignore
+.git
+.github
+
+#!include:.gitignore
+
+# Local/generated artifacts not needed for Cloud Build context.
+docs/architecture/*.html
+frontend/playwright-report/
+frontend/test-results/
+scripts/__pycache__/
+tmp/
