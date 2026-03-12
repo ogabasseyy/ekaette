@@ -248,8 +248,8 @@ async def _on_session_started(session: WaSession, msg: dict) -> None:
         session._greeting_lock_active = True
         try:
             await session.gateway_client.send_text(json.dumps({
-                "type": "text",
-                "text": "[Call connected]",
+                "type": "system_text",
+                "text": "Call connected",
             }))
         except Exception:
             session._model_speaking = False

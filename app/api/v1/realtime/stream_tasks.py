@@ -239,13 +239,13 @@ async def upstream_task(
 
             # Any valid client JSON message counts as activity.
             msg_type = json_message.get("type", "")
-            if msg_type in ("text", "image", "negotiate", "activity_start"):
+            if msg_type in ("text", "system_text", "image", "negotiate", "activity_start"):
                 now = time.monotonic()
                 silence_state.last_client_activity = now
                 silence_state.silence_nudge_count = 0
                 silence_state.awaiting_agent_response = False
                 silence_state.response_nudge_count = 0
-                if msg_type in ("text", "image", "negotiate"):
+                if msg_type in ("text", "system_text", "image", "negotiate"):
                     silence_state.agent_busy = True
                 (
                     silence_state.silence_nudge_due_at,
@@ -264,6 +264,20 @@ async def upstream_task(
                         "Greet the customer now.]"
                     )
                 content = types_mod.Content(parts=[types_mod.Part(text=raw_text)])
+                live_request_queue.send_content(content)
+
+            elif msg_type == "system_text":
+                raw_text = str(json_message.get("text", "") or "").strip()
+                if not raw_text:
+                    continue
+                system_hint = (
+                    "[System: "
+                    + raw_text
+                    + ". Transport metadata only. The customer has not spoken yet. "
+                    "Do not infer any product, support, booking, or callback request. "
+                    "Greet the caller warmly now and ask how you can help.]"
+                )
+                content = types_mod.Content(parts=[types_mod.Part(text=system_hint)])
                 live_request_queue.send_content(content)
 
             elif msg_type == "image":

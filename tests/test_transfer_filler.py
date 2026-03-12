@@ -1163,6 +1163,45 @@ class TestWatchdogSuspensionOnNewInput:
         assert silence_state.response_nudge_count == 0
         assert queue.activity_start_calls == 1
 
+    @pytest.mark.asyncio
+    async def test_system_text_startup_marker_sends_non_user_intent_hint(self):
+        st = _inject_stream_tasks_globals()
+
+        st.configure_runtime(
+            types=_FakeTypes,
+            _check_rate_limit=lambda *args: True,
+            UPLOAD_RATE_LIMIT=10,
+            _validate_upload_bytes=lambda *args: None,
+            MAX_UPLOAD_BYTES=1024 * 1024,
+            cache_latest_image=lambda **kwargs: None,
+            _normalize_company_id=lambda value: value,
+            _append_canonical_lock_fields=lambda payload, session_state: payload,
+            _voice_for_industry=lambda industry: "Aoede",
+            _build_session_started_message=lambda **kwargs: kwargs,
+        )
+
+        websocket = _FakeWebSocket(
+            incoming=[
+                {"text": json.dumps({"type": "system_text", "text": "Call connected"})},
+                {"type": "websocket.disconnect", "code": 1000},
+            ]
+        )
+        ctx = _make_ctx(websocket)
+        silence_state = _make_silence_state()
+        queue = _FakeRequestQueue()
+        session_alive = asyncio.Event()
+        session_alive.set()
+
+        with pytest.raises(WebSocketDisconnect):
+            await st.upstream_task(ctx, queue, session_alive, silence_state)
+
+        assert len(queue.sent) == 1
+        assert queue.sent[0].parts[0].text == (
+            "[System: Call connected. Transport metadata only. The customer has not spoken yet. "
+            "Do not infer any product, support, booking, or callback request. "
+            "Greet the caller warmly now and ask how you can help.]"
+        )
+
 
 class TestResponseLatencyNudge:
     """Verify the fast-path nudge fires at the configured thresholds."""

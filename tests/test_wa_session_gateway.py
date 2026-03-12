@@ -206,8 +206,8 @@ class TestWaSessionGatewayMode:
         mock_client.send_text.assert_awaited_once()
         actual_payload = mock_client.send_text.await_args.args[0]
         assert json.loads(actual_payload) == {
-            "type": "text",
-            "text": "[Call connected]",
+            "type": "system_text",
+            "text": "Call connected",
         }
         assert mock_client.canonical_session_id == "canonical-xyz"
         assert s._gateway_greeting_sent is True
