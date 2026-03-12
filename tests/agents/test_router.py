@@ -145,7 +145,7 @@ class TestEkaetteRouterAgent:
         }
         assert "end_call" in tool_names
         assert "send_whatsapp_message" in tool_names
-        assert "send_sms_message" in tool_names
+        assert "send_sms_message" not in tool_names
 
     def test_text_router_omits_outbound_message_tools(self):
         from app.agents.ekaette_router.agent import create_ekaette_router
@@ -186,9 +186,11 @@ class TestEkaetteRouterAgent:
         }
         for agent_name in {"vision_agent", "valuation_agent", "booking_agent", "catalog_agent", "support_agent"}:
             assert "end_call" in tool_names_by_agent[agent_name]
-        for agent_name in {"valuation_agent", "booking_agent", "catalog_agent", "support_agent"}:
+        for agent_name in {"booking_agent", "catalog_agent", "support_agent"}:
             assert "send_sms_message" in tool_names_by_agent[agent_name]
             assert "send_whatsapp_message" in tool_names_by_agent[agent_name]
+        assert "send_sms_message" not in tool_names_by_agent["valuation_agent"]
+        assert "send_whatsapp_message" in tool_names_by_agent["valuation_agent"]
 
     def test_model_reads_from_env(self):
         """Root agent reads LIVE_MODEL_ID from environment at module load time."""

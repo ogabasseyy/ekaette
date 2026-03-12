@@ -168,6 +168,34 @@ def _state_get(state: Any, key: str, default: Any = None) -> Any:
     return default
 
 
+def _is_greeted_state(state: Any, *, session: Any = None) -> bool:
+    """Return greeting completion from either immediate or session-backed state.
+
+    Live voice paths can update the ADK session state before the per-tool state
+    snapshot reflects the change. For first-turn transfer guards we therefore
+    treat session.state as a fallback source of truth.
+    """
+    if bool(_state_get(state, "temp:greeted", False)):
+        return True
+    session_state = getattr(session, "state", None)
+    if session_state is not None and bool(_state_get(session_state, "temp:greeted", False)):
+        return True
+    try:
+        turn_count = int(_state_get(state, "temp:model_turn_count", 0) or 0)
+    except (TypeError, ValueError):
+        turn_count = 0
+    if turn_count > 0:
+        return True
+    if session_state is not None:
+        try:
+            session_turn_count = int(_state_get(session_state, "temp:model_turn_count", 0) or 0)
+        except (TypeError, ValueError):
+            session_turn_count = 0
+        if session_turn_count > 0:
+            return True
+    return False
+
+
 def _maybe_inject_caller_phone(tool_context: Any) -> None:
     """Inject caller phone into tool state from the ephemeral registry.
 
@@ -614,7 +642,10 @@ async def before_model_inject_config(
     instruction_lines: list[str] = []
     agent_name = getattr(callback_context, "agent_name", "") or ""
 
-    already_greeted = bool(callback_context.state.get("temp:greeted", False))
+    already_greeted = _is_greeted_state(
+        callback_context.state,
+        session=getattr(callback_context, "session", None),
+    )
 
     company_profile = callback_context.state.get("app:company_profile")
     if not isinstance(company_profile, dict):
@@ -994,7 +1025,10 @@ async def before_tool_agent_transfer_guard(
     # app/agents/tool_scheduling.py so this guard works safely.
     channel = _state_get(tool_context.state, "app:channel", "")
     is_voice = isinstance(channel, str) and channel.strip().lower() == "voice"
-    already_greeted = bool(tool_context.state.get("temp:greeted", False))
+    already_greeted = _is_greeted_state(
+        tool_context.state,
+        session=getattr(tool_context, "session", None),
+    )
     if is_voice and not already_greeted:
         # Count blocked attempts. After 3 blocks the model clearly won't greet
         # on its own — let it transfer rather than loop forever.
@@ -1009,6 +1043,12 @@ async def before_tool_agent_transfer_guard(
                 blocked_count,
             )
             tool_context.state["temp:greeted"] = True
+            session_state = getattr(getattr(tool_context, "session", None), "state", None)
+            if session_state is not None:
+                try:
+                    session_state["temp:greeted"] = True
+                except Exception:
+                    logger.debug("Failed to set temp:greeted on session state", exc_info=True)
             # Fall through to normal transfer handling
         else:
             logger.warning(

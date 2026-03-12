@@ -41,6 +41,8 @@ class TestAgentFactories:
             for tool in getattr(agent, "tools", [])
         }
         assert "request_media_via_whatsapp" in tool_names
+        assert "send_sms_message" not in tool_names
+        assert "send_whatsapp_message" in tool_names
 
     def test_text_valuation_agent_omits_cross_channel_media_tool(self):
         from app.agents.valuation_agent.agent import create_valuation_agent
