@@ -344,6 +344,70 @@ def _is_voice_opening_complete(state: Any, *, session: Any = None) -> bool:
     return False
 
 
+def _hydrate_voice_opening_state_from_session(
+    state: Any, *, session: Any = None,
+) -> None:
+    """Copy canonical opening/turn flags from session.state into callback state.
+
+    In Live API mode, stream_tasks writes guard-relevant flags to the raw
+    session.state dict, but ADK's tool_context.state (a snapshot) may not
+    see those writes.  This helper bridges the gap so that transfer guards
+    make decisions against the most up-to-date values.
+
+    Semantics:
+    - Boolean flags: upgrade-only (False → True, never downgrade).
+    - String values: session.state is canonical when non-empty, overwriting
+      stale callback values so guards see the latest user turn.
+    """
+    if session is None:
+        return
+    session_state = getattr(session, "state", None)
+    if session_state is None:
+        return
+
+    _BOOL_KEYS = (
+        "temp:greeted",
+        "temp:opening_greeting_complete",
+        "temp:opening_phase_complete",
+        "temp:first_user_turn_started",
+        "temp:first_user_turn_complete",
+    )
+    _STR_KEYS = (
+        "temp:last_user_turn",
+        "temp:last_agent_turn",
+    )
+
+    hydrated_any = False
+    # Boolean flags: upgrade-only (never downgrade True → False)
+    for key in _BOOL_KEYS:
+        session_value = _state_get(session_state, key, False)
+        if bool(session_value) and not bool(_state_get(state, key, False)):
+            try:
+                state[key] = session_value
+                hydrated_any = True
+            except Exception:
+                pass
+    # String values: session.state is canonical when non-empty
+    for key in _STR_KEYS:
+        session_value = _state_get(session_state, key, "")
+        if isinstance(session_value, str) and session_value.strip():
+            current = _state_get(state, key, "")
+            current_str = current.strip() if isinstance(current, str) else ""
+            if current_str != session_value.strip():
+                try:
+                    state[key] = session_value
+                    hydrated_any = True
+                except Exception:
+                    pass
+    if hydrated_any:
+        logger.debug(
+            "hydrate_voice_state session_state_has_opening_complete=%s greeted=%s first_user_turn_complete=%s",
+            bool(_state_get(session_state, "temp:opening_phase_complete", False)),
+            bool(_state_get(session_state, "temp:greeted", False)),
+            bool(_state_get(session_state, "temp:first_user_turn_complete", False)),
+        )
+
+
 def _hallucinated_transfer_signature(state: Any, target_agent: str) -> str:
     latest_user_raw = _state_get(state, "temp:last_user_turn", "")
     latest_user = latest_user_raw.strip() if isinstance(latest_user_raw, str) else ""
@@ -1019,6 +1083,28 @@ async def after_model_valuation_sanity(
         callback_context.state.get("temp:opening_phase_complete", False)
     ):
         callback_context.state["temp:opening_phase_complete"] = True
+    # Bridge guard-relevant flags from session.state into ADK-visible state
+    # so that subsequent tool callbacks (transfer guards) see them.
+    if hasattr(callback_context, "session"):
+        _s_state = getattr(callback_context.session, "state", None)
+        if isinstance(_s_state, dict):
+            for _bk in (
+                "temp:last_user_turn",
+                "temp:first_user_turn_started",
+                "temp:first_user_turn_complete",
+                "temp:opening_phase_complete",
+                "temp:opening_greeting_complete",
+            ):
+                _bv = _s_state.get(_bk)
+                if _bv in (None, "", False):
+                    continue
+                if isinstance(_bv, bool):
+                    # Boolean: upgrade-only (never downgrade True → False)
+                    if not bool(callback_context.state.get(_bk, False)):
+                        callback_context.state[_bk] = _bv
+                elif isinstance(_bv, str) and _bv.strip():
+                    # String: session.state is canonical when non-empty
+                    callback_context.state[_bk] = _bv
     pending_target = _state_get(callback_context.state, "temp:pending_handoff_target_agent", "")
     if (
         has_content
@@ -1198,6 +1284,10 @@ def _guard_transfer_before_greeting(
     target_agent: str,
 ) -> dict[str, Any] | None:
     """Return an actionable error when voice transfer is attempted too early."""
+    # Hydrate callback-visible state from session.state so that flags
+    # written by stream_tasks (opening_phase_complete, last_user_turn, etc.)
+    # are visible to the guard decision.
+    _hydrate_voice_opening_state_from_session(state, session=session)
     channel = _state_get(state, "app:channel", "")
     is_voice = isinstance(channel, str) and channel.strip().lower() == "voice"
     opening_complete = _is_voice_opening_complete(state, session=session)
@@ -1693,6 +1783,10 @@ async def on_tool_error_emit(
 
     # Hallucinated sub-agent name as direct function call
     if tool.name in _KNOWN_AGENT_NAMES:
+        # Hydrate callback-visible state before evaluating opening guards.
+        _hydrate_voice_opening_state_from_session(
+            tool_context.state, session=getattr(tool_context, "session", None),
+        )
         channel = _state_get(tool_context.state, "app:channel", "")
         is_voice = isinstance(channel, str) and channel.strip().lower() == "voice"
         opening_complete = _is_voice_opening_complete(

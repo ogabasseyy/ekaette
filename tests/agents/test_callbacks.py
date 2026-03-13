@@ -762,6 +762,139 @@ class TestCallbackLegGuards:
         assert result is None
 
 
+class TestOptionEHydrationGuard:
+    """Option E: session.state hydration ensures transfer guards see stream_tasks writes."""
+
+    @pytest.mark.asyncio
+    async def test_transfer_allowed_when_opening_complete_only_in_session_state(self):
+        """Guard should allow transfer when session.state has opening_phase_complete,
+        even if tool_context.state does not."""
+        tool = SimpleNamespace(name="transfer_to_agent")
+        ctx = SimpleNamespace(
+            state={
+                "app:channel": "voice",
+            },
+            session=SimpleNamespace(state={
+                "temp:opening_phase_complete": True,
+                "temp:last_user_turn": "I want to swap my iPhone XR for an iPhone 14.",
+            }),
+            agent_name="ekaette_router",
+        )
+        result = await before_tool_capability_guard_and_log(
+            tool, {"agent_name": "valuation_agent"}, ctx
+        )
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_hallucinated_valuation_recovery_allowed_when_session_state_has_opening_flags(self):
+        """Hallucinated sub-agent recovery should also benefit from hydration."""
+        tool = SimpleNamespace(name="valuation_agent")
+        ctx = SimpleNamespace(
+            state={
+                "app:channel": "voice",
+            },
+            session=SimpleNamespace(state={
+                "temp:opening_phase_complete": True,
+                "temp:last_user_turn": "I want to swap my Samsung S10 for an iPhone 14.",
+            }),
+            agent_name="ekaette_router",
+            actions=SimpleNamespace(transfer_to_agent=None),
+        )
+        result = await on_tool_error_emit(tool, {}, ctx)
+        # Should recover via transfer, not block with opening_phase_in_progress
+        assert isinstance(result, dict)
+        assert result.get("error") != "opening_phase_in_progress"
+        assert result.get("error") != "routing_retry_suppressed"
+
+    @pytest.mark.asyncio
+    async def test_transfer_still_blocked_when_only_greeted_is_true(self):
+        """Regression: greeted alone must NOT unlock transfers — strict guard preserved."""
+        tool = SimpleNamespace(name="transfer_to_agent")
+        ctx = SimpleNamespace(
+            state={
+                "app:channel": "voice",
+                "temp:greeted": True,
+            },
+            agent_name="ekaette_router",
+        )
+        result = await before_tool_capability_guard_and_log(
+            tool, {"agent_name": "support_agent"}, ctx
+        )
+        assert isinstance(result, dict)
+        assert result["error"] in ("greeting_required", "routing_retry_suppressed")
+
+    @pytest.mark.asyncio
+    async def test_after_model_bridges_last_user_turn_from_session_state(self):
+        """after_model should copy last_user_turn from session.state when ADK state lacks it."""
+        callback_context = SimpleNamespace(
+            state={
+                "app:channel": "voice",
+            },
+            session=SimpleNamespace(state={
+                "temp:last_user_turn": "I want to swap my iPhone XR for a 15 Pro Max.",
+                "temp:first_user_turn_complete": True,
+            }),
+            agent_name="ekaette_router",
+        )
+        llm_response = SimpleNamespace(
+            content=SimpleNamespace(parts=[SimpleNamespace(text="Let me help you with that.")])
+        )
+        await after_model_valuation_sanity(callback_context, llm_response)
+        assert callback_context.state.get("temp:last_user_turn") == "I want to swap my iPhone XR for a 15 Pro Max."
+        assert callback_context.state.get("temp:first_user_turn_complete") is True
+
+    @pytest.mark.asyncio
+    async def test_hydration_overwrites_stale_string_values(self):
+        """Verify that hydration replaces old strings in callback state with fresh ones from session."""
+        tool = SimpleNamespace(name="transfer_to_agent")
+        ctx = SimpleNamespace(
+            state={
+                "app:channel": "voice",
+                "temp:last_user_turn": "hello",  # stale value
+            },
+            session=SimpleNamespace(state={
+                "temp:opening_phase_complete": True,
+                "temp:last_user_turn": "I want to swap my phone",  # fresh value
+            }),
+            agent_name="ekaette_router",
+        )
+        # Calling the guard triggers hydration
+        await before_tool_capability_guard_and_log(
+            tool, {"agent_name": "valuation_agent"}, ctx
+        )
+        assert ctx.state["temp:last_user_turn"] == "I want to swap my phone"
+
+    @pytest.mark.asyncio
+    async def test_hydration_does_not_downgrade_booleans(self):
+        """Verify that hydration only upgrades booleans (False->True) and never downgrades (True->False)."""
+        from app.agents.callbacks import _hydrate_voice_opening_state_from_session
+        state = {"temp:opening_phase_complete": True}
+        session = SimpleNamespace(state={"temp:opening_phase_complete": False})
+        
+        _hydrate_voice_opening_state_from_session(state, session=session)
+        
+        # Should remain True
+        assert state["temp:opening_phase_complete"] is True
+
+    @pytest.mark.asyncio
+    async def test_after_model_overwrites_stale_string_values(self):
+        """Verify after_model bridge also treats session.state as canonical for strings."""
+        callback_context = SimpleNamespace(
+            state={
+                "temp:last_user_turn": "stale",
+            },
+            session=SimpleNamespace(state={
+                "temp:last_user_turn": "canonical",
+            }),
+            agent_name="ekaette_router",
+        )
+        llm_response = SimpleNamespace(
+            content=SimpleNamespace(parts=[SimpleNamespace(text="hi")])
+        )
+        await after_model_valuation_sanity(callback_context, llm_response)
+        assert callback_context.state["temp:last_user_turn"] == "canonical"
+
+
 class TestCompanyInstructionBuilder:
     def test_company_instruction_includes_core_sections(self):
         text = _company_instruction(
