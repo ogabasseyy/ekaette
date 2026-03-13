@@ -1011,6 +1011,14 @@ async def after_model_valuation_sanity(
     if not bool(callback_context.state.get("temp:greeted", False)):
         if has_content or _turn_count > 1:
             callback_context.state["temp:greeted"] = True
+    # On turn 2+, the model has processed at least one customer message.
+    # Set the canonical opening-phase flag so _is_voice_opening_complete
+    # can allow transfers even when stream_tasks user-turn markers (written
+    # to a separate in-memory dict) are not visible in tool_context.state.
+    if _turn_count >= 2 and not bool(
+        callback_context.state.get("temp:opening_phase_complete", False)
+    ):
+        callback_context.state["temp:opening_phase_complete"] = True
     pending_target = _state_get(callback_context.state, "temp:pending_handoff_target_agent", "")
     if (
         has_content
