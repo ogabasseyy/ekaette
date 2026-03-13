@@ -27,6 +27,10 @@ logger = logging.getLogger(__name__)
 
 _PRICE_PATTERN = re.compile(r"\b\d[\d,]{2,}\b")
 _STORAGE_PATTERN = re.compile(r"\b\d+(?:gb|tb)\b", flags=re.IGNORECASE)
+_DEVICE_BRAND_PATTERN = re.compile(
+    r"\b(?:iphone|samsung|galaxy|pixel|redmi|tecno|infinix|itel|xiaomi|nokia|oppo|vivo|huawei)\b",
+    re.IGNORECASE,
+)
 _CALLBACK_REQUEST_PATTERNS = (
     re.compile(r"\bcall(?:ing)?\s+(?:me\s+)?back\b", re.IGNORECASE),
     re.compile(r"\bcallback\b", re.IGNORECASE),
@@ -76,6 +80,43 @@ def looks_like_callback_promise(text: str) -> bool:
     if not normalized:
         return False
     return any(p.search(normalized) for p in _CALLBACK_PROMISE_PATTERNS)
+
+
+def _latest_user_turn_text(state: Any, *, session: Any = None) -> str:
+    latest_user_raw = _state_get(state, "temp:last_user_turn", "")
+    if isinstance(latest_user_raw, str) and latest_user_raw.strip():
+        return latest_user_raw.strip()
+    session_state = getattr(session, "state", None)
+    if session_state is not None:
+        session_latest_user_raw = _state_get(session_state, "temp:last_user_turn", "")
+        if isinstance(session_latest_user_raw, str) and session_latest_user_raw.strip():
+            return session_latest_user_raw.strip()
+    return ""
+
+
+def _looks_like_tradein_or_upgrade_request(text: str) -> bool:
+    normalized = text.strip()
+    if not normalized:
+        return False
+    lower = normalized.lower()
+    if any(
+        phrase in lower
+        for phrase in (
+            "swap",
+            "trade in",
+            "trade-in",
+            "upgrade",
+            "switch to",
+            "exchange",
+        )
+    ):
+        return True
+    brand_matches = list(_DEVICE_BRAND_PATTERN.finditer(normalized))
+    if len(brand_matches) >= 2 and " to " in lower:
+        return True
+    if len(brand_matches) >= 1 and any(token in lower for token in (" from ", " to ")):
+        return True
+    return False
 
 
 def _request_callback_has_explicit_intent(
@@ -1140,7 +1181,14 @@ def _guard_transfer_before_greeting(
     channel = _state_get(state, "app:channel", "")
     is_voice = isinstance(channel, str) and channel.strip().lower() == "voice"
     opening_complete = _is_voice_opening_complete(state, session=session)
-    if not is_voice or opening_complete:
+    latest_user_turn = _latest_user_turn_text(state, session=session)
+    tradein_fast_path = (
+        is_voice
+        and target_agent == "valuation_agent"
+        and _is_greeted_state(state, session=session)
+        and _looks_like_tradein_or_upgrade_request(latest_user_turn)
+    )
+    if not is_voice or opening_complete or tradein_fast_path:
         state["temp:last_blocked_transfer_signature"] = ""
         state["temp:last_blocked_transfer_attempts"] = 0
         return None
@@ -1631,6 +1679,18 @@ async def on_tool_error_emit(
             tool_context.state,
             session=getattr(tool_context, "session", None),
         )
+        latest_user_turn = _latest_user_turn_text(
+            tool_context.state,
+            session=getattr(tool_context, "session", None),
+        )
+        tradein_fast_path = (
+            is_voice
+            and tool.name == "valuation_agent"
+            and _is_greeted_state(
+                tool_context.state, session=getattr(tool_context, "session", None)
+            )
+            and _looks_like_tradein_or_upgrade_request(latest_user_turn)
+        )
         signature = _hallucinated_transfer_signature(tool_context.state, tool.name)
         previous_signature = str(
             _state_get(tool_context.state, "temp:last_hallucinated_handoff_signature", "") or ""
@@ -1645,7 +1705,7 @@ async def on_tool_error_emit(
         current_attempts = previous_attempts + 1 if previous_signature == signature else 1
         tool_context.state["temp:last_hallucinated_handoff_signature"] = signature
         tool_context.state["temp:last_hallucinated_handoff_attempts"] = current_attempts
-        if is_voice and not opening_complete:
+        if is_voice and not opening_complete and not tradein_fast_path:
             logger.warning(
                 "Suppressing hallucinated sub-agent recovery during protected opening agent=%s target=%s signature=%s attempt=%d",
                 tool_context.agent_name,
