@@ -234,6 +234,41 @@ def _is_greeted_state(state: Any, *, session: Any = None) -> bool:
     return False
 
 
+def _is_voice_opening_complete(state: Any, *, session: Any = None) -> bool:
+    """Return whether the protected voice opening phase has fully completed.
+
+    Voice transfers should only happen after:
+    1. the greeting has actually completed, and
+    2. the first real user turn has clearly started.
+
+    This state is stricter than ``temp:greeted`` and avoids letting weak
+    startup transcripts or model-side attach noise drive early routing.
+    """
+    if bool(_state_get(state, "temp:opening_phase_complete", False)):
+        return True
+    session_state = getattr(session, "state", None)
+    if session_state is not None and bool(
+        _state_get(session_state, "temp:opening_phase_complete", False)
+    ):
+        return True
+
+    opening_greeting_complete = bool(_state_get(state, "temp:opening_greeting_complete", False))
+    first_user_turn_started = bool(_state_get(state, "temp:first_user_turn_started", False))
+    if opening_greeting_complete and first_user_turn_started:
+        return True
+
+    if session_state is not None:
+        session_greeting_complete = bool(
+            _state_get(session_state, "temp:opening_greeting_complete", False)
+        )
+        session_first_user_turn_started = bool(
+            _state_get(session_state, "temp:first_user_turn_started", False)
+        )
+        if session_greeting_complete and session_first_user_turn_started:
+            return True
+    return False
+
+
 def _hallucinated_transfer_signature(state: Any, target_agent: str) -> str:
     latest_user_raw = _state_get(state, "temp:last_user_turn", "")
     latest_user = latest_user_raw.strip() if isinstance(latest_user_raw, str) else ""
@@ -1079,11 +1114,11 @@ def _guard_transfer_before_greeting(
     agent_name: str,
     target_agent: str,
 ) -> dict[str, Any] | None:
-    """Return an actionable error when voice transfer is attempted before greeting."""
+    """Return an actionable error when voice transfer is attempted too early."""
     channel = _state_get(state, "app:channel", "")
     is_voice = isinstance(channel, str) and channel.strip().lower() == "voice"
-    already_greeted = _is_greeted_state(state, session=session)
-    if not is_voice or already_greeted:
+    opening_complete = _is_voice_opening_complete(state, session=session)
+    if not is_voice or opening_complete:
         return None
 
     blocked_count = int(state.get("temp:greeting_block_count", 0))
@@ -1099,9 +1134,9 @@ def _guard_transfer_before_greeting(
     return {
         "error": "greeting_required",
         "detail": (
-            "Transfer blocked. You have not greeted the caller yet. "
-            "You MUST speak your greeting aloud to the customer NOW. "
-            "Say your greeting first, then you may transfer."
+            "Transfer blocked. Finish your opening with the caller first. "
+            "You must greet the caller aloud and speak to their first real reply "
+            "before transferring."
         ),
     }
 

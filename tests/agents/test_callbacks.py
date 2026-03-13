@@ -585,6 +585,7 @@ class TestCallbackLegGuards:
             state={
                 "app:channel": "voice",
                 "temp:greeted": True,
+                "temp:opening_phase_complete": True,
             },
             agent_name="ekaette_router",
         )
@@ -594,13 +595,13 @@ class TestCallbackLegGuards:
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_transfer_allowed_when_greeted_exists_only_in_session_state(self):
+    async def test_transfer_allowed_when_opening_phase_complete_exists_only_in_session_state(self):
         tool = SimpleNamespace(name="transfer_to_agent")
         ctx = SimpleNamespace(
             state={
                 "app:channel": "voice",
             },
-            session=SimpleNamespace(state={"temp:greeted": True}),
+            session=SimpleNamespace(state={"temp:opening_phase_complete": True}),
             agent_name="ekaette_router",
         )
         result = await before_tool_capability_guard_and_log(
@@ -609,7 +610,7 @@ class TestCallbackLegGuards:
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_transfer_allowed_when_last_agent_turn_exists_in_state(self):
+    async def test_transfer_still_blocked_when_only_last_agent_turn_exists_in_state(self):
         tool = SimpleNamespace(name="transfer_to_agent")
         ctx = SimpleNamespace(
             state={
@@ -621,10 +622,11 @@ class TestCallbackLegGuards:
         result = await before_tool_capability_guard_and_log(
             tool, {"agent_name": "support_agent"}, ctx
         )
-        assert result is None
+        assert isinstance(result, dict)
+        assert result["error"] == "greeting_required"
 
     @pytest.mark.asyncio
-    async def test_transfer_allowed_when_last_agent_turn_exists_only_in_session_state(self):
+    async def test_transfer_still_blocked_when_only_last_agent_turn_exists_in_session_state(self):
         tool = SimpleNamespace(name="transfer_to_agent")
         ctx = SimpleNamespace(
             state={
@@ -640,7 +642,8 @@ class TestCallbackLegGuards:
         result = await before_tool_capability_guard_and_log(
             tool, {"agent_name": "support_agent"}, ctx
         )
-        assert result is None
+        assert isinstance(result, dict)
+        assert result["error"] == "greeting_required"
 
     @pytest.mark.asyncio
     async def test_transfer_allowed_on_text_channel_without_greeting(self):
@@ -1070,6 +1073,7 @@ class TestOnToolErrorEmit:
         tool_context.state["temp:recent_customer_context"] = "Customer wants a phone."
         tool_context.state["app:channel"] = "voice"
         tool_context.state["temp:greeted"] = True
+        tool_context.state["temp:opening_phase_complete"] = True
         err = ValueError("Tool 'catalog_agent' not found.")
 
         await on_tool_error_emit(
@@ -1097,10 +1101,11 @@ class TestOnToolErrorEmit:
         assert "temp:pending_handoff_target_agent" not in tool_context.state
 
     @pytest.mark.asyncio
-    async def test_hallucinated_agent_name_after_first_user_turn_transfers_without_greeted_flag(self):
+    async def test_hallucinated_agent_name_after_opening_phase_complete_transfers(self):
         tool = BaseTool(name="valuation_agent", description="Tool not found")
         tool_context = self._make_tool_context()
         tool_context.state["app:channel"] = "voice"
+        tool_context.state["temp:opening_phase_complete"] = True
         tool_context.state["temp:last_user_turn"] = "I want to swap my iPhone XR for an iPhone 14."
         err = ValueError("Tool 'valuation_agent' not found.")
 
@@ -1112,6 +1117,45 @@ class TestOnToolErrorEmit:
         assert "transfer_to_agent" in result.get("hint", "")
         assert tool_context.actions.transfer_to_agent == "valuation_agent"
         assert tool_context.state["temp:pending_handoff_target_agent"] == "valuation_agent"
+
+    @pytest.mark.asyncio
+    async def test_hallucinated_agent_name_uses_session_opening_phase_complete_fallback(self):
+        tool = BaseTool(name="valuation_agent", description="Tool not found")
+        tool_context = self._make_tool_context()
+        tool_context.state["app:channel"] = "voice"
+        tool_context.state["temp:last_user_turn"] = "I want to swap my iPhone XR for an iPhone 14."
+        tool_context.session = SimpleNamespace(state={"temp:opening_phase_complete": True})
+        err = ValueError("Tool 'valuation_agent' not found.")
+
+        result = await on_tool_error_emit(
+            tool=tool, args={}, tool_context=tool_context, error=err,
+        )
+
+        assert isinstance(result, dict)
+        assert "transfer_to_agent" in result.get("hint", "")
+        assert tool_context.actions.transfer_to_agent == "valuation_agent"
+
+    @pytest.mark.asyncio
+    async def test_hallucinated_agent_name_allows_transfer_after_first_user_turn_started(self):
+        tool = BaseTool(name="valuation_agent", description="Tool not found")
+        tool_context = self._make_tool_context()
+        tool_context.state.update(
+            {
+                "app:channel": "voice",
+                "temp:opening_greeting_complete": True,
+                "temp:first_user_turn_started": True,
+                "temp:last_user_turn": "I want to swap my iPhone XR for an iPhone 14.",
+            }
+        )
+        err = ValueError("Tool 'valuation_agent' not found.")
+
+        result = await on_tool_error_emit(
+            tool=tool, args={}, tool_context=tool_context, error=err,
+        )
+
+        assert isinstance(result, dict)
+        assert "transfer_to_agent" in result.get("hint", "")
+        assert tool_context.actions.transfer_to_agent == "valuation_agent"
 
     @pytest.mark.asyncio
     async def test_hallucinated_agent_name_never_bypasses_greeting_after_retries(self):
@@ -1147,6 +1191,7 @@ class TestOnToolErrorEmit:
         tool_context.state["app:channel"] = "voice"
         tool_context.state["temp:last_user_turn"] = "Do you have iPhone 14?"
         tool_context.state["temp:greeted"] = True
+        tool_context.state["temp:opening_phase_complete"] = True
         err = ValueError("Tool 'catalog_agent' not found.")
 
         first = await on_tool_error_emit(

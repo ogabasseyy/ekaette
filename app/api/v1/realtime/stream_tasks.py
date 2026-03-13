@@ -627,6 +627,13 @@ async def downstream_task(
         except Exception:
             logger.debug("Voice analytics transfer capture skipped", exc_info=True)
 
+    def _is_voice_channel() -> bool:
+        channel = _session_get("app:channel", "")
+        return isinstance(channel, str) and channel.strip().lower() == "voice"
+
+    def _is_opening_phase_complete() -> bool:
+        return bool(_session_get("temp:opening_phase_complete", False))
+
     def _looks_like_callback_request(text: str) -> bool:
         from app.agents.callbacks import looks_like_callback_request
 
@@ -949,6 +956,11 @@ async def downstream_task(
                                     input_finalized = False
                                 last_input_text = text
                                 receiving_input = True
+                                if _is_voice_channel() and bool(
+                                    _session_get("temp:opening_greeting_complete", False)
+                                ):
+                                    _session_set("temp:first_user_turn_started", True)
+                                    _session_set("temp:opening_phase_complete", True)
                                 is_partial = not finished
                                 await websocket.send_text(json.dumps({
                                     "type": "transcription",
@@ -960,6 +972,13 @@ async def downstream_task(
                                 if finished:
                                     recent_turns.append(("user", text))
                                     _session_set("temp:last_user_turn", text)
+                                    if _is_voice_channel() and bool(
+                                        _session_get("temp:opening_greeting_complete", False)
+                                    ):
+                                        _session_set("temp:first_user_turn_started", True)
+                                        _session_set("temp:first_user_turn_complete", True)
+                                        _session_set("temp:opening_phase_complete", True)
+                                        _session_set("temp:greeting_block_count", 0)
                                     _maybe_register_callback_from_user_turn(text)
                                     _persist_recent_customer_context()
                                     last_input_text = ""
@@ -1059,6 +1078,13 @@ async def downstream_task(
 
                     # Interrupted -> finalize + clear playback
                     if event.interrupted:
+                        if _is_voice_channel() and not _is_opening_phase_complete():
+                            logger.info(
+                                "Ignoring interrupted event during protected voice opening "
+                                "session=%s",
+                                sanitize_log_fn(ctx.resolved_session_id),
+                            )
+                            continue
                         await _finalize_input()
                         await _finalize_output(interrupted=True)
                         silence_state.agent_busy = False
@@ -1141,6 +1167,9 @@ async def downstream_task(
                         if silence_state.greeting_lock_active:
                             silence_state.greeting_lock_active = False
                             _session_set("temp:greeted", True)
+                            if _is_voice_channel():
+                                _session_set("temp:opening_greeting_complete", True)
+                                _session_set("temp:greeting_block_count", 0)
                             logger.info("Greeting lock released (first turn complete)")
                         # Anchor silence nudges to when the agent actually finishes,
                         # not when the user last spoke. This avoids check-in nudges

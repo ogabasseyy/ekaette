@@ -1041,6 +1041,48 @@ class TestWatchdogClearingInDownstream:
         assert ctx.session_state["temp:greeted"] is True
 
     @pytest.mark.asyncio
+    async def test_finished_first_user_turn_marks_opening_phase_complete(self):
+        ctx = _make_ctx(_FakeWebSocket())
+        ctx.session_state["app:channel"] = "voice"
+        ctx.session_state["temp:greeted"] = True
+        ctx.session_state["temp:opening_greeting_complete"] = True
+
+        await _run_downstream_events(
+            _make_live_event(
+                input_transcription=SimpleNamespace(
+                    text="I want to swap my iPhone XR for an iPhone 14.",
+                    finished=True,
+                )
+            ),
+            ctx=ctx,
+        )
+
+        assert ctx.session_state["temp:first_user_turn_started"] is True
+        assert ctx.session_state["temp:first_user_turn_complete"] is True
+        assert ctx.session_state["temp:opening_phase_complete"] is True
+
+    @pytest.mark.asyncio
+    async def test_partial_first_user_turn_after_greeting_marks_opening_phase_complete(self):
+        ctx = _make_ctx(_FakeWebSocket())
+        ctx.session_state["app:channel"] = "voice"
+        ctx.session_state["temp:greeted"] = True
+        ctx.session_state["temp:opening_greeting_complete"] = True
+
+        await _run_downstream_events(
+            _make_live_event(
+                input_transcription=SimpleNamespace(
+                    text="I want to swap",
+                    finished=False,
+                )
+            ),
+            ctx=ctx,
+        )
+
+        assert ctx.session_state["temp:first_user_turn_started"] is True
+        assert ctx.session_state["temp:opening_phase_complete"] is True
+        assert "temp:first_user_turn_complete" not in ctx.session_state
+
+    @pytest.mark.asyncio
     async def test_interrupted_clears_watchdog(self):
         websocket, _, ss = await _run_downstream_events(
             _make_live_event(interrupted=True),
@@ -1061,6 +1103,28 @@ class TestWatchdogClearingInDownstream:
             "type": "interrupted",
             "interrupted": True,
         }]
+
+    @pytest.mark.asyncio
+    async def test_interrupted_is_ignored_during_protected_voice_opening(self):
+        ctx = _make_ctx(_FakeWebSocket())
+        ctx.session_state["app:channel"] = "voice"
+        websocket, _, ss = await _run_downstream_events(
+            _make_live_event(interrupted=True),
+            ctx=ctx,
+            silence_state=_make_silence_state(
+                awaiting_agent_response=True,
+                user_spoke_at=time.monotonic(),
+                agent_busy=True,
+            ),
+        )
+
+        assert ss.awaiting_agent_response is True
+        assert ss.agent_busy is True
+        interrupted_messages = [
+            msg for msg in websocket.sent_texts
+            if msg.get("type") == "interrupted"
+        ]
+        assert interrupted_messages == []
 
     @pytest.mark.asyncio
     async def test_turn_complete_does_not_clear_watchdog(self):
