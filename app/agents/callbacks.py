@@ -246,17 +246,26 @@ def _is_voice_opening_complete(state: Any, *, session: Any = None) -> bool:
     """
     if bool(_state_get(state, "temp:opening_phase_complete", False)):
         return True
+    if bool(_state_get(state, "temp:first_user_turn_complete", False)):
+        return True
     session_state = getattr(session, "state", None)
     if session_state is not None and bool(
         _state_get(session_state, "temp:opening_phase_complete", False)
     ):
         return True
+    if session_state is not None and bool(
+        _state_get(session_state, "temp:first_user_turn_complete", False)
+    ):
+        return True
 
     opening_greeting_complete = bool(_state_get(state, "temp:opening_greeting_complete", False))
     first_user_turn_started = bool(_state_get(state, "temp:first_user_turn_started", False))
+    first_user_turn_complete = bool(_state_get(state, "temp:first_user_turn_complete", False))
     last_user_turn = _state_get(state, "temp:last_user_turn", "")
     has_last_user_turn = isinstance(last_user_turn, str) and bool(last_user_turn.strip())
-    if opening_greeting_complete and (first_user_turn_started or has_last_user_turn):
+    if opening_greeting_complete and (
+        first_user_turn_started or first_user_turn_complete or has_last_user_turn
+    ):
         return True
 
     if session_state is not None:
@@ -266,12 +275,17 @@ def _is_voice_opening_complete(state: Any, *, session: Any = None) -> bool:
         session_first_user_turn_started = bool(
             _state_get(session_state, "temp:first_user_turn_started", False)
         )
+        session_first_user_turn_complete = bool(
+            _state_get(session_state, "temp:first_user_turn_complete", False)
+        )
         session_last_user_turn = _state_get(session_state, "temp:last_user_turn", "")
         session_has_last_user_turn = isinstance(session_last_user_turn, str) and bool(
             session_last_user_turn.strip()
         )
         if session_greeting_complete and (
-            session_first_user_turn_started or session_has_last_user_turn
+            session_first_user_turn_started
+            or session_first_user_turn_complete
+            or session_has_last_user_turn
         ):
             return True
     return False

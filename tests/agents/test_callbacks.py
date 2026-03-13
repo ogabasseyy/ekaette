@@ -610,6 +610,36 @@ class TestCallbackLegGuards:
         assert result is None
 
     @pytest.mark.asyncio
+    async def test_transfer_allowed_when_first_user_turn_complete_exists_in_state(self):
+        tool = SimpleNamespace(name="transfer_to_agent")
+        ctx = SimpleNamespace(
+            state={
+                "app:channel": "voice",
+                "temp:first_user_turn_complete": True,
+            },
+            agent_name="ekaette_router",
+        )
+        result = await before_tool_capability_guard_and_log(
+            tool, {"agent_name": "valuation_agent"}, ctx
+        )
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_transfer_allowed_when_first_user_turn_complete_exists_only_in_session_state(self):
+        tool = SimpleNamespace(name="transfer_to_agent")
+        ctx = SimpleNamespace(
+            state={
+                "app:channel": "voice",
+            },
+            session=SimpleNamespace(state={"temp:first_user_turn_complete": True}),
+            agent_name="ekaette_router",
+        )
+        result = await before_tool_capability_guard_and_log(
+            tool, {"agent_name": "valuation_agent"}, ctx
+        )
+        assert result is None
+
+    @pytest.mark.asyncio
     async def test_transfer_allowed_when_greeting_complete_and_last_user_turn_exists_in_session_state(self):
         tool = SimpleNamespace(name="transfer_to_agent")
         ctx = SimpleNamespace(
@@ -1164,6 +1194,27 @@ class TestOnToolErrorEmit:
                 "app:channel": "voice",
                 "temp:opening_greeting_complete": True,
                 "temp:first_user_turn_started": True,
+                "temp:last_user_turn": "I want to swap my iPhone XR for an iPhone 14.",
+            }
+        )
+        err = ValueError("Tool 'valuation_agent' not found.")
+
+        result = await on_tool_error_emit(
+            tool=tool, args={}, tool_context=tool_context, error=err,
+        )
+
+        assert isinstance(result, dict)
+        assert "transfer_to_agent" in result.get("hint", "")
+        assert tool_context.actions.transfer_to_agent == "valuation_agent"
+
+    @pytest.mark.asyncio
+    async def test_hallucinated_agent_name_allows_transfer_after_first_user_turn_complete(self):
+        tool = BaseTool(name="valuation_agent", description="Tool not found")
+        tool_context = self._make_tool_context()
+        tool_context.state.update(
+            {
+                "app:channel": "voice",
+                "temp:first_user_turn_complete": True,
                 "temp:last_user_turn": "I want to swap my iPhone XR for an iPhone 14.",
             }
         )
