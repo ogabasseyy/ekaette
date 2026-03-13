@@ -610,6 +610,26 @@ class TestCallbackLegGuards:
         assert result is None
 
     @pytest.mark.asyncio
+    async def test_transfer_allowed_when_greeting_complete_and_last_user_turn_exists_in_session_state(self):
+        tool = SimpleNamespace(name="transfer_to_agent")
+        ctx = SimpleNamespace(
+            state={
+                "app:channel": "voice",
+            },
+            session=SimpleNamespace(
+                state={
+                    "temp:opening_greeting_complete": True,
+                    "temp:last_user_turn": "I want to swap my iPhone XR for an iPhone 14.",
+                }
+            ),
+            agent_name="ekaette_router",
+        )
+        result = await before_tool_capability_guard_and_log(
+            tool, {"agent_name": "valuation_agent"}, ctx
+        )
+        assert result is None
+
+    @pytest.mark.asyncio
     async def test_transfer_still_blocked_when_only_last_agent_turn_exists_in_state(self):
         tool = SimpleNamespace(name="transfer_to_agent")
         ctx = SimpleNamespace(
@@ -1206,3 +1226,25 @@ class TestOnToolErrorEmit:
         assert isinstance(second, dict)
         assert second["error"] == "routing_retry_suppressed"
         assert tool_context.actions.transfer_to_agent is None
+
+    @pytest.mark.asyncio
+    async def test_transfer_retry_is_suppressed_after_first_same_turn_block(self):
+        tool = SimpleNamespace(name="transfer_to_agent")
+        ctx = SimpleNamespace(
+            state={
+                "app:channel": "voice",
+                "temp:opening_greeting_complete": True,
+            },
+            agent_name="ekaette_router",
+        )
+        first = await before_tool_capability_guard_and_log(
+            tool, {"agent_name": "catalog_agent"}, ctx
+        )
+        second = await before_tool_capability_guard_and_log(
+            tool, {"agent_name": "catalog_agent"}, ctx
+        )
+
+        assert isinstance(first, dict)
+        assert first["error"] == "greeting_required"
+        assert isinstance(second, dict)
+        assert second["error"] == "routing_retry_suppressed"

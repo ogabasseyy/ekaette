@@ -254,7 +254,9 @@ def _is_voice_opening_complete(state: Any, *, session: Any = None) -> bool:
 
     opening_greeting_complete = bool(_state_get(state, "temp:opening_greeting_complete", False))
     first_user_turn_started = bool(_state_get(state, "temp:first_user_turn_started", False))
-    if opening_greeting_complete and first_user_turn_started:
+    last_user_turn = _state_get(state, "temp:last_user_turn", "")
+    has_last_user_turn = isinstance(last_user_turn, str) and bool(last_user_turn.strip())
+    if opening_greeting_complete and (first_user_turn_started or has_last_user_turn):
         return True
 
     if session_state is not None:
@@ -264,7 +266,13 @@ def _is_voice_opening_complete(state: Any, *, session: Any = None) -> bool:
         session_first_user_turn_started = bool(
             _state_get(session_state, "temp:first_user_turn_started", False)
         )
-        if session_greeting_complete and session_first_user_turn_started:
+        session_last_user_turn = _state_get(session_state, "temp:last_user_turn", "")
+        session_has_last_user_turn = isinstance(session_last_user_turn, str) and bool(
+            session_last_user_turn.strip()
+        )
+        if session_greeting_complete and (
+            session_first_user_turn_started or session_has_last_user_turn
+        ):
             return True
     return False
 
@@ -1119,7 +1127,20 @@ def _guard_transfer_before_greeting(
     is_voice = isinstance(channel, str) and channel.strip().lower() == "voice"
     opening_complete = _is_voice_opening_complete(state, session=session)
     if not is_voice or opening_complete:
+        state["temp:last_blocked_transfer_signature"] = ""
+        state["temp:last_blocked_transfer_attempts"] = 0
         return None
+
+    signature = _hallucinated_transfer_signature(state, target_agent)
+    previous_signature = str(_state_get(state, "temp:last_blocked_transfer_signature", "") or "")
+    previous_attempts_raw = _state_get(state, "temp:last_blocked_transfer_attempts", 0)
+    try:
+        previous_attempts = int(previous_attempts_raw or 0)
+    except (TypeError, ValueError):
+        previous_attempts = 0
+    current_attempts = previous_attempts + 1 if previous_signature == signature else 1
+    state["temp:last_blocked_transfer_signature"] = signature
+    state["temp:last_blocked_transfer_attempts"] = current_attempts
 
     blocked_count = int(state.get("temp:greeting_block_count", 0))
     blocked_count += 1
@@ -1131,6 +1152,14 @@ def _guard_transfer_before_greeting(
         target_agent,
         blocked_count,
     )
+    if current_attempts > 1:
+        return {
+            "error": "routing_retry_suppressed",
+            "detail": (
+                "Do not retry the same transfer again for this turn. Respond directly to the "
+                "caller or ask one short clarifying question."
+            ),
+        }
     return {
         "error": "greeting_required",
         "detail": (
