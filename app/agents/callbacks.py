@@ -94,6 +94,38 @@ def _latest_user_turn_text(state: Any, *, session: Any = None) -> str:
     return ""
 
 
+def _opening_progress_seen(state: Any, *, session: Any = None) -> bool:
+    """Return True when the first real user turn has started or completed.
+
+    Live voice/tool callbacks can observe a slightly stale immediate state while
+    the authoritative ADK session state already contains the first-turn flags.
+    We treat any of these markers across either store as evidence that the
+    protected opening phase is already progressing.
+    """
+    if bool(_state_get(state, "temp:opening_phase_complete", False)):
+        return True
+    if bool(_state_get(state, "temp:first_user_turn_started", False)):
+        return True
+    if bool(_state_get(state, "temp:first_user_turn_complete", False)):
+        return True
+    last_user_turn = _state_get(state, "temp:last_user_turn", "")
+    if isinstance(last_user_turn, str) and last_user_turn.strip():
+        return True
+
+    session_state = getattr(session, "state", None)
+    if session_state is None:
+        return False
+
+    if bool(_state_get(session_state, "temp:opening_phase_complete", False)):
+        return True
+    if bool(_state_get(session_state, "temp:first_user_turn_started", False)):
+        return True
+    if bool(_state_get(session_state, "temp:first_user_turn_complete", False)):
+        return True
+    session_last_user_turn = _state_get(session_state, "temp:last_user_turn", "")
+    return isinstance(session_last_user_turn, str) and bool(session_last_user_turn.strip())
+
+
 def _looks_like_tradein_or_upgrade_request(text: str) -> bool:
     normalized = text.strip()
     if not normalized:
@@ -300,35 +332,15 @@ def _is_voice_opening_complete(state: Any, *, session: Any = None) -> bool:
         return True
 
     opening_greeting_complete = bool(_state_get(state, "temp:opening_greeting_complete", False))
-    first_user_turn_started = bool(_state_get(state, "temp:first_user_turn_started", False))
-    first_user_turn_complete = bool(_state_get(state, "temp:first_user_turn_complete", False))
-    last_user_turn = _state_get(state, "temp:last_user_turn", "")
-    has_last_user_turn = isinstance(last_user_turn, str) and bool(last_user_turn.strip())
-    if opening_greeting_complete and (
-        first_user_turn_started or first_user_turn_complete or has_last_user_turn
-    ):
-        return True
-
     if session_state is not None:
-        session_greeting_complete = bool(
+        opening_greeting_complete = opening_greeting_complete or bool(
             _state_get(session_state, "temp:opening_greeting_complete", False)
         )
-        session_first_user_turn_started = bool(
-            _state_get(session_state, "temp:first_user_turn_started", False)
-        )
-        session_first_user_turn_complete = bool(
-            _state_get(session_state, "temp:first_user_turn_complete", False)
-        )
-        session_last_user_turn = _state_get(session_state, "temp:last_user_turn", "")
-        session_has_last_user_turn = isinstance(session_last_user_turn, str) and bool(
-            session_last_user_turn.strip()
-        )
-        if session_greeting_complete and (
-            session_first_user_turn_started
-            or session_first_user_turn_complete
-            or session_has_last_user_turn
-        ):
-            return True
+
+    if _opening_progress_seen(state, session=session) and (
+        opening_greeting_complete or _is_greeted_state(state, session=session)
+    ):
+        return True
     return False
 
 
