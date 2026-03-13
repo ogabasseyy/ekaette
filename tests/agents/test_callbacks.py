@@ -1096,7 +1096,7 @@ class TestOnToolErrorEmit:
         )
 
         assert isinstance(result, dict)
-        assert result["error"] == "greeting_required"
+        assert result["error"] == "opening_phase_in_progress"
         assert tool_context.actions.transfer_to_agent is None
         assert "temp:pending_handoff_target_agent" not in tool_context.state
 
@@ -1168,10 +1168,9 @@ class TestOnToolErrorEmit:
             tool=tool, args={}, tool_context=tool_context, error=err,
         )
         assert isinstance(first, dict)
-        assert first["error"] == "greeting_required"
+        assert first["error"] == "opening_phase_in_progress"
         assert tool_context.actions.transfer_to_agent is None
         assert "temp:pending_handoff_target_agent" not in tool_context.state
-        assert tool_context.state["temp:greeting_block_count"] == 1
 
         for _ in range(2):
             result = await on_tool_error_emit(
@@ -1181,7 +1180,6 @@ class TestOnToolErrorEmit:
             assert result["error"] == "routing_retry_suppressed"
             assert tool_context.actions.transfer_to_agent is None
             assert "temp:pending_handoff_target_agent" not in tool_context.state
-            assert tool_context.state["temp:greeting_block_count"] == 1
         assert not bool(tool_context.state.get("temp:greeted", False))
 
     @pytest.mark.asyncio

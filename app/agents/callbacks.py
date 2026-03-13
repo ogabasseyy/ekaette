@@ -1582,6 +1582,12 @@ async def on_tool_error_emit(
 
     # Hallucinated sub-agent name as direct function call
     if tool.name in _KNOWN_AGENT_NAMES:
+        channel = _state_get(tool_context.state, "app:channel", "")
+        is_voice = isinstance(channel, str) and channel.strip().lower() == "voice"
+        opening_complete = _is_voice_opening_complete(
+            tool_context.state,
+            session=getattr(tool_context, "session", None),
+        )
         signature = _hallucinated_transfer_signature(tool_context.state, tool.name)
         previous_signature = str(
             _state_get(tool_context.state, "temp:last_hallucinated_handoff_signature", "") or ""
@@ -1596,6 +1602,30 @@ async def on_tool_error_emit(
         current_attempts = previous_attempts + 1 if previous_signature == signature else 1
         tool_context.state["temp:last_hallucinated_handoff_signature"] = signature
         tool_context.state["temp:last_hallucinated_handoff_attempts"] = current_attempts
+        if is_voice and not opening_complete:
+            logger.warning(
+                "Suppressing hallucinated sub-agent recovery during protected opening agent=%s target=%s signature=%s attempt=%d",
+                tool_context.agent_name,
+                tool.name,
+                signature,
+                current_attempts,
+            )
+            tool_context.actions.transfer_to_agent = None
+            if current_attempts > 1:
+                return {
+                    "error": "routing_retry_suppressed",
+                    "detail": (
+                        "Do not retry the same agent handoff again for this turn. "
+                        "Finish the opening and respond directly to the caller's first real reply."
+                    ),
+                }
+            return {
+                "error": "opening_phase_in_progress",
+                "detail": (
+                    "Opening phase still in progress. Do not transfer or call another agent yet. "
+                    "Finish the greeting and respond directly to the caller's first real reply."
+                ),
+            }
         if current_attempts > 1:
             logger.warning(
                 "Suppressing repeated hallucinated sub-agent recovery agent=%s target=%s signature=%s attempt=%d",
