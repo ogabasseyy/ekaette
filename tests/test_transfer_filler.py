@@ -1015,7 +1015,7 @@ class TestDownstreamRetry:
         assert websocket.sent_bytes == [b"\x00\x01", b"\x00\x02"]
 
     @pytest.mark.asyncio
-    async def test_connection_errors_are_re_raised(self):
+    async def test_connection_errors_are_re_raised(self, monkeypatch):
         import app.api.v1.realtime.stream_tasks as st
 
         class _FailingSendWebSocket(_FakeWebSocket):
@@ -1031,6 +1031,7 @@ class TestDownstreamRetry:
             DEBUG_TELEMETRY=False,
             _sanitize_log=lambda value: value,
         )
+        monkeypatch.setattr(st, "VOICE_SERVER_OWNED_OPENING_ENABLED", False)
 
         websocket = _FailingSendWebSocket()
         ctx = _make_ctx(websocket)
@@ -1127,16 +1128,16 @@ class TestWatchdogClearingInDownstream:
     async def test_server_owned_opening_greeting_sent_before_first_user_turn(self, monkeypatch):
         import app.api.v1.realtime.stream_tasks as st
 
-        async def _fake_tts(text: str, *, voice_name: str | None = None):
-            assert text == "Hello, this is ehkaitay from Acme Gadgets. How can I help you today?"
-            assert voice_name == "Aoede"
-            return b"\x00\x01", "audio/pcm;rate=24000"
-
-        monkeypatch.setattr(
-            "app.api.v1.at.providers.text_to_speech_pcm",
-            _fake_tts,
+        st = _configure_downstream_runtime(
+            _make_content_event(audio_bytes=b"\x00\x01"),
+            _make_live_event(
+                output_transcription=SimpleNamespace(
+                    text="Hello, this is ehkaitay from Acme Gadgets. How can I help you today?",
+                    finished=True,
+                )
+            ),
+            _make_live_event(turn_complete=True),
         )
-        st = _configure_downstream_runtime()
         monkeypatch.setattr(st, "VOICE_SERVER_OWNED_OPENING_ENABLED", True)
 
         ctx = _make_ctx(_FakeWebSocket())
@@ -1150,6 +1151,10 @@ class TestWatchdogClearingInDownstream:
         await st.downstream_task(ctx, queue, session_alive, silence_state)
 
         assert ctx.websocket.sent_bytes == [b"\x00\x01"]
+        assert any(
+            "opening phase recovery" in (content.parts[0].text or "").lower()
+            for content in queue.sent
+        )
         assert ctx.session_state["temp:greeted"] is True
         assert ctx.session_state["temp:opening_greeting_complete"] is True
         assert ctx.session_state["temp:opening_greeting_server_owned"] is True
@@ -1165,24 +1170,18 @@ class TestWatchdogClearingInDownstream:
         }]
 
     @pytest.mark.asyncio
-    async def test_server_owned_opening_suppresses_preuser_model_output(self, monkeypatch):
+    async def test_server_owned_opening_retries_when_buffered_output_is_invalid(self, monkeypatch):
         import app.api.v1.realtime.stream_tasks as st
 
-        async def _fake_tts(text: str, *, voice_name: str | None = None):
-            return b"\x00\x01", "audio/pcm;rate=24000"
-
-        monkeypatch.setattr(
-            "app.api.v1.at.providers.text_to_speech_pcm",
-            _fake_tts,
-        )
         st = _configure_downstream_runtime(
             _make_content_event(audio_bytes=b"\xAA\xBB"),
             _make_live_event(
                 output_transcription=SimpleNamespace(
                     text="Let me check our catalog for that.",
                     finished=True,
-                )
+                ),
             ),
+            _make_live_event(turn_complete=True),
         )
         monkeypatch.setattr(st, "VOICE_SERVER_OWNED_OPENING_ENABLED", True)
 
@@ -1195,17 +1194,20 @@ class TestWatchdogClearingInDownstream:
 
         await st.downstream_task(ctx, queue, session_alive, silence_state)
 
-        assert ctx.websocket.sent_bytes == [b"\x00\x01"]
+        assert ctx.websocket.sent_bytes == []
         agent_transcripts = [
             msg for msg in ctx.websocket.sent_texts
             if msg.get("type") == "transcription" and msg.get("role") == "agent"
         ]
-        assert agent_transcripts == [{
-            "type": "transcription",
-            "role": "agent",
-            "text": "Hello, this is ehkaitay from our service desk. How can I help you today?",
-            "partial": False,
-        }]
+        assert agent_transcripts == []
+        prompts = [
+            content.parts[0].text
+            for content in queue.sent
+            if getattr(content, "parts", None)
+        ]
+        assert sum("opening phase recovery" in (text or "").lower() for text in prompts) == 2
+        assert ctx.session_state["temp:opening_bootstrap_retry_count"] == 1
+        assert ctx.session_state.get("temp:opening_greeting_complete") is not True
 
     @pytest.mark.asyncio
     async def test_suppresses_second_opening_output_before_first_user_turn(self):

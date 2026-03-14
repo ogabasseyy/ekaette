@@ -949,6 +949,8 @@ async def downstream_task(
 
     current_agent_raw = _session_get("temp:active_agent", "ekaette_router")
     current_agent = current_agent_raw if isinstance(current_agent_raw, str) else "ekaette_router"
+    opening_audio_buffer: list[bytes] = []
+    opening_candidate_text = ""
 
     def _record_voice_transcript(role: str, text: str, partial: bool) -> None:
         if voice_analytics is None:
@@ -974,75 +976,6 @@ async def downstream_task(
         except Exception:
             logger.debug("Voice analytics transfer capture skipped", exc_info=True)
 
-    async def _send_server_owned_opening_greeting() -> None:
-        nonlocal opening_turn_completed_at
-        nonlocal opening_output_observed
-        nonlocal server_owned_opening_pending
-        greeting_text = _server_owned_opening_text()
-        try:
-            from app.api.v1.at.providers import text_to_speech_pcm
-
-            server_owned_opening_pending = True
-            silence_state.agent_busy = True
-            silence_state.assistant_output_active = True
-            silence_state.awaiting_agent_response = False
-            silence_state.user_turn_active = False
-            _sync_pending_media_analysis()
-
-            pcm_data, _mime_type = await text_to_speech_pcm(
-                greeting_text,
-                voice_name=ctx.session_voice,
-            )
-            if isinstance(pcm_data, str):
-                pcm_data = base64.b64decode(pcm_data)
-
-            await websocket.send_text(json.dumps({
-                "type": "agent_status",
-                "agent": current_agent,
-                "status": "active",
-            }))
-            await websocket.send_bytes(pcm_data)
-            await websocket.send_text(json.dumps({
-                "type": "transcription",
-                "role": "agent",
-                "text": greeting_text,
-                "partial": False,
-            }))
-
-            _record_voice_transcript("agent", greeting_text, False)
-            recent_turns.append(("agent", greeting_text))
-            _session_set("temp:last_agent_turn", greeting_text)
-            _session_set("temp:opening_greeting_server_owned", True)
-            opening_output_observed = True
-            opening_turn_completed_at = time.monotonic()
-            _complete_opening_greeting("server-owned opening greeting")
-
-            silence_state.agent_busy = False
-            silence_state.assistant_output_active = False
-            _sync_pending_media_analysis()
-            await websocket.send_text(json.dumps({
-                "type": "agent_status",
-                "agent": current_agent,
-                "status": "idle",
-            }))
-            logger.info(
-                "Server-owned opening greeting sent session=%s voice=%s",
-                sanitize_log_fn(ctx.resolved_session_id),
-                sanitize_log_fn(ctx.session_voice),
-            )
-        except Exception:
-            silence_state.agent_busy = False
-            silence_state.assistant_output_active = False
-            _sync_pending_media_analysis()
-            logger.warning(
-                "Server-owned opening greeting failed; falling back to opening bootstrap session=%s",
-                sanitize_log_fn(ctx.resolved_session_id),
-                exc_info=True,
-            )
-            _queue_opening_bootstrap_prompt()
-        finally:
-            server_owned_opening_pending = False
-
     def _is_voice_channel() -> bool:
         channel = _session_get("app:channel", "")
         return isinstance(channel, str) and channel.strip().lower() == "voice"
@@ -1058,15 +991,6 @@ async def downstream_task(
     def _server_owned_opening_enabled() -> bool:
         return VOICE_SERVER_OWNED_OPENING_ENABLED and _is_live_voice_session_local()
 
-    def _server_owned_opening_state() -> bool:
-        if bool(_session_get("temp:opening_greeting_server_owned", False)):
-            return True
-        registry_state = get_registered_voice_state(
-            user_id=ctx.user_id,
-            session_id=ctx.resolved_session_id,
-        )
-        return bool(registry_state.get("temp:opening_greeting_server_owned", False))
-
     def _server_owned_preuser_guard_active() -> bool:
         if not _server_owned_opening_enabled():
             return False
@@ -1074,11 +998,81 @@ async def downstream_task(
             return False
         if bool(_session_get("temp:first_user_turn_complete", False)):
             return False
-        return server_owned_opening_pending or _server_owned_opening_state()
+        if bool(_session_get("temp:opening_greeting_complete", False)):
+            return False
+        return server_owned_opening_pending
 
     def _server_owned_opening_text() -> str:
         opening_sentence = _resolve_opening_sentence("Server-owned opening")
         return f"{opening_sentence} How can I help you today?"
+
+    def _normalize_opening_contract_text(text: str) -> str:
+        lowered = re.sub(r"[^a-z0-9]+", " ", str(text or "").lower())
+        return " ".join(lowered.split()).strip()
+
+    def _opening_output_matches_expected(text: str) -> bool:
+        candidate = _normalize_opening_contract_text(text)
+        if not candidate:
+            return False
+        if "this is ehkaitay" not in candidate and "welcome back" not in candidate:
+            return False
+        for forbidden in (
+            "catalog",
+            "callback",
+            "call you back",
+            "transfer",
+            "booking agent",
+            "valuation agent",
+            "support agent",
+        ):
+            if forbidden in candidate:
+                return False
+        expected = _normalize_opening_contract_text(_server_owned_opening_text())
+        return expected in candidate or _text_overlap(expected, candidate) >= 0.75
+
+    def _clear_buffered_opening_output() -> None:
+        nonlocal opening_candidate_text
+        opening_audio_buffer.clear()
+        opening_candidate_text = ""
+
+    async def _flush_buffered_opening_greeting(text: str) -> None:
+        nonlocal opening_turn_completed_at
+        nonlocal opening_output_observed
+        nonlocal server_owned_opening_pending
+        server_owned_opening_pending = False
+        silence_state.agent_busy = True
+        silence_state.assistant_output_active = True
+        silence_state.awaiting_agent_response = False
+        silence_state.user_turn_active = False
+        _sync_pending_media_analysis()
+
+        await websocket.send_text(json.dumps({
+            "type": "agent_status",
+            "agent": current_agent,
+            "status": "active",
+        }))
+        for audio_bytes in opening_audio_buffer:
+            await websocket.send_bytes(audio_bytes)
+        await websocket.send_text(json.dumps({
+            "type": "transcription",
+            "role": "agent",
+            "text": text,
+            "partial": False,
+        }))
+
+        _record_voice_transcript("agent", text, False)
+        recent_turns.append(("agent", text))
+        _session_set("temp:last_agent_turn", text)
+        _session_set("temp:opening_greeting_server_owned", True)
+        opening_output_observed = True
+        opening_turn_completed_at = time.monotonic()
+        _complete_opening_greeting("validated server-owned live opening")
+        _clear_buffered_opening_output()
+        logger.info(
+            "Server-owned opening greeting validated session=%s voice=%s",
+            sanitize_log_fn(ctx.resolved_session_id),
+            sanitize_log_fn(ctx.session_voice),
+        )
 
     def _looks_like_callback_request(text: str) -> bool:
         from app.agents.callbacks import looks_like_callback_request
@@ -1379,21 +1373,17 @@ async def downstream_task(
         last_output_text = ""
         output_finalized = True
 
-    opening_task: asyncio.Task[None] | None = None
     if (
         _server_owned_opening_enabled()
         and not bool(_session_get("temp:opening_greeting_complete", False))
         and not bool(_session_get("temp:first_user_turn_started", False))
+        and not bool(_session_get("temp:first_user_turn_complete", False))
     ):
-        opening_task = asyncio.create_task(_send_server_owned_opening_greeting())
+        server_owned_opening_pending = _queue_opening_bootstrap_prompt()
 
     try:
         while session_alive.is_set():
             try:
-                if opening_task is not None and opening_task.done():
-                    finished_opening = opening_task
-                    opening_task = None
-                    await finished_opening
                 async for event in runner_obj.run_live(
                     user_id=ctx.user_id,
                     session_id=ctx.resolved_session_id,
@@ -1408,14 +1398,30 @@ async def downstream_task(
                         if event.content and event.content.parts:
                             for part in event.content.parts:
                                 if _server_owned_preuser_guard_active():
-                                    if not server_owned_opening_logged:
-                                        logger.warning(
-                                            "Suppressing pre-user model content during server-owned opening "
-                                            "session=%s author=%s",
-                                            sanitize_log_fn(ctx.resolved_session_id),
-                                            sanitize_log_fn(event.author or current_agent),
-                                        )
-                                        server_owned_opening_logged = True
+                                    if (
+                                        part.inline_data
+                                        and part.inline_data.data
+                                        and part.inline_data.mime_type
+                                        and "audio" in part.inline_data.mime_type
+                                    ):
+                                        audio_bytes = part.inline_data.data
+                                        if isinstance(audio_bytes, str):
+                                            audio_bytes = base64.b64decode(audio_bytes)
+                                        opening_audio_buffer.append(audio_bytes)
+                                        opening_output_observed = True
+                                        event_had_agent_output = True
+                                        if not server_owned_opening_logged:
+                                            logger.info(
+                                                "Buffering pre-user opening audio until transcript validation "
+                                                "session=%s author=%s",
+                                                sanitize_log_fn(ctx.resolved_session_id),
+                                                sanitize_log_fn(event.author or current_agent),
+                                            )
+                                            server_owned_opening_logged = True
+                                    elif part.text and not ctx.is_native_audio:
+                                        opening_candidate_text = str(part.text or "").strip()
+                                        opening_output_observed = True
+                                        event_had_agent_output = True
                                     continue
                                 server_owned_opening_logged = False
                                 # Audio -> binary WebSocket frame (lowest latency)
@@ -1480,6 +1486,14 @@ async def downstream_task(
                             text = getattr(event.input_transcription, "text", None)
                             finished = getattr(event.input_transcription, "finished", False)
                             if text:
+                                if _server_owned_preuser_guard_active():
+                                    logger.warning(
+                                        "Caller spoke before opening greeting was validated session=%s; "
+                                        "aborting buffered opening output",
+                                        sanitize_log_fn(ctx.resolved_session_id),
+                                    )
+                                    server_owned_opening_pending = False
+                                    _clear_buffered_opening_output()
                                 if input_finalized and not finished:
                                     # Suppress late partials after input was already finalized
                                     pass
@@ -1539,9 +1553,12 @@ async def downstream_task(
                             finished = getattr(event.output_transcription, "finished", False)
                             if text:
                                 if _server_owned_preuser_guard_active():
-                                    if not server_owned_opening_logged:
-                                        logger.warning(
-                                            "Suppressing pre-user model transcription during server-owned opening "
+                                    if finished:
+                                        opening_candidate_text = str(text or "").strip()
+                                        opening_output_observed = True
+                                    elif not server_owned_opening_logged:
+                                        logger.info(
+                                            "Buffering pre-user opening transcription until turn completion "
                                             "session=%s text=%s",
                                             sanitize_log_fn(ctx.resolved_session_id),
                                             text[:80],
@@ -1784,10 +1801,22 @@ async def downstream_task(
                             await _finalize_output()
                             if silence_state.greeting_lock_active:
                                 if _server_owned_preuser_guard_active():
-                                    logger.info(
-                                        "Ignoring pre-user turn_complete during server-owned opening session=%s",
-                                        sanitize_log_fn(ctx.resolved_session_id),
-                                    )
+                                    if _opening_output_matches_expected(opening_candidate_text):
+                                        await _flush_buffered_opening_greeting(opening_candidate_text)
+                                    elif opening_candidate_text or opening_audio_buffer:
+                                        logger.warning(
+                                            "Buffered opening output failed validation session=%s text=%s",
+                                            sanitize_log_fn(ctx.resolved_session_id),
+                                            opening_candidate_text[:120],
+                                        )
+                                        _clear_buffered_opening_output()
+                                        server_owned_opening_pending = _queue_opening_bootstrap_prompt()
+                                    else:
+                                        logger.warning(
+                                            "Opening turn completed before any validated assistant output session=%s",
+                                            sanitize_log_fn(ctx.resolved_session_id),
+                                        )
+                                        server_owned_opening_pending = _queue_opening_bootstrap_prompt()
                                 elif opening_output_observed:
                                     _complete_opening_greeting("first turn complete after output")
                                 else:
@@ -1795,7 +1824,7 @@ async def downstream_task(
                                         "Greeting turn completed before any assistant output session=%s",
                                         sanitize_log_fn(ctx.resolved_session_id),
                                     )
-                                    _queue_opening_bootstrap_prompt()
+                                    server_owned_opening_pending = _queue_opening_bootstrap_prompt()
                             # Anchor silence nudges to when the agent actually finishes,
                             # not when the user last spoke. This avoids check-in nudges
                             # racing right after a long agent response.
@@ -1811,6 +1840,7 @@ async def downstream_task(
                             input_finalized = False
                             output_finalized = False
                             suppress_preuser_opening_output = False
+                            server_owned_opening_logged = False
                             await websocket.send_text(json.dumps({
                                 "type": "agent_status",
                                 "agent": event.author or current_agent,
