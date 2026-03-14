@@ -43,6 +43,7 @@ def build_genai_client(
     api_version: str | None = None,
     prefer_vertex: bool | None = None,
     api_key: str | None = None,
+    location: str | None = None,
 ) -> genai.Client:
     """Build an explicit backend-aware GenAI client.
 
@@ -64,11 +65,15 @@ def build_genai_client(
         )
     if use_vertex:
         project = os.getenv("GOOGLE_CLOUD_PROJECT", "").strip() or None
-        location = os.getenv("GOOGLE_CLOUD_LOCATION", "").strip() or None
+        resolved_location = (
+            location.strip()
+            if isinstance(location, str) and location.strip()
+            else os.getenv("GOOGLE_CLOUD_LOCATION", "").strip() or None
+        )
         return genai.Client(
             vertexai=True,
             project=project,
-            location=location,
+            location=resolved_location,
             http_options=http_options,
         )
 

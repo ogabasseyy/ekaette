@@ -49,8 +49,8 @@ class TestQueryText:
         config = call_kwargs["config"]
         assert config.system_instruction.endswith(_CHANNEL_CONFIG["sms"]["system_suffix"])
         assert "e hkaitay" not in config.system_instruction.lower()
-        assert "named ehkaitay" in config.system_instruction.lower()
-        assert "you are ekaette" not in config.system_instruction.lower()
+        assert "spell your assistant name exactly as 'ekaette'" in config.system_instruction.lower()
+        assert "never type the phonetic spelling 'ehkaitay'" in config.system_instruction.lower()
         assert "ekaette-electronics" not in config.system_instruction.lower()
 
     async def test_whatsapp_channel(self, _mock_genai) -> None:
@@ -74,3 +74,10 @@ class TestQueryText:
         _mock_genai.models.generate_content.return_value.text = ""
         result = await query_text(user_message="Hi")
         assert "How can I help" in result
+
+    async def test_normalizes_phonetic_name_in_text_reply(self, _mock_genai) -> None:
+        _mock_genai.models.generate_content.return_value.text = (
+            "Hello, this is ehkaitay from Ogabassey Gadgets."
+        )
+        result = await query_text(user_message="Hi", channel="whatsapp")
+        assert result == "Hello, this is Ekaette from Ogabassey Gadgets."

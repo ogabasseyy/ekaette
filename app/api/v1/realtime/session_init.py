@@ -23,10 +23,14 @@ from app.api.v1.realtime.runtime_cache import (
 logger = logging.getLogger(__name__)
 
 _HANDOFF_STATE_DEFAULTS: dict[str, str] = {
+    "temp:vision_media_handoff_state": "",
+    "temp:background_vision_status": "",
     "temp:pending_handoff_target_agent": "",
     "temp:pending_handoff_latest_user": "",
     "temp:pending_handoff_latest_agent": "",
     "temp:pending_handoff_recent_customer_context": "",
+    "temp:pending_transfer_bootstrap_target_agent": "",
+    "temp:pending_transfer_bootstrap_reason": "",
 }
 
 

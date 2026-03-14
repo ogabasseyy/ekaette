@@ -15,6 +15,11 @@ import pytest
 from fastapi import WebSocketDisconnect
 
 from app.api.v1.realtime.models import SessionInitContext, SilenceState
+from app.api.v1.realtime.voice_state_registry import (
+    clear_registered_voice_state,
+    get_registered_voice_state,
+    update_voice_state,
+)
 
 
 class TestSilenceStateResponseLatencyFields:
@@ -31,6 +36,8 @@ class TestSilenceStateResponseLatencyFields:
         assert state.awaiting_agent_response is False
         assert state.user_spoke_at == 0.0
         assert state.response_nudge_count == 0
+        assert state.user_turn_active is False
+        assert state.pending_media_analysis is False
 
     def test_can_set_awaiting_agent_response(self):
         state = SilenceState(
@@ -191,6 +198,42 @@ class TestTransferHandoffInjection:
         assert "iPhone 14 128GB" in ctx.session_state["temp:recent_customer_context"]
 
     @pytest.mark.asyncio
+    async def test_finished_user_transcription_updates_voice_state_registry(self):
+        ctx = _make_ctx(_FakeWebSocket())
+        ctx.session_state.update(
+            {
+                "app:channel": "voice",
+                "temp:opening_greeting_complete": True,
+            }
+        )
+
+        try:
+            await _run_downstream_events(
+                _make_live_event(
+                    input_transcription=SimpleNamespace(
+                        text="I want to swap my iPhone XR for an iPhone 14.",
+                        finished=True,
+                    )
+                ),
+                ctx=ctx,
+            )
+
+            registry_state = get_registered_voice_state(
+                user_id=ctx.user_id,
+                session_id=ctx.resolved_session_id,
+            )
+            assert registry_state["temp:last_user_turn"] == (
+                "I want to swap my iPhone XR for an iPhone 14."
+            )
+            assert registry_state["temp:first_user_turn_complete"] is True
+            assert registry_state["temp:opening_phase_complete"] is True
+        finally:
+            clear_registered_voice_state(
+                user_id=ctx.user_id,
+                session_id=ctx.resolved_session_id,
+            )
+
+    @pytest.mark.asyncio
     async def test_first_transferred_agent_final_clears_pending_handoff_state(self):
         ctx = _make_ctx(_FakeWebSocket())
         ctx.session_state.update(
@@ -248,6 +291,116 @@ class TestTransferHandoffInjection:
 
         assert ctx.session_state["temp:active_agent"] == "catalog_agent"
         assert ctx.session_state["temp:pending_handoff_target_agent"] == ""
+
+    @pytest.mark.asyncio
+    async def test_transfer_event_queues_tradein_recovery_bootstrap_prompt(self):
+        ctx = _make_ctx(_FakeWebSocket())
+        ctx.session_state.update(
+            {
+                "app:channel": "voice",
+                "temp:pending_handoff_target_agent": "valuation_agent",
+                "temp:pending_handoff_latest_user": "I want to swap my iPhone XR for an iPhone 14.",
+                "temp:pending_handoff_recent_customer_context": (
+                    "Customer: I want to swap my iPhone XR for an iPhone 14."
+                ),
+                "temp:pending_transfer_bootstrap_target_agent": "valuation_agent",
+                "temp:pending_transfer_bootstrap_reason": "voice_tradein_recovery",
+            }
+        )
+
+        _, queue, _ = await _run_downstream_events(
+            _make_live_event(
+                actions=SimpleNamespace(
+                    transfer_to_agent="valuation_agent",
+                    state_delta=None,
+                ),
+            ),
+            ctx=ctx,
+        )
+
+        assert any(
+            "request_media_via_whatsapp has not succeeded yet" in (content.parts[0].text or "")
+            for content in queue.sent
+        )
+        assert ctx.session_state["temp:pending_transfer_bootstrap_target_agent"] == ""
+        assert ctx.session_state["temp:pending_transfer_bootstrap_reason"] == ""
+
+    @pytest.mark.asyncio
+    async def test_transfer_event_queues_tradein_bootstrap_prompt_for_normal_handoff(self):
+        ctx = _make_ctx(_FakeWebSocket())
+        ctx.session_state.update(
+            {
+                "app:channel": "voice",
+                "temp:pending_handoff_target_agent": "valuation_agent",
+                "temp:pending_handoff_latest_user": "I want to swap my iPhone XR for an iPhone 14.",
+                "temp:pending_handoff_recent_customer_context": (
+                    "Customer: I want to swap my iPhone XR for an iPhone 14."
+                ),
+                "temp:pending_transfer_bootstrap_target_agent": "valuation_agent",
+                "temp:pending_transfer_bootstrap_reason": "voice_tradein_handoff",
+            }
+        )
+
+        _, queue, _ = await _run_downstream_events(
+            _make_live_event(
+                actions=SimpleNamespace(
+                    transfer_to_agent="valuation_agent",
+                    state_delta=None,
+                ),
+            ),
+            ctx=ctx,
+        )
+
+        assert any(
+            "request_media_via_whatsapp has not succeeded yet" in (content.parts[0].text or "")
+            for content in queue.sent
+        )
+        assert ctx.session_state["temp:pending_transfer_bootstrap_target_agent"] == ""
+        assert ctx.session_state["temp:pending_transfer_bootstrap_reason"] == ""
+
+    @pytest.mark.asyncio
+    async def test_transfer_event_uses_registry_bootstrap_when_session_state_is_stale(self):
+        ctx = _make_ctx(_FakeWebSocket())
+        ctx.session_state.update(
+            {
+                "app:channel": "voice",
+                "temp:pending_handoff_target_agent": "valuation_agent",
+                "temp:pending_handoff_latest_user": "I want to swap my iPhone XR for an iPhone 14.",
+                "temp:pending_handoff_recent_customer_context": (
+                    "Customer: I want to swap my iPhone XR for an iPhone 14."
+                ),
+            }
+        )
+        update_voice_state(
+            user_id=ctx.user_id,
+            session_id=ctx.resolved_session_id,
+            **{
+                "temp:pending_transfer_bootstrap_target_agent": "valuation_agent",
+                "temp:pending_transfer_bootstrap_reason": "voice_tradein_recovery",
+            },
+        )
+
+        _, queue, _ = await _run_downstream_events(
+            _make_live_event(
+                actions=SimpleNamespace(
+                    transfer_to_agent="valuation_agent",
+                    state_delta=None,
+                ),
+            ),
+            ctx=ctx,
+        )
+
+        assert any(
+            "request_media_via_whatsapp has not succeeded yet" in (content.parts[0].text or "")
+            for content in queue.sent
+        )
+        registry_state = get_registered_voice_state(
+            user_id=ctx.user_id,
+            session_id=ctx.resolved_session_id,
+        )
+        assert registry_state.get("temp:pending_transfer_bootstrap_target_agent", None) == ""
+        assert registry_state.get("temp:pending_transfer_bootstrap_reason", None) == ""
+        clear_registered_voice_state(user_id=ctx.user_id, session_id=ctx.resolved_session_id)
 
 
 class TestVoiceCallbackIntentRegistration:
@@ -428,12 +581,14 @@ def _inject_stream_tasks_globals():
     st.SILENCE_NUDGE_MAX = 2
     st.SILENCE_NUDGE_BACKOFF_MULTIPLIER = 1.5
     st.SILENCE_NUDGE_MAX_INTERVAL_SECONDS = 30
+    st.VOICE_SERVER_OWNED_OPENING_ENABLED = False
     return st
 
 
 def _configure_downstream_runtime(*events):
     import app.api.v1.realtime.stream_tasks as st
 
+    st.VOICE_SERVER_OWNED_OPENING_ENABLED = False
     st.configure_runtime(
         runner=_FakeRunner(events),
         _extract_server_message_from_state_delta=lambda delta: None,
@@ -498,7 +653,12 @@ class _SignalRequestQueue(_FakeRequestQueue):
 
 
 @contextlib.asynccontextmanager
-async def _run_nudge_task(st, silence_state: SilenceState):
+async def _run_nudge_task(
+    st,
+    silence_state: SilenceState,
+    *,
+    ctx: SessionInitContext | None = None,
+):
     queue = _SignalRequestQueue()
     session_alive = asyncio.Event()
     session_alive.set()
@@ -510,7 +670,14 @@ async def _run_nudge_task(st, silence_state: SilenceState):
         return original_bind(*names)
 
     st.bind_runtime_values = fake_bind
-    task = asyncio.create_task(st.silence_nudge_task(queue, session_alive, silence_state))
+    task = asyncio.create_task(
+        st.silence_nudge_task(
+            queue,
+            session_alive,
+            silence_state,
+            ctx or _make_ctx(_FakeWebSocket()),
+        )
+    )
     try:
         yield queue
     finally:
@@ -788,6 +955,7 @@ class TestDownstreamRetry:
     async def test_retryable_live_error_retries_stream(self, monkeypatch):
         import app.api.v1.realtime.stream_tasks as st
 
+        monkeypatch.setattr(st, "VOICE_SERVER_OWNED_OPENING_ENABLED", False)
         runner = _RetryableFailureRunner([_make_content_event(audio_bytes=b"\x00\x01")])
         st.configure_runtime(
             runner=runner,
@@ -817,6 +985,7 @@ class TestDownstreamRetry:
     async def test_successful_reconnect_resets_retry_budget(self, monkeypatch):
         import app.api.v1.realtime.stream_tasks as st
 
+        monkeypatch.setattr(st, "VOICE_SERVER_OWNED_OPENING_ENABLED", False)
         runner = _IntermittentRetryRunner(
             [_make_content_event(audio_bytes=b"\x00\x01")],
             [_make_content_event(audio_bytes=b"\x00\x02")],
@@ -955,6 +1124,127 @@ class TestWatchdogClearingInDownstream:
         assert ctx.session_state["temp:greeted"] is True
 
     @pytest.mark.asyncio
+    async def test_server_owned_opening_greeting_sent_before_first_user_turn(self, monkeypatch):
+        import app.api.v1.realtime.stream_tasks as st
+
+        async def _fake_tts(text: str, *, voice_name: str | None = None):
+            assert text == "Hello, this is ehkaitay from Acme Gadgets. How can I help you today?"
+            assert voice_name == "Aoede"
+            return b"\x00\x01", "audio/pcm;rate=24000"
+
+        monkeypatch.setattr(
+            "app.api.v1.at.providers.text_to_speech_pcm",
+            _fake_tts,
+        )
+        st = _configure_downstream_runtime()
+        monkeypatch.setattr(st, "VOICE_SERVER_OWNED_OPENING_ENABLED", True)
+
+        ctx = _make_ctx(_FakeWebSocket())
+        ctx.session_state["app:channel"] = "voice"
+        ctx.session_state["app:company_profile"] = {"spoken_name": "Acme Gadgets"}
+        silence_state = _make_silence_state()
+        queue = _FakeRequestQueue()
+        session_alive = asyncio.Event()
+        session_alive.set()
+
+        await st.downstream_task(ctx, queue, session_alive, silence_state)
+
+        assert ctx.websocket.sent_bytes == [b"\x00\x01"]
+        assert ctx.session_state["temp:greeted"] is True
+        assert ctx.session_state["temp:opening_greeting_complete"] is True
+        assert ctx.session_state["temp:opening_greeting_server_owned"] is True
+        agent_transcripts = [
+            msg for msg in ctx.websocket.sent_texts
+            if msg.get("type") == "transcription" and msg.get("role") == "agent"
+        ]
+        assert agent_transcripts == [{
+            "type": "transcription",
+            "role": "agent",
+            "text": "Hello, this is ehkaitay from Acme Gadgets. How can I help you today?",
+            "partial": False,
+        }]
+
+    @pytest.mark.asyncio
+    async def test_server_owned_opening_suppresses_preuser_model_output(self, monkeypatch):
+        import app.api.v1.realtime.stream_tasks as st
+
+        async def _fake_tts(text: str, *, voice_name: str | None = None):
+            return b"\x00\x01", "audio/pcm;rate=24000"
+
+        monkeypatch.setattr(
+            "app.api.v1.at.providers.text_to_speech_pcm",
+            _fake_tts,
+        )
+        st = _configure_downstream_runtime(
+            _make_content_event(audio_bytes=b"\xAA\xBB"),
+            _make_live_event(
+                output_transcription=SimpleNamespace(
+                    text="Let me check our catalog for that.",
+                    finished=True,
+                )
+            ),
+        )
+        monkeypatch.setattr(st, "VOICE_SERVER_OWNED_OPENING_ENABLED", True)
+
+        ctx = _make_ctx(_FakeWebSocket())
+        ctx.session_state["app:channel"] = "voice"
+        silence_state = _make_silence_state()
+        queue = _FakeRequestQueue()
+        session_alive = asyncio.Event()
+        session_alive.set()
+
+        await st.downstream_task(ctx, queue, session_alive, silence_state)
+
+        assert ctx.websocket.sent_bytes == [b"\x00\x01"]
+        agent_transcripts = [
+            msg for msg in ctx.websocket.sent_texts
+            if msg.get("type") == "transcription" and msg.get("role") == "agent"
+        ]
+        assert agent_transcripts == [{
+            "type": "transcription",
+            "role": "agent",
+            "text": "Hello, this is ehkaitay from our service desk. How can I help you today?",
+            "partial": False,
+        }]
+
+    @pytest.mark.asyncio
+    async def test_suppresses_second_opening_output_before_first_user_turn(self):
+        ctx = _make_ctx(_FakeWebSocket())
+        ctx.session_state["app:channel"] = "voice"
+
+        websocket, _, _ = await _run_downstream_events(
+            _make_content_event(audio_bytes=b"first-greeting-audio"),
+            _make_live_event(
+                output_transcription=SimpleNamespace(
+                    text="Hello, this is ehkaitay from Ogabassey Gadgets. How can I help you today?",
+                    finished=True,
+                )
+            ),
+            _make_live_event(turn_complete=True),
+            _make_content_event(audio_bytes=b"duplicate-greeting-audio"),
+            _make_live_event(
+                output_transcription=SimpleNamespace(
+                    text="Hello, this is ehkaitay from Ogabassey Gadgets. How can I help you today?",
+                    finished=True,
+                )
+            ),
+            _make_live_event(turn_complete=True),
+            ctx=ctx,
+        )
+
+        assert websocket.sent_bytes == [b"first-greeting-audio"]
+        agent_transcripts = [
+            msg for msg in websocket.sent_texts
+            if msg.get("type") == "transcription" and msg.get("role") == "agent"
+        ]
+        assert agent_transcripts == [{
+            "type": "transcription",
+            "role": "agent",
+            "text": "Hello, this is ehkaitay from Ogabassey Gadgets. How can I help you today?",
+            "partial": False,
+        }]
+
+    @pytest.mark.asyncio
     async def test_session_server_message_fallback_emits_call_control_without_state_delta(self):
         ctx = _make_ctx(_FakeWebSocket())
         ctx.session_state["temp:last_server_message"] = {
@@ -974,6 +1264,58 @@ class TestWatchdogClearingInDownstream:
             "action": "end_after_speaking",
             "reason": "callback_acknowledged",
         } in websocket.sent_texts
+
+    @pytest.mark.asyncio
+    async def test_media_request_success_queues_immediate_voice_ack_prompt(self):
+        ctx = _make_ctx(_FakeWebSocket())
+        ctx.session_state.update(
+            {
+                "app:channel": "voice",
+                "temp:active_agent": "valuation_agent",
+                "temp:pending_media_request_voice_ack": "ready",
+            }
+        )
+
+        _, queue, silence_state = await _run_downstream_events(
+            _make_live_event(turn_complete=True),
+            ctx=ctx,
+        )
+
+        assert any(
+            "whatsapp media request has already been sent successfully"
+            in (content.parts[0].text or "").lower()
+            for content in queue.sent
+        )
+        assert ctx.session_state["temp:pending_media_request_voice_ack"] == ""
+        assert silence_state.awaiting_agent_response is True
+
+    @pytest.mark.asyncio
+    async def test_media_request_success_prompt_consumed_when_agent_already_spoke(self):
+        ctx = _make_ctx(_FakeWebSocket())
+        ctx.session_state.update(
+            {
+                "app:channel": "voice",
+                "temp:active_agent": "valuation_agent",
+                "temp:pending_media_request_voice_ack": "ready",
+            }
+        )
+
+        _, queue, _ = await _run_downstream_events(
+            _make_live_event(
+                output_transcription=SimpleNamespace(
+                    text="I've sent the WhatsApp message. Please check it now.",
+                    finished=True,
+                )
+            ),
+            ctx=ctx,
+        )
+
+        assert not any(
+            "whatsapp media request has already been sent successfully"
+            in (content.parts[0].text or "").lower()
+            for content in queue.sent
+        )
+        assert ctx.session_state["temp:pending_media_request_voice_ack"] == ""
 
     @pytest.mark.asyncio
     async def test_finished_callback_ack_emits_end_after_speaking_directly(self):
@@ -1039,6 +1381,71 @@ class TestWatchdogClearingInDownstream:
         )
 
         assert ctx.session_state["temp:greeted"] is True
+
+    @pytest.mark.asyncio
+    async def test_empty_turn_complete_does_not_consume_first_greeting(self):
+        ctx = _make_ctx(_FakeWebSocket())
+        ctx.session_state["app:channel"] = "voice"
+
+        websocket, _, silence_state = await _run_downstream_events(
+            _make_live_event(turn_complete=True),
+            _make_live_event(
+                output_transcription=SimpleNamespace(
+                    text="Hello, this is ehkaitay from Ogabassey Gadgets.",
+                    finished=True,
+                )
+            ),
+            ctx=ctx,
+        )
+
+        agent_transcripts = [
+            msg for msg in websocket.sent_texts
+            if msg.get("type") == "transcription" and msg.get("role") == "agent"
+        ]
+        assert agent_transcripts
+        assert agent_transcripts[0]["text"] == "Hello, this is ehkaitay from Ogabassey Gadgets."
+        assert ctx.session_state["temp:opening_greeting_complete"] is True
+        assert ctx.session_state["temp:greeted"] is True
+        assert silence_state.greeting_lock_active is False
+
+    @pytest.mark.asyncio
+    async def test_silent_opening_turn_queues_internal_bootstrap_prompt(self):
+        ctx = _make_ctx(_FakeWebSocket())
+        ctx.session_state["app:channel"] = "voice"
+        ctx.session_state["app:company_profile"] = {"name": "Ogabassey Gadgets"}
+
+        _, queue, silence_state = await _run_downstream_events(
+            _make_live_event(turn_complete=True),
+            ctx=ctx,
+        )
+
+        assert any(
+            "opening phase recovery" in (content.parts[0].text or "").lower()
+            for content in queue.sent
+        )
+        assert ctx.session_state["temp:opening_bootstrap_retry_count"] == 1
+        assert silence_state.greeting_lock_active is True
+        assert ctx.session_state.get("temp:opening_greeting_complete") is not True
+
+    @pytest.mark.asyncio
+    async def test_silent_opening_bootstrap_retry_is_bounded(self):
+        ctx = _make_ctx(_FakeWebSocket())
+        ctx.session_state["app:channel"] = "voice"
+
+        _, queue, silence_state = await _run_downstream_events(
+            _make_live_event(turn_complete=True),
+            _make_live_event(turn_complete=True),
+            ctx=ctx,
+        )
+
+        prompts = [
+            content.parts[0].text
+            for content in queue.sent
+            if getattr(content, "parts", None)
+        ]
+        assert sum("opening phase recovery" in (text or "").lower() for text in prompts) == 1
+        assert ctx.session_state["temp:opening_bootstrap_retry_count"] == 1
+        assert silence_state.greeting_lock_active is True
 
     @pytest.mark.asyncio
     async def test_finished_first_user_turn_marks_opening_phase_complete(self):
@@ -1151,6 +1558,23 @@ class TestWatchdogClearingInDownstream:
         }]
 
     @pytest.mark.asyncio
+    async def test_turn_complete_keeps_pending_media_analysis_while_background_running(self):
+        ctx = _make_ctx(_FakeWebSocket())
+        ctx.session_state["temp:background_vision_status"] = "running"
+        _, _, ss = await _run_downstream_events(
+            _make_live_event(turn_complete=True),
+            ctx=ctx,
+            silence_state=_make_silence_state(
+                awaiting_agent_response=True,
+                pending_media_analysis=True,
+                user_spoke_at=time.monotonic(),
+                agent_busy=True,
+            ),
+        )
+
+        assert ss.pending_media_analysis is True
+
+    @pytest.mark.asyncio
     async def test_stale_output_partial_does_not_clear_watchdog(self):
         websocket, _, silence_state = await _run_downstream_events(
             _make_live_event(
@@ -1177,7 +1601,7 @@ class TestWatchdogSuspensionOnNewInput:
     """Fresh caller input should cancel the prior response-latency watchdog."""
 
     @pytest.mark.asyncio
-    async def test_binary_audio_clears_watchdog(self):
+    async def test_binary_audio_does_not_clear_watchdog(self):
         st = _inject_stream_tasks_globals()
 
         st.configure_runtime(
@@ -1212,8 +1636,8 @@ class TestWatchdogSuspensionOnNewInput:
         with pytest.raises(WebSocketDisconnect):
             await st.upstream_task(ctx, queue, session_alive, silence_state)
 
-        assert silence_state.awaiting_agent_response is False
-        assert silence_state.response_nudge_count == 0
+        assert silence_state.awaiting_agent_response is True
+        assert silence_state.response_nudge_count == 1
         assert len(queue.realtime) == 1
 
     @pytest.mark.asyncio
@@ -1295,6 +1719,42 @@ class TestWatchdogSuspensionOnNewInput:
             "Greet the caller warmly now and ask how you can help.]"
         )
 
+    @pytest.mark.asyncio
+    async def test_system_text_startup_marker_is_swallowed_for_server_owned_voice_opening(self):
+        st = _inject_stream_tasks_globals()
+        st.VOICE_SERVER_OWNED_OPENING_ENABLED = True
+
+        st.configure_runtime(
+            types=_FakeTypes,
+            _check_rate_limit=lambda *args: True,
+            UPLOAD_RATE_LIMIT=10,
+            _validate_upload_bytes=lambda *args: None,
+            MAX_UPLOAD_BYTES=1024 * 1024,
+            cache_latest_image=lambda **kwargs: None,
+            _normalize_company_id=lambda value: value,
+            _append_canonical_lock_fields=lambda payload, session_state: payload,
+            _voice_for_industry=lambda industry: "Aoede",
+            _build_session_started_message=lambda **kwargs: kwargs,
+        )
+
+        websocket = _FakeWebSocket(
+            incoming=[
+                {"text": json.dumps({"type": "system_text", "text": "Call connected"})},
+                {"type": "websocket.disconnect", "code": 1000},
+            ]
+        )
+        ctx = _make_ctx(websocket)
+        ctx.session_state["app:channel"] = "voice"
+        silence_state = _make_silence_state()
+        queue = _FakeRequestQueue()
+        session_alive = asyncio.Event()
+        session_alive.set()
+
+        with pytest.raises(WebSocketDisconnect):
+            await st.upstream_task(ctx, queue, session_alive, silence_state)
+
+        assert queue.sent == []
+
 
 class TestResponseLatencyNudge:
     """Verify the fast-path nudge fires at the configured thresholds."""
@@ -1317,6 +1777,33 @@ class TestResponseLatencyNudge:
         assert "filler" in first_nudge_text.lower() or "check that" in first_nudge_text.lower()
 
     @pytest.mark.asyncio
+    async def test_tradein_router_nudge_forces_valuation_handoff_language(self):
+        st = _inject_stream_tasks_globals()
+        ss = _make_silence_state(
+            awaiting_agent_response=True,
+            user_spoke_at=time.monotonic() - 4.0,
+        )
+        ctx = _make_ctx(_FakeWebSocket())
+        ctx.session_state.update(
+            {
+                "temp:active_agent": "ekaette_router",
+                "temp:last_user_turn": "I want to swap from an iPhone XR to an iPhone 14.",
+                "temp:recent_customer_context": (
+                    "Customer: I want to swap from an iPhone XR to an iPhone 14."
+                ),
+            }
+        )
+
+        async with _run_nudge_task(st, ss, ctx=ctx) as queue:
+            await asyncio.wait_for(queue.sent_event.wait(), timeout=2.5)
+
+        assert ss.response_nudge_count == 1
+        first_nudge_text = queue.sent[0].parts[0].text
+        assert "valuation_agent" in first_nudge_text
+        assert "phone they have and the phone they want" in first_nudge_text
+        assert "Do not ask brand-new" in first_nudge_text
+
+    @pytest.mark.asyncio
     async def test_nudge_not_gated_on_agent_busy(self):
         """Response nudge must fire even when agent_busy=True."""
         st = _inject_stream_tasks_globals()
@@ -1331,6 +1818,24 @@ class TestResponseLatencyNudge:
 
         assert ss.response_nudge_count == 1
         assert len(queue.sent) >= 1
+
+    @pytest.mark.asyncio
+    async def test_media_analysis_reassure_mentions_video_after_5s(self):
+        st = _inject_stream_tasks_globals()
+        ss = _make_silence_state(
+            awaiting_agent_response=True,
+            pending_media_analysis=True,
+            response_nudge_count=1,
+            user_spoke_at=time.monotonic() - 6.0,
+        )
+
+        async with _run_nudge_task(st, ss) as queue:
+            await asyncio.wait_for(queue.sent_event.wait(), timeout=2.5)
+
+        assert ss.response_nudge_count == 2
+        assert len(queue.sent) >= 1
+        reassure_text = queue.sent[0].parts[0].text
+        assert "still checking the video" in reassure_text.lower()
 
     @pytest.mark.asyncio
     async def test_customer_silence_nudge_suppressed_when_awaiting_response(self):

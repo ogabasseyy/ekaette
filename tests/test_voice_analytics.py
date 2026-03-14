@@ -29,6 +29,30 @@ def voice_analytics_client():
 
 
 class TestVoiceAnalytics:
+    def test_get_session_snapshot_returns_integer_duration_seconds(
+        self,
+        voice_analytics_client: TestClient,
+    ) -> None:
+        from app.api.v1.at import voice_analytics
+
+        voice_analytics.start_session(
+            session_id="sess-voice-snapshot",
+            tenant_id="public",
+            company_id="ekaette-electronics",
+            channel="voice",
+            started_at=1_700_000_000.0,
+        )
+        voice_analytics.end_session(
+            session_id="sess-voice-snapshot",
+            ended_at=1_700_000_045.6,
+        )
+
+        snapshot = voice_analytics.get_session_snapshot("sess-voice-snapshot")
+
+        assert snapshot is not None
+        assert snapshot["duration_seconds"] == 46
+        assert isinstance(snapshot["duration_seconds"], int)
+
     def test_voice_overview_returns_call_metrics_and_recent_calls(
         self,
         voice_analytics_client: TestClient,

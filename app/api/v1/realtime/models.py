@@ -40,10 +40,19 @@ class SilenceState:
     agent_busy: bool
     silence_nudge_due_at: float
     silence_nudge_interval: float
+    # True only while the assistant is actively outputting audio/text for the
+    # current turn. This is intentionally narrower than ``agent_busy``.
+    assistant_output_active: bool = False
     # Agent response latency tracking (independent from customer-silence)
     awaiting_agent_response: bool = False
     user_spoke_at: float = 0.0
     response_nudge_count: int = 0
+    # True while a new user utterance is in progress, based on
+    # transcription/VAD signals rather than raw RTP packet arrival.
+    user_turn_active: bool = False
+    # True when cross-channel media has just been injected and the caller is
+    # waiting for a visual analysis acknowledgement or result.
+    pending_media_analysis: bool = False
     # Greeting lock: suppress caller audio until the first agent turn completes,
     # matching the SIP/WA bridge pattern of non-interruptible greetings.
     greeting_lock_active: bool = True

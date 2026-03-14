@@ -282,6 +282,7 @@ async def _process_message(
         reply = await service_whatsapp.handle_text_message(
             from_=from_,
             text=text_body,
+            phone_number_id=phone_number_id,
         )
     elif msg_type == "image":
         image_data = message.get("image", {})
@@ -290,6 +291,7 @@ async def _process_message(
             media_id=image_data.get("id", ""),
             mime_type=image_data.get("mime_type", ""),
             caption=image_data.get("caption", ""),
+            phone_number_id=phone_number_id,
         )
     elif msg_type == "video":
         video_data = message.get("video", {})
@@ -298,6 +300,7 @@ async def _process_message(
             media_id=video_data.get("id", ""),
             mime_type=video_data.get("mime_type", ""),
             caption=video_data.get("caption", ""),
+            phone_number_id=phone_number_id,
         )
     elif msg_type == "audio":
         audio_data = message.get("audio", {})
@@ -305,6 +308,7 @@ async def _process_message(
             from_=from_,
             media_id=audio_data.get("id", ""),
             mime_type=audio_data.get("mime_type", ""),
+            phone_number_id=phone_number_id,
         )
     elif msg_type == "interactive":
         # Handle button_reply or list_reply
@@ -400,6 +404,9 @@ async def _schedule_nudge(
     Dev/test: asyncio background task with sleep.
     """
     service_whatsapp.record_outbound_timestamp(user_phone, phone_number_id)
+    if service_whatsapp.is_nudge_suppressed(user_phone, phone_number_id):
+        logger.info("Skipping WA silence nudge during active cross-session flow")
+        return
 
     delay = service_whatsapp.WA_NUDGE_DELAY_SECONDS
 

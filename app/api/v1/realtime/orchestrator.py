@@ -52,9 +52,10 @@ async def run_stream_loop(ctx: SessionInitContext, live_request_queue) -> None:
             name="keepalive_task",
         )
         nudge = asyncio.create_task(
-            silence_nudge_task(live_request_queue, session_alive, silence_state),
+            silence_nudge_task(live_request_queue, session_alive, silence_state, ctx),
             name="silence_nudge_task",
         )
+        nudge.add_done_callback(_log_background_task_failure)
         live_media = asyncio.create_task(
             active_live_media_task(ctx, live_request_queue, session_alive, silence_state),
             name="active_live_media_task",

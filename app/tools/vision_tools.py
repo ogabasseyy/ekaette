@@ -1,14 +1,16 @@
 """Vision tools — image analysis via Gemini Standard API + Cloud Storage upload.
 
-These tools use the Standard API (gemini-3-flash) for detailed vision analysis,
-NOT the Live API model. This is because the Live API model handles real-time
-audio; complex vision grading/analysis is better served by the standard model
-with Visual Thinking capabilities.
+These tools use a standard multimodal model for detailed vision analysis, not
+the Live API audio model. Complex grading and video inspection are handled here
+with stable model fallback logic so media analysis survives preview retirement
+or access drift.
 """
 
+import asyncio
 import base64
 import binascii
 import copy
+import hashlib
 import json
 import logging
 import os
@@ -23,7 +25,7 @@ from google.genai import types
 from pydantic import BaseModel, Field
 
 from app.configs import sanitize_log
-from app.configs.model_resolver import resolve_vision_model_id
+from app.configs.model_resolver import get_vision_model_candidates, resolve_vision_model_id
 from app.genai_clients import build_genai_client
 
 logger = logging.getLogger(__name__)
@@ -76,8 +78,28 @@ class DeviceAnalysis(BaseModel):
     device_name: str = Field(default="Unknown", description="Identified device model")
     brand: str = Field(default="Unknown")
     category: str = Field(default="Unknown")
+    device_color: str = Field(
+        default="unknown",
+        description=(
+            "Dominant visible device color when it can be determined confidently, "
+            "otherwise unknown"
+        ),
+    )
+    color_confidence: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="Confidence that the visible device color assessment is correct",
+    )
     condition: str = Field(default="Unknown", description="Excellent|Good|Fair|Poor")
     condition_justification: str = Field(default="")
+    power_state: str = Field(
+        default="unknown",
+        description=(
+            "Visible power state based only on what can be seen in the media: "
+            "on|off|unknown"
+        ),
+    )
     details: DeviceDetails = Field(default_factory=DeviceDetails)
     accessories_detected: list[str] = Field(default_factory=list)
     confidence: float = Field(default=0.5, ge=0.0, le=1.0, description="Overall assessment confidence")
@@ -86,13 +108,31 @@ class DeviceAnalysis(BaseModel):
 _IMAGE_ANALYSIS_PROMPT = """Analyze this device image for trade-in valuation.
 Identify the device model and brand. Assess condition as Excellent, Good, Fair, or Poor.
 Be specific about scratches, dents, cracks, and defect locations (top-left, center, bottom-right, etc.).
-Note any visible accessories (case, charger, box)."""
+Note any visible accessories (case, charger, box).
+Set device_color to a grounded visible color such as red, black, white, blue, gold, silver,
+green, purple, pink, gray, or unknown.
+Set color_confidence between 0.0 and 1.0 based only on how clearly the device color is visible.
+If lighting, reflections, cases, or framing make the color uncertain, set device_color to
+"unknown" or use a low color_confidence.
+Set power_state to:
+- "on" only when the display, boot screen, or visible content clearly proves the device is powered on
+- "off" only when the media clearly shows the device is off or not powering up
+- "unknown" when power state is not visually provable from the media."""
 
 _VIDEO_ANALYSIS_PROMPT = """Analyze this video walkthrough of a device for trade-in valuation.
 Identify the device model and brand. Assess condition as Excellent, Good, Fair, or Poor.
 Examine multiple frames throughout the video for scratches, dents, cracks, and defect locations
 (top-left, center, bottom-right, etc.) visible from different angles and movement.
-Note any visible accessories (case, charger, box)."""
+Note any visible accessories (case, charger, box).
+Set device_color to a grounded visible color such as red, black, white, blue, gold, silver,
+green, purple, pink, gray, or unknown.
+Set color_confidence between 0.0 and 1.0 based only on how clearly the device color is visible.
+If lighting, reflections, cases, motion blur, or framing make the color uncertain, set
+device_color to "unknown" or use a low color_confidence.
+Set power_state to:
+- "on" only when the display, boot screen, or visible content clearly proves the device is powered on
+- "off" only when the video clearly shows the device is off or not powering up
+- "unknown" when power state is not visually provable from the media."""
 
 # Backward compat alias
 ANALYSIS_PROMPT = _IMAGE_ANALYSIS_PROMPT
@@ -110,7 +150,11 @@ def _get_genai_client() -> genai.Client:
     """Get or create the GenAI client for Standard API calls."""
     global _genai_client
     if _genai_client is None:
-        _genai_client = build_genai_client(api_version="v1alpha")
+        vision_location = os.getenv("VISION_MODEL_LOCATION", "").strip() or None
+        _genai_client = build_genai_client(
+            api_version="v1alpha",
+            location=vision_location,
+        )
     return _genai_client
 
 
@@ -126,6 +170,147 @@ def _get_storage_client() -> Any | None:
     except Exception as exc:
         logger.warning("Cloud Storage client unavailable: %s", exc)
         return None
+
+
+def _vision_model_candidates() -> list[str]:
+    candidates = [VISION_MODEL]
+    for candidate in get_vision_model_candidates():
+        if candidate and candidate not in candidates:
+            candidates.append(candidate)
+    return candidates
+
+
+def _resolved_model_candidates(model_candidates: list[str] | None = None) -> list[str]:
+    if not model_candidates:
+        return _vision_model_candidates()
+    candidates: list[str] = []
+    for candidate in model_candidates:
+        normalized = str(candidate or "").strip()
+        if normalized and normalized not in candidates:
+            candidates.append(normalized)
+    return candidates or _vision_model_candidates()
+
+
+def _is_model_unavailable_error(exc: Exception) -> bool:
+    status_code = getattr(exc, "status_code", None)
+    if status_code in {403, 404, 429}:
+        return True
+    message = f"{exc}".lower()
+    return (
+        (
+            "publisher model" in message
+            and ("not found" in message or "does not have access" in message)
+        )
+        or "resource exhausted" in message
+        or "quota exceeded" in message
+        or "rate limit" in message
+        or "too many requests" in message
+    )
+
+
+def _unknown_analysis_result(error: str) -> dict[str, Any]:
+    return normalize_analysis_result({
+        "device_name": "Unknown",
+        "condition": "Unknown",
+        "details": {},
+        "error": error,
+    })
+
+
+def _parse_vision_response_text(raw_text: str) -> dict[str, Any]:
+    normalized = (raw_text or "").strip()
+    if not normalized:
+        return _unknown_analysis_result("Empty response from vision model")
+
+    if normalized.startswith("```"):
+        lines = normalized.split("\n")
+        normalized = "\n".join(lines[1:-1]) if len(lines) > 2 else normalized
+
+    try:
+        return normalize_analysis_result(json.loads(normalized))
+    except json.JSONDecodeError:
+        return normalize_analysis_result({
+            "device_name": "Unknown",
+            "condition": "Unknown",
+            "details": {},
+            "raw_analysis": normalized,
+        })
+
+
+def _build_user_media_content(
+    *,
+    media_data: bytes,
+    mime_type: str,
+    prompt: str,
+) -> list[types.Content]:
+    """Build a Gemini 3 compatible user turn with inline media + prompt text."""
+    return [
+        types.Content(
+            role="user",
+            parts=[
+                types.Part(
+                    inline_data=types.Blob(
+                        mime_type=mime_type,
+                        data=media_data,
+                    )
+                ),
+                types.Part(text=prompt),
+            ],
+        )
+    ]
+
+
+def _media_fingerprint(media_data: bytes, mime_type: str) -> str:
+    digest = hashlib.sha256()
+    digest.update((mime_type or "").encode("utf-8"))
+    digest.update(b"\0")
+    digest.update(media_data)
+    return digest.hexdigest()
+
+
+def _persist_tool_state(tool_context: ToolContext, key: str, value: Any) -> None:
+    try:
+        tool_context.state[key] = value
+    except Exception:
+        logger.debug("Failed to persist tool state key %s", key, exc_info=True)
+    session_state = getattr(getattr(tool_context, "session", None), "state", None)
+    if session_state is not None:
+        try:
+            session_state[key] = value
+        except Exception:
+            logger.debug("Failed to persist session tool state key %s", key, exc_info=True)
+
+
+def _cached_analysis_for_media(
+    tool_context: ToolContext,
+    *,
+    media_fingerprint: str,
+) -> dict[str, Any] | None:
+    cached_fingerprint = _tool_state_value(
+        tool_context,
+        "temp:last_analyzed_media_fingerprint",
+    )
+    cached_result = _tool_state_value(
+        tool_context,
+        "temp:last_analyzed_media_result",
+    )
+    if cached_fingerprint != media_fingerprint or not isinstance(cached_result, dict):
+        return None
+    return copy.deepcopy(cached_result)
+
+
+def _cache_analysis_for_media(
+    tool_context: ToolContext,
+    *,
+    media_fingerprint: str,
+    analysis: dict[str, Any],
+) -> None:
+    _persist_tool_state(tool_context, "temp:last_analyzed_media_fingerprint", media_fingerprint)
+    _persist_tool_state(
+        tool_context,
+        "temp:last_analyzed_media_result",
+        copy.deepcopy(analysis),
+    )
 
 
 def _cache_key(user_id: str, session_id: str) -> str:
@@ -216,11 +401,47 @@ def normalize_analysis_result(raw: dict[str, Any]) -> dict[str, Any]:
     """
     result = copy.deepcopy(raw)
     result.setdefault("device_name", "Unknown")
+    legacy_device_name = result.get("device_model")
+    if (
+        result["device_name"] == "Unknown"
+        and isinstance(legacy_device_name, str)
+        and legacy_device_name.strip()
+    ):
+        result["device_name"] = legacy_device_name.strip()
     result.setdefault("brand", "Unknown")
+    legacy_brand = result.get("device_brand")
+    if result["brand"] == "Unknown" and isinstance(legacy_brand, str) and legacy_brand.strip():
+        result["brand"] = legacy_brand.strip()
     result.setdefault("category", "Unknown")
+    color_raw = result.get("device_color", "unknown")
+    if isinstance(color_raw, str) and color_raw.strip():
+        result["device_color"] = color_raw.strip().lower()
+    else:
+        result["device_color"] = "unknown"
+    color_confidence_raw = result.get("color_confidence", 0.0)
+    try:
+        color_confidence = float(color_confidence_raw)
+    except (TypeError, ValueError):
+        color_confidence = 0.0
+    result["color_confidence"] = max(0.0, min(1.0, color_confidence))
     result.setdefault("condition", "Unknown")
     result.setdefault("condition_justification", "")
+    power_state_raw = result.get("power_state", "unknown")
+    if isinstance(power_state_raw, str) and power_state_raw.strip().lower() in {"on", "off", "unknown"}:
+        result["power_state"] = power_state_raw.strip().lower()
+    else:
+        result["power_state"] = "unknown"
     result.setdefault("accessories_detected", [])
+    legacy_accessories = result.get("accessories")
+    if (
+        not result["accessories_detected"]
+        and isinstance(legacy_accessories, list)
+    ):
+        result["accessories_detected"] = [
+            str(item).strip()
+            for item in legacy_accessories
+            if isinstance(item, str) and item.strip()
+        ]
     result.setdefault("confidence", 0.5)
 
     details = result.get("details")
@@ -271,6 +492,8 @@ def normalize_analysis_result(raw: dict[str, Any]) -> dict[str, Any]:
 async def analyze_device_media(
     media_data: bytes,
     mime_type: str = "image/jpeg",
+    *,
+    model_candidates: list[str] | None = None,
 ) -> dict[str, Any]:
     """Analyze device media (image or video) using Gemini Standard API with structured output.
 
@@ -284,77 +507,80 @@ async def analyze_device_media(
     """
     prompt = get_analysis_prompt(mime_type)
     client = _get_genai_client()
-    contents = [
-        types.Content(
-            parts=[
-                types.Part(
-                    inline_data=types.Blob(
-                        mime_type=mime_type,
-                        data=media_data,
-                    )
-                ),
-                types.Part(text=prompt),
-            ]
-        )
-    ]
+    contents = _build_user_media_content(
+        media_data=media_data,
+        mime_type=mime_type,
+        prompt=prompt,
+    )
 
-    # Try structured output first
-    try:
-        response = await client.aio.models.generate_content(
-            model=VISION_MODEL,
-            contents=contents,
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json",
-                response_schema=DeviceAnalysis.model_json_schema(),
-                media_resolution=types.MediaResolution.MEDIA_RESOLUTION_HIGH,
-            ),
-        )
-        if not response.text:
-            raise ValueError("Empty response from structured output")
-        result = json.loads(response.text)
-        return normalize_analysis_result(result)
+    last_unavailable_error: Exception | None = None
 
-    except Exception as structured_exc:
-        logger.warning("Structured output failed, falling back: %s", structured_exc)
+    for model_id in _resolved_model_candidates(model_candidates):
+        try:
+            structured_config_kwargs: dict[str, Any] = {
+                "response_mime_type": "application/json",
+                "response_schema": DeviceAnalysis.model_json_schema(),
+            }
+            if not mime_type.startswith("video/"):
+                structured_config_kwargs["media_resolution"] = (
+                    types.MediaResolution.MEDIA_RESOLUTION_HIGH
+                )
+            response = await client.aio.models.generate_content(
+                model=model_id,
+                contents=contents,
+                config=types.GenerateContentConfig(**structured_config_kwargs),
+            )
+            if not response.text:
+                raise ValueError("Empty response from structured output")
+            return normalize_analysis_result(json.loads(response.text))
 
-    # Fallback: manual JSON parse without structured output
-    try:
-        response = await client.aio.models.generate_content(
-            model=VISION_MODEL,
-            contents=contents,
-        )
-
-        raw_text = (response.text or "").strip()
-        if not raw_text:
-            return normalize_analysis_result({
-                "device_name": "Unknown",
-                "condition": "Unknown",
-                "details": {},
-                "error": "Empty response from vision model",
-            })
+        except Exception as structured_exc:
+            if _is_model_unavailable_error(structured_exc):
+                last_unavailable_error = structured_exc
+                logger.warning(
+                    "Structured vision model unavailable model=%s error=%s",
+                    model_id,
+                    sanitize_log(str(structured_exc)),
+                )
+                continue
+            logger.warning(
+                "Structured output failed for model=%s, falling back: %s",
+                model_id,
+                sanitize_log(str(structured_exc)),
+            )
 
         try:
-            if raw_text.startswith("```"):
-                lines = raw_text.split("\n")
-                raw_text = "\n".join(lines[1:-1]) if len(lines) > 2 else raw_text
-            result = json.loads(raw_text)
-            return normalize_analysis_result(result)
-        except json.JSONDecodeError:
-            return normalize_analysis_result({
-                "device_name": "Unknown",
-                "condition": "Unknown",
-                "details": {},
-                "raw_analysis": raw_text,
-            })
+            response = await client.aio.models.generate_content(
+                model=model_id,
+                contents=contents,
+            )
+            return _parse_vision_response_text(response.text or "")
 
-    except Exception as exc:
-        logger.error("Vision analysis failed: %s", sanitize_log(str(exc)), exc_info=True)
-        return normalize_analysis_result({
-            "device_name": "Unknown",
-            "condition": "Unknown",
-            "details": {},
-            "error": "Vision analysis failed",
-        })
+        except Exception as exc:
+            if _is_model_unavailable_error(exc):
+                last_unavailable_error = exc
+                logger.warning(
+                    "Vision model unavailable model=%s error=%s",
+                    model_id,
+                    sanitize_log(str(exc)),
+                )
+                continue
+            logger.error(
+                "Vision analysis failed model=%s: %s",
+                model_id,
+                sanitize_log(str(exc)),
+                exc_info=True,
+            )
+            return _unknown_analysis_result("Vision analysis failed")
+
+    if last_unavailable_error is not None:
+        logger.error(
+            "All configured vision models were unavailable: %s",
+            sanitize_log(str(last_unavailable_error)),
+        )
+        return _unknown_analysis_result("Vision model unavailable")
+
+    return _unknown_analysis_result("Vision analysis failed")
 
 
 async def upload_to_cloud_storage(
@@ -411,6 +637,29 @@ async def analyze_device_image(
     return await analyze_device_media(media_data=image_data, mime_type=mime_type)
 
 
+def _tool_state_value(tool_context: ToolContext, key: str, default: Any = None) -> Any:
+    value = tool_context.state.get(key, default)
+    if value != default:
+        return value
+    session_state = getattr(getattr(tool_context, "session", None), "state", None)
+    if isinstance(session_state, dict):
+        return session_state.get(key, default)
+    return default
+
+
+async def _download_media_blob(blob_path: str) -> bytes | None:
+    storage_client = _get_storage_client()
+    if storage_client is None or not MEDIA_BUCKET or not blob_path:
+        return None
+    try:
+        bucket = storage_client.bucket(MEDIA_BUCKET)
+        blob = bucket.blob(blob_path)
+        return await asyncio.to_thread(blob.download_as_bytes)
+    except Exception as exc:
+        logger.warning("Cloud Storage download failed (%s): %s", blob_path, exc)
+        return None
+
+
 async def analyze_device_image_tool(
     image_base64: str | None = None,
     mime_type: str = "image/jpeg",
@@ -426,11 +675,25 @@ async def analyze_device_image_tool(
     image_data: bytes | None = None
     session_id = ""
     user_id = ""
+    persisted_blob_path = ""
+    persisted_gcs_uri = ""
+    persisted_mime_type = ""
 
     if tool_context is not None:
         user_id = tool_context.user_id or ""
         session = getattr(tool_context, "session", None)
         session_id = getattr(session, "id", "") if session else ""
+        persisted_blob_path = str(
+            _tool_state_value(tool_context, "temp:last_media_blob_path", "") or ""
+        ).strip()
+        persisted_gcs_uri = str(
+            _tool_state_value(tool_context, "temp:last_media_gcs_uri", "") or ""
+        ).strip()
+        persisted_mime_type = str(
+            _tool_state_value(tool_context, "temp:last_media_mime_type", "") or ""
+        ).strip()
+        if persisted_mime_type:
+            mime_type = persisted_mime_type
 
     if image_base64:
         try:
@@ -463,6 +726,9 @@ async def analyze_device_image_tool(
             except Exception as exc:
                 logger.warning("Artifact load failed (%s): %s", artifact_id, exc)
 
+    if image_data is None and persisted_blob_path:
+        image_data = await _download_media_blob(persisted_blob_path)
+
     if image_data is None:
         return {
             "device_name": "Unknown",
@@ -470,6 +736,22 @@ async def analyze_device_image_tool(
             "details": {},
             "error": "No image payload available for analysis",
         }
+
+    media_fingerprint = _media_fingerprint(image_data, mime_type)
+
+    if tool_context is not None:
+        cached_analysis = _cached_analysis_for_media(
+            tool_context,
+            media_fingerprint=media_fingerprint,
+        )
+        if cached_analysis is not None:
+            logger.info(
+                "Reusing cached vision analysis session=%s fingerprint=%s mime=%s",
+                session_id or "unknown-session",
+                media_fingerprint[:12],
+                mime_type,
+            )
+            return cached_analysis
 
     analysis = await analyze_device_media(image_data, mime_type)
 
@@ -479,16 +761,27 @@ async def analyze_device_image_tool(
     effective_user_id = user_id or "anonymous"
     effective_session_id = session_id or "unknown-session"
 
-    upload_result = await upload_to_cloud_storage(
-        image_data=image_data,
-        mime_type=mime_type,
-        user_id=effective_user_id,
-        session_id=effective_session_id,
-    )
-    if "gcs_uri" in upload_result:
-        analysis["gcs_uri"] = upload_result["gcs_uri"]
-    elif "error" in upload_result:
-        analysis["upload_error"] = upload_result["error"]
+    if persisted_gcs_uri:
+        analysis["gcs_uri"] = persisted_gcs_uri
+        if persisted_blob_path:
+            analysis["blob_path"] = persisted_blob_path
+    else:
+        upload_result = await upload_to_cloud_storage(
+            image_data=image_data,
+            mime_type=mime_type,
+            user_id=effective_user_id,
+            session_id=effective_session_id,
+        )
+        if "gcs_uri" in upload_result:
+            analysis["gcs_uri"] = upload_result["gcs_uri"]
+            blob_path = upload_result.get("blob_path")
+            if isinstance(blob_path, str) and blob_path:
+                analysis["blob_path"] = blob_path
+                _persist_tool_state(tool_context, "temp:last_media_blob_path", blob_path)
+            _persist_tool_state(tool_context, "temp:last_media_gcs_uri", upload_result["gcs_uri"])
+            _persist_tool_state(tool_context, "temp:last_media_mime_type", mime_type)
+        elif "error" in upload_result:
+            analysis["upload_error"] = upload_result["error"]
 
     try:
         artifact_id = _artifact_filename(mime_type)
@@ -509,5 +802,12 @@ async def analyze_device_image_tool(
     except Exception as exc:
         logger.warning("Artifact save failed: %s", exc)
         analysis["artifact_error"] = str(exc)
+
+    if not analysis.get("error"):
+        _cache_analysis_for_media(
+            tool_context,
+            media_fingerprint=media_fingerprint,
+            analysis=analysis,
+        )
 
     return analysis

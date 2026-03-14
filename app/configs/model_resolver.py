@@ -13,7 +13,9 @@ load_dotenv()
 DEFAULT_LIVE_MODEL_ID = "gemini-live-2.5-flash-native-audio"
 DEFAULT_TEXT_MODEL_ID = "gemini-2.5-pro"
 DEFAULT_TEXT_FALLBACK_MODEL_ID = "gemini-2.5-flash"
-DEFAULT_VISION_MODEL_ID = "gemini-2.5-pro"
+DEFAULT_VISION_MODEL_ID = "gemini-2.5-flash"
+DEFAULT_VISION_FALLBACK_MODEL_ID = "gemini-2.5-pro"
+DEFAULT_LIVE_MEDIA_ANALYSIS_MODEL_ID = "gemini-2.5-pro"
 DEFAULT_TTS_MODEL_ID = "gemini-2.5-flash-tts"
 
 
@@ -58,6 +60,54 @@ def resolve_tts_model_id() -> str:
 def resolve_vision_model_id() -> str:
     """Resolve the model for vision/analysis tools (image grading, device ID)."""
     return os.getenv("VISION_MODEL", DEFAULT_VISION_MODEL_ID).strip() or DEFAULT_VISION_MODEL_ID
+
+
+def get_vision_model_candidates() -> list[str]:
+    """Return ordered stable candidates for vision analysis calls.
+
+    Vision tool calls should survive a preview retirement or a project access
+    mismatch, so we keep a small ordered candidate list instead of relying on a
+    single pinned model ID.
+    """
+    candidates: list[str] = []
+    primary = os.getenv("VISION_MODEL", DEFAULT_VISION_MODEL_ID).strip()
+    fallback = os.getenv("VISION_MODEL_FALLBACK", DEFAULT_VISION_FALLBACK_MODEL_ID).strip()
+    extra = [
+        item.strip()
+        for item in os.getenv("VISION_MODEL_CANDIDATES", "").split(",")
+        if item.strip()
+    ]
+
+    for candidate in [primary, fallback, *extra, DEFAULT_VISION_MODEL_ID, DEFAULT_VISION_FALLBACK_MODEL_ID]:
+        if candidate and candidate not in candidates:
+            candidates.append(candidate)
+
+    if not candidates:
+        candidates.append(DEFAULT_VISION_MODEL_ID)
+    return candidates
+
+
+def get_live_media_vision_model_candidates() -> list[str]:
+    """Return ordered candidates for live cross-session media analysis."""
+    candidates: list[str] = []
+    primary = os.getenv(
+        "LIVE_MEDIA_ANALYSIS_MODEL",
+        DEFAULT_LIVE_MEDIA_ANALYSIS_MODEL_ID,
+    ).strip()
+    fallback = os.getenv("LIVE_MEDIA_ANALYSIS_MODEL_FALLBACK", "").strip()
+    extra = [
+        item.strip()
+        for item in os.getenv("LIVE_MEDIA_ANALYSIS_MODEL_CANDIDATES", "").split(",")
+        if item.strip()
+    ]
+
+    for candidate in [primary, fallback, *extra]:
+        if candidate and candidate not in candidates:
+            candidates.append(candidate)
+
+    if not candidates:
+        candidates.append(DEFAULT_LIVE_MEDIA_ANALYSIS_MODEL_ID)
+    return candidates
 
 
 def get_live_model_candidates() -> list[str]:

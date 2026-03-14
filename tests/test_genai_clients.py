@@ -23,13 +23,25 @@ def test_can_build_genai_client_requires_api_key_when_vertex_disabled(monkeypatc
 def test_build_genai_client_uses_vertex_explicitly(monkeypatch):
     monkeypatch.setenv("GOOGLE_GENAI_USE_VERTEXAI", "true")
     monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "ekaette")
-    monkeypatch.setenv("GOOGLE_CLOUD_LOCATION", "us-central1")
+    monkeypatch.setenv("GOOGLE_CLOUD_LOCATION", "us-east1")
     monkeypatch.setenv("GOOGLE_API_KEY", "should-not-be-used")
 
     client = build_genai_client(api_version="v1alpha")
 
     assert client._api_client.vertexai is True
     assert client._api_client._http_options.api_version == "v1"
+    assert client._api_client.location == "us-east1"
+
+
+def test_build_genai_client_uses_location_override_for_vertex(monkeypatch):
+    monkeypatch.setenv("GOOGLE_GENAI_USE_VERTEXAI", "true")
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "ekaette")
+    monkeypatch.setenv("GOOGLE_CLOUD_LOCATION", "us-east1")
+
+    client = build_genai_client(api_version="v1alpha", location="global")
+
+    assert client._api_client.vertexai is True
+    assert client._api_client.location == "global"
 
 
 def test_build_genai_client_uses_api_key_when_vertex_disabled(monkeypatch):

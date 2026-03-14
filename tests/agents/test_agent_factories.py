@@ -24,6 +24,17 @@ class TestAgentFactories:
         }
         assert "end_call" not in tool_names
 
+    def test_vision_agent_instruction_requires_tool_backed_visual_claims(self):
+        from app.agents.vision_agent.agent import create_vision_agent
+
+        agent = create_vision_agent(model="gemini-3-flash-preview", channel="voice")
+        instruction = str(agent.instruction)
+        normalized_instruction = " ".join(instruction.split())
+
+        assert "must wait for its result before" in normalized_instruction
+        assert "Do not guess from memory" in normalized_instruction
+        assert "couldn't access the media right now" in normalized_instruction
+
     def test_create_valuation_agent_uses_given_model(self):
         from app.agents.valuation_agent.agent import create_valuation_agent
 
@@ -53,6 +64,19 @@ class TestAgentFactories:
             for tool in getattr(agent, "tools", [])
         }
         assert "request_media_via_whatsapp" not in tool_names
+
+    def test_valuation_agent_instruction_uses_canonical_background_vision_for_live_swap_media(self):
+        from app.agents.valuation_agent.agent import create_valuation_agent
+
+        agent = create_valuation_agent(model="gemini-3-flash-preview", channel="voice")
+        instruction = str(agent.instruction)
+
+        assert "Never answer color, cosmetic condition" in instruction
+        assert "do not ask whether it powers on" in instruction
+        assert "Do NOT transfer to" in instruction
+        assert "canonical background analysis" in instruction
+        assert "cannot confirm it and do not guess" in instruction
+        assert "temp:last_analysis" not in instruction
 
     def test_create_booking_agent_uses_given_model(self):
         from app.agents.booking_agent.agent import create_booking_agent

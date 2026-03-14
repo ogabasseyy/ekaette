@@ -198,6 +198,34 @@ def mark_callback_triggered(
         candidates[0].updated_at = _to_iso()
 
 
+def get_session_snapshot(session_id: str) -> dict[str, Any] | None:
+    normalized_session_id = (session_id or "").strip()
+    if not normalized_session_id:
+        return None
+    with _lock:
+        session = _sessions.get(normalized_session_id)
+        if session is None:
+            return None
+        return {
+            "session_id": session.session_id,
+            "tenant_id": session.tenant_id,
+            "company_id": session.company_id,
+            "channel": session.channel,
+            "status": session.status,
+            "started_at": session.started_at,
+            "updated_at": session.updated_at,
+            "ended_at": session.ended_at,
+            "duration_seconds": int(round(session.duration_seconds)),
+            "caller_phone": session.caller_phone,
+            "transfer_count": session.transfer_count,
+            "callback_requested": session.callback_requested,
+            "callback_triggered": session.callback_triggered,
+            "transcript_messages_total": session.transcript_messages_total,
+            "transcript_preview": session.transcript_preview,
+            "agent_path": list(session.agent_path),
+        }
+
+
 def _filtered_sessions(
     *,
     tenant_id: str,

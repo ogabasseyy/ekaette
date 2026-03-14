@@ -127,6 +127,24 @@ class TestCheckNeedsNudge:
         # Nudge should be available again since new outbound is after nudge
         assert check_needs_nudge("2348001234567", "phone123") is True
 
+    def test_no_nudge_during_cross_session_suppression(self):
+        from app.api.v1.at.service_whatsapp import (
+            check_needs_nudge,
+            record_outbound_timestamp,
+            suppress_nudge_for_cross_session,
+        )
+
+        record_inbound_timestamp("2348001234567", "phone123")
+        time.sleep(0.01)
+        record_outbound_timestamp("2348001234567", "phone123")
+        suppress_nudge_for_cross_session(
+            "2348001234567",
+            "phone123",
+            ttl_seconds=120,
+        )
+
+        assert check_needs_nudge("2348001234567", "phone123") is False
+
 
 class TestNudgeMessage:
     """Nudge message content."""
@@ -185,6 +203,29 @@ class TestNudgeInProcessMessage:
             await _process_message(message, "test_phone_id")
 
         assert nudge_scheduled
+
+    @pytest.mark.asyncio
+    async def test_schedule_nudge_returns_early_when_cross_session_is_suppressed(self):
+        """Cross-session media replies should not create delayed nudge work."""
+        from app.api.v1.at.whatsapp import _schedule_nudge
+        from app.api.v1.at import service_whatsapp
+
+        service_whatsapp.suppress_nudge_for_cross_session(
+            "2348001234567",
+            "test_phone_id",
+            ttl_seconds=120,
+        )
+
+        with patch(
+            "app.api.v1.at.whatsapp.asyncio.to_thread",
+            new_callable=AsyncMock,
+        ) as to_thread_mock, patch(
+            "app.api.v1.at.whatsapp.asyncio.create_task",
+        ) as create_task_mock:
+            await _schedule_nudge("2348001234567", "test_phone_id")
+
+        to_thread_mock.assert_not_awaited()
+        create_task_mock.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_no_nudge_on_failed_send(self):

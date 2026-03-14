@@ -10,6 +10,8 @@ import logging
 import re
 from typing import Any
 
+from google.adk.tools.tool_context import ToolContext
+
 logger = logging.getLogger(__name__)
 
 # ─── Valid condition grades ─────────────────────────────────────
@@ -340,11 +342,14 @@ BRAND_QUESTIONS: dict[str, list[dict[str, Any]]] = {
 
 def get_device_questionnaire(
     device_brand: str,
+    analysis: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Get brand-specific questionnaire questions.
 
     Args:
         device_brand: Device brand (e.g. "Apple", "Samsung").
+        analysis: Optional tool-backed vision analysis used to skip questions
+            already resolved from visible evidence.
 
     Returns:
         List of question dicts with id, question, type, invert fields.
@@ -353,7 +358,35 @@ def get_device_questionnaire(
     brand_key = (device_brand.strip().lower() if isinstance(device_brand, str) else "")
     brand_specific = BRAND_QUESTIONS.get(brand_key, [])
     questions.extend(copy.deepcopy(brand_specific))
-    return questions
+    return _filter_questions_from_analysis(questions, analysis)
+
+
+def _normalize_power_state_from_analysis(analysis: dict[str, Any] | None) -> str:
+    if not isinstance(analysis, dict):
+        return "unknown"
+    raw = analysis.get("power_state", "unknown")
+    if isinstance(raw, str):
+        normalized = raw.strip().lower()
+        if normalized in {"on", "off", "unknown"}:
+            return normalized
+    return "unknown"
+
+
+def _question_ids_omitted_from_analysis(analysis: dict[str, Any] | None) -> list[str]:
+    omitted: list[str] = []
+    if _normalize_power_state_from_analysis(analysis) == "on":
+        omitted.append("does_not_power_on")
+    return omitted
+
+
+def _filter_questions_from_analysis(
+    questions: list[dict[str, Any]],
+    analysis: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    omitted = set(_question_ids_omitted_from_analysis(analysis))
+    if not omitted:
+        return questions
+    return [question for question in questions if question.get("id") not in omitted]
 
 
 # ─── Questionnaire answer normalization ───────────────────────
@@ -528,14 +561,39 @@ def negotiate_tool(
 
 def get_device_questionnaire_tool(
     device_brand: str = "",
+    analysis: str | dict[str, Any] | None = None,
+    tool_context: ToolContext | None = None,
 ) -> dict[str, Any]:
     """ADK tool: Get brand-specific diagnostic questions for trade-in evaluation.
 
     Args:
         device_brand: Device brand (e.g. "Apple", "Samsung").
+        analysis: Optional JSON string or dict of latest tool-backed vision analysis.
+        tool_context: Optional ADK tool context for session-backed analysis fallback.
 
     Returns:
         Dict with 'questions' key containing list of question objects.
     """
-    questions = get_device_questionnaire(device_brand or "")
-    return {"questions": questions}
+    resolved_analysis: dict[str, Any] | None = None
+    if isinstance(analysis, dict):
+        resolved_analysis = analysis
+    elif isinstance(analysis, str) and analysis.strip():
+        try:
+            parsed = json.loads(analysis)
+        except json.JSONDecodeError:
+            logger.debug("Invalid questionnaire analysis JSON; ignoring")
+        else:
+            if isinstance(parsed, dict):
+                resolved_analysis = parsed
+
+    if resolved_analysis is None and tool_context is not None:
+        state_analysis = tool_context.state.get("temp:last_analysis")
+        if isinstance(state_analysis, dict):
+            resolved_analysis = state_analysis
+
+    omitted_question_ids = _question_ids_omitted_from_analysis(resolved_analysis)
+    questions = get_device_questionnaire(device_brand or "", analysis=resolved_analysis)
+    result: dict[str, Any] = {"questions": questions}
+    if omitted_question_ids:
+        result["omitted_question_ids"] = omitted_question_ids
+    return result

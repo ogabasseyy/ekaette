@@ -324,6 +324,7 @@ async def whatsapp_send_text(
 
 # ── Text-to-Speech (Gemini TTS) ──
 _TTS_VOICE = "Kore"  # Warm, friendly female voice
+_PCM_SAMPLE_RATE_HZ = 24000
 
 _genai_client = None
 
@@ -342,12 +343,26 @@ async def text_to_speech(text: str) -> tuple[bytes, str]:
     Returns (ogg_bytes, mime_type). Uses the TTS model resolved from
     TTS_MODEL_ID env var for fast generation with natural-sounding voice.
     """
+    pcm_data, _mime_type = await text_to_speech_pcm(text)
+
+    # Convert PCM (24kHz, 16-bit, mono) to OGG/opus for WhatsApp
+    ogg_bytes = _pcm_to_ogg_opus(pcm_data, sample_rate=_PCM_SAMPLE_RATE_HZ)
+    return ogg_bytes, "audio/ogg"
+
+
+async def text_to_speech_pcm(
+    text: str,
+    *,
+    voice_name: str | None = None,
+) -> tuple[bytes, str]:
+    """Convert text to raw PCM audio using Gemini TTS."""
     if not text or not text.strip():
         raise ValueError("Text must not be empty for TTS")
 
     from google.genai import types
 
     client = _get_genai_client()
+    resolved_voice = str(voice_name or _TTS_VOICE).strip() or _TTS_VOICE
     response = await client.aio.models.generate_content(
         model=resolve_tts_model_id(),
         contents=text,
@@ -356,7 +371,7 @@ async def text_to_speech(text: str) -> tuple[bytes, str]:
             speech_config=types.SpeechConfig(
                 voice_config=types.VoiceConfig(
                     prebuilt_voice_config=types.PrebuiltVoiceConfig(
-                        voice_name=_TTS_VOICE,
+                        voice_name=resolved_voice,
                     )
                 )
             ),
@@ -374,13 +389,10 @@ async def text_to_speech(text: str) -> tuple[bytes, str]:
     pcm_data = getattr(inline_data, "data", None) if inline_data else None
     if not pcm_data:
         raise RuntimeError("TTS returned empty audio data")
-
-    # Convert PCM (24kHz, 16-bit, mono) to OGG/opus for WhatsApp
-    ogg_bytes = _pcm_to_ogg_opus(pcm_data, sample_rate=24000)
-    return ogg_bytes, "audio/ogg"
+    return pcm_data, f"audio/pcm;rate={_PCM_SAMPLE_RATE_HZ}"
 
 
-def _pcm_to_ogg_opus(pcm_data: bytes, sample_rate: int = 24000) -> bytes:
+def _pcm_to_ogg_opus(pcm_data: bytes, sample_rate: int = _PCM_SAMPLE_RATE_HZ) -> bytes:
     """Convert raw PCM to OGG/opus using ffmpeg (available on Cloud Run)."""
     import subprocess
     import tempfile

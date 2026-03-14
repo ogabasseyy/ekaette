@@ -90,6 +90,7 @@ async def handle_text_message(
     *,
     from_: str,
     text: str,
+    phone_number_id: str = "",
     tenant_id: str = "public",
     company_id: str = "ekaette-electronics",
 ) -> str:
@@ -136,6 +137,7 @@ async def handle_image_message(
     media_id: str,
     mime_type: str = "",
     caption: str = "",
+    phone_number_id: str = "",
     tenant_id: str = "public",
     company_id: str = "ekaette-electronics",
 ) -> str:
@@ -147,6 +149,7 @@ async def handle_image_message(
         mime_type=mime_type,
         default_mime="image/jpeg",
         caption=caption,
+        phone_number_id=phone_number_id,
         tenant_id=tenant_id,
         company_id=company_id,
     )
@@ -158,6 +161,7 @@ async def handle_video_message(
     media_id: str,
     mime_type: str = "",
     caption: str = "",
+    phone_number_id: str = "",
     tenant_id: str = "public",
     company_id: str = "ekaette-electronics",
 ) -> str:
@@ -169,6 +173,7 @@ async def handle_video_message(
         mime_type=mime_type,
         default_mime="video/mp4",
         caption=caption,
+        phone_number_id=phone_number_id,
         tenant_id=tenant_id,
         company_id=company_id,
     )
@@ -179,6 +184,7 @@ async def handle_audio_message(
     from_: str,
     media_id: str,
     mime_type: str = "",
+    phone_number_id: str = "",
     tenant_id: str = "public",
     company_id: str = "ekaette-electronics",
 ) -> str:
@@ -194,6 +200,7 @@ async def handle_audio_message(
         mime_type=mime_type,
         default_mime="audio/ogg",
         caption="",
+        phone_number_id=phone_number_id,
         tenant_id=tenant_id,
         company_id=company_id,
     )
@@ -207,6 +214,7 @@ async def _handle_media_message(
     mime_type: str,
     default_mime: str,
     caption: str,
+    phone_number_id: str,
     tenant_id: str,
     company_id: str,
 ) -> str:
@@ -261,6 +269,12 @@ async def _handle_media_message(
     if isinstance(live_queue_result, dict):
         reply_text = str(live_queue_result.get("reply_text", "") or "").strip()
         if reply_text:
+            suppress_nudge_for_cross_session(
+                from_,
+                phone_number_id,
+                tenant_id=tenant_id,
+                company_id=company_id,
+            )
             return reply_text[:WA_MAX_CHARS]
 
     if runner is not None:
@@ -300,33 +314,62 @@ async def _legacy_media_analysis(
 ) -> str:
     """Legacy fallback: direct Gemini vision call without ADK agent graph."""
     try:
+        from app.configs.model_resolver import get_vision_model_candidates
         from app.tools.vision_tools import _get_genai_client, VISION_MODEL
         from google.genai import types
 
         client = _get_genai_client()
-        response = await asyncio.to_thread(
-            client.models.generate_content,
-            model=VISION_MODEL,
-            contents=[
-                types.Part(
-                    inline_data=types.Blob(
-                        mime_type=resolved_mime,
-                        data=media_bytes,
-                    )
-                ),
-                caption or "Analyze this media and provide any relevant assistance.",
-            ],
-            config=types.GenerateContentConfig(
-                system_instruction=(
-                    f"You are Ekaette, virtual assistant for {company_id}. "
-                    "Analyze the media and respond helpfully. Focus on concrete "
-                    "business tasks like product identification, trade-in valuation, "
-                    "or customer support."
-                ),
-                max_output_tokens=1024,
+        contents = [
+            types.Content(
+                role="user",
+                parts=[
+                    types.Part(
+                        inline_data=types.Blob(
+                            mime_type=resolved_mime,
+                            data=media_bytes,
+                        )
+                    ),
+                    types.Part(
+                        text=caption or "Analyze this media and provide any relevant assistance."
+                    ),
+                ],
+            )
+        ]
+        config = types.GenerateContentConfig(
+            system_instruction=(
+                f"You are Ekaette, virtual assistant for {company_id}. "
+                "Analyze the media and respond helpfully. Focus on concrete "
+                "business tasks like product identification, trade-in valuation, "
+                "or customer support."
             ),
+            max_output_tokens=1024,
         )
-        text = (response.text or "").strip()
+
+        text = ""
+        candidate_models: list[str] = []
+        for model_id in [VISION_MODEL, *get_vision_model_candidates()]:
+            if model_id and model_id not in candidate_models:
+                candidate_models.append(model_id)
+        for model_id in candidate_models:
+            if not model_id:
+                continue
+            try:
+                response = await asyncio.to_thread(
+                    client.models.generate_content,
+                    model=model_id,
+                    contents=contents,
+                    config=config,
+                )
+                text = (response.text or "").strip()
+                if text:
+                    break
+            except Exception:
+                logger.warning(
+                    "Legacy media analysis failed for model=%s",
+                    model_id,
+                    exc_info=True,
+                )
+                continue
         if not text:
             text = "I received your media but couldn't analyze it. Could you send it again or describe what you need?"
     except Exception:
@@ -494,6 +537,7 @@ def reset_service_windows() -> None:
     _service_windows.clear()
     _outbound_timestamps.clear()
     _nudge_sent.clear()
+    _cross_session_nudge_suppression_until.clear()
 
 
 # ── Silence Nudge Tracking ──
@@ -501,6 +545,7 @@ def reset_service_windows() -> None:
 # Track when Ekaette last replied, so we can nudge if user goes silent.
 _outbound_timestamps: dict[str, float] = {}
 _nudge_sent: dict[str, float] = {}
+_cross_session_nudge_suppression_until: dict[str, float] = {}
 
 WA_NUDGE_DELAY_SECONDS = int(os.getenv("WA_NUDGE_DELAY_SECONDS", "120"))
 
@@ -517,6 +562,70 @@ def _nudge_doc_ref(key: str):
     collection_name = os.getenv("WA_NUDGE_STATE_COLLECTION", "wa_nudge_state")
     key_hash = hashlib.sha256(key.encode()).hexdigest()
     return client.collection(collection_name).document(key_hash)
+
+
+def _cross_session_nudge_suppression_seconds() -> int:
+    raw = os.getenv("WA_CROSS_SESSION_NUDGE_SUPPRESSION_SECONDS", "")
+    baseline = WA_NUDGE_DELAY_SECONDS + 60
+    try:
+        configured = int(raw)
+    except (TypeError, ValueError):
+        configured = 0
+    return max(baseline, configured) if configured > 0 else baseline
+
+
+def _local_nudge_suppressed(key: str, *, now: float | None = None) -> bool:
+    current_time = time.time() if now is None else now
+    suppress_until = float(_cross_session_nudge_suppression_until.get(key, 0) or 0)
+    if suppress_until <= 0:
+        return False
+    if suppress_until <= current_time:
+        _cross_session_nudge_suppression_until.pop(key, None)
+        return False
+    return True
+
+
+def suppress_nudge_for_cross_session(
+    user_phone: str,
+    phone_number_id: str = "",
+    *,
+    tenant_id: str = "public",
+    company_id: str = "ekaette-electronics",
+    ttl_seconds: int | None = None,
+) -> None:
+    """Suppress WA silence nudges for replies that belong to an active voice handoff."""
+    key = _window_key(
+        user_phone,
+        phone_number_id or WHATSAPP_PHONE_NUMBER_ID,
+        tenant_id,
+        company_id,
+    )
+    now = time.time()
+    suppress_until = now + float(ttl_seconds or _cross_session_nudge_suppression_seconds())
+    _cross_session_nudge_suppression_until[key] = suppress_until
+
+    if _state_store_uses_firestore():
+        try:
+            doc_ref = _nudge_doc_ref(key)
+            doc_ref.set({"cross_session_suppressed_until_ts": suppress_until}, merge=True)
+        except Exception:
+            logger.debug("Cross-session nudge suppression write failed", exc_info=True)
+
+
+def is_nudge_suppressed(
+    user_phone: str,
+    phone_number_id: str = "",
+    tenant_id: str = "public",
+    company_id: str = "ekaette-electronics",
+) -> bool:
+    """Return True when the current conversation turn should not schedule a WA silence nudge."""
+    key = _window_key(
+        user_phone,
+        phone_number_id or WHATSAPP_PHONE_NUMBER_ID,
+        tenant_id,
+        company_id,
+    )
+    return _local_nudge_suppressed(key)
 
 
 def record_outbound_timestamp(
@@ -556,6 +665,9 @@ def check_needs_nudge(
         tenant_id,
         company_id,
     )
+
+    if _local_nudge_suppressed(key):
+        return False
 
     if _state_store_uses_firestore():
         return _check_needs_nudge_firestore(key)
@@ -603,6 +715,10 @@ def _check_needs_nudge_firestore(key: str) -> bool:
 
     nudge_ts = float(nudge_data.get("nudge_sent_ts", 0) or 0)
     if nudge_ts >= outbound_ts:
+        return False
+
+    suppress_until = float(nudge_data.get("cross_session_suppressed_until_ts", 0) or 0)
+    if suppress_until > time.time():
         return False
 
     inbound_ts = float(window_data.get("updated_at", 0) or 0)

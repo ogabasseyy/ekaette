@@ -57,6 +57,7 @@ async def voice_callback(
         tenant_id, company_id = service_voice.resolve_tenant_context(destinationNumber or AT_VIRTUAL_NUMBER)
         service_voice.log_call_ended(sessionId, callerNumber, durationInSeconds, amount)
         await service_voice.maybe_trigger_post_call_callback(
+            session_id=sessionId,
             caller_phone=callerNumber,
             direction=direction,
             duration_seconds=durationInSeconds,

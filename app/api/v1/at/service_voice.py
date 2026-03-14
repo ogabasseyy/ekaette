@@ -46,6 +46,13 @@ def _read_float_env(name: str, default: float) -> float:
         return default
 
 
+def _safe_int(value: object, default: int = 0) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return default
+
+
 _CALLBACK_PREWARM_TIMEOUT_SECONDS = max(
     1.0,
     _read_float_env("AT_CALLBACK_PREWARM_TIMEOUT_SECONDS", 12.0),
@@ -599,6 +606,7 @@ async def trigger_callback(
 
 async def maybe_trigger_post_call_callback(
     *,
+    session_id: str,
     caller_phone: str,
     direction: str,
     duration_seconds: str,
@@ -663,6 +671,27 @@ async def maybe_trigger_post_call_callback(
             _flash_callback_duration_seconds(),
         )
         return
+
+    try:
+        from app.api.v1.at import voice_analytics
+
+        session_snapshot = voice_analytics.get_session_snapshot(session_id)
+    except Exception:
+        logger.debug("Flash callback analytics lookup skipped", exc_info=True)
+        session_snapshot = None
+
+    if isinstance(session_snapshot, dict):
+        transcript_messages_total = _safe_int(session_snapshot.get("transcript_messages_total", 0))
+        transfer_count = _safe_int(session_snapshot.get("transfer_count", 0))
+        if transcript_messages_total > 0 or transfer_count > 0:
+            logger.info(
+                "Skipping flash callback fallback phone=%s session_id=%s transcripts=%d transfers=%d",
+                normalized_phone,
+                session_id,
+                transcript_messages_total,
+                transfer_count,
+            )
+            return
 
     logger.info("Triggering flash callback fallback phone=%s", normalized_phone)
     await trigger_callback(

@@ -2,7 +2,7 @@
 
 In bidi-streaming mode, all agents must use a Live API-compatible model.
 Complex vision tasks (grading, detailed analysis) are handled by tools
-that can internally call standard API models like gemini-3-flash.
+that can internally call standard multimodal models.
 """
 
 from google.adk.agents import Agent
@@ -41,26 +41,32 @@ _INSTRUCTION = """You are an expert device appraiser. When a customer sends a ph
     - You may be reached after another agent already spoke to the customer.
     - In that case, do NOT greet, re-introduce yourself, or restate the
       customer's request. Continue directly from the active handoff context.
-    - If '{temp:pending_handoff_target_agent}' is 'vision_agent', this is the
-      first turn immediately after a live transfer.
-    - Latest customer request before transfer: '{temp:pending_handoff_latest_user}'.
-    - Previous agent's latest spoken line: '{temp:pending_handoff_latest_agent}'.
-    - Recent customer-only context: '{temp:pending_handoff_recent_customer_context}'.
+    - Runtime handoff details are injected separately before each model turn
+      when a transfer actually happened. Follow that runtime context exactly.
     - In that first transferred turn, do NOT repeat or paraphrase the previous
       agent's last question or statement. Continue from the next useful step.
 
     When the customer sends a photo or video of their device:
-    1. Say a filler like "Let me take a closer look at your device..."
-    2. Call analyze_device_image_tool (NON_BLOCKING — keep talking while it processes)
-    3. Narrate your findings naturally, walking through each area:
+    1. Immediately acknowledge receipt in one short spoken sentence, like
+       "I've got the video, let me check it now" or
+       "Let me take a closer look at your device..."
+    2. Call analyze_device_image_tool immediately.
+    2a. Call analyze_device_image_tool only once for the current photo or video.
+       If the current media was already analyzed, reuse that result instead of
+       analyzing the same media again.
+    3. While the tool is running, do NOT state any specific model, color, damage severity,
+       or condition yet. Do not guess from memory, prior turns, or raw media alone.
+    4. After the tool returns successfully, narrate your findings naturally, walking through each area:
        - START with the device identity: "I can see this is a [device name]..."
+       - Only state the device color when the tool returned a grounded device_color.
+         If device_color is unknown, say you cannot confirm the color from this media yet.
        - SCREEN: Lead with positives, then issues. Use severity levels from the analysis
          (e.g. "light scratches near the top-left" not just "some scratches")
        - BODY: Note specific defect locations (e.g. "small dent on the bottom-right corner")
        - ACCESSORIES: Mention if you spot a case, charger, or original box
        - If confidence is below 0.7, add a brief caveat: "I'm not 100% certain about
          the model — could you confirm?"
-    4. After narrating, suggest proceeding to valuation for a price quote
+    5. After narrating, suggest proceeding to valuation for a price quote
 
     VIDEO WALKTHROUGH:
     - When the customer sends a video, the tool analyzes multiple frames throughout
@@ -71,15 +77,24 @@ _INSTRUCTION = """You are an expert device appraiser. When a customer sends a ph
     - If the video is too short or blurry, ask for a longer/clearer walkthrough.
 
     IMPORTANT:
-    - The analyze_device_image_tool calls gemini-3-flash for detailed visual analysis.
-      It handles both images and videos automatically.
-      This is a NON_BLOCKING operation — keep talking while it processes.
+    - The analyze_device_image_tool calls a standard vision model for detailed
+      visual analysis. It handles both images and videos automatically.
+      The tool starts asynchronously, but you must wait for its result before
+      stating any specific visual findings.
+      If the analysis takes a little longer on a live call, give a short reassurance
+      while you wait instead of guessing.
+    - If analysis is taking longer than a moment on a live call, briefly reassure
+      the caller that you are still checking the photo or video.
     - If a customer asks policy/business questions mid-analysis, use:
       - search_company_knowledge
       - get_company_profile_fact
       - query_company_system (if connectors are configured)
     - If analysis returns device_name "Unknown", ask the customer to tell you what
       the device is or to send a clearer photo or video.
+    - If the tool fails or cannot access the media, plainly say you couldn't access
+      the media right now and ask the customer to resend it or wait while it is reattached.
+    - Never say "based on the video" or contradict the customer about visible
+      attributes unless the tool result actually supports that statement.
     - Sound like a knowledgeable human appraiser, not a robot reading a form.
       Lead with positives, mention issues second.
 

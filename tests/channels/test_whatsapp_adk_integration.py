@@ -196,6 +196,8 @@ class TestHandleImageMessageADK:
                 "reply_text": "I’ve received your photo and I’m checking it on the call now.",
             },
         ) as mock_enqueue, patch(
+            "app.api.v1.at.service_whatsapp.suppress_nudge_for_cross_session",
+        ) as suppress_mock, patch(
             "app.channels.adk_text_adapter.send_media_message",
             new_callable=AsyncMock,
         ) as mock_send:
@@ -204,10 +206,17 @@ class TestHandleImageMessageADK:
                 media_id="media-123",
                 mime_type="image/jpeg",
                 caption="Check this phone",
+                phone_number_id="test_phone_id",
             )
 
         assert reply == "I’ve received your photo and I’m checking it on the call now."
         mock_enqueue.assert_called_once()
+        suppress_mock.assert_called_once_with(
+            "2348001234567",
+            "test_phone_id",
+            tenant_id="public",
+            company_id="ekaette-electronics",
+        )
         mock_send.assert_not_called()
 
     @pytest.mark.asyncio

@@ -168,6 +168,7 @@ class TestVoiceCallback:
         )
         assert resp.status_code == 200
         mock_post_call_callback.assert_awaited_once_with(
+            session_id="AT-end-001",
             caller_phone="+2348012345678",
             direction="Inbound",
             duration_seconds="2",
@@ -192,6 +193,7 @@ class TestPostCallCallbackFallback:
 
         with patch("app.api.v1.at.service_voice.trigger_callback", new_callable=AsyncMock) as mock_trigger:
             await service_voice.maybe_trigger_post_call_callback(
+                session_id="AT-short-001",
                 caller_phone="+2348012345678",
                 direction="Inbound",
                 duration_seconds="6",
@@ -206,6 +208,68 @@ class TestPostCallCallbackFallback:
             source="flash_callback",
             reason="Short inbound call requested callback",
         )
+
+    @pytest.mark.asyncio
+    async def test_short_inbound_call_with_live_conversation_skips_flash_callback(
+        self,
+        monkeypatch,
+    ) -> None:
+        from app.api.v1.at import service_voice
+
+        service_voice._CALLBACK_REQUESTS_LOCAL.clear()
+        monkeypatch.setenv("AT_FLASH_CALLBACK_ENABLED", "true")
+        monkeypatch.setenv("AT_FLASH_CALLBACK_MAX_DURATION_SECONDS", "8")
+        monkeypatch.setattr(service_voice, "AT_CALLBACK_DIAL_FALLBACK", True)
+        monkeypatch.setattr(service_voice, "_load_callback_request", lambda *args, **kwargs: None)
+
+        with patch(
+            "app.api.v1.at.service_voice.trigger_callback",
+            new_callable=AsyncMock,
+        ) as mock_trigger, patch(
+            "app.api.v1.at.voice_analytics.get_session_snapshot",
+            return_value={"transcript_messages_total": 2, "transfer_count": 1},
+        ):
+            await service_voice.maybe_trigger_post_call_callback(
+                session_id="AT-short-bridged-001",
+                caller_phone="+2348012345678",
+                direction="Inbound",
+                duration_seconds="6",
+                tenant_id="public",
+                company_id="ekaette-electronics",
+            )
+
+        mock_trigger.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_short_inbound_call_tolerates_non_numeric_analytics_snapshot(
+        self,
+        monkeypatch,
+    ) -> None:
+        from app.api.v1.at import service_voice
+
+        service_voice._CALLBACK_REQUESTS_LOCAL.clear()
+        monkeypatch.setenv("AT_FLASH_CALLBACK_ENABLED", "true")
+        monkeypatch.setenv("AT_FLASH_CALLBACK_MAX_DURATION_SECONDS", "8")
+        monkeypatch.setattr(service_voice, "AT_CALLBACK_DIAL_FALLBACK", True)
+        monkeypatch.setattr(service_voice, "_load_callback_request", lambda *args, **kwargs: None)
+
+        with patch(
+            "app.api.v1.at.service_voice.trigger_callback",
+            new_callable=AsyncMock,
+        ) as mock_trigger, patch(
+            "app.api.v1.at.voice_analytics.get_session_snapshot",
+            return_value={"transcript_messages_total": "unknown", "transfer_count": "n/a"},
+        ):
+            await service_voice.maybe_trigger_post_call_callback(
+                session_id="AT-short-bad-analytics-001",
+                caller_phone="+2348012345678",
+                direction="Inbound",
+                duration_seconds="6",
+                tenant_id="public",
+                company_id="ekaette-electronics",
+            )
+
+        mock_trigger.assert_awaited_once()
 
 
 # ── Outbound Call Tests ──

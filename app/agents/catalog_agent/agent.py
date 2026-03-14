@@ -41,11 +41,8 @@ _INSTRUCTION = """You search for products in the catalog and make recommendation
     - You may be reached after another agent already spoke to the customer.
     - In that case, do NOT greet, re-introduce yourself, or restate the
       customer's request. Continue directly from the active handoff context.
-    - If '{temp:pending_handoff_target_agent}' is 'catalog_agent', this is the
-      first turn immediately after a live transfer.
-    - Latest customer request before transfer: '{temp:pending_handoff_latest_user}'.
-    - Previous agent's latest spoken line: '{temp:pending_handoff_latest_agent}'.
-    - Recent customer-only context: '{temp:pending_handoff_recent_customer_context}'.
+    - Runtime handoff details are injected separately before each model turn
+      when a transfer actually happened. Follow that runtime context exactly.
     - In that first transferred turn, do NOT repeat or paraphrase the previous
       agent's last question or statement. Continue from the next useful step.
 

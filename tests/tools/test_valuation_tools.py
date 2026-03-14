@@ -4,6 +4,7 @@ MOST THOROUGH TESTS — pricing math must be correct.
 """
 
 import json
+from types import SimpleNamespace
 
 # ─── Pricing table used across tests ───────────────────────────
 
@@ -711,6 +712,21 @@ class TestGetDeviceQuestionnaire:
         assert len(water_q) == 1
         assert water_q[0]["invert"] is False
 
+    def test_skips_power_question_when_analysis_shows_device_is_on(self):
+        """Visible powered-on evidence should prune the redundant power question."""
+        from app.tools.valuation_tools import get_device_questionnaire
+
+        questions = get_device_questionnaire(
+            "Apple",
+            analysis={"power_state": "on"},
+        )
+
+        question_ids = [question["id"] for question in questions]
+        assert len(questions) == 6
+        assert "does_not_power_on" not in question_ids
+        assert "water_damage" in question_ids
+        assert "battery_health_pct" in question_ids
+
 
 class TestGetDeviceQuestionnaireTool:
     """Test the ADK tool wrapper for questionnaire."""
@@ -739,6 +755,36 @@ class TestGetDeviceQuestionnaireTool:
         assert isinstance(result, dict)
         assert isinstance(result["questions"], list)
         assert all(isinstance(q, dict) for q in result["questions"])
+
+    def test_tool_skips_power_question_from_analysis_json(self):
+        """The tool should omit power-state questions already resolved by vision."""
+        from app.tools.valuation_tools import get_device_questionnaire_tool
+
+        result = get_device_questionnaire_tool(
+            device_brand="Apple",
+            analysis=json.dumps({"power_state": "on"}),
+        )
+
+        question_ids = [question["id"] for question in result["questions"]]
+        assert "does_not_power_on" not in question_ids
+        assert result["omitted_question_ids"] == ["does_not_power_on"]
+        assert result["omitted_question_ids"] == ["does_not_power_on"]
+
+    def test_tool_falls_back_to_tool_context_analysis(self):
+        """ADK sessions should prune from shared latest analysis when args omit it."""
+        from app.tools.valuation_tools import get_device_questionnaire_tool
+
+        tool_context = SimpleNamespace(
+            state={"temp:last_analysis": {"power_state": "on"}},
+        )
+
+        result = get_device_questionnaire_tool(
+            device_brand="Apple",
+            tool_context=tool_context,
+        )
+
+        question_ids = [question["id"] for question in result["questions"]]
+        assert "does_not_power_on" not in question_ids
 
 
 class TestNormalizeQuestionnaireAnswers:

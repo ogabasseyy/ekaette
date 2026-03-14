@@ -21,6 +21,14 @@ from app.api.v1.realtime.runtime_cache import (
     bind_runtime_values,
     configure_runtime as configure_runtime_cache,
 )
+from app.api.v1.realtime.voice_state_registry import (
+    VOICE_STATE_BOOL_KEYS,
+    VOICE_STATE_INT_KEYS,
+    VOICE_STATE_KEYS,
+    VOICE_STATE_STR_KEYS,
+    get_registered_voice_state,
+    update_voice_state,
+)
 from app.tools.pii_redaction import redact_pii
 
 logger = logging.getLogger(__name__)
@@ -56,19 +64,40 @@ def _parse_float_env(name: str, default: float) -> float:
         return default
 
 
+def _env_flag(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
 RESPONSE_LATENCY_FILLER_SECONDS = max(
     0.5,
     _parse_float_env("RESPONSE_LATENCY_FILLER_SECONDS", 2.0),
 )
 RESPONSE_LATENCY_REASSURE_SECONDS = max(
     RESPONSE_LATENCY_FILLER_SECONDS + 1.0,
-    _parse_float_env("RESPONSE_LATENCY_REASSURE_SECONDS", 15.0),
+    _parse_float_env("RESPONSE_LATENCY_REASSURE_SECONDS", 5.0),
 )
 LIVE_STREAM_MAX_RETRIES = max(0, _parse_int_env("LIVE_STREAM_MAX_RETRIES", 2))
 LIVE_STREAM_RETRY_BASE_SECONDS = max(
     0.1,
     _parse_float_env("LIVE_STREAM_RETRY_BASE_SECONDS", 0.5),
 )
+OPENING_DUPLICATE_SUPPRESSION_SECONDS = max(
+    1.0,
+    _parse_float_env("OPENING_DUPLICATE_SUPPRESSION_SECONDS", 3.0),
+)
+VOICE_SERVER_OWNED_OPENING_ENABLED = _env_flag(
+    "VOICE_SERVER_OWNED_OPENING_ENABLED",
+    False,
+)
+_VOICE_OPENING_CONNECT_MARKERS = frozenset({
+    "[phone call connected]",
+    "[call connected]",
+    "phone call connected",
+    "call connected",
+})
 _CONNECTION_ERRNOS = frozenset({
     errno.EPIPE,
     errno.ECONNABORTED,
@@ -120,6 +149,122 @@ def _is_connection_error(exc: Exception) -> bool:
     return False
 
 
+def _looks_like_tradein_request(text: str) -> bool:
+    normalized = " ".join(str(text or "").split()).strip()
+    if not normalized:
+        return False
+    try:
+        from app.agents.callbacks import (
+            _looks_like_explicit_device_swap_request,
+            _looks_like_tradein_or_upgrade_request,
+        )
+
+        return (
+            _looks_like_explicit_device_swap_request(normalized)
+            or _looks_like_tradein_or_upgrade_request(normalized)
+        )
+    except Exception:
+        lowered = normalized.lower()
+        return any(
+            token in lowered
+            for token in ("swap", "trade in", "trade-in", "upgrade")
+        )
+
+
+def _normalize_opening_transport_text(text: str) -> str:
+    return " ".join(str(text or "").strip().lower().split())
+
+
+def _session_flag_true(state: Any, key: str) -> bool:
+    getter = getattr(state, "get", None)
+    if not callable(getter):
+        return False
+    try:
+        return bool(getter(key, False))
+    except TypeError:
+        return bool(getter(key))
+
+
+def _is_live_voice_session(ctx: SessionInitContext) -> bool:
+    session_state = getattr(ctx, "session_state", None)
+    channel_getter = getattr(session_state, "get", None)
+    channel = ""
+    if callable(channel_getter):
+        try:
+            channel = str(channel_getter("app:channel", "") or "").strip().lower()
+        except TypeError:
+            channel = str(channel_getter("app:channel") or "").strip().lower()
+    return channel == "voice"
+
+
+def _should_swallow_opening_transport_metadata(
+    ctx: SessionInitContext,
+    *,
+    msg_type: str,
+    raw_text: str,
+) -> bool:
+    if not VOICE_SERVER_OWNED_OPENING_ENABLED:
+        return False
+    if msg_type not in {"text", "system_text"}:
+        return False
+    if not _is_live_voice_session(ctx):
+        return False
+    session_state = getattr(ctx, "session_state", None)
+    if _session_flag_true(session_state, "temp:first_user_turn_started"):
+        return False
+    if _session_flag_true(session_state, "temp:first_user_turn_complete"):
+        return False
+    return _normalize_opening_transport_text(raw_text) in _VOICE_OPENING_CONNECT_MARKERS
+
+
+def _response_latency_prompt(
+    *,
+    ctx: SessionInitContext | None,
+    silence_state: SilenceState,
+) -> str:
+    session_state = getattr(ctx, "session_state", None)
+    current_agent = ""
+    latest_user = ""
+    recent_customer = ""
+    if isinstance(session_state, dict):
+        current_agent = str(session_state.get("temp:active_agent", "") or "").strip()
+        latest_user = str(session_state.get("temp:last_user_turn", "") or "").strip()
+        recent_customer = str(session_state.get("temp:recent_customer_context", "") or "").strip()
+
+    combined = " ".join(part for part in (latest_user, recent_customer) if part).strip()
+    if (current_agent or "ekaette_router") == "ekaette_router" and _looks_like_tradein_request(combined):
+        explicit_swap_pair = False
+        try:
+            from app.agents.callbacks import _looks_like_explicit_device_swap_request
+
+            explicit_swap_pair = _looks_like_explicit_device_swap_request(combined)
+        except Exception:
+            explicit_swap_pair = False
+        if explicit_swap_pair:
+            return (
+                "[System: The customer already stated both the phone they have and the phone "
+                "they want in a live swap request and is waiting in silence. Respond right now. "
+                "If you are still ekaette_router, transfer immediately to valuation_agent. "
+                "Do not greet again. Do not ask brand-new, pre-owned, storage, colour, price, "
+                "availability, delivery, or payment questions before the valuation handoff. "
+                "Do not stay silent.]"
+            )
+        return (
+            "[System: The customer just made an explicit swap or trade-in request on a live "
+            "phone call and is waiting in silence. Respond right now. If you are still "
+            "ekaette_router, transfer immediately to valuation_agent. Do not greet again. "
+            "Do not stay silent.]"
+        )
+
+    return (
+        "[System: The customer said something several seconds ago "
+        "and is waiting for a response on a phone call. Silence on "
+        "a phone call feels like a dropped connection. Say a brief "
+        "filler phrase NOW, like 'Let me check that for you', then "
+        "proceed with your task.]"
+    )
+
+
 def create_initial_silence_state() -> SilenceState:
     """Create initial silence-nudge state for a new websocket stream."""
     now = time.monotonic()
@@ -130,6 +275,7 @@ def create_initial_silence_state() -> SilenceState:
         agent_busy=False,
         silence_nudge_due_at=due_at,
         silence_nudge_interval=interval,
+        assistant_output_active=False,
     )
 
 
@@ -193,9 +339,6 @@ async def upstream_task(
             now = time.monotonic()
             silence_state.last_client_activity = now
             silence_state.silence_nudge_count = 0
-            # New caller audio supersedes any pending response-latency watchdog.
-            silence_state.awaiting_agent_response = False
-            silence_state.response_nudge_count = 0
             (
                 silence_state.silence_nudge_due_at,
                 silence_state.silence_nudge_interval,
@@ -240,12 +383,28 @@ async def upstream_task(
 
             # Any valid client JSON message counts as activity.
             msg_type = json_message.get("type", "")
+            if msg_type in ("text", "system_text"):
+                raw_text_payload = str(json_message.get("text", "") or "").strip()
+                if _should_swallow_opening_transport_metadata(
+                    ctx,
+                    msg_type=msg_type,
+                    raw_text=raw_text_payload,
+                ):
+                    logger.info(
+                        "Suppressing opening transport metadata from model session=%s type=%s text=%s",
+                        ctx.resolved_session_id,
+                        msg_type,
+                        raw_text_payload,
+                    )
+                    continue
             if msg_type in ("text", "system_text", "image", "negotiate", "activity_start"):
                 now = time.monotonic()
                 silence_state.last_client_activity = now
                 silence_state.silence_nudge_count = 0
                 silence_state.awaiting_agent_response = False
                 silence_state.response_nudge_count = 0
+                silence_state.pending_media_analysis = False
+                silence_state.user_turn_active = msg_type == "activity_start"
                 if msg_type in ("text", "system_text", "image", "negotiate"):
                     silence_state.agent_busy = True
                 (
@@ -446,6 +605,7 @@ async def upstream_task(
                     live_request_queue.send_activity_start()
 
             elif msg_type == "activity_end":
+                silence_state.user_turn_active = False
                 if ctx.manual_vad_active and hasattr(live_request_queue, "send_activity_end"):
                     live_request_queue.send_activity_end()
 
@@ -517,6 +677,29 @@ async def downstream_task(
             session_state_store[key] = value
         except Exception:
             logger.debug("Failed to persist session key %s", key, exc_info=True)
+            return
+        if key not in VOICE_STATE_KEYS:
+            return
+        payload: dict[str, Any] = {}
+        if key in VOICE_STATE_BOOL_KEYS:
+            if bool(value):
+                payload[key] = True
+        elif key in VOICE_STATE_STR_KEYS:
+            if isinstance(value, str):
+                payload[key] = value.strip()
+        elif key in VOICE_STATE_INT_KEYS:
+            try:
+                parsed = int(value or 0)
+            except (TypeError, ValueError):
+                parsed = 0
+            if parsed > 0:
+                payload[key] = parsed
+        if payload:
+            update_voice_state(
+                user_id=ctx.user_id,
+                session_id=ctx.resolved_session_id,
+                **payload,
+            )
 
     def _latest_server_message_from_session() -> dict[str, Any] | None:
         raw_message = _session_get("temp:last_server_message", None)
@@ -561,6 +744,170 @@ async def downstream_task(
             content = types_mod.Content(parts=[types_mod.Part(text=prompt)])
         except Exception:
             content = SimpleNamespace(parts=[SimpleNamespace(text=prompt)])
+        live_request_queue.send_content(content)
+
+    def _pending_media_request_voice_ack() -> str:
+        raw = _session_get("temp:pending_media_request_voice_ack", "")
+        if isinstance(raw, str) and raw.strip():
+            return raw.strip().lower()
+        registry_state = get_registered_voice_state(
+            user_id=ctx.user_id,
+            session_id=ctx.resolved_session_id,
+        )
+        registry_raw = registry_state.get("temp:pending_media_request_voice_ack", "")
+        if isinstance(registry_raw, str) and registry_raw.strip():
+            return registry_raw.strip().lower()
+        return ""
+
+    def _queue_media_request_sent_ack_prompt() -> None:
+        prompt = (
+            "[System: The WhatsApp media request has already been sent successfully. "
+            "Respond immediately with one short sentence telling the caller to check "
+            "WhatsApp now and send the photo or short video there. Do not say you are "
+            "still sending it. Do not ask another question before this acknowledgement. "
+            "Do not stay silent.]"
+        )
+        try:
+            (types_mod,) = bind_runtime_values("types")
+            content = types_mod.Content(parts=[types_mod.Part(text=prompt)])
+        except Exception:
+            content = SimpleNamespace(parts=[SimpleNamespace(text=prompt)])
+        live_request_queue.send_content(content)
+
+    def _maybe_queue_media_request_sent_ack_prompt() -> bool:
+        if _pending_media_request_voice_ack() != "ready":
+            return False
+        if str(_session_get("app:channel", "") or "").strip().lower() != "voice":
+            _session_set("temp:pending_media_request_voice_ack", "")
+            return False
+        _session_set("temp:pending_media_request_voice_ack", "")
+        _queue_media_request_sent_ack_prompt()
+        silence_state.awaiting_agent_response = True
+        silence_state.user_turn_active = False
+        silence_state.user_spoke_at = time.monotonic()
+        silence_state.response_nudge_count = 0
+        _sync_pending_media_analysis()
+        logger.info(
+            "Queued immediate media-request acknowledgement prompt session=%s agent=%s",
+            sanitize_log_fn(ctx.resolved_session_id),
+            sanitize_log_fn(_session_get("temp:active_agent", "") or "unknown"),
+        )
+        return True
+
+    def _resolve_opening_sentence(log_context: str) -> str:
+        opening_sentence = "Hello, this is ehkaitay from our service desk."
+        try:
+            from app.agents.callbacks import (
+                _first_turn_opening,
+                _resolve_company_names,
+                _resolve_first_turn_customer_name,
+            )
+
+            company_profile = _session_get("app:company_profile", {})
+            if not isinstance(company_profile, dict):
+                company_profile = {}
+            _display_name, spoken_name = _resolve_company_names(company_profile)
+            opening_sentence = _first_turn_opening(
+                spoken_name,
+                _resolve_first_turn_customer_name(ctx.session_state),
+            )
+        except Exception:
+            logger.debug("%s fell back to generic greeting", log_context, exc_info=True)
+        return opening_sentence
+
+    def _opening_bootstrap_prompt_text() -> str:
+        opening_sentence = _resolve_opening_sentence("Opening bootstrap prompt")
+        return (
+            "[System: Opening phase recovery. No greeting has been spoken yet. "
+            "Do not call any tools or transfer. "
+            f"Speak the required opening greeting immediately: '{opening_sentence} "
+            "How can I help you today?' "
+            "Do not stay silent.]"
+        )
+
+    def _queue_opening_bootstrap_prompt() -> bool:
+        retry_raw = _session_get("temp:opening_bootstrap_retry_count", 0)
+        try:
+            retry_count = int(retry_raw or 0)
+        except (TypeError, ValueError):
+            retry_count = 0
+        if retry_count >= 1:
+            logger.warning(
+                "Opening bootstrap retry exhausted session=%s",
+                sanitize_log_fn(ctx.resolved_session_id),
+            )
+            return False
+        _session_set("temp:opening_bootstrap_retry_count", retry_count + 1)
+        prompt = _opening_bootstrap_prompt_text()
+        try:
+            (types_mod,) = bind_runtime_values("types")
+            content = types_mod.Content(parts=[types_mod.Part(text=prompt)])
+        except Exception:
+            content = SimpleNamespace(parts=[SimpleNamespace(text=prompt)])
+        live_request_queue.send_content(content)
+        logger.info(
+            "Queued opening bootstrap prompt session=%s attempt=%d",
+            sanitize_log_fn(ctx.resolved_session_id),
+            retry_count + 1,
+        )
+        return True
+
+    def _background_media_analysis_running() -> bool:
+        raw = _session_get("temp:background_vision_status", "")
+        if isinstance(raw, str) and raw.strip().lower() == "running":
+            return True
+        registry_state = get_registered_voice_state(
+            user_id=ctx.user_id,
+            session_id=ctx.resolved_session_id,
+        )
+        registry_raw = registry_state.get("temp:background_vision_status", "")
+        return isinstance(registry_raw, str) and registry_raw.strip().lower() == "running"
+
+    def _sync_pending_media_analysis() -> None:
+        silence_state.pending_media_analysis = _background_media_analysis_running()
+
+    def _queue_transfer_bootstrap_prompt(target_agent: str, reason: str) -> None:
+        latest_user = _session_get("temp:pending_handoff_latest_user", "")
+        recent_customer = _session_get("temp:pending_handoff_recent_customer_context", "")
+        if (
+            reason in {"voice_tradein_recovery", "voice_tradein_handoff"}
+            and target_agent == "valuation_agent"
+        ):
+            routing_phrase = (
+                "Routing recovery just transferred"
+                if reason == "voice_tradein_recovery"
+                else "Routing just transferred"
+            )
+            prompt = (
+                f"[System: {routing_phrase} this live voice trade-in call to "
+                "valuation_agent. Respond immediately with one short continuity phrase. Do not "
+                "greet or stay silent. If request_media_via_whatsapp has not succeeded yet on "
+                "this call, call it now before you say the message was sent or ask the caller "
+                "to check WhatsApp. After the tool succeeds, tell the caller briefly to check "
+                "WhatsApp. Do not ask them to describe visible condition before the media is "
+                "received.]"
+            )
+        else:
+            prompt = (
+                "[System: Routing recovery just transferred this live voice call. Respond "
+                "immediately with one short continuity phrase, do not greet again, and continue "
+                "the task without staying silent.]"
+            )
+        if isinstance(latest_user, str) and latest_user.strip():
+            prompt += f" Latest customer request: '{latest_user.strip()}'."
+        if isinstance(recent_customer, str) and recent_customer.strip():
+            prompt += f" Recent customer context: '{recent_customer.strip()}'."
+        try:
+            (types_mod,) = bind_runtime_values("types")
+            content = types_mod.Content(parts=[types_mod.Part(text=prompt)])
+        except Exception:
+            content = SimpleNamespace(parts=[SimpleNamespace(text=prompt)])
+        logger.info(
+            "Queued transfer bootstrap prompt session=%s target=%s reason=%s",
+            sanitize_log_fn(ctx.resolved_session_id),
+            target_agent,
+            reason,
+        )
         live_request_queue.send_content(content)
 
     async def _emit_end_after_speaking(reason: str) -> None:
@@ -627,12 +974,111 @@ async def downstream_task(
         except Exception:
             logger.debug("Voice analytics transfer capture skipped", exc_info=True)
 
+    async def _send_server_owned_opening_greeting() -> None:
+        nonlocal opening_turn_completed_at
+        nonlocal opening_output_observed
+        nonlocal server_owned_opening_pending
+        greeting_text = _server_owned_opening_text()
+        try:
+            from app.api.v1.at.providers import text_to_speech_pcm
+
+            server_owned_opening_pending = True
+            silence_state.agent_busy = True
+            silence_state.assistant_output_active = True
+            silence_state.awaiting_agent_response = False
+            silence_state.user_turn_active = False
+            _sync_pending_media_analysis()
+
+            pcm_data, _mime_type = await text_to_speech_pcm(
+                greeting_text,
+                voice_name=ctx.session_voice,
+            )
+            if isinstance(pcm_data, str):
+                pcm_data = base64.b64decode(pcm_data)
+
+            await websocket.send_text(json.dumps({
+                "type": "agent_status",
+                "agent": current_agent,
+                "status": "active",
+            }))
+            await websocket.send_bytes(pcm_data)
+            await websocket.send_text(json.dumps({
+                "type": "transcription",
+                "role": "agent",
+                "text": greeting_text,
+                "partial": False,
+            }))
+
+            _record_voice_transcript("agent", greeting_text, False)
+            recent_turns.append(("agent", greeting_text))
+            _session_set("temp:last_agent_turn", greeting_text)
+            _session_set("temp:opening_greeting_server_owned", True)
+            opening_output_observed = True
+            opening_turn_completed_at = time.monotonic()
+            _complete_opening_greeting("server-owned opening greeting")
+
+            silence_state.agent_busy = False
+            silence_state.assistant_output_active = False
+            _sync_pending_media_analysis()
+            await websocket.send_text(json.dumps({
+                "type": "agent_status",
+                "agent": current_agent,
+                "status": "idle",
+            }))
+            logger.info(
+                "Server-owned opening greeting sent session=%s voice=%s",
+                sanitize_log_fn(ctx.resolved_session_id),
+                sanitize_log_fn(ctx.session_voice),
+            )
+        except Exception:
+            silence_state.agent_busy = False
+            silence_state.assistant_output_active = False
+            _sync_pending_media_analysis()
+            logger.warning(
+                "Server-owned opening greeting failed; falling back to opening bootstrap session=%s",
+                sanitize_log_fn(ctx.resolved_session_id),
+                exc_info=True,
+            )
+            _queue_opening_bootstrap_prompt()
+        finally:
+            server_owned_opening_pending = False
+
     def _is_voice_channel() -> bool:
         channel = _session_get("app:channel", "")
         return isinstance(channel, str) and channel.strip().lower() == "voice"
 
+    def _is_live_voice_session_local() -> bool:
+        if _is_voice_channel():
+            return True
+        return bool(getattr(ctx, "is_native_audio", False))
+
     def _is_opening_phase_complete() -> bool:
         return bool(_session_get("temp:opening_phase_complete", False))
+
+    def _server_owned_opening_enabled() -> bool:
+        return VOICE_SERVER_OWNED_OPENING_ENABLED and _is_live_voice_session_local()
+
+    def _server_owned_opening_state() -> bool:
+        if bool(_session_get("temp:opening_greeting_server_owned", False)):
+            return True
+        registry_state = get_registered_voice_state(
+            user_id=ctx.user_id,
+            session_id=ctx.resolved_session_id,
+        )
+        return bool(registry_state.get("temp:opening_greeting_server_owned", False))
+
+    def _server_owned_preuser_guard_active() -> bool:
+        if not _server_owned_opening_enabled():
+            return False
+        if bool(_session_get("temp:first_user_turn_started", False)):
+            return False
+        if bool(_session_get("temp:first_user_turn_complete", False)):
+            return False
+        return server_owned_opening_pending or _server_owned_opening_state()
+
+    def _server_owned_opening_text() -> str:
+        opening_sentence = _resolve_opening_sentence("Server-owned opening")
+        return f"{opening_sentence} How can I help you today?"
 
     def _looks_like_callback_request(text: str) -> bool:
         from app.agents.callbacks import looks_like_callback_request
@@ -801,6 +1247,11 @@ async def downstream_task(
     # Each entry: (role, text) — keeps the last 6 turns.
     recent_turns: deque[tuple[str, str]] = deque(maxlen=6)
     model_has_spoken = False
+    opening_turn_completed_at = 0.0
+    suppress_preuser_opening_output = False
+    opening_output_observed = False
+    server_owned_opening_pending = False
+    server_owned_opening_logged = False
     handoff_sig_raw = _session_get("temp:last_transfer_handoff_signature", "")
     last_handoff_signature = handoff_sig_raw if isinstance(handoff_sig_raw, str) else ""
 
@@ -835,12 +1286,38 @@ async def downstream_task(
         if not bool(_session_get("temp:greeted", False)):
             _session_set("temp:greeted", True)
 
+    def _complete_opening_greeting(reason: str) -> None:
+        nonlocal opening_turn_completed_at
+        if not silence_state.greeting_lock_active:
+            return
+        silence_state.greeting_lock_active = False
+        _session_set("temp:greeted", True)
+        _session_set("temp:opening_bootstrap_retry_count", 0)
+        if _is_voice_channel():
+            _session_set("temp:opening_greeting_complete", True)
+            _session_set("temp:greeting_block_count", 0)
+            opening_turn_completed_at = time.monotonic()
+        logger.info("Greeting lock released (%s)", reason)
+
+    def _preuser_opening_duplicate_active() -> bool:
+        if not _is_voice_channel():
+            return False
+        if not bool(_session_get("temp:opening_greeting_complete", False)):
+            return False
+        if bool(_session_get("temp:first_user_turn_started", False)):
+            return False
+        if opening_turn_completed_at <= 0.0:
+            return False
+        return (time.monotonic() - opening_turn_completed_at) < OPENING_DUPLICATE_SUPPRESSION_SECONDS
+
     def _clear_pending_handoff() -> None:
         for key in (
             "temp:pending_handoff_target_agent",
             "temp:pending_handoff_latest_user",
             "temp:pending_handoff_latest_agent",
             "temp:pending_handoff_recent_customer_context",
+            "temp:pending_transfer_bootstrap_target_agent",
+            "temp:pending_transfer_bootstrap_reason",
         ):
             _session_set(key, "")
 
@@ -883,6 +1360,7 @@ async def downstream_task(
         last_input_text = ""
         receiving_input = False
         input_finalized = True
+        silence_state.user_turn_active = False
 
     async def _finalize_output(*, interrupted: bool = False) -> None:
         """Send a non-partial output transcription to close the agent's turn."""
@@ -901,159 +1379,368 @@ async def downstream_task(
         last_output_text = ""
         output_finalized = True
 
-    while session_alive.is_set():
-        try:
-            async for event in runner_obj.run_live(
-                user_id=ctx.user_id,
-                session_id=ctx.resolved_session_id,
-                live_request_queue=live_request_queue,
-                run_config=ctx.run_config,
-            ):
-                if retry_attempt > 0:
-                    retry_attempt = 0
-                try:
-                    # Audio + Text content
-                    if event.content and event.content.parts:
-                        for part in event.content.parts:
-                            # Audio -> binary WebSocket frame (lowest latency)
-                            if (
-                                part.inline_data
-                                and part.inline_data.data
-                                and part.inline_data.mime_type
-                                and "audio" in part.inline_data.mime_type
-                            ):
-                                silence_state.agent_busy = True
-                                silence_state.awaiting_agent_response = False
-                                _mark_greeted_from_agent_output()
-                                audio_bytes = part.inline_data.data
-                                if isinstance(audio_bytes, str):
-                                    audio_bytes = base64.b64decode(audio_bytes)
-                                await websocket.send_bytes(audio_bytes)
+    opening_task: asyncio.Task[None] | None = None
+    if (
+        _server_owned_opening_enabled()
+        and not bool(_session_get("temp:opening_greeting_complete", False))
+        and not bool(_session_get("temp:first_user_turn_started", False))
+    ):
+        opening_task = asyncio.create_task(_send_server_owned_opening_greeting())
 
-                            # Text -> transcription (text-mode fallback only)
-                            elif part.text and not ctx.is_native_audio:
-                                silence_state.agent_busy = True
-                                silence_state.awaiting_agent_response = False
-                                _mark_greeted_from_agent_output()
-                                await websocket.send_text(json.dumps({
-                                    "type": "transcription",
-                                    "role": "agent",
-                                    "text": part.text,
-                                    "partial": not bool(event.turn_complete),
-                                }))
-
-                    # Input transcription (user's speech -> text)
-                    if event.input_transcription:
-                        text = getattr(event.input_transcription, "text", None)
-                        finished = getattr(event.input_transcription, "finished", False)
-                        if text:
-                            if input_finalized and not finished:
-                                # Suppress late partials after input was already finalized
-                                pass
-                            else:
-                                if input_finalized:
-                                    # New final after prior finalization -> new utterance
-                                    input_finalized = False
-                                last_input_text = text
-                                receiving_input = True
-                                if _is_voice_channel() and bool(
-                                    _session_get("temp:opening_greeting_complete", False)
+    try:
+        while session_alive.is_set():
+            try:
+                if opening_task is not None and opening_task.done():
+                    finished_opening = opening_task
+                    opening_task = None
+                    await finished_opening
+                async for event in runner_obj.run_live(
+                    user_id=ctx.user_id,
+                    session_id=ctx.resolved_session_id,
+                    live_request_queue=live_request_queue,
+                    run_config=ctx.run_config,
+                ):
+                    if retry_attempt > 0:
+                        retry_attempt = 0
+                    event_had_agent_output = False
+                    try:
+                        # Audio + Text content
+                        if event.content and event.content.parts:
+                            for part in event.content.parts:
+                                if _server_owned_preuser_guard_active():
+                                    if not server_owned_opening_logged:
+                                        logger.warning(
+                                            "Suppressing pre-user model content during server-owned opening "
+                                            "session=%s author=%s",
+                                            sanitize_log_fn(ctx.resolved_session_id),
+                                            sanitize_log_fn(event.author or current_agent),
+                                        )
+                                        server_owned_opening_logged = True
+                                    continue
+                                server_owned_opening_logged = False
+                                # Audio -> binary WebSocket frame (lowest latency)
+                                if (
+                                    part.inline_data
+                                    and part.inline_data.data
+                                    and part.inline_data.mime_type
+                                    and "audio" in part.inline_data.mime_type
                                 ):
-                                    _session_set("temp:first_user_turn_started", True)
-                                    _session_set("temp:opening_phase_complete", True)
-                                is_partial = not finished
-                                await websocket.send_text(json.dumps({
-                                    "type": "transcription",
-                                    "role": "user",
-                                    "text": redact_pii(text),
-                                    "partial": is_partial,
-                                }))
-                                _record_voice_transcript("user", text, is_partial)
-                                if finished:
-                                    recent_turns.append(("user", text))
-                                    _session_set("temp:last_user_turn", text)
+                                    if _preuser_opening_duplicate_active():
+                                        if not suppress_preuser_opening_output:
+                                            logger.warning(
+                                                "Suppressing duplicate pre-user opening audio "
+                                                "session=%s author=%s",
+                                                sanitize_log_fn(ctx.resolved_session_id),
+                                                sanitize_log_fn(event.author or current_agent),
+                                            )
+                                        suppress_preuser_opening_output = True
+                                        continue
+                                    silence_state.agent_busy = True
+                                    silence_state.assistant_output_active = True
+                                    silence_state.awaiting_agent_response = False
+                                    silence_state.user_turn_active = False
+                                    _sync_pending_media_analysis()
+                                    opening_output_observed = True
+                                    event_had_agent_output = True
+                                    _mark_greeted_from_agent_output()
+                                    audio_bytes = part.inline_data.data
+                                    if isinstance(audio_bytes, str):
+                                        audio_bytes = base64.b64decode(audio_bytes)
+                                    await websocket.send_bytes(audio_bytes)
+    
+                                # Text -> transcription (text-mode fallback only)
+                                elif part.text and not ctx.is_native_audio:
+                                    if _preuser_opening_duplicate_active():
+                                        if not suppress_preuser_opening_output:
+                                            logger.warning(
+                                                "Suppressing duplicate pre-user opening text "
+                                                "session=%s author=%s",
+                                                sanitize_log_fn(ctx.resolved_session_id),
+                                                sanitize_log_fn(event.author or current_agent),
+                                            )
+                                        suppress_preuser_opening_output = True
+                                        continue
+                                    silence_state.agent_busy = True
+                                    silence_state.assistant_output_active = True
+                                    silence_state.awaiting_agent_response = False
+                                    silence_state.user_turn_active = False
+                                    _sync_pending_media_analysis()
+                                    opening_output_observed = True
+                                    event_had_agent_output = True
+                                    _mark_greeted_from_agent_output()
+                                    await websocket.send_text(json.dumps({
+                                        "type": "transcription",
+                                        "role": "agent",
+                                        "text": part.text,
+                                        "partial": not bool(event.turn_complete),
+                                    }))
+    
+                        # Input transcription (user's speech -> text)
+                        if event.input_transcription:
+                            text = getattr(event.input_transcription, "text", None)
+                            finished = getattr(event.input_transcription, "finished", False)
+                            if text:
+                                if input_finalized and not finished:
+                                    # Suppress late partials after input was already finalized
+                                    pass
+                                else:
+                                    if input_finalized:
+                                        # New final after prior finalization -> new utterance
+                                        input_finalized = False
+                                    last_input_text = text
+                                    receiving_input = True
+                                    silence_state.user_turn_active = not finished
                                     if _is_voice_channel() and bool(
                                         _session_get("temp:opening_greeting_complete", False)
                                     ):
                                         _session_set("temp:first_user_turn_started", True)
-                                        _session_set("temp:first_user_turn_complete", True)
                                         _session_set("temp:opening_phase_complete", True)
-                                        _session_set("temp:greeting_block_count", 0)
-                                    _maybe_register_callback_from_user_turn(text)
-                                    _persist_recent_customer_context()
-                                    last_input_text = ""
-                                    receiving_input = False
-                                    input_finalized = True
-
-                                # Arm/reset response latency watchdog
-                                silence_state.awaiting_agent_response = True
-                                silence_state.user_spoke_at = time.monotonic()
-                                silence_state.response_nudge_count = 0
-
-                    # Output transcription (agent's speech -> text)
-                    if event.output_transcription:
-                        text = getattr(event.output_transcription, "text", None)
-                        finished = getattr(event.output_transcription, "finished", False)
-                        if text:
-                            silence_state.agent_busy = True
-                            if output_finalized and not finished:
-                                # Suppress late partials after output was already finalized
-                                pass
-                            else:
-                                silence_state.awaiting_agent_response = False
-                                if output_finalized:
-                                    output_finalized = False
-                                # Agent started responding -> finalize user's input
-                                if receiving_input:
-                                    await _finalize_input()
-                                _mark_greeted_from_agent_output()
-                                last_output_text = text
-                                is_partial = not finished
-
-                                # Output-level dedup (ADK #3395): suppress
-                                # near-duplicate finished transcriptions
-                                # arriving within 3s of each other.
-                                _is_dup_final = False
-                                if finished:
-                                    _now_f = time.monotonic()
-                                    if (
-                                        _last_final_text
-                                        and (_now_f - _last_final_ts) < 3.0
-                                        and _text_overlap(
-                                            _last_final_text, text
-                                        ) > 0.6
-                                    ):
-                                        _is_dup_final = True
-                                        logger.info(
-                                            "Dedup output: suppressing duplicate "
-                                            "final (%.1fs gap) text=%s",
-                                            _now_f - _last_final_ts,
-                                            text[:80],
-                                        )
-
-                                if not _is_dup_final:
+                                    is_partial = not finished
                                     await websocket.send_text(json.dumps({
                                         "type": "transcription",
-                                        "role": "agent",
-                                        "text": text,
+                                        "role": "user",
+                                        "text": redact_pii(text),
                                         "partial": is_partial,
                                     }))
-                                    _record_voice_transcript("agent", text, is_partial)
-                                # Check partial transcriptions too — if
-                                # Gemini crashes mid-turn the finished event
-                                # never arrives and the promise is lost.
-                                _maybe_register_callback_from_agent_promise(text)
-                                if finished:
-                                    if not _is_dup_final:
-                                        recent_turns.append(("agent", text))
-                                        _session_set(
-                                            "temp:last_agent_turn", text
+                                    _record_voice_transcript("user", text, is_partial)
+                                    if finished:
+                                        recent_turns.append(("user", text))
+                                        _session_set("temp:last_user_turn", text)
+                                        if _is_voice_channel() and bool(
+                                            _session_get("temp:opening_greeting_complete", False)
+                                        ):
+                                            _session_set("temp:first_user_turn_started", True)
+                                            _session_set("temp:first_user_turn_complete", True)
+                                            _session_set("temp:opening_phase_complete", True)
+                                            _session_set("temp:greeting_block_count", 0)
+                                        _maybe_register_callback_from_user_turn(text)
+                                        _persist_recent_customer_context()
+                                        last_input_text = ""
+                                        receiving_input = False
+                                        input_finalized = True
+    
+                                    # Arm/reset response latency watchdog
+                                    silence_state.awaiting_agent_response = True
+                                    silence_state.user_spoke_at = time.monotonic()
+                                    silence_state.response_nudge_count = 0
+                                    _sync_pending_media_analysis()
+                                    if finished:
+                                        logger.info(
+                                            "Armed response-latency watchdog session=%s agent=%s media_pending=%s user=%s",
+                                            sanitize_log_fn(ctx.resolved_session_id),
+                                            sanitize_log_fn(current_agent),
+                                            silence_state.pending_media_analysis,
+                                            redact_pii(text)[:120],
                                         )
-                                    _last_final_text = text
-                                    _last_final_ts = time.monotonic()
-                                    model_has_spoken = True
-                                    last_output_text = ""
-                                    output_finalized = True
+    
+                        # Output transcription (agent's speech -> text)
+                        if event.output_transcription:
+                            text = getattr(event.output_transcription, "text", None)
+                            finished = getattr(event.output_transcription, "finished", False)
+                            if text:
+                                if _server_owned_preuser_guard_active():
+                                    if not server_owned_opening_logged:
+                                        logger.warning(
+                                            "Suppressing pre-user model transcription during server-owned opening "
+                                            "session=%s text=%s",
+                                            sanitize_log_fn(ctx.resolved_session_id),
+                                            text[:80],
+                                        )
+                                        server_owned_opening_logged = True
+                                    if finished:
+                                        _last_final_text = text
+                                        _last_final_ts = time.monotonic()
+                                        last_output_text = ""
+                                        output_finalized = True
+                                    continue
+                                server_owned_opening_logged = False
+                                if suppress_preuser_opening_output or _preuser_opening_duplicate_active():
+                                    if not suppress_preuser_opening_output:
+                                        logger.warning(
+                                            "Suppressing duplicate pre-user opening transcription "
+                                            "session=%s text=%s",
+                                            sanitize_log_fn(ctx.resolved_session_id),
+                                            text[:80],
+                                        )
+                                    suppress_preuser_opening_output = True
+                                    if finished:
+                                        _last_final_text = text
+                                        _last_final_ts = time.monotonic()
+                                        last_output_text = ""
+                                        output_finalized = True
+                                    continue
+                                silence_state.agent_busy = True
+                                silence_state.assistant_output_active = True
+                                if output_finalized and not finished:
+                                    # Suppress late partials after output was already finalized
+                                    pass
+                                else:
+                                    silence_state.awaiting_agent_response = False
+                                    silence_state.user_turn_active = False
+                                    _sync_pending_media_analysis()
+                                    if output_finalized:
+                                        output_finalized = False
+                                    # Agent started responding -> finalize user's input
+                                    if receiving_input:
+                                        await _finalize_input()
+                                    opening_output_observed = True
+                                    event_had_agent_output = True
+                                    _mark_greeted_from_agent_output()
+                                    last_output_text = text
+                                    is_partial = not finished
+    
+                                    # Output-level dedup (ADK #3395): suppress
+                                    # near-duplicate finished transcriptions
+                                    # arriving within 3s of each other.
+                                    _is_dup_final = False
+                                    if finished:
+                                        _now_f = time.monotonic()
+                                        if (
+                                            _last_final_text
+                                            and (_now_f - _last_final_ts) < 3.0
+                                            and _text_overlap(
+                                                _last_final_text, text
+                                            ) > 0.6
+                                        ):
+                                            _is_dup_final = True
+                                            logger.info(
+                                                "Dedup output: suppressing duplicate "
+                                                "final (%.1fs gap) text=%s",
+                                                _now_f - _last_final_ts,
+                                                text[:80],
+                                            )
+    
+                                    if not _is_dup_final:
+                                        await websocket.send_text(json.dumps({
+                                            "type": "transcription",
+                                            "role": "agent",
+                                            "text": text,
+                                            "partial": is_partial,
+                                        }))
+                                        _record_voice_transcript("agent", text, is_partial)
+                                    # Check partial transcriptions too — if
+                                    # Gemini crashes mid-turn the finished event
+                                    # never arrives and the promise is lost.
+                                    _maybe_register_callback_from_agent_promise(text)
+                                    if finished:
+                                        if not _is_dup_final:
+                                            recent_turns.append(("agent", text))
+                                            _session_set(
+                                                "temp:last_agent_turn", text
+                                            )
+                                        _last_final_text = text
+                                        _last_final_ts = time.monotonic()
+                                        model_has_spoken = True
+                                        last_output_text = ""
+                                        output_finalized = True
+                                        pending_target = _session_get(
+                                            "temp:pending_handoff_target_agent", ""
+                                        )
+                                        if (
+                                            isinstance(pending_target, str)
+                                            and pending_target.strip()
+                                            and pending_target.strip() == current_agent
+                                        ):
+                                            _clear_pending_handoff()
+                                        session_id_for_close = _session_get("app:session_id", "")
+                                        if (
+                                            bool(_session_get("temp:callback_requested", False))
+                                            and not (
+                                                isinstance(session_id_for_close, str)
+                                                and session_id_for_close.strip().startswith("sip-callback-")
+                                            )
+                                            and _looks_like_callback_closing(text)
+                                        ):
+                                            await _emit_end_after_speaking(
+                                                "callback_acknowledged"
+                                            )
+                                        if silence_state.greeting_lock_active:
+                                            _complete_opening_greeting("first output transcription complete")
+    
+                        # Interrupted -> finalize + clear playback
+                        if event.interrupted:
+                            if _is_voice_channel() and not _is_opening_phase_complete():
+                                logger.info(
+                                    "Ignoring interrupted event during protected voice opening "
+                                    "session=%s",
+                                    sanitize_log_fn(ctx.resolved_session_id),
+                                )
+                                continue
+                            await _finalize_input()
+                            await _finalize_output(interrupted=True)
+                            silence_state.agent_busy = False
+                            silence_state.assistant_output_active = False
+                            silence_state.awaiting_agent_response = False
+                            _sync_pending_media_analysis()
+                            await websocket.send_text(json.dumps({
+                                "type": "interrupted",
+                                "interrupted": True,
+                            }))
+    
+                        # Agent transfer
+                        if event.actions and event.actions.transfer_to_agent:
+                            new_agent = event.actions.transfer_to_agent
+                            if not isinstance(new_agent, str) or not new_agent.strip():
+                                logger.debug("Ignoring invalid transfer target: %r", new_agent)
+                            elif new_agent == current_agent:
+                                logger.debug("Suppressing no-op agent_transfer (already on %s)", new_agent)
+                            else:
+                                await websocket.send_text(json.dumps({
+                                    "type": "agent_transfer",
+                                    "from": current_agent,
+                                    "to": new_agent,
+                                }))
+                                existing_pending = _session_get(
+                                    "temp:pending_handoff_target_agent", ""
+                                )
+                                if (
+                                    not isinstance(existing_pending, str)
+                                    or existing_pending.strip() != new_agent
+                                ):
+                                    _persist_transfer_handoff_state(new_agent)
+                                current_agent = new_agent
+                                _session_set("temp:active_agent", current_agent)
+                                _record_voice_transfer(new_agent)
+                                bootstrap_target = _session_get(
+                                    "temp:pending_transfer_bootstrap_target_agent", ""
+                                )
+                                bootstrap_reason = _session_get(
+                                    "temp:pending_transfer_bootstrap_reason", ""
+                                )
+                                if (
+                                    (not isinstance(bootstrap_target, str) or not bootstrap_target.strip())
+                                    and ctx.user_id
+                                    and ctx.resolved_session_id
+                                ):
+                                    registry_state = get_registered_voice_state(
+                                        user_id=ctx.user_id,
+                                        session_id=ctx.resolved_session_id,
+                                    )
+                                    registry_target = registry_state.get(
+                                        "temp:pending_transfer_bootstrap_target_agent", ""
+                                    )
+                                    registry_reason = registry_state.get(
+                                        "temp:pending_transfer_bootstrap_reason", ""
+                                    )
+                                    if isinstance(registry_target, str) and registry_target.strip():
+                                        bootstrap_target = registry_target.strip()
+                                    if isinstance(registry_reason, str) and registry_reason.strip():
+                                        bootstrap_reason = registry_reason.strip()
+                                if (
+                                    isinstance(bootstrap_target, str)
+                                    and bootstrap_target.strip() == current_agent
+                                ):
+                                    _session_set("temp:pending_transfer_bootstrap_target_agent", "")
+                                    _session_set("temp:pending_transfer_bootstrap_reason", "")
+                                    if isinstance(bootstrap_reason, str) and bootstrap_reason.strip():
+                                        _queue_transfer_bootstrap_prompt(
+                                            current_agent,
+                                            bootstrap_reason.strip(),
+                                        )
+                                output_finished = bool(
+                                    getattr(event.output_transcription, "finished", False)
+                                ) if event.output_transcription else False
+                                if output_finished:
                                     pending_target = _session_get(
                                         "temp:pending_handoff_target_agent", ""
                                     )
@@ -1063,275 +1750,225 @@ async def downstream_task(
                                         and pending_target.strip() == current_agent
                                     ):
                                         _clear_pending_handoff()
-                                    session_id_for_close = _session_get("app:session_id", "")
-                                    if (
-                                        bool(_session_get("temp:callback_requested", False))
-                                        and not (
-                                            isinstance(session_id_for_close, str)
-                                            and session_id_for_close.strip().startswith("sip-callback-")
-                                        )
-                                        and _looks_like_callback_closing(text)
-                                    ):
-                                        await _emit_end_after_speaking(
-                                            "callback_acknowledged"
-                                        )
-
-                    # Interrupted -> finalize + clear playback
-                    if event.interrupted:
-                        if _is_voice_channel() and not _is_opening_phase_complete():
-                            logger.info(
-                                "Ignoring interrupted event during protected voice opening "
-                                "session=%s",
-                                sanitize_log_fn(ctx.resolved_session_id),
-                            )
-                            continue
-                        await _finalize_input()
-                        await _finalize_output(interrupted=True)
-                        silence_state.agent_busy = False
-                        silence_state.awaiting_agent_response = False
-                        await websocket.send_text(json.dumps({
-                            "type": "interrupted",
-                            "interrupted": True,
-                        }))
-
-                    # Agent transfer
-                    if event.actions and event.actions.transfer_to_agent:
-                        new_agent = event.actions.transfer_to_agent
-                        if not isinstance(new_agent, str) or not new_agent.strip():
-                            logger.debug("Ignoring invalid transfer target: %r", new_agent)
-                        elif new_agent == current_agent:
-                            logger.debug("Suppressing no-op agent_transfer (already on %s)", new_agent)
-                        else:
-                            await websocket.send_text(json.dumps({
-                                "type": "agent_transfer",
-                                "from": current_agent,
-                                "to": new_agent,
-                            }))
-                            existing_pending = _session_get(
-                                "temp:pending_handoff_target_agent", ""
-                            )
-                            if (
-                                not isinstance(existing_pending, str)
-                                or existing_pending.strip() != new_agent
-                            ):
-                                _persist_transfer_handoff_state(new_agent)
-                            current_agent = new_agent
-                            _session_set("temp:active_agent", current_agent)
-                            _record_voice_transfer(new_agent)
-                            output_finished = bool(
-                                getattr(event.output_transcription, "finished", False)
-                            ) if event.output_transcription else False
-                            if output_finished:
-                                pending_target = _session_get(
-                                    "temp:pending_handoff_target_agent", ""
+                                await websocket.send_text(json.dumps({
+                                    "type": "agent_status",
+                                    "agent": new_agent,
+                                    "status": "active",
+                                }))
+    
+                        # Structured ServerMessages from callbacks/state delta
+                        state_delta = event.actions.state_delta if event.actions else None
+                        structured = extract_server_message_from_state_delta_fn(state_delta)
+                        if not structured:
+                            structured = _latest_server_message_from_session()
+                        if structured:
+                            raw_id = structured.get("id", 0)
+                            try:
+                                structured_id = int(raw_id)
+                            except (TypeError, ValueError):
+                                structured_id = 0
+    
+                            if structured_id > last_structured_message_id:
+                                payload = {k: v for k, v in structured.items() if k != "id"}
+                                await websocket.send_text(json.dumps(payload))
+                                last_structured_message_id = structured_id
+    
+                        if event_had_agent_output and _pending_media_request_voice_ack() == "ready":
+                            _session_set("temp:pending_media_request_voice_ack", "")
+                        elif not event_had_agent_output:
+                            _maybe_queue_media_request_sent_ack_prompt()
+    
+                        # Turn complete -> finalize output + status
+                        if event.turn_complete:
+                            await _finalize_input()
+                            await _finalize_output()
+                            if silence_state.greeting_lock_active:
+                                if _server_owned_preuser_guard_active():
+                                    logger.info(
+                                        "Ignoring pre-user turn_complete during server-owned opening session=%s",
+                                        sanitize_log_fn(ctx.resolved_session_id),
+                                    )
+                                elif opening_output_observed:
+                                    _complete_opening_greeting("first turn complete after output")
+                                else:
+                                    logger.warning(
+                                        "Greeting turn completed before any assistant output session=%s",
+                                        sanitize_log_fn(ctx.resolved_session_id),
+                                    )
+                                    _queue_opening_bootstrap_prompt()
+                            # Anchor silence nudges to when the agent actually finishes,
+                            # not when the user last spoke. This avoids check-in nudges
+                            # racing right after a long agent response.
+                            now = time.monotonic()
+                            silence_state.agent_busy = False
+                            silence_state.assistant_output_active = False
+                            _sync_pending_media_analysis()
+                            if now >= silence_state.last_client_activity:
+                                silence_state.silence_nudge_due_at = now + max(
+                                    1.0, float(silence_state.silence_nudge_interval)
                                 )
-                                if (
-                                    isinstance(pending_target, str)
-                                    and pending_target.strip()
-                                    and pending_target.strip() == current_agent
-                                ):
-                                    _clear_pending_handoff()
+                            # Reset suppression flags for the next turn
+                            input_finalized = False
+                            output_finalized = False
+                            suppress_preuser_opening_output = False
                             await websocket.send_text(json.dumps({
                                 "type": "agent_status",
-                                "agent": new_agent,
-                                "status": "active",
+                                "agent": event.author or current_agent,
+                                "status": "idle",
                             }))
-
-                    # Structured ServerMessages from callbacks/state delta
-                    state_delta = event.actions.state_delta if event.actions else None
-                    structured = extract_server_message_from_state_delta_fn(state_delta)
-                    if not structured:
-                        structured = _latest_server_message_from_session()
-                    if structured:
-                        raw_id = structured.get("id", 0)
-                        try:
-                            structured_id = int(raw_id)
-                        except (TypeError, ValueError):
-                            structured_id = 0
-
-                        if structured_id > last_structured_message_id:
-                            payload = {k: v for k, v in structured.items() if k != "id"}
-                            await websocket.send_text(json.dumps(payload))
-                            last_structured_message_id = structured_id
-
-                    # Turn complete -> finalize output + status
-                    if event.turn_complete:
-                        await _finalize_input()
-                        await _finalize_output()
-                        # Release greeting lock after the first complete
-                        # agent turn so caller audio flows through.
-                        # Also set temp:greeted — in native audio mode the
-                        # after_model callback cannot see audio content, so
-                        # this is the reliable signal that the greeting was
-                        # actually delivered.
-                        if silence_state.greeting_lock_active:
-                            silence_state.greeting_lock_active = False
-                            _session_set("temp:greeted", True)
-                            if _is_voice_channel():
-                                _session_set("temp:opening_greeting_complete", True)
-                                _session_set("temp:greeting_block_count", 0)
-                            logger.info("Greeting lock released (first turn complete)")
-                        # Anchor silence nudges to when the agent actually finishes,
-                        # not when the user last spoke. This avoids check-in nudges
-                        # racing right after a long agent response.
-                        now = time.monotonic()
-                        silence_state.agent_busy = False
-                        if now >= silence_state.last_client_activity:
-                            silence_state.silence_nudge_due_at = now + max(
-                                1.0, float(silence_state.silence_nudge_interval)
+    
+                        # Usage metadata
+                        if event.usage_metadata:
+                            logger.debug("Token usage: %s", event.usage_metadata)
+                            prompt_tokens = usage_int_fn(
+                                event.usage_metadata, "prompt_token_count", "prompt_tokens"
                             )
-                        # Reset suppression flags for the next turn
-                        input_finalized = False
-                        output_finalized = False
-                        await websocket.send_text(json.dumps({
-                            "type": "agent_status",
-                            "agent": event.author or current_agent,
-                            "status": "idle",
-                        }))
-
-                    # Usage metadata
-                    if event.usage_metadata:
-                        logger.debug("Token usage: %s", event.usage_metadata)
-                        prompt_tokens = usage_int_fn(
-                            event.usage_metadata, "prompt_token_count", "prompt_tokens"
-                        )
-                        completion_tokens = usage_int_fn(
-                            event.usage_metadata,
-                            "candidates_token_count",
-                            "completion_token_count",
-                            "completion_tokens",
-                        )
-                        total_tokens = usage_int_fn(
-                            event.usage_metadata, "total_token_count", "total_tokens"
-                        )
-                        if total_tokens <= 0:
-                            total_tokens = prompt_tokens + completion_tokens
-
-                        if total_tokens > 0:
-                            session_prompt_tokens += prompt_tokens
-                            session_completion_tokens += completion_tokens
-                            session_total_tokens += total_tokens
-                            session_cost_usd += (
-                                (prompt_tokens / 1_000_000) * token_price_prompt_per_million
-                                + (completion_tokens / 1_000_000) * token_price_completion_per_million
+                            completion_tokens = usage_int_fn(
+                                event.usage_metadata,
+                                "candidates_token_count",
+                                "completion_token_count",
+                                "completion_tokens",
                             )
-
-                            if debug_telemetry:
-                                await websocket.send_text(
-                                    json.dumps(
-                                        {
-                                            "type": "telemetry",
-                                            "promptTokens": prompt_tokens,
-                                            "completionTokens": completion_tokens,
-                                            "totalTokens": total_tokens,
-                                            "sessionPromptTokens": session_prompt_tokens,
-                                            "sessionCompletionTokens": session_completion_tokens,
-                                            "sessionTotalTokens": session_total_tokens,
-                                            "sessionCostUsd": round(session_cost_usd, 6),
-                                        }
-                                    )
+                            total_tokens = usage_int_fn(
+                                event.usage_metadata, "total_token_count", "total_tokens"
+                            )
+                            if total_tokens <= 0:
+                                total_tokens = prompt_tokens + completion_tokens
+    
+                            if total_tokens > 0:
+                                session_prompt_tokens += prompt_tokens
+                                session_completion_tokens += completion_tokens
+                                session_total_tokens += total_tokens
+                                session_cost_usd += (
+                                    (prompt_tokens / 1_000_000) * token_price_prompt_per_million
+                                    + (completion_tokens / 1_000_000) * token_price_completion_per_million
                                 )
-
-                    # Session resumption token
-                    if event.live_session_resumption_update:
-                        if not ctx.live_session_resumption_enabled:
-                            logger.debug("Ignoring live session resumption update on Gemini API backend")
-                            continue
-                        logger.debug("Session resumption token received")
-                        token_val = getattr(event.live_session_resumption_update, "token", None)
-                        if isinstance(token_val, str) and token_val:
-                            session_resumption = getattr(ctx.run_config, "session_resumption", None)
-                            if session_resumption is not None:
-                                try:
-                                    setattr(session_resumption, "handle", token_val)
-                                except Exception:
-                                    logger.debug("Failed to update in-process resumption handle", exc_info=True)
+    
+                                if debug_telemetry:
+                                    await websocket.send_text(
+                                        json.dumps(
+                                            {
+                                                "type": "telemetry",
+                                                "promptTokens": prompt_tokens,
+                                                "completionTokens": completion_tokens,
+                                                "totalTokens": total_tokens,
+                                                "sessionPromptTokens": session_prompt_tokens,
+                                                "sessionCompletionTokens": session_completion_tokens,
+                                                "sessionTotalTokens": session_total_tokens,
+                                                "sessionCostUsd": round(session_cost_usd, 6),
+                                            }
+                                        )
+                                    )
+    
+                        # Session resumption token
+                        if event.live_session_resumption_update:
+                            if not ctx.live_session_resumption_enabled:
+                                logger.debug("Ignoring live session resumption update on Gemini API backend")
+                                continue
+                            logger.debug("Session resumption token received")
+                            token_val = getattr(event.live_session_resumption_update, "token", None)
+                            if isinstance(token_val, str) and token_val:
+                                session_resumption = getattr(ctx.run_config, "session_resumption", None)
+                                if session_resumption is not None:
+                                    try:
+                                        setattr(session_resumption, "handle", token_val)
+                                    except Exception:
+                                        logger.debug("Failed to update in-process resumption handle", exc_info=True)
+                                await websocket.send_text(json.dumps({
+                                    "type": "session_ending",
+                                    "reason": "session_resumption",
+                                    "resumptionToken": token_val,
+                                }))
+    
+                        # GoAway
+                        go_away = getattr(event, "go_away", None)
+                        if go_away is not None:
+                            time_left = getattr(go_away, "time_left", None)
+                            logger.warning("GoAway received, timeLeft=%s", time_left)
                             await websocket.send_text(json.dumps({
                                 "type": "session_ending",
-                                "reason": "session_resumption",
-                                "resumptionToken": token_val,
+                                "reason": "go_away",
+                                "timeLeftMs": int(time_left.total_seconds() * 1000)
+                                if time_left is not None
+                                else None,
                             }))
+    
+                    except Exception as e:
+                        if _is_connection_error(e):
+                            raise
+                        logger.error("Error processing downstream event: %s", e, exc_info=True)
+                        if not session_alive.is_set():
+                            break
 
-                    # GoAway
-                    go_away = getattr(event, "go_away", None)
-                    if go_away is not None:
-                        time_left = getattr(go_away, "time_left", None)
-                        logger.warning("GoAway received, timeLeft=%s", time_left)
-                        await websocket.send_text(json.dumps({
-                            "type": "session_ending",
-                            "reason": "go_away",
-                            "timeLeftMs": int(time_left.total_seconds() * 1000)
-                            if time_left is not None
-                            else None,
-                        }))
-
-                except Exception as e:
-                    if _is_connection_error(e):
-                        raise
-                    logger.error("Error processing downstream event: %s", e, exc_info=True)
-                    if not session_alive.is_set():
-                        break
-
-            # Live API session ended naturally (timeout / GoAway completion).
-            # Notify client so it can decide to reconnect gracefully.
-            logger.info(
-                "downstream_task: run_live loop ended for session %s",
-                sanitize_log_fn(ctx.resolved_session_id),
-            )
-            try:
-                await websocket.send_text(json.dumps({
-                    "type": "session_ending",
-                    "reason": "live_session_ended",
-                }))
-            except Exception:
-                pass  # Client already disconnected; safe to ignore
-            return
-        except Exception as exc:
-            if (
-                session_alive.is_set()
-                and retry_attempt < LIVE_STREAM_MAX_RETRIES
-                and _is_retryable_live_error(exc)
-            ):
-                retry_attempt += 1
-                delay = min(LIVE_STREAM_RETRY_BASE_SECONDS * (2 ** (retry_attempt - 1)), 5.0)
-                logger.warning(
-                    "Retrying transient live stream failure attempt=%d/%d delay=%.2fs session=%s",
-                    retry_attempt,
-                    LIVE_STREAM_MAX_RETRIES,
-                    delay,
+                # Live API session ended naturally (timeout / GoAway completion).
+                # Notify client so it can decide to reconnect gracefully.
+                logger.info(
+                    "downstream_task: run_live loop ended for session %s",
                     sanitize_log_fn(ctx.resolved_session_id),
-                    exc_info=True,
                 )
-                await asyncio.sleep(delay)
-                # Inject context recovery so the model doesn't re-greet
-                # or lose track of the conversation after a 1011 crash.
-                if model_has_spoken and recent_turns:
-                    (types_mod,) = bind_runtime_values("types")
-                    lines = _recent_turn_lines()
-                    recovery = (
-                        "[System: The connection was briefly interrupted. "
-                        "You are resuming a conversation already in progress. "
-                        "Do NOT greet the customer again — no hello, no introduction. "
-                        "Continue naturally from where you left off.\n"
-                        "Recent conversation:\n"
-                        + "\n".join(lines)
-                        + "]"
-                    )
-                    live_request_queue.send_content(
-                        types_mod.Content(
-                            parts=[types_mod.Part(text=recovery)],
-                        )
-                    )
-                    logger.info(
-                        "Injected context recovery (%d turns) for session %s",
-                        len(recent_turns),
+                try:
+                    await websocket.send_text(json.dumps({
+                        "type": "session_ending",
+                        "reason": "live_session_ended",
+                    }))
+                except Exception:
+                    pass  # Client already disconnected; safe to ignore
+                return
+            except Exception as exc:
+                if (
+                    session_alive.is_set()
+                    and retry_attempt < LIVE_STREAM_MAX_RETRIES
+                    and _is_retryable_live_error(exc)
+                ):
+                    retry_attempt += 1
+                    delay = min(LIVE_STREAM_RETRY_BASE_SECONDS * (2 ** (retry_attempt - 1)), 5.0)
+                    logger.warning(
+                        "Retrying transient live stream failure attempt=%d/%d delay=%.2fs session=%s",
+                        retry_attempt,
+                        LIVE_STREAM_MAX_RETRIES,
+                        delay,
                         sanitize_log_fn(ctx.resolved_session_id),
+                        exc_info=True,
                     )
-                continue
-            raise
+                    await asyncio.sleep(delay)
+                    # Inject context recovery so the model doesn't re-greet
+                    # or lose track of the conversation after a 1011 crash.
+                    if model_has_spoken and recent_turns:
+                        (types_mod,) = bind_runtime_values("types")
+                        lines = _recent_turn_lines()
+                        recovery = (
+                            "[System: The connection was briefly interrupted. "
+                            "You are resuming a conversation already in progress. "
+                            "Do NOT greet the customer again — no hello, no introduction. "
+                            "Continue naturally from where you left off.\n"
+                            "Recent conversation:\n"
+                            + "\n".join(lines)
+                            + "]"
+                        )
+                        live_request_queue.send_content(
+                            types_mod.Content(
+                                parts=[types_mod.Part(text=recovery)],
+                            )
+                        )
+                        logger.info(
+                            "Injected context recovery (%d turns) for session %s",
+                            len(recent_turns),
+                            sanitize_log_fn(ctx.resolved_session_id),
+                        )
+                    continue
+                raise
+    finally:
+        if opening_task is not None and not opening_task.done():
+            opening_task.cancel()
+            await asyncio.gather(opening_task, return_exceptions=True)
 
 
-async def silence_nudge_task(live_request_queue, session_alive: asyncio.Event, silence_state: SilenceState) -> None:
+async def silence_nudge_task(
+    live_request_queue,
+    session_alive: asyncio.Event,
+    silence_state: SilenceState,
+    ctx: SessionInitContext | None = None,
+) -> None:
     """Nudge the model when the customer has been silent too long."""
     (types_mod,) = bind_runtime_values("types")
     if SILENCE_NUDGE_SECONDS <= 0:
@@ -1346,6 +1983,8 @@ async def silence_nudge_task(live_request_queue, session_alive: asyncio.Event, s
         # NOT gated on agent_busy — upstream sets that on user audio
         # frames and never clears it during router thinking time.
         if silence_state.awaiting_agent_response:
+            if silence_state.user_turn_active:
+                continue
             elapsed = now - silence_state.user_spoke_at
             if (
                 elapsed >= RESPONSE_LATENCY_FILLER_SECONDS
@@ -1353,18 +1992,21 @@ async def silence_nudge_task(live_request_queue, session_alive: asyncio.Event, s
             ):
                 silence_state.response_nudge_count = 1
                 try:
+                    logger.info(
+                        "Sending first response-latency nudge session_waiting=%s media_pending=%s",
+                        silence_state.awaiting_agent_response,
+                        silence_state.pending_media_analysis,
+                    )
                     live_request_queue.send_content(types_mod.Content(parts=[
-                        types_mod.Part(text=(
-                            "[System: The customer said something several seconds ago "
-                            "and is waiting for a response on a phone call. Silence on "
-                            "a phone call feels like a dropped connection. Say a brief "
-                            "filler phrase NOW, like 'Let me check that for you', then "
-                            "proceed with your task.]"
+                        types_mod.Part(text=_response_latency_prompt(
+                            ctx=ctx,
+                            silence_state=silence_state,
                         ))
                     ]))
                 except Exception:
-                    logger.debug(
-                        "silence_nudge_task: failed to send first response-latency nudge",
+                    logger.error(
+                        "silence_nudge_task: failed to send first response-latency nudge session=%s",
+                        sanitize_log_fn(ctx.resolved_session_id) if ctx is not None else "unknown",
                         exc_info=True,
                     )
                     break
@@ -1375,16 +2017,29 @@ async def silence_nudge_task(live_request_queue, session_alive: asyncio.Event, s
             ):
                 silence_state.response_nudge_count = 2
                 try:
+                    logger.info(
+                        "Sending second response-latency nudge session_waiting=%s media_pending=%s",
+                        silence_state.awaiting_agent_response,
+                        silence_state.pending_media_analysis,
+                    )
+                    reassure_text = (
+                        "[System: Over 5 seconds have passed while you are still "
+                        "checking the customer's photo or video. Reassure them "
+                        "briefly right now, for example 'I'm still with you, "
+                        "still checking the video now.' Then continue.]"
+                        if silence_state.pending_media_analysis
+                        else
+                        "[System: Over 5 seconds have passed since the customer "
+                        "spoke. Say 'I'm still with you, just a moment longer' "
+                        "to reassure them you haven't disconnected.]"
+                    )
                     live_request_queue.send_content(types_mod.Content(parts=[
-                        types_mod.Part(text=(
-                            "[System: Over 15 seconds have passed since the customer "
-                            "spoke. Say 'I'm still with you, just a moment longer' "
-                            "to reassure them you haven't disconnected.]"
-                        ))
+                        types_mod.Part(text=reassure_text)
                     ]))
                 except Exception:
-                    logger.debug(
-                        "silence_nudge_task: failed to send second response-latency nudge",
+                    logger.error(
+                        "silence_nudge_task: failed to send second response-latency nudge session=%s",
+                        sanitize_log_fn(ctx.resolved_session_id) if ctx is not None else "unknown",
                         exc_info=True,
                     )
                     break

@@ -1,7 +1,7 @@
 """Tests for ADK text channel adapter — TDD for unified channel routing."""
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 
 # ─── Helpers ───────────────────────────────────────────────────
@@ -87,6 +87,35 @@ class TestSendTextMessage:
 
         assert result["text"] == "Hello! How can I help you today?"
         assert result["channel"] == "whatsapp"
+
+    @pytest.mark.asyncio
+    async def test_normalizes_phonetic_name_in_whatsapp_text_output(self):
+        """Written replies should never expose the phonetic speech spelling."""
+        from app.channels.adk_text_adapter import send_text_message
+
+        mock_runner = MagicMock()
+        mock_runner.run_async = MagicMock(
+            return_value=_async_gen(
+                _make_event("Hello, this is ehkaitay from Ogabassey Gadgets.")
+            )
+        )
+
+        mock_session_service = MagicMock()
+        mock_session_service.get_session = AsyncMock(return_value=None)
+        mock_session_service.create_session = AsyncMock(
+            return_value=MagicMock(id="sess-123")
+        )
+
+        result = await send_text_message(
+            runner=mock_runner,
+            session_service=mock_session_service,
+            app_name="ekaette",
+            user_id="wa_2348001234567",
+            message_text="Hi there",
+            channel="whatsapp",
+        )
+
+        assert result["text"] == "Hello, this is Ekaette from Ogabassey Gadgets."
 
     @pytest.mark.asyncio
     async def test_concatenates_multiple_text_events(self):
@@ -299,6 +328,89 @@ class TestSessionManagement:
         assert state.get("app:tenant_id") == "public"
         assert state.get("app:company_id") == "ekaette-electronics"
 
+    @pytest.mark.asyncio
+    async def test_creates_new_session_with_company_grounding_state(self):
+        """New text sessions should include company grounding required by agent prompts."""
+        from app.channels.adk_text_adapter import send_text_message
+
+        mock_runner = MagicMock()
+        mock_runner.run_async = MagicMock(
+            return_value=_async_gen(_make_event("Hello!"))
+        )
+
+        created_session = MagicMock()
+        created_session.id = "new-sess-company"
+
+        mock_session_service = MagicMock()
+        mock_session_service.get_session = AsyncMock(return_value=None)
+        mock_session_service.create_session = AsyncMock(return_value=created_session)
+
+        with patch("app.configs.registry_enabled", return_value=False), patch(
+            "app.configs.company_loader.load_company_profile",
+            new=AsyncMock(return_value={"name": "Awgabassey Gadgets"}),
+        ), patch(
+            "app.configs.company_loader.load_company_knowledge",
+            new=AsyncMock(return_value=[{"id": "kb-1", "text": "Trade-ins available"}]),
+        ), patch(
+            "app.api.v1.admin.shared.company_config_client",
+            new=object(),
+        ):
+            await send_text_message(
+                runner=mock_runner,
+                session_service=mock_session_service,
+                app_name="ekaette",
+                user_id="wa_user",
+                message_text="Hi",
+                tenant_id="public",
+                company_id="ekaette-electronics",
+            )
+
+        state = mock_session_service.create_session.call_args.kwargs.get("state", {})
+        assert state.get("app:company_name") == "Awgabassey Gadgets"
+        assert state.get("app:company_spoken_name") == "Awgabassey Gadgets"
+        assert state.get("app:company_profile", {}).get("name") == "Awgabassey Gadgets"
+        assert state.get("app:company_knowledge", [])[0]["id"] == "kb-1"
+
+    @pytest.mark.asyncio
+    async def test_repairs_existing_session_missing_company_grounding_state(self):
+        """Existing text sessions missing company state should be repaired before running."""
+        from app.channels.adk_text_adapter import send_text_message
+
+        existing_session = MagicMock()
+        existing_session.id = "existing-sess"
+        existing_session.state = {"app:industry": "electronics"}
+
+        mock_runner = MagicMock()
+        mock_runner.run_async = MagicMock(
+            return_value=_async_gen(_make_event("Welcome back!"))
+        )
+
+        mock_session_service = MagicMock()
+        mock_session_service.get_session = AsyncMock(return_value=existing_session)
+        mock_session_service.append_event = AsyncMock(return_value=None)
+
+        with patch("app.configs.registry_enabled", return_value=False), patch(
+            "app.configs.company_loader.load_company_profile",
+            new=AsyncMock(return_value={"name": "Awgabassey Gadgets"}),
+        ), patch(
+            "app.configs.company_loader.load_company_knowledge",
+            new=AsyncMock(return_value=[]),
+        ), patch(
+            "app.api.v1.admin.shared.company_config_client",
+            new=object(),
+        ):
+            result = await send_text_message(
+                runner=mock_runner,
+                session_service=mock_session_service,
+                app_name="ekaette",
+                user_id="wa_user",
+                message_text="Hi",
+            )
+
+        assert result["text"] == "Welcome back!"
+        mock_session_service.append_event.assert_awaited_once()
+        assert existing_session.state["app:company_name"] == "Awgabassey Gadgets"
+
 
 # ─── Test: send_image_message ─────────────────────────────────
 
@@ -495,6 +607,61 @@ class TestImageSizeValidation:
 
         assert result["text"] == "Analysis done."
         mock_runner.run_async.assert_called_once()
+
+
+class TestMediaStatePriming:
+    """Inbound media should be persisted for later tool-backed analysis."""
+
+    @pytest.mark.asyncio
+    async def test_send_media_message_primes_cache_and_session_state(self):
+        from app.channels.adk_text_adapter import send_media_message
+
+        mock_runner = MagicMock()
+        mock_runner.run_async = MagicMock(
+            return_value=_async_gen(_make_event("I can see the phone."))
+        )
+
+        session = MagicMock()
+        session.id = "sess-media"
+        session.state = {}
+
+        mock_session_service = MagicMock()
+        mock_session_service.get_session = AsyncMock(side_effect=[None, session])
+        mock_session_service.create_session = AsyncMock(return_value=session)
+        mock_session_service.append_event = AsyncMock()
+
+        with patch(
+            "app.channels.adk_text_adapter.cache_latest_image",
+        ) as cache_mock, patch(
+            "app.channels.adk_text_adapter.upload_to_cloud_storage",
+            new=AsyncMock(
+                return_value={
+                    "gcs_uri": "gs://test-bucket/uploads/wa_user/sess-media/file.mp4",
+                    "blob_path": "uploads/wa_user/sess-media/file.mp4",
+                }
+            ),
+        ):
+            result = await send_media_message(
+                runner=mock_runner,
+                session_service=mock_session_service,
+                app_name="ekaette",
+                user_id="wa_user",
+                media_bytes=b"video-bytes",
+                mime_type="video/mp4",
+                channel="whatsapp",
+            )
+
+        assert result["text"] == "I can see the phone."
+        cache_mock.assert_called_once_with(
+            user_id="wa_user",
+            session_id="sess-media",
+            image_data=b"video-bytes",
+            mime_type="video/mp4",
+        )
+        assert session.state["temp:last_media_mime_type"] == "video/mp4"
+        assert session.state["temp:last_media_blob_path"] == "uploads/wa_user/sess-media/file.mp4"
+        assert session.state["temp:last_media_gcs_uri"] == "gs://test-bucket/uploads/wa_user/sess-media/file.mp4"
+        mock_session_service.append_event.assert_awaited_once()
 
 
 # ─── Test: Channel config ─────────────────────────────────────

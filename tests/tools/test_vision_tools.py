@@ -11,17 +11,42 @@ import pytest
 class TestAnalyzeDeviceImage:
     """Test image analysis via Gemini vision model."""
 
+    def test_get_genai_client_uses_vision_location_override(self, monkeypatch):
+        """Vision tool client should use its dedicated location override."""
+        import app.tools.vision_tools as vision_tools
+
+        sentinel_client = object()
+        monkeypatch.setenv("VISION_MODEL_LOCATION", "global")
+        monkeypatch.setattr(vision_tools, "_genai_client", None)
+
+        with patch(
+            "app.tools.vision_tools.build_genai_client",
+            return_value=sentinel_client,
+        ) as mock_build:
+            client = vision_tools._get_genai_client()
+
+        assert client is sentinel_client
+        mock_build.assert_called_once_with(api_version="v1alpha", location="global")
+
     @pytest.mark.asyncio
     async def test_returns_structured_analysis(self):
         """Should return device_name, condition, and details from image."""
         from app.tools.vision_tools import analyze_device_image
 
         mock_response = MagicMock()
-        mock_response.text = (
-            '{"device_name": "iPhone 14 Pro", "condition": "Good", '
-            '"details": {"screen": "Minor scratches", "body": "Small dent on corner", '
-            '"battery": "85% health", "functionality": "All features working"}}'
-        )
+        mock_response.text = json.dumps({
+            "device_name": "iPhone 14 Pro",
+            "brand": "Apple",
+            "device_color": "Red",
+            "color_confidence": 0.91,
+            "condition": "Good",
+            "details": {
+                "screen": "Minor scratches",
+                "body": "Small dent on corner",
+                "battery": "85% health",
+                "functionality": "All features working",
+            },
+        })
 
         mock_client = MagicMock()
         mock_client.aio.models.generate_content = AsyncMock(return_value=mock_response)
@@ -34,6 +59,9 @@ class TestAnalyzeDeviceImage:
 
         assert result["device_name"] == "iPhone 14 Pro"
         assert result["condition"] == "Good"
+        assert result["device_color"] == "red"
+        assert result["color_confidence"] == pytest.approx(0.91)
+        assert result["power_state"] == "unknown"
         assert "screen" in result["details"]
         assert "body" in result["details"]
 
@@ -79,7 +107,7 @@ class TestAnalyzeDeviceImage:
 
     @pytest.mark.asyncio
     async def test_uses_correct_vision_model(self):
-        """Should call gemini-3-flash-preview (standard API, not live)."""
+        """Should call the configured standard vision model, not the live model."""
         from app.tools.vision_tools import analyze_device_image
 
         mock_response = MagicMock()
@@ -89,14 +117,121 @@ class TestAnalyzeDeviceImage:
         mock_client.aio.models.generate_content = AsyncMock(return_value=mock_response)
 
         with patch("app.tools.vision_tools._get_genai_client", return_value=mock_client), \
-             patch("app.tools.vision_tools.VISION_MODEL", "gemini-3-flash-preview"):
+             patch("app.tools.vision_tools.VISION_MODEL", "gemini-2.5-flash"), \
+             patch("app.tools.vision_tools.get_vision_model_candidates", return_value=["gemini-2.5-flash"]):
             await analyze_device_image(
                 image_data=b"fake-image-bytes",
                 mime_type="image/jpeg",
             )
 
         call_kwargs = mock_client.aio.models.generate_content.call_args
-        assert "gemini-3-flash-preview" in str(call_kwargs)
+        assert "gemini-2.5-flash" in str(call_kwargs)
+
+    @pytest.mark.asyncio
+    async def test_falls_back_when_primary_vision_model_is_unavailable(self):
+        """Should retry with a stable fallback when the configured model is unavailable."""
+        from app.tools.vision_tools import analyze_device_image
+
+        unavailable = RuntimeError(
+            "404 NOT_FOUND. Publisher Model `projects/x/locations/us-central1/publishers/google/models/gemini-3-flash-preview` "
+            "was not found or your project does not have access to it."
+        )
+        mock_response = MagicMock()
+        mock_response.text = '{"device_name": "iPhone 14", "condition": "Good", "details": {}}'
+
+        mock_client = MagicMock()
+        mock_client.aio.models.generate_content = AsyncMock(
+            side_effect=[unavailable, mock_response]
+        )
+
+        with patch("app.tools.vision_tools._get_genai_client", return_value=mock_client), \
+             patch("app.tools.vision_tools.VISION_MODEL", "gemini-3-flash-preview"), \
+             patch(
+                 "app.tools.vision_tools.get_vision_model_candidates",
+                 return_value=["gemini-3-flash-preview", "gemini-2.5-flash"],
+             ):
+            result = await analyze_device_image(
+                image_data=b"fake-image-bytes",
+                mime_type="image/jpeg",
+            )
+
+        assert result["device_name"] == "iPhone 14"
+        calls = mock_client.aio.models.generate_content.await_args_list
+        assert calls[0].kwargs["model"] == "gemini-3-flash-preview"
+        assert calls[1].kwargs["model"] == "gemini-2.5-flash"
+
+    @pytest.mark.asyncio
+    async def test_falls_back_when_primary_vision_model_is_rate_limited(self):
+        """Resource exhaustion on Gemini 3 should fail over to the next model candidate."""
+        from app.tools.vision_tools import analyze_device_image
+
+        exhausted = RuntimeError(
+            "429 RESOURCE_EXHAUSTED. Resource exhausted. Please try again later."
+        )
+        mock_response = MagicMock()
+        mock_response.text = '{"device_name": "iPhone 14", "condition": "Good", "details": {}}'
+
+        mock_client = MagicMock()
+        mock_client.aio.models.generate_content = AsyncMock(
+            side_effect=[exhausted, mock_response]
+        )
+
+        with patch("app.tools.vision_tools._get_genai_client", return_value=mock_client), \
+             patch("app.tools.vision_tools.VISION_MODEL", "gemini-3.1-pro-preview"), \
+             patch(
+                 "app.tools.vision_tools.get_vision_model_candidates",
+                 return_value=["gemini-3.1-pro-preview", "gemini-2.5-pro"],
+             ):
+            result = await analyze_device_image(
+                image_data=b"fake-image-bytes",
+                mime_type="image/jpeg",
+            )
+
+        assert result["device_name"] == "iPhone 14"
+        calls = mock_client.aio.models.generate_content.await_args_list
+        assert calls[0].kwargs["model"] == "gemini-3.1-pro-preview"
+        assert calls[1].kwargs["model"] == "gemini-2.5-pro"
+
+    @pytest.mark.asyncio
+    async def test_video_structured_output_omits_high_media_resolution(self):
+        """Structured video fallback should not force image-only HIGH media resolution."""
+        from app.tools.vision_tools import analyze_device_media
+
+        mock_response = MagicMock()
+        mock_response.text = '{"device_name": "iPhone XR", "condition": "Good", "details": {}}'
+
+        mock_client = MagicMock()
+        mock_client.aio.models.generate_content = AsyncMock(return_value=mock_response)
+
+        with patch("app.tools.vision_tools._get_genai_client", return_value=mock_client):
+            await analyze_device_media(
+                media_data=b"fake-video-bytes",
+                mime_type="video/mp4",
+            )
+
+        first_call = mock_client.aio.models.generate_content.await_args_list[0]
+        config = first_call.kwargs["config"]
+        assert getattr(config, "media_resolution", None) is None
+
+    @pytest.mark.asyncio
+    async def test_analyze_device_media_uses_explicit_model_candidates_when_provided(self):
+        from app.tools.vision_tools import analyze_device_media
+
+        mock_response = MagicMock()
+        mock_response.text = '{"device_name": "iPhone XR", "condition": "Good", "details": {}}'
+
+        mock_client = MagicMock()
+        mock_client.aio.models.generate_content = AsyncMock(return_value=mock_response)
+
+        with patch("app.tools.vision_tools._get_genai_client", return_value=mock_client):
+            await analyze_device_media(
+                media_data=b"fake-video-bytes",
+                mime_type="video/mp4",
+                model_candidates=["gemini-2.5-pro", "gemini-3.1-pro-preview"],
+            )
+
+        first_call = mock_client.aio.models.generate_content.await_args_list[0]
+        assert first_call.kwargs["model"] == "gemini-2.5-pro"
 
     @pytest.mark.asyncio
     async def test_sends_image_as_inline_data(self):
@@ -314,6 +449,140 @@ class TestAnalyzeDeviceImageTool:
         assert fake_context.state["temp:last_image_artifact_id"] == result["artifact_id"]
 
     @pytest.mark.asyncio
+    async def test_tool_uses_cached_video_mime_type_when_media_was_injected(self):
+        """Cross-channel injected video should be reused with its cached MIME type."""
+        from app.tools.vision_tools import analyze_device_image_tool, cache_latest_image
+
+        cache_latest_image(
+            user_id="bridge-user",
+            session_id="wa-session-bridge",
+            image_data=b"cached-video-bytes",
+            mime_type="video/mp4",
+        )
+
+        fake_context = SimpleNamespace(
+            user_id="bridge-user",
+            session=SimpleNamespace(id="wa-session-bridge"),
+            state={},
+            save_artifact=AsyncMock(return_value=1),
+            load_artifact=AsyncMock(return_value=None),
+        )
+
+        with patch(
+            "app.tools.vision_tools.analyze_device_media",
+            new=AsyncMock(
+                return_value={"device_name": "iPhone XR", "condition": "Good", "details": {}}
+            ),
+        ) as analyze_mock, patch(
+            "app.tools.vision_tools.upload_to_cloud_storage",
+            new=AsyncMock(return_value={"gcs_uri": "gs://test-bucket/path.mp4"}),
+        ):
+            result = await analyze_device_image_tool(
+                image_base64=None,
+                mime_type="image/jpeg",
+                tool_context=fake_context,
+            )
+
+        analyze_mock.assert_awaited_once_with(b"cached-video-bytes", "video/mp4")
+        assert result["device_name"] == "iPhone XR"
+        assert result["gcs_uri"].endswith(".mp4")
+
+    @pytest.mark.asyncio
+    async def test_tool_reuses_completed_analysis_for_same_media(self):
+        """Repeated tool calls for the same media should reuse the completed analysis."""
+        from app.tools.vision_tools import analyze_device_image_tool, cache_latest_image
+
+        cache_latest_image(
+            user_id="repeat-user",
+            session_id="repeat-session",
+            image_data=b"same-video-bytes",
+            mime_type="video/mp4",
+        )
+
+        fake_context = SimpleNamespace(
+            user_id="repeat-user",
+            session=SimpleNamespace(id="repeat-session", state={}),
+            state={},
+            save_artifact=AsyncMock(return_value=1),
+            load_artifact=AsyncMock(return_value=None),
+        )
+
+        with patch(
+            "app.tools.vision_tools.analyze_device_media",
+            new=AsyncMock(
+                return_value={"device_name": "iPhone XR", "condition": "Good", "details": {}}
+            ),
+        ) as analyze_mock, patch(
+            "app.tools.vision_tools.upload_to_cloud_storage",
+            new=AsyncMock(return_value={"gcs_uri": "gs://test-bucket/path.mp4"}),
+        ) as upload_mock:
+            first = await analyze_device_image_tool(
+                image_base64=None,
+                mime_type="image/jpeg",
+                tool_context=fake_context,
+            )
+            second = await analyze_device_image_tool(
+                image_base64=None,
+                mime_type="image/jpeg",
+                tool_context=fake_context,
+            )
+
+        analyze_mock.assert_awaited_once_with(b"same-video-bytes", "video/mp4")
+        upload_mock.assert_awaited_once()
+        assert fake_context.save_artifact.await_count == 1
+        assert first["gcs_uri"] == second["gcs_uri"]
+        assert first["artifact_id"] == second["artifact_id"]
+        assert second["device_name"] == "iPhone XR"
+
+    @pytest.mark.asyncio
+    async def test_tool_loads_persisted_session_media_when_cache_is_empty(self):
+        """Text sessions should be able to reload media from persisted storage state."""
+        from app.tools.vision_tools import analyze_device_image_tool
+
+        fake_context = SimpleNamespace(
+            user_id="wa-user",
+            session=SimpleNamespace(
+                id="wa-session",
+                state={
+                    "temp:last_media_blob_path": "uploads/wa-user/wa-session/file.mp4",
+                    "temp:last_media_gcs_uri": "gs://test-bucket/uploads/wa-user/wa-session/file.mp4",
+                    "temp:last_media_mime_type": "video/mp4",
+                },
+            ),
+            state={},
+            save_artifact=AsyncMock(return_value=1),
+            load_artifact=AsyncMock(return_value=None),
+        )
+
+        with patch(
+            "app.tools.vision_tools._download_media_blob",
+            new=AsyncMock(return_value=b"persisted-video-bytes"),
+        ) as download_mock, patch(
+            "app.tools.vision_tools.analyze_device_media",
+            new=AsyncMock(
+                return_value={
+                    "device_name": "iPhone XR",
+                    "brand": "Apple",
+                    "device_color": "red",
+                    "color_confidence": 0.92,
+                    "condition": "Good",
+                    "details": {},
+                }
+            ),
+        ) as analyze_mock:
+            result = await analyze_device_image_tool(
+                image_base64=None,
+                mime_type="image/jpeg",
+                tool_context=fake_context,
+            )
+
+        download_mock.assert_awaited_once_with("uploads/wa-user/wa-session/file.mp4")
+        analyze_mock.assert_awaited_once_with(b"persisted-video-bytes", "video/mp4")
+        assert result["gcs_uri"] == "gs://test-bucket/uploads/wa-user/wa-session/file.mp4"
+        assert result["blob_path"] == "uploads/wa-user/wa-session/file.mp4"
+        assert result["device_color"] == "red"
+
+    @pytest.mark.asyncio
     async def test_tool_returns_error_when_no_image_available(self):
         """Should fail gracefully when neither base64 nor cached image exists."""
         from app.tools.vision_tools import analyze_device_image_tool
@@ -347,6 +616,7 @@ class TestEnhancedAnalysisOutput:
             "category": "phone",
             "condition": "Good",
             "condition_justification": "Minor scratches on screen",
+            "power_state": "on",
             "details": {
                 "screen": {
                     "description": "Light scratches near edges",
@@ -378,11 +648,30 @@ class TestEnhancedAnalysisOutput:
         assert result["brand"] == "Apple"
         assert result["device_name"] == "iPhone 15 Pro"
         assert result["condition"] == "Good"
+        assert result["power_state"] == "on"
         assert isinstance(result["details"]["screen"], dict)
         assert result["details"]["screen"]["scratches"] == "light"
         assert result["details"]["screen"]["defect_locations"] == ["top-left"]
         assert result["confidence"] == 0.85
         assert result["accessories_detected"] == ["case"]
+
+    def test_normalize_analysis_result_maps_legacy_video_fields(self):
+        """Free-form fallback keys should still populate the modern analysis shape."""
+        from app.tools.vision_tools import normalize_analysis_result
+
+        result = normalize_analysis_result({
+            "device_model": "iPhone XR",
+            "device_brand": "Apple",
+            "device_color": "Red",
+            "accessories": ["box"],
+            "condition": "Good",
+            "details": {},
+        })
+
+        assert result["device_name"] == "iPhone XR"
+        assert result["brand"] == "Apple"
+        assert result["device_color"] == "red"
+        assert result["accessories_detected"] == ["box"]
 
     @pytest.mark.asyncio
     async def test_structured_output_backward_compat_has_device_name_and_condition(self):
@@ -609,6 +898,7 @@ class TestMediaAwareAnalysis:
                     text_parts.append(part.text)
         prompt_text = " ".join(text_parts).lower()
         assert "video" in prompt_text
+        assert contents[0].role == "user"
 
     @pytest.mark.asyncio
     async def test_analyze_device_image_still_works_as_alias(self):

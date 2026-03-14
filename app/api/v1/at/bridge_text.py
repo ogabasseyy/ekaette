@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 
 from google import genai
 from google.genai import types
@@ -47,6 +48,14 @@ _CHANNEL_CONFIG = {
     },
 }
 
+_TEXT_ASSISTANT_NAME_PATTERN = re.compile(r"\b(?:ehkaitay|eh[-\s]?kai[-\s]?tay)\b", re.IGNORECASE)
+
+
+def _normalize_text_assistant_name(text: str) -> str:
+    if not isinstance(text, str) or not text.strip():
+        return text
+    return _TEXT_ASSISTANT_NAME_PATTERN.sub("Ekaette", text)
+
 
 async def query_text(
     *,
@@ -65,15 +74,17 @@ async def query_text(
         contents=[user_message],
         config=types.GenerateContentConfig(
             system_instruction=(
-                "You are the virtual assistant named ehkaitay, pronounced 'eh-KAI-tay'. "
-                "The middle syllable is exactly 'kai', rhyming with 'sky'. "
+                "You are the virtual assistant whose spoken name is pronounced 'eh-KAI-tay'. "
+                "When writing in text, spell your assistant name exactly as 'Ekaette'. "
+                "Never type the phonetic spelling 'ehkaitay' or 'eh-KAI-tay'. "
+                "The middle syllable is exactly 'kai', rhyming with 'sky' when spoken. "
                 "Do not mention internal business IDs, slugs, or platform names. "
                 f"{cfg['system_suffix']}"
             ),
             max_output_tokens=cfg["max_tokens"],
         ),
     )
-    text = (response.text or "").strip()
+    text = _normalize_text_assistant_name((response.text or "").strip())
     if not text:
         text = "Thanks for your message. How can I help you today?"
     return text[: cfg["max_chars"]]

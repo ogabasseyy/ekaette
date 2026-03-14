@@ -52,6 +52,15 @@ async def websocket_endpoint(
         await run_stream_loop(session_ctx, live_request_queue)
     finally:
         try:
+            from app.api.v1.realtime.voice_state_registry import clear_registered_voice_state
+
+            clear_registered_voice_state(
+                user_id=session_ctx.user_id,
+                session_id=session_ctx.resolved_session_id,
+            )
+        except Exception:
+            logger.debug("Voice state registry cleanup skipped", exc_info=True)
+        try:
             from app.api.v1.at import voice_analytics
 
             voice_analytics.end_session(

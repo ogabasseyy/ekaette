@@ -18,12 +18,18 @@ Usage:
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
+import re
 from typing import Any
 
+from google.adk.events import Event
+from google.adk.events.event_actions import EventActions
 from google.genai import types
 from google.genai.errors import APIError, ServerError
+
+from app.tools.vision_tools import cache_latest_image, upload_to_cloud_storage
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +42,7 @@ CHANNEL_LIMITS: dict[str, dict[str, int]] = {
 }
 
 _DEFAULT_FALLBACK = "Thanks for your message. How can I help you today?"
+_TEXT_ASSISTANT_NAME_PATTERN = re.compile(r"\b(?:ehkaitay|eh[-\s]?kai[-\s]?tay)\b", re.IGNORECASE)
 
 
 class ModelOverloadedError(Exception):
@@ -49,6 +56,16 @@ _DEFAULT_MEDIA_PROMPTS: dict[str, str] = {
     "default": "The customer sent media. Analyze it and respond helpfully.",
 }
 _MAX_MEDIA_BYTES = 20 * 1024 * 1024  # 20 MB — generous limit for any channel
+
+
+def _normalize_text_assistant_name(text: str, *, channel: str) -> str:
+    """Keep phonetic pronunciation guidance out of written channel output."""
+    normalized_channel = (channel or "").strip().lower()
+    if normalized_channel not in {"whatsapp", "sms", "text"}:
+        return text
+    if not isinstance(text, str) or not text.strip():
+        return text
+    return _TEXT_ASSISTANT_NAME_PATTERN.sub("Ekaette", text)
 
 
 # ─── Session ID derivation ────────────────────────────────────
@@ -145,7 +162,7 @@ async def send_text_message(
     limit = CHANNEL_LIMITS.get(channel, CHANNEL_LIMITS["default"])["max_chars"]
 
     return {
-        "text": text[:limit],
+        "text": _normalize_text_assistant_name(text, channel=channel)[:limit],
         "session_id": session_id,
         "channel": channel,
     }
@@ -205,6 +222,14 @@ async def send_media_message(
         tenant_id=tenant_id,
         company_id=company_id,
         channel=channel,
+    )
+    await _prime_session_media_state(
+        session_service=session_service,
+        app_name=app_name,
+        user_id=user_id,
+        session_id=session_id,
+        media_bytes=media_bytes,
+        mime_type=mime_type,
     )
 
     customer_prompt = ""
@@ -269,7 +294,7 @@ async def send_media_message(
     limit = CHANNEL_LIMITS.get(channel, CHANNEL_LIMITS["default"])["max_chars"]
 
     return {
-        "text": text[:limit],
+        "text": _normalize_text_assistant_name(text, channel=channel)[:limit],
         "session_id": session_id,
         "channel": channel,
     }
@@ -305,12 +330,77 @@ async def _ensure_session(
 
     Returns the resolved session_id (may differ if Vertex auto-generates IDs).
     """
+    async def _load_company_state() -> dict[str, Any]:
+        from app.configs import registry_enabled
+        from app.configs.company_loader import (
+            build_company_session_state,
+            load_company_knowledge,
+            load_company_profile,
+        )
+        from app.api.v1.admin import shared as admin_shared
+
+        db = admin_shared.company_config_client or admin_shared.industry_config_client
+        if db is None:
+            raise RuntimeError("Company config DB client not initialized")
+
+        if registry_enabled():
+            company_profile, company_knowledge = await asyncio.gather(
+                load_company_profile(db, company_id, tenant_id=tenant_id),
+                load_company_knowledge(db, company_id, tenant_id=tenant_id),
+            )
+        else:
+            company_profile, company_knowledge = await asyncio.gather(
+                load_company_profile(db, company_id),
+                load_company_knowledge(db, company_id),
+            )
+
+        return build_company_session_state(
+            company_id=company_id,
+            profile=company_profile,
+            knowledge=company_knowledge,
+        )
+
+    async def _repair_existing_session_state(session_obj: Any) -> None:
+        session_state = getattr(session_obj, "state", None)
+        if not isinstance(session_state, dict):
+            return
+
+        missing_company_context = any(
+            key not in session_state
+            for key in (
+                "app:company_name",
+                "app:company_profile",
+                "app:company_knowledge",
+            )
+        )
+        if not missing_company_context:
+            return
+
+        try:
+            state_updates = await _load_company_state()
+        except Exception as exc:
+            logger.error("Text session company bootstrap failed: %s", exc, exc_info=True)
+            return
+
+        try:
+            await session_service.append_event(
+                session=session_obj,
+                event=Event(
+                    author="system:session_state",
+                    actions=EventActions(state_delta=state_updates),
+                ),
+            )
+        except Exception:
+            logger.debug("Text session state persistence via append_event skipped", exc_info=True)
+        session_state.update(state_updates)
+
     session = await session_service.get_session(
         app_name=app_name, user_id=user_id, session_id=session_id,
     )
 
     if session is not None:
         resolved_id = getattr(session, "id", session_id)
+        await _repair_existing_session_state(session)
         return resolved_id if isinstance(resolved_id, str) and resolved_id else session_id
 
     initial_state: dict[str, Any] = {
@@ -359,6 +449,11 @@ async def _ensure_session(
     except Exception as exc:
         logger.debug("Registry state bootstrap skipped: %s", exc)
 
+    try:
+        initial_state.update(await _load_company_state())
+    except Exception as exc:
+        logger.error("Text session company bootstrap failed: %s", exc, exc_info=True)
+
     created = await session_service.create_session(
         app_name=app_name,
         user_id=user_id,
@@ -368,6 +463,72 @@ async def _ensure_session(
 
     resolved_id = getattr(created, "id", session_id)
     return resolved_id if isinstance(resolved_id, str) and resolved_id else session_id
+
+
+async def _prime_session_media_state(
+    *,
+    session_service: Any,
+    app_name: str,
+    user_id: str,
+    session_id: str,
+    media_bytes: bytes,
+    mime_type: str,
+) -> None:
+    """Persist inbound media so vision tools can reload it within and across turns."""
+    cache_latest_image(
+        user_id=user_id,
+        session_id=session_id,
+        image_data=media_bytes,
+        mime_type=mime_type,
+    )
+
+    state_updates: dict[str, Any] = {
+        "temp:last_media_mime_type": mime_type,
+    }
+    try:
+        upload_result = await upload_to_cloud_storage(
+            image_data=media_bytes,
+            mime_type=mime_type,
+            user_id=user_id,
+            session_id=session_id,
+        )
+    except Exception:
+        logger.debug("Text media pre-upload failed", exc_info=True)
+    else:
+        gcs_uri = upload_result.get("gcs_uri")
+        blob_path = upload_result.get("blob_path")
+        if isinstance(gcs_uri, str) and gcs_uri:
+            state_updates["temp:last_media_gcs_uri"] = gcs_uri
+        if isinstance(blob_path, str) and blob_path:
+            state_updates["temp:last_media_blob_path"] = blob_path
+
+    try:
+        session = await session_service.get_session(
+            app_name=app_name,
+            user_id=user_id,
+            session_id=session_id,
+        )
+    except Exception:
+        logger.debug("Text media session lookup failed", exc_info=True)
+        return
+
+    if session is None:
+        return
+
+    session_state = getattr(session, "state", None)
+    if isinstance(session_state, dict):
+        session_state.update(state_updates)
+
+    try:
+        await session_service.append_event(
+            session=session,
+            event=Event(
+                author="system:session_media",
+                actions=EventActions(state_delta=state_updates),
+            ),
+        )
+    except Exception:
+        logger.debug("Text media state persistence via append_event skipped", exc_info=True)
 
 
 async def _run_and_collect_text(

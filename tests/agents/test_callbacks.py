@@ -22,6 +22,11 @@ from app.agents.callbacks import (
     on_tool_error_emit,
     queue_server_message,
 )
+from app.api.v1.realtime.voice_state_registry import (
+    clear_registered_voice_state,
+    get_registered_voice_state,
+    update_voice_state,
+)
 
 
 class TestQueueServerMessage:
@@ -91,6 +96,244 @@ class TestBeforeModelInjectConfig:
         assert "internal company ids" in system_instruction.lower()
 
     @pytest.mark.asyncio
+    async def test_seeds_optional_instruction_state_defaults(self):
+        callback_context = SimpleNamespace(
+            state={
+                "app:industry_config": {
+                    "name": "Electronics & Gadgets",
+                    "greeting": "Welcome!",
+                }
+            }
+        )
+        llm_request = LlmRequest(model="gemini-test", contents=[])
+
+        await before_model_inject_config(callback_context, llm_request)
+
+        assert callback_context.state["temp:vision_media_handoff_state"] == ""
+        assert callback_context.state["temp:background_vision_status"] == ""
+        assert callback_context.state["temp:pending_handoff_target_agent"] == ""
+        assert callback_context.state["temp:pending_handoff_latest_user"] == ""
+        assert callback_context.state["temp:pending_handoff_latest_agent"] == ""
+        assert callback_context.state["temp:pending_handoff_recent_customer_context"] == ""
+
+    @pytest.mark.asyncio
+    async def test_callback_hospitality_not_injected_during_protected_opening(self):
+        callback_context = SimpleNamespace(
+            state={
+                "app:industry_config": {
+                    "name": "Electronics & Gadgets",
+                    "greeting": "Welcome!",
+                },
+                "app:company_profile": {"name": "Ogabassey Gadgets"},
+                "app:channel": "voice",
+            },
+            agent_name="ekaette_router",
+        )
+        llm_request = LlmRequest(model="gemini-test", contents=[])
+
+        await before_model_inject_config(callback_context, llm_request)
+
+        system_instruction = str(llm_request.config.system_instruction)
+        assert "NIGERIAN PACING (NO SILENCE)" in system_instruction
+        assert "NIGERIAN HOSPITALITY (CALLBACKS)" not in system_instruction
+
+    @pytest.mark.asyncio
+    async def test_callback_hospitality_returns_after_opening_progress(self):
+        callback_context = SimpleNamespace(
+            state={
+                "app:industry_config": {
+                    "name": "Electronics & Gadgets",
+                    "greeting": "Welcome!",
+                },
+                "app:company_profile": {"name": "Ogabassey Gadgets"},
+                "app:channel": "voice",
+                "temp:opening_greeting_complete": True,
+                "temp:first_user_turn_started": True,
+            },
+            agent_name="ekaette_router",
+        )
+        llm_request = LlmRequest(model="gemini-test", contents=[])
+
+        await before_model_inject_config(callback_context, llm_request)
+
+        system_instruction = str(llm_request.config.system_instruction)
+        assert "NIGERIAN HOSPITALITY (CALLBACKS)" in system_instruction
+
+    @pytest.mark.asyncio
+    async def test_injects_safe_no_analysis_guidance_for_valuation_agent(self):
+        callback_context = SimpleNamespace(
+            state={
+                "app:industry_config": {
+                    "name": "Electronics & Gadgets",
+                    "greeting": "Welcome!",
+                }
+            },
+            agent_name="valuation_agent",
+        )
+        llm_request = LlmRequest(model="gemini-test", contents=[])
+
+        await before_model_inject_config(callback_context, llm_request)
+
+        system_instruction = str(llm_request.config.system_instruction)
+        assert "No tool-backed vision analysis is currently available" in system_instruction
+        assert "transfer to vision_agent before answering" in system_instruction
+
+    @pytest.mark.asyncio
+    async def test_injects_media_request_status_guidance_for_valuation_agent(self):
+        callback_context = SimpleNamespace(
+            state={
+                "app:channel": "voice",
+                "app:industry_config": {
+                    "name": "Electronics & Gadgets",
+                    "greeting": "Welcome!",
+                },
+                "temp:last_media_request_status": "sending",
+            },
+            agent_name="valuation_agent",
+        )
+        llm_request = LlmRequest(model="gemini-test", contents=[])
+
+        await before_model_inject_config(callback_context, llm_request)
+
+        system_instruction = str(llm_request.config.system_instruction)
+        assert "WhatsApp media request status" in system_instruction
+        assert "Do not say the message was already sent" in system_instruction
+
+    @pytest.mark.asyncio
+    async def test_injects_voice_tradein_media_collection_guidance_for_valuation_agent(self):
+        callback_context = SimpleNamespace(
+            state={
+                "app:channel": "voice",
+                "app:industry_config": {
+                    "name": "Electronics & Gadgets",
+                    "greeting": "Welcome!",
+                },
+                "temp:last_user_turn": "I want to swap my iPhone XS for an iPhone 14.",
+                "temp:recent_customer_context": (
+                    "Customer: I want to swap my iPhone XS for an iPhone 14."
+                ),
+            },
+            agent_name="valuation_agent",
+        )
+        llm_request = LlmRequest(model="gemini-test", contents=[])
+
+        await before_model_inject_config(callback_context, llm_request)
+
+        system_instruction = str(llm_request.config.system_instruction)
+        assert "VOICE TRADE-IN MEDIA COLLECTION" in system_instruction
+        assert "request_media_via_whatsapp" in system_instruction
+        assert "Do NOT ask the caller to send media on the audio call" in system_instruction
+
+    @pytest.mark.asyncio
+    async def test_injects_latest_analysis_guidance_for_valuation_agent(self):
+        callback_context = SimpleNamespace(
+            state={
+                "app:industry_config": {
+                    "name": "Electronics & Gadgets",
+                    "greeting": "Welcome!",
+                },
+                "temp:last_analysis": {
+                    "device_name": "iPhone XR",
+                    "brand": "Apple",
+                    "device_color": "red",
+                    "color_confidence": 0.12,
+                    "condition": "Good",
+                    "power_state": "on",
+                    "details": {"body": {"description": "Minor wear"}},
+                },
+            },
+            agent_name="valuation_agent",
+        )
+        llm_request = LlmRequest(model="gemini-test", contents=[])
+
+        await before_model_inject_config(callback_context, llm_request)
+
+        system_instruction = str(llm_request.config.system_instruction)
+        assert "Latest tool-backed vision analysis is available" in system_instruction
+        assert "device_name='iPhone XR'" in system_instruction
+        assert "brand='Apple'" in system_instruction
+        assert "device_color='red'" in system_instruction
+        assert "condition='Good'" in system_instruction
+        assert "power_state='on'" in system_instruction
+        assert "did not confirm the device colour" not in system_instruction
+
+    @pytest.mark.asyncio
+    async def test_injects_unknown_colour_guidance_for_valuation_agent(self):
+        callback_context = SimpleNamespace(
+            state={
+                "app:industry_config": {
+                    "name": "Electronics & Gadgets",
+                    "greeting": "Welcome!",
+                },
+                "temp:last_analysis": {
+                    "device_name": "iPhone XR",
+                    "brand": "Apple",
+                    "device_color": "unknown",
+                    "color_confidence": 0.0,
+                    "condition": "Good",
+                    "details": {"body": {"description": "Minor wear"}},
+                },
+            },
+            agent_name="valuation_agent",
+        )
+        llm_request = LlmRequest(model="gemini-test", contents=[])
+
+        await before_model_inject_config(callback_context, llm_request)
+
+        system_instruction = str(llm_request.config.system_instruction)
+        assert "Latest tool-backed vision analysis is available" in system_instruction
+        assert "did not confirm the device colour" in system_instruction
+        assert "do not guess" in system_instruction
+
+    @pytest.mark.asyncio
+    async def test_injects_canonical_live_swap_guidance_when_analysis_not_ready(self):
+        callback_context = SimpleNamespace(
+            state={
+                "app:channel": "voice",
+                "app:industry_config": {
+                    "name": "Electronics & Gadgets",
+                    "greeting": "Welcome!",
+                },
+                "temp:last_user_turn": "Can you confirm the colour now?",
+                "temp:recent_customer_context": (
+                    "Customer: I want to swap my iPhone XR for an iPhone 14.\n"
+                    "Customer: Can you confirm the colour now?"
+                ),
+                "temp:vision_media_handoff_state": "transferring",
+            },
+            agent_name="valuation_agent",
+        )
+        llm_request = LlmRequest(model="gemini-test", contents=[])
+
+        await before_model_inject_config(callback_context, llm_request)
+
+        system_instruction = str(llm_request.config.system_instruction)
+        assert "canonical background analysis path" in system_instruction
+        assert "Do NOT transfer to vision_agent for this same media" in system_instruction
+
+    @pytest.mark.asyncio
+    async def test_injects_background_vision_guidance_for_voice_valuation_agent(self):
+        callback_context = SimpleNamespace(
+            state={
+                "app:channel": "voice",
+                "app:industry_config": {
+                    "name": "Electronics & Gadgets",
+                    "greeting": "Welcome!",
+                },
+                "temp:background_vision_status": "running",
+            },
+            agent_name="valuation_agent",
+        )
+        llm_request = LlmRequest(model="gemini-test", contents=[])
+
+        await before_model_inject_config(callback_context, llm_request)
+
+        system_instruction = str(llm_request.config.system_instruction)
+        assert "BACKGROUND VISION ANALYSIS" in system_instruction
+        assert "Do NOT request media again" in system_instruction
+        assert "non-visual follow-up question" in system_instruction
+
+    @pytest.mark.asyncio
     async def test_first_turn_greeting_uses_company_name_template(self):
         callback_context = SimpleNamespace(
             state={
@@ -155,6 +398,29 @@ class TestBeforeModelInjectConfig:
         assert "Hello, this is ehkaitay from our service desk." in system_instruction
 
     @pytest.mark.asyncio
+    async def test_text_channel_uses_written_name_spelling_not_phonetic_intro(self):
+        callback_context = SimpleNamespace(
+            state={
+                "app:channel": "whatsapp",
+                "app:industry_config": {
+                    "name": "Electronics & Gadgets",
+                    "greeting": "Welcome!",
+                },
+                "app:company_profile": {
+                    "name": "Ogabassey Gadgets",
+                },
+            }
+        )
+        llm_request = LlmRequest(model="gemini-test", contents=[])
+
+        await before_model_inject_config(callback_context, llm_request)
+
+        system_instruction = str(llm_request.config.system_instruction)
+        assert "spell it exactly as 'Ekaette'" in system_instruction
+        assert "Never type the phonetic spelling 'ehkaitay'" in system_instruction
+        assert "Hello, this is ehkaitay from Ogabassey Gadgets." not in system_instruction
+
+    @pytest.mark.asyncio
     async def test_does_not_emit_first_turn_greeting_when_already_greeted(self):
         callback_context = SimpleNamespace(
             state={
@@ -193,6 +459,72 @@ class TestBeforeModelInjectConfig:
         system_instruction = str(llm_request.config.system_instruction)
         assert "CALLBACK WRAP-UP" in system_instruction
         assert "Do NOT ask follow-up questions" in system_instruction
+
+    @pytest.mark.asyncio
+    async def test_callback_leg_instruction_does_not_claim_callback_was_requested(self):
+        callback_context = SimpleNamespace(
+            state={
+                "temp:greeted": True,
+                "app:channel": "voice",
+                "app:session_id": "sip-callback-abc123",
+                "app:industry_config": {"name": "Electronics"},
+                "app:company_profile": {"name": "Awgabassey Gadgets"},
+            },
+            session=SimpleNamespace(id="sip-callback-abc123"),
+            agent_name="ekaette_router",
+        )
+        llm_request = LlmRequest(model="gemini-test", contents=[])
+
+        await before_model_inject_config(callback_context, llm_request)
+
+        system_instruction = str(llm_request.config.system_instruction)
+        assert "CALLBACK LEG" in system_instruction
+        assert "Do NOT say 'as requested'" in system_instruction
+        assert "customer previously requested" not in system_instruction
+
+    @pytest.mark.asyncio
+    async def test_router_injects_mandatory_voice_swap_handoff_for_explicit_pair(self):
+        callback_context = SimpleNamespace(
+            state={
+                "temp:greeted": True,
+                "app:channel": "voice",
+                "app:industry_config": {"name": "Electronics"},
+                "app:company_profile": {"name": "Awgabassey Gadgets"},
+                "temp:last_user_turn": "I want to swap from XR to 14.",
+                "temp:recent_customer_context": (
+                    "Customer: I want to swap from XR to 14."
+                ),
+            },
+            agent_name="ekaette_router",
+        )
+        llm_request = LlmRequest(model="gemini-test", contents=[])
+
+        await before_model_inject_config(callback_context, llm_request)
+
+        system_instruction = str(llm_request.config.system_instruction)
+        assert "VOICE SWAP ROUTING" in system_instruction
+        assert 'transfer_to_agent(agent_name="valuation_agent")' in system_instruction
+        assert "Do NOT ask catalog questions" in system_instruction
+
+    @pytest.mark.asyncio
+    async def test_router_does_not_inject_mandatory_swap_handoff_without_both_devices(self):
+        callback_context = SimpleNamespace(
+            state={
+                "temp:greeted": True,
+                "app:channel": "voice",
+                "app:industry_config": {"name": "Electronics"},
+                "app:company_profile": {"name": "Awgabassey Gadgets"},
+                "temp:last_user_turn": "I want to swap my phone.",
+                "temp:recent_customer_context": "Customer: I want to swap my phone.",
+            },
+            agent_name="ekaette_router",
+        )
+        llm_request = LlmRequest(model="gemini-test", contents=[])
+
+        await before_model_inject_config(callback_context, llm_request)
+
+        system_instruction = str(llm_request.config.system_instruction)
+        assert "VOICE SWAP ROUTING" not in system_instruction
 
     @pytest.mark.asyncio
     async def test_injects_nigerian_voice_style_guidance_for_voice(self):
@@ -315,6 +647,257 @@ class TestBeforeModelInjectConfig:
         await after_model_valuation_sanity(callback_context, llm_response)
 
         assert callback_context.state.get("temp:greeted") is True
+
+    @pytest.mark.asyncio
+    async def test_after_model_normalizes_written_name_for_text_channels(self):
+        callback_context = SimpleNamespace(
+            state={"app:channel": "whatsapp"},
+            agent_name="ekaette_router",
+        )
+        llm_response = SimpleNamespace(
+            content=SimpleNamespace(
+                parts=[SimpleNamespace(text="Hello, this is ehkaitay from Ogabassey Gadgets.")]
+            )
+        )
+
+        await after_model_valuation_sanity(callback_context, llm_response)
+
+        assert llm_response.content.parts[0].text == "Hello, this is Ekaette from Ogabassey Gadgets."
+
+    @pytest.mark.asyncio
+    async def test_after_model_rewrites_visible_question_while_background_analysis_runs(self):
+        callback_context = SimpleNamespace(
+            state={
+                "app:channel": "voice",
+                "temp:background_vision_status": "running",
+                "temp:last_user_turn": "I want to swap my iPhone XR for an iPhone 14.",
+                "temp:recent_customer_context": (
+                    "Customer: I want to swap my iPhone XR for an iPhone 14."
+                ),
+            },
+            agent_name="valuation_agent",
+        )
+        llm_response = SimpleNamespace(
+            content=SimpleNamespace(
+                parts=[SimpleNamespace(text="Can you describe the condition of the phone for me?")]
+            )
+        )
+
+        await after_model_valuation_sanity(callback_context, llm_response)
+
+        assert "describe the condition" not in llm_response.content.parts[0].text.lower()
+        assert "which storage size would you like for the new phone" in llm_response.content.parts[0].text.lower()
+
+    @pytest.mark.asyncio
+    async def test_after_model_rewrites_unbacked_whatsapp_delivery_claim(self):
+        callback_context = SimpleNamespace(
+            state={
+                "app:channel": "voice",
+                "temp:last_media_request_status": "sending",
+            },
+            agent_name="valuation_agent",
+        )
+        llm_response = SimpleNamespace(
+            content=SimpleNamespace(
+                parts=[SimpleNamespace(text="I've sent it on WhatsApp already, please check there now.")]
+            )
+        )
+
+        await after_model_valuation_sanity(callback_context, llm_response)
+
+        rewritten = llm_response.content.parts[0].text
+        assert "reply there with the photo or short video" in rewritten.lower()
+        assert "already" not in rewritten.lower()
+
+    @pytest.mark.asyncio
+    async def test_after_model_rewrites_booking_transfer_disclosure_on_voice(self):
+        callback_context = SimpleNamespace(
+            state={
+                "app:channel": "voice",
+                "temp:last_offer_amount": 168750,
+                "temp:last_user_turn": "Yeah, you can proceed.",
+                "temp:recent_customer_context": (
+                    "Customer: Okay, so let's proceed with the swap then.\n"
+                    "Customer: Yeah, you can proceed."
+                ),
+            },
+            agent_name="valuation_agent",
+        )
+        llm_response = SimpleNamespace(
+            content=SimpleNamespace(
+                parts=[
+                    SimpleNamespace(
+                        text="Great, I'll transfer you to the booking agent now to finalize the swap!"
+                    )
+                ]
+            )
+        )
+
+        await after_model_valuation_sanity(callback_context, llm_response)
+
+        rewritten = llm_response.content.parts[0].text.lower()
+        assert "transfer" not in rewritten
+        assert "booking agent" not in rewritten
+        assert "next step" in rewritten
+
+    @pytest.mark.asyncio
+    async def test_after_model_rewrites_tradein_offer_to_lead_with_grounded_analysis(self):
+        callback_context = SimpleNamespace(
+            state={
+                "app:channel": "voice",
+                "temp:last_offer_amount": 234000,
+                "temp:background_vision_status": "ready",
+                "temp:last_user_turn": "I want to swap my iPhone XR for an iPhone 14.",
+                "temp:recent_customer_context": (
+                    "Customer: I want to swap my iPhone XR for an iPhone 14."
+                ),
+                "temp:last_analysis": {
+                    "device_name": "iPhone XR",
+                    "brand": "Apple",
+                    "device_color": "red",
+                    "color_confidence": 0.12,
+                    "condition": "Good",
+                    "power_state": "on",
+                    "details": {
+                        "screen": {"description": "Minor scratches"},
+                        "body": {"description": "Light wear"},
+                    },
+                },
+            },
+            agent_name="valuation_agent",
+        )
+        llm_response = SimpleNamespace(
+            content=SimpleNamespace(
+                parts=[SimpleNamespace(text="Our final offer is ₦234,000. Would you like to proceed?")]
+            )
+        )
+
+        await after_model_valuation_sanity(callback_context, llm_response)
+
+        rewritten = llm_response.content.parts[0].text
+        assert rewritten.startswith("Here's what I can confirm from the video:")
+        assert "iphone xr" in rewritten.lower()
+        assert "red" in rewritten.lower()
+        assert "power on" in rewritten.lower()
+        assert "good condition" in rewritten.lower()
+        assert "₦234,000" in rewritten
+
+    @pytest.mark.asyncio
+    async def test_after_model_rewrites_color_confirmation_from_registry_analysis(self):
+        user_id = "voice-user-color"
+        session_id = "voice-session-color"
+        update_voice_state(
+            user_id=user_id,
+            session_id=session_id,
+            **{
+                "temp:background_vision_status": "ready",
+                "temp:last_analysis": {
+                    "device_name": "iPhone XR",
+                    "brand": "Apple",
+                    "device_color": "red",
+                    "color_confidence": 0.12,
+                    "condition": "Good",
+                },
+            },
+        )
+        try:
+            callback_context = SimpleNamespace(
+                state={
+                    "app:channel": "voice",
+                    "app:user_id": user_id,
+                    "app:session_id": session_id,
+                    "temp:background_vision_status": "ready",
+                    "temp:last_user_turn": "Can you confirm the colour of the phone?",
+                    "temp:recent_customer_context": (
+                        "Customer: I want to swap my iPhone XR for an iPhone 14.\n"
+                        "Customer: Can you confirm the colour of the phone?"
+                    ),
+                    "temp:last_analysis": {
+                        "device_name": "iPhone XR",
+                        "brand": "Apple",
+                        "device_color": "blue",
+                        "color_confidence": 0.91,
+                        "condition": "Good",
+                    },
+                },
+                session=SimpleNamespace(
+                    state={
+                        "app:user_id": user_id,
+                        "app:session_id": session_id,
+                    }
+                ),
+                agent_name="valuation_agent",
+            )
+            llm_response = SimpleNamespace(
+                content=SimpleNamespace(
+                    parts=[
+                        SimpleNamespace(
+                            text="The analysis confirms it's blue. Did you want to proceed with that offer?"
+                        )
+                    ]
+                )
+            )
+
+            await after_model_valuation_sanity(callback_context, llm_response)
+
+            rewritten = llm_response.content.parts[0].text.lower()
+            assert "phone is red" in rewritten
+            assert "blue" not in rewritten
+        finally:
+            clear_registered_voice_state(user_id=user_id, session_id=session_id)
+
+    @pytest.mark.asyncio
+    async def test_after_model_blocks_tradein_offer_while_background_analysis_is_running(self):
+        callback_context = SimpleNamespace(
+            state={
+                "app:channel": "voice",
+                "temp:last_offer_amount": 234000,
+                "temp:background_vision_status": "running",
+                "temp:last_user_turn": "I want to swap my iPhone XR for an iPhone 14.",
+                "temp:recent_customer_context": (
+                    "Customer: I want to swap my iPhone XR for an iPhone 14."
+                ),
+            },
+            agent_name="valuation_agent",
+        )
+        llm_response = SimpleNamespace(
+            content=SimpleNamespace(
+                parts=[SimpleNamespace(text="Based on the video, our offer is ₦234,000.")]
+            )
+        )
+
+        await after_model_valuation_sanity(callback_context, llm_response)
+
+        rewritten = llm_response.content.parts[0].text
+        assert "quote a trade-in price from guesswork" in rewritten.lower()
+        assert "₦234,000" not in rewritten
+        assert "which storage size would you like for the new phone" in rewritten.lower()
+
+    @pytest.mark.asyncio
+    async def test_after_model_blocks_tradein_offer_when_background_analysis_failed(self):
+        callback_context = SimpleNamespace(
+            state={
+                "app:channel": "voice",
+                "temp:last_offer_amount": 234000,
+                "temp:background_vision_status": "failed",
+                "temp:last_user_turn": "I want to swap my iPhone XR for an iPhone 14.",
+                "temp:recent_customer_context": (
+                    "Customer: I want to swap my iPhone XR for an iPhone 14."
+                ),
+            },
+            agent_name="valuation_agent",
+        )
+        llm_response = SimpleNamespace(
+            content=SimpleNamespace(
+                parts=[SimpleNamespace(text="Based on the video, our offer is ₦234,000.")]
+            )
+        )
+
+        await after_model_valuation_sanity(callback_context, llm_response)
+
+        rewritten = llm_response.content.parts[0].text
+        assert "please resend the video or a few clear photos on whatsapp" in rewritten.lower()
+        assert "₦234,000" not in rewritten
 
     @pytest.mark.asyncio
     async def test_after_model_clears_handoff_on_audio_only_response(self):
@@ -496,6 +1079,7 @@ class TestCallbackLegGuards:
                 "app:session_id": "wa-abc123",
                 "app:capabilities": ["outbound_messaging"],
                 "app:channel": "voice",
+                "app:company_profile": {"name": "Ogabassey Gadgets"},
                 "temp:last_user_turn": "",
             },
             agent_name="ekaette_router",
@@ -504,6 +1088,10 @@ class TestCallbackLegGuards:
         assert isinstance(result, dict)
         assert result["status"] == "error"
         assert result["error"] == "callback_intent_required"
+        assert "OPENING PHASE" in result["detail"]
+        assert "Do NOT call any tools or transfer" in result["detail"]
+        assert "Ogabassey Gadgets" in result["detail"]
+        assert "How can I help you today?" in result["detail"]
 
     @pytest.mark.asyncio
     async def test_capability_guard_allows_request_callback_from_last_user_turn_intent(self):
@@ -518,6 +1106,142 @@ class TestCallbackLegGuards:
             agent_name="ekaette_router",
         )
         result = await before_tool_capability_guard_and_log(tool, {}, ctx)
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_questionnaire_blocked_while_background_vision_running_from_registry(self):
+        tool = SimpleNamespace(name="get_device_questionnaire_tool")
+        user_id = "voice-user-tradein"
+        session_id = "sip-tradein-pending"
+        update_voice_state(
+            user_id=user_id,
+            session_id=session_id,
+            **{"temp:background_vision_status": "running"},
+        )
+        ctx = SimpleNamespace(
+            state={
+                "app:session_id": session_id,
+                "app:user_id": user_id,
+                "app:capabilities": ["valuation_tradein"],
+                "app:channel": "voice",
+                "temp:last_user_turn": "I want to swap my iPhone XR for an iPhone 14.",
+                "temp:recent_customer_context": "Customer: I want to swap my iPhone XR for an iPhone 14.",
+            },
+            session=SimpleNamespace(state={}),
+            agent_name="valuation_agent",
+        )
+
+        result = await before_tool_capability_guard_and_log(tool, {"device_brand": "Apple"}, ctx)
+
+        assert isinstance(result, dict)
+        assert result["error"] == "vision_analysis_pending"
+        clear_registered_voice_state(user_id=user_id, session_id=session_id)
+
+    @pytest.mark.asyncio
+    async def test_grade_and_value_blocked_while_media_handoff_pending(self):
+        tool = SimpleNamespace(name="grade_and_value_tool")
+        ctx = SimpleNamespace(
+            state={
+                "app:session_id": "sip-tradein-pending-two",
+                "app:user_id": "voice-user-tradein-two",
+                "app:capabilities": ["valuation_tradein"],
+                "app:channel": "voice",
+                "temp:vision_media_handoff_state": "pending",
+                "temp:last_user_turn": "I want to swap my iPhone XR for an iPhone 14.",
+                "temp:recent_customer_context": "Customer: I want to swap my iPhone XR for an iPhone 14.",
+            },
+            session=SimpleNamespace(state={}),
+            agent_name="valuation_agent",
+        )
+
+        result = await before_tool_capability_guard_and_log(
+            tool,
+            {"analysis": "{}", "questionnaire_answers": "{}", "retail_price": 1000},
+            ctx,
+        )
+
+        assert isinstance(result, dict)
+        assert result["error"] == "vision_analysis_pending"
+
+    @pytest.mark.asyncio
+    async def test_questionnaire_blocked_while_waiting_for_new_media_even_with_stale_analysis(self):
+        tool = SimpleNamespace(name="get_device_questionnaire_tool")
+        user_id = "voice-user-awaiting"
+        session_id = "sip-tradein-awaiting"
+        update_voice_state(
+            user_id=user_id,
+            session_id=session_id,
+            **{"temp:background_vision_status": "awaiting_media"},
+        )
+        try:
+            ctx = SimpleNamespace(
+                state={
+                    "app:session_id": session_id,
+                    "app:user_id": user_id,
+                    "app:capabilities": ["valuation_tradein"],
+                    "app:channel": "voice",
+                    "temp:last_user_turn": "I just sent the video.",
+                    "temp:recent_customer_context": (
+                        "Customer: I want to swap my iPhone XR for an iPhone 14.\n"
+                        "Customer: I just sent the video."
+                    ),
+                    "temp:last_analysis": {
+                        "device_name": "iPhone XR",
+                        "brand": "Apple",
+                        "condition": "Good",
+                        "device_color": "blue",
+                        "details": {"body": {"description": "Minor wear"}},
+                    },
+                },
+                session=SimpleNamespace(
+                    state={
+                        "app:user_id": user_id,
+                        "app:session_id": session_id,
+                    }
+                ),
+                agent_name="valuation_agent",
+            )
+
+            result = await before_tool_capability_guard_and_log(
+                tool,
+                {"device_brand": "Apple"},
+                ctx,
+            )
+
+            assert isinstance(result, dict)
+            assert result["error"] == "vision_analysis_pending"
+        finally:
+            clear_registered_voice_state(user_id=user_id, session_id=session_id)
+
+    @pytest.mark.asyncio
+    async def test_grade_and_value_allowed_once_tool_backed_analysis_is_ready(self):
+        tool = SimpleNamespace(name="grade_and_value_tool")
+        ctx = SimpleNamespace(
+            state={
+                "app:session_id": "sip-tradein-ready",
+                "app:user_id": "voice-user-tradein-ready",
+                "app:capabilities": ["valuation_tradein"],
+                "app:channel": "voice",
+                "temp:background_vision_status": "ready",
+                "temp:last_analysis": {
+                    "device_name": "iPhone XR",
+                    "brand": "Apple",
+                    "condition": "Good",
+                    "details": {"screen": "Minor wear"},
+                },
+                "temp:last_user_turn": "I want to swap my iPhone XR for an iPhone 14.",
+                "temp:recent_customer_context": "Customer: I want to swap my iPhone XR for an iPhone 14.",
+            },
+            session=SimpleNamespace(state={}),
+            agent_name="valuation_agent",
+        )
+
+        result = await before_tool_capability_guard_and_log(
+            tool,
+            {"analysis": "{}", "questionnaire_answers": "{}", "retail_price": 1000},
+            ctx,
+        )
+
         assert result is None
 
     @pytest.mark.asyncio
@@ -586,6 +1310,7 @@ class TestCallbackLegGuards:
                 "app:channel": "voice",
                 "temp:greeted": True,
                 "temp:opening_phase_complete": True,
+                "temp:last_user_turn": "What time do you close today?",
             },
             agent_name="ekaette_router",
         )
@@ -595,13 +1320,47 @@ class TestCallbackLegGuards:
         assert result is None
 
     @pytest.mark.asyncio
+    async def test_voice_tradein_transfer_sets_bootstrap_for_normal_handoff(self):
+        tool = SimpleNamespace(name="transfer_to_agent")
+        session = SimpleNamespace(state={})
+        ctx = SimpleNamespace(
+            state={
+                "app:channel": "voice",
+                "temp:greeted": True,
+                "temp:opening_phase_complete": True,
+                "temp:last_user_turn": "I want to swap my iPhone XR for an iPhone 14.",
+                "temp:recent_customer_context": (
+                    "Customer: I want to swap my iPhone XR for an iPhone 14."
+                ),
+            },
+            session=session,
+            agent_name="ekaette_router",
+        )
+
+        result = await before_tool_capability_guard_and_log(
+            tool,
+            {"agent_name": "valuation_agent"},
+            ctx,
+        )
+
+        assert result is None
+        assert ctx.state["temp:pending_transfer_bootstrap_target_agent"] == "valuation_agent"
+        assert ctx.state["temp:pending_transfer_bootstrap_reason"] == "voice_tradein_handoff"
+        assert session.state["temp:pending_transfer_bootstrap_target_agent"] == "valuation_agent"
+
+    @pytest.mark.asyncio
     async def test_transfer_allowed_when_opening_phase_complete_exists_only_in_session_state(self):
         tool = SimpleNamespace(name="transfer_to_agent")
         ctx = SimpleNamespace(
             state={
                 "app:channel": "voice",
             },
-            session=SimpleNamespace(state={"temp:opening_phase_complete": True}),
+            session=SimpleNamespace(
+                state={
+                    "temp:opening_phase_complete": True,
+                    "temp:last_user_turn": "I want to swap my iPhone XR for an iPhone 14.",
+                }
+            ),
             agent_name="ekaette_router",
         )
         result = await before_tool_capability_guard_and_log(
@@ -610,12 +1369,49 @@ class TestCallbackLegGuards:
         assert result is None
 
     @pytest.mark.asyncio
+    async def test_transfer_allowed_when_recent_customer_context_exists_only_in_registry(self):
+        tool = SimpleNamespace(name="transfer_to_agent")
+        user_id = "sip-user-ctx"
+        session_id = "sip-session-ctx"
+        update_voice_state(
+            user_id=user_id,
+            session_id=session_id,
+            **{
+                "temp:recent_customer_context": (
+                    "Customer: I want to swap my iPhone XR for an iPhone 14."
+                ),
+            },
+        )
+        try:
+            ctx = SimpleNamespace(
+                state={
+                    "app:channel": "voice",
+                    "app:user_id": user_id,
+                    "app:session_id": session_id,
+                    "temp:opening_phase_complete": True,
+                    "temp:last_user_turn": "1.5 million",
+                },
+                agent_name="ekaette_router",
+            )
+            result = await before_tool_capability_guard_and_log(
+                tool, {"agent_name": "valuation_agent"}, ctx
+            )
+            assert result is None
+            assert (
+                ctx.state["temp:pending_handoff_recent_customer_context"]
+                == "Customer: I want to swap my iPhone XR for an iPhone 14."
+            )
+        finally:
+            clear_registered_voice_state(user_id=user_id, session_id=session_id)
+
+    @pytest.mark.asyncio
     async def test_transfer_allowed_when_first_user_turn_complete_exists_in_state(self):
         tool = SimpleNamespace(name="transfer_to_agent")
         ctx = SimpleNamespace(
             state={
                 "app:channel": "voice",
                 "temp:first_user_turn_complete": True,
+                "temp:last_user_turn": "I want to swap my iPhone XR for an iPhone 14.",
             },
             agent_name="ekaette_router",
         )
@@ -631,7 +1427,12 @@ class TestCallbackLegGuards:
             state={
                 "app:channel": "voice",
             },
-            session=SimpleNamespace(state={"temp:first_user_turn_complete": True}),
+            session=SimpleNamespace(
+                state={
+                    "temp:first_user_turn_complete": True,
+                    "temp:last_user_turn": "I want to swap my iPhone XR for an iPhone 14.",
+                }
+            ),
             agent_name="ekaette_router",
         )
         result = await before_tool_capability_guard_and_log(
@@ -647,6 +1448,7 @@ class TestCallbackLegGuards:
                 "app:channel": "voice",
                 "temp:greeted": True,
                 "temp:first_user_turn_started": True,
+                "temp:last_user_turn": "I want to swap my iPhone XR for an iPhone 14.",
             },
             agent_name="ekaette_router",
         )
@@ -666,6 +1468,7 @@ class TestCallbackLegGuards:
                 state={
                     "temp:greeted": True,
                     "temp:first_user_turn_started": True,
+                    "temp:last_user_turn": "I want to swap my iPhone XR for an iPhone 14.",
                 }
             ),
             agent_name="ekaette_router",
@@ -674,6 +1477,196 @@ class TestCallbackLegGuards:
             tool, {"agent_name": "valuation_agent"}, ctx
         )
         assert result is None
+
+    @pytest.mark.asyncio
+    async def test_transfer_blocked_when_latest_user_is_only_greeting(self):
+        tool = SimpleNamespace(name="transfer_to_agent")
+        ctx = SimpleNamespace(
+            state={
+                "app:channel": "voice",
+                "temp:greeted": True,
+                "temp:opening_phase_complete": True,
+                "temp:last_user_turn": "Hello?",
+            },
+            agent_name="ekaette_router",
+        )
+        result = await before_tool_capability_guard_and_log(
+            tool, {"agent_name": "support_agent"}, ctx
+        )
+        assert isinstance(result, dict)
+        assert result["error"] == "explicit_request_required"
+
+    @pytest.mark.asyncio
+    async def test_transfer_blocked_when_latest_user_is_only_self_intro(self):
+        tool = SimpleNamespace(name="transfer_to_agent")
+        ctx = SimpleNamespace(
+            state={
+                "app:channel": "voice",
+                "temp:greeted": True,
+                "temp:opening_phase_complete": True,
+                "temp:last_user_turn": "My name is Akon.",
+            },
+            agent_name="ekaette_router",
+        )
+        result = await before_tool_capability_guard_and_log(
+            tool, {"agent_name": "support_agent"}, ctx
+        )
+        assert isinstance(result, dict)
+        assert result["error"] == "explicit_request_required"
+
+    @pytest.mark.asyncio
+    async def test_transfer_blocked_when_latest_user_is_connection_check(self):
+        tool = SimpleNamespace(name="transfer_to_agent")
+        ctx = SimpleNamespace(
+            state={
+                "app:channel": "voice",
+                "temp:greeted": True,
+                "temp:opening_phase_complete": True,
+                "temp:last_user_turn": "Can you hear me now?",
+            },
+            agent_name="ekaette_router",
+        )
+        result = await before_tool_capability_guard_and_log(
+            tool, {"agent_name": "support_agent"}, ctx
+        )
+        assert isinstance(result, dict)
+        assert result["error"] == "explicit_request_required"
+
+    @pytest.mark.asyncio
+    async def test_transfer_blocked_when_latest_user_requests_slower_repeat(self):
+        tool = SimpleNamespace(name="transfer_to_agent")
+        ctx = SimpleNamespace(
+            state={
+                "app:channel": "voice",
+                "temp:greeted": True,
+                "temp:opening_phase_complete": True,
+                "temp:last_user_turn": "Please slow down and repeat that.",
+            },
+            agent_name="ekaette_router",
+        )
+        result = await before_tool_capability_guard_and_log(
+            tool, {"agent_name": "support_agent"}, ctx
+        )
+        assert isinstance(result, dict)
+        assert result["error"] == "explicit_request_required"
+
+    @pytest.mark.asyncio
+    async def test_support_transfer_allowed_for_real_support_question(self):
+        tool = SimpleNamespace(name="transfer_to_agent")
+        ctx = SimpleNamespace(
+            state={
+                "app:channel": "voice",
+                "temp:greeted": True,
+                "temp:opening_phase_complete": True,
+                "temp:last_user_turn": "Please help me track my order.",
+            },
+            agent_name="ekaette_router",
+        )
+        result = await before_tool_capability_guard_and_log(
+            tool, {"agent_name": "support_agent"}, ctx
+        )
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_transfer_allowed_when_recent_customer_context_carries_booking_intent(self):
+        tool = SimpleNamespace(name="transfer_to_agent")
+        ctx = SimpleNamespace(
+            state={
+                "app:channel": "voice",
+                "temp:greeted": True,
+                "temp:opening_phase_complete": True,
+                "temp:last_user_turn": "Yes.",
+                "temp:recent_customer_context": "Customer wants to book a pickup for tomorrow morning.",
+            },
+            agent_name="ekaette_router",
+        )
+        result = await before_tool_capability_guard_and_log(
+            tool, {"agent_name": "booking_agent"}, ctx
+        )
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_transfer_allows_booking_after_tradein_offer_acceptance(self):
+        tool = SimpleNamespace(name="transfer_to_agent")
+        ctx = SimpleNamespace(
+            state={
+                "app:channel": "voice",
+                "temp:greeted": True,
+                "temp:opening_phase_complete": True,
+                "temp:last_offer_amount": 168750,
+                "temp:last_user_turn": "Yeah, you can proceed.",
+                "temp:recent_customer_context": (
+                    "Customer: Okay, so let's proceed with the swap then.\n"
+                    "Customer: 128 GB.\n"
+                    "Customer: Yeah, you can proceed."
+                ),
+            },
+            agent_name="valuation_agent",
+        )
+        result = await before_tool_capability_guard_and_log(
+            tool, {"agent_name": "booking_agent"}, ctx
+        )
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_transfer_allowed_when_opening_phase_complete_exists_only_in_voice_state_registry(self):
+        tool = SimpleNamespace(name="transfer_to_agent")
+        ctx = SimpleNamespace(
+            state={
+                "app:channel": "voice",
+                "app:user_id": "voice-user-1",
+                "app:session_id": "voice-session-1",
+            },
+            agent_name="ekaette_router",
+        )
+        update_voice_state(
+            user_id="voice-user-1",
+            session_id="voice-session-1",
+            **{
+                "temp:opening_phase_complete": True,
+                "temp:last_user_turn": "I want to swap my iPhone XR for an iPhone 14.",
+            },
+        )
+        try:
+            result = await before_tool_capability_guard_and_log(
+                tool, {"agent_name": "valuation_agent"}, ctx
+            )
+            assert result is None
+        finally:
+            clear_registered_voice_state(
+                user_id="voice-user-1",
+                session_id="voice-session-1",
+            )
+
+    @pytest.mark.asyncio
+    async def test_tradein_transfer_allowed_when_latest_user_turn_exists_only_in_voice_state_registry(self):
+        tool = SimpleNamespace(name="transfer_to_agent")
+        ctx = SimpleNamespace(
+            state={
+                "app:channel": "voice",
+                "app:user_id": "voice-user-2",
+                "app:session_id": "voice-session-2",
+            },
+            agent_name="ekaette_router",
+        )
+        update_voice_state(
+            user_id="voice-user-2",
+            session_id="voice-session-2",
+            **{
+                "temp:greeted": True,
+                "temp:last_user_turn": "I want to swap my iPhone XR for an iPhone 14",
+            },
+        )
+        try:
+            result = await before_tool_capability_guard_and_log(
+                tool, {"agent_name": "valuation_agent"}, ctx
+            )
+            assert result is None
+        finally:
+            clear_registered_voice_state(
+                user_id="voice-user-2",
+                session_id="voice-session-2",
+            )
 
     @pytest.mark.asyncio
     async def test_transfer_allowed_when_greeting_complete_and_last_user_turn_exists_in_session_state(self):
@@ -694,6 +1687,107 @@ class TestCallbackLegGuards:
             tool, {"agent_name": "valuation_agent"}, ctx
         )
         assert result is None
+
+    @pytest.mark.asyncio
+    async def test_vision_transfer_blocked_when_pending_media_exists_in_voice_state_registry(self):
+        tool = SimpleNamespace(name="transfer_to_agent")
+        ctx = SimpleNamespace(
+            state={
+                "app:channel": "voice",
+                "app:user_id": "voice-user-vision",
+                "app:session_id": "voice-session-vision",
+                "temp:greeted": True,
+                "temp:opening_phase_complete": True,
+                "temp:last_user_turn": "Okay, I will send it to you.",
+                "temp:recent_customer_context": (
+                    "Customer: I want to swap my phone, my iPhone XR to an iPhone 14.\n"
+                    "Customer: Okay, I will send it to you."
+                ),
+            },
+            session=SimpleNamespace(
+                state={
+                    "app:user_id": "voice-user-vision",
+                    "app:session_id": "voice-session-vision",
+                }
+            ),
+            agent_name="valuation_agent",
+        )
+        update_voice_state(
+            user_id="voice-user-vision",
+            session_id="voice-session-vision",
+            **{"temp:vision_media_handoff_state": "pending"},
+        )
+        try:
+            result = await before_tool_capability_guard_and_log(
+                tool, {"agent_name": "vision_agent"}, ctx
+            )
+            assert result is not None
+            assert result["error"] == "canonical_background_vision_only"
+        finally:
+            clear_registered_voice_state(
+                user_id="voice-user-vision",
+                session_id="voice-session-vision",
+            )
+
+    @pytest.mark.asyncio
+    async def test_vision_transfer_blocked_while_background_analysis_is_running(self):
+        tool = SimpleNamespace(name="transfer_to_agent")
+        ctx = SimpleNamespace(
+            state={
+                "app:channel": "voice",
+                "temp:greeted": True,
+                "temp:opening_phase_complete": True,
+                "temp:last_user_turn": "Can you confirm the colour now?",
+                "temp:recent_customer_context": (
+                    "Customer: I want to swap my iPhone XR for an iPhone 14.\n"
+                    "Customer: Can you confirm the colour now?"
+                ),
+                "temp:background_vision_status": "running",
+            },
+            session=SimpleNamespace(state={}),
+            agent_name="valuation_agent",
+        )
+
+        result = await before_tool_capability_guard_and_log(
+            tool, {"agent_name": "vision_agent"}, ctx
+        )
+
+        assert result is not None
+        assert result["error"] == "canonical_background_vision_only"
+
+    @pytest.mark.asyncio
+    async def test_vision_transfer_blocked_when_canonical_analysis_is_ready(self):
+        tool = SimpleNamespace(name="transfer_to_agent")
+        ctx = SimpleNamespace(
+            state={
+                "app:channel": "voice",
+                "temp:greeted": True,
+                "temp:opening_phase_complete": True,
+                "temp:last_user_turn": "Can you confirm the colour now?",
+                "temp:recent_customer_context": (
+                    "Customer: I want to swap my iPhone XR for an iPhone 14.\n"
+                    "Customer: Can you confirm the colour now?"
+                ),
+                "temp:background_vision_status": "ready",
+                "temp:last_analysis": {
+                    "device_name": "iPhone XR",
+                    "brand": "Apple",
+                    "device_color": "unknown",
+                    "color_confidence": 0.0,
+                    "condition": "Good",
+                    "details": {"body": {"description": "Minor wear"}},
+                },
+            },
+            session=SimpleNamespace(state={}),
+            agent_name="valuation_agent",
+        )
+
+        result = await before_tool_capability_guard_and_log(
+            tool, {"agent_name": "vision_agent"}, ctx
+        )
+
+        assert result is not None
+        assert result["error"] == "canonical_background_vision_only"
 
     @pytest.mark.asyncio
     async def test_transfer_allows_tradein_fast_path_after_greeting_even_without_opening_phase_complete(self):
@@ -1068,6 +2162,72 @@ class TestAfterToolEmitMessages:
         assert message["action"] == "end_after_speaking"
 
     @pytest.mark.asyncio
+    async def test_request_media_via_whatsapp_marks_delivery_success(self):
+        tool = SimpleNamespace(name="request_media_via_whatsapp")
+        ctx = SimpleNamespace(state={}, agent_name="valuation_agent")
+        result = {"status": "sent", "phone": "+2348012345678", "message_id": "wamid-1"}
+
+        await after_tool_emit_messages(tool, {}, ctx, result)
+
+        assert ctx.state["temp:last_media_request_status"] == "sent"
+        assert ctx.state["temp:last_outbound_delivery_status"] == "success"
+        assert ctx.state["temp:last_outbound_delivery_channels"] == "whatsapp"
+        assert ctx.state["temp:last_outbound_delivery_phone"] == "+2348012345678"
+
+    @pytest.mark.asyncio
+    async def test_request_media_via_whatsapp_marks_voice_tradein_media_pending(self):
+        tool = SimpleNamespace(name="request_media_via_whatsapp")
+        user_id = "voice-user-media-pending"
+        session_id = "voice-session-media-pending"
+        ctx = SimpleNamespace(
+            state={
+                "app:channel": "voice",
+                "app:user_id": user_id,
+                "app:session_id": session_id,
+                "temp:last_user_turn": "I want to swap my iPhone XR for an iPhone 14.",
+                "temp:recent_customer_context": "Customer: I want to swap my iPhone XR for an iPhone 14.",
+                "temp:last_analysis": {"device_name": "iPhone XR", "device_color": "blue"},
+                "temp:last_offer_amount": 123000,
+            },
+            session=SimpleNamespace(
+                state={
+                    "app:user_id": user_id,
+                    "app:session_id": session_id,
+                    "temp:last_analysis": {"device_name": "iPhone XR", "device_color": "blue"},
+                    "temp:last_offer_amount": 123000,
+                }
+            ),
+            agent_name="valuation_agent",
+        )
+        result = {"status": "sent", "phone": "+2348012345678", "message_id": "wamid-1"}
+
+        await after_tool_emit_messages(tool, {}, ctx, result)
+
+        assert ctx.state["temp:last_media_request_status"] == "sent"
+        assert ctx.state["temp:vision_media_handoff_state"] == "pending"
+        assert ctx.state["temp:background_vision_status"] == "awaiting_media"
+        assert ctx.state["temp:pending_media_request_voice_ack"] == "ready"
+        assert ctx.state["temp:last_analysis"] == {}
+        assert ctx.state["temp:last_offer_amount"] == 0
+        assert ctx.session.state["temp:last_analysis"] == {}
+        assert ctx.session.state["temp:last_offer_amount"] == 0
+        assert ctx.session.state["temp:pending_media_request_voice_ack"] == "ready"
+        clear_registered_voice_state(user_id=user_id, session_id=session_id)
+
+    @pytest.mark.asyncio
+    async def test_request_media_via_whatsapp_marks_delivery_failure(self):
+        tool = SimpleNamespace(name="request_media_via_whatsapp")
+        ctx = SimpleNamespace(state={}, agent_name="valuation_agent")
+        result = {"status": "error", "detail": "delivery failed"}
+
+        await after_tool_emit_messages(tool, {}, ctx, result)
+
+        assert ctx.state["temp:last_media_request_status"] == "failure"
+        assert ctx.state["temp:last_outbound_delivery_status"] == "failure"
+        message = ctx.state["temp:last_server_message"]
+        assert message["type"] == "error"
+
+    @pytest.mark.asyncio
     async def test_end_call_queues_end_after_speaking_on_voice(self):
         tool = SimpleNamespace(name="end_call")
         ctx = SimpleNamespace(
@@ -1130,6 +2290,47 @@ class TestQuestionnaireWiring:
         message = ctx.state["temp:last_server_message"]
         assert message["type"] == "questionnaire_started"
         assert message["questionCount"] == 1
+
+    @pytest.mark.asyncio
+    async def test_caches_power_state_from_vision_analysis(self):
+        """Vision tool results should preserve visible power-state evidence for valuation."""
+        tool = SimpleNamespace(name="analyze_device_image_tool")
+        ctx = SimpleNamespace(
+            state={
+                "app:user_id": "voice-user-analysis",
+                "app:session_id": "voice-session-analysis",
+                "temp:vision_media_handoff_state": "transferring",
+            },
+            session=SimpleNamespace(
+                state={
+                    "app:user_id": "voice-user-analysis",
+                    "app:session_id": "voice-session-analysis",
+                    "temp:vision_media_handoff_state": "transferring",
+                }
+            ),
+            agent_name="vision_agent",
+        )
+        result = {
+            "device_name": "iPhone XR",
+            "brand": "Apple",
+            "device_color": "red",
+            "color_confidence": 0.93,
+            "condition": "Good",
+            "power_state": "on",
+            "details": {"functionality": "Display is on"},
+        }
+
+        await after_tool_emit_messages(tool, {}, ctx, result)
+
+        assert ctx.state["temp:last_analysis"]["power_state"] == "on"
+        assert ctx.state["temp:last_analysis"]["device_color"] == "red"
+        assert ctx.state["temp:last_analysis"]["color_confidence"] == 0.93
+        assert ctx.state["temp:vision_media_handoff_state"] == "consumed"
+        assert ctx.session.state["temp:vision_media_handoff_state"] == "consumed"
+        clear_registered_voice_state(
+            user_id="voice-user-analysis",
+            session_id="voice-session-analysis",
+        )
 
     @pytest.mark.asyncio
     async def test_valuation_result_includes_adjustments_when_present(self):
@@ -1354,6 +2555,78 @@ class TestOnToolErrorEmit:
         assert tool_context.state["temp:pending_handoff_target_agent"] == "valuation_agent"
 
     @pytest.mark.asyncio
+    async def test_hallucinated_tradein_recovery_sets_transfer_bootstrap(self):
+        tool = BaseTool(name="valuation_agent", description="Tool not found")
+        tool_context = self._make_tool_context()
+        user_id = "voice-user-bootstrap"
+        session_id = "sip-bootstrap-recovery"
+        tool_context.state.update(
+            {
+                "app:channel": "voice",
+                "app:user_id": user_id,
+                "app:session_id": session_id,
+                "temp:opening_phase_complete": True,
+                "temp:last_user_turn": "I want to swap my iPhone XR for an iPhone 14.",
+            }
+        )
+        tool_context.session = SimpleNamespace(state={})
+        err = ValueError("Tool 'valuation_agent' not found.")
+
+        try:
+            await on_tool_error_emit(
+                tool=tool, args={}, tool_context=tool_context, error=err,
+            )
+
+            assert tool_context.state["temp:pending_transfer_bootstrap_target_agent"] == "valuation_agent"
+            assert tool_context.state["temp:pending_transfer_bootstrap_reason"] == "voice_tradein_recovery"
+            assert tool_context.session.state["temp:pending_transfer_bootstrap_target_agent"] == "valuation_agent"
+            registry_state = get_registered_voice_state(user_id=user_id, session_id=session_id)
+            assert registry_state["temp:pending_transfer_bootstrap_target_agent"] == "valuation_agent"
+            assert registry_state["temp:pending_transfer_bootstrap_reason"] == "voice_tradein_recovery"
+        finally:
+            clear_registered_voice_state(user_id=user_id, session_id=session_id)
+
+    @pytest.mark.asyncio
+    async def test_hallucinated_agent_name_uses_registry_recent_customer_context_fallback(self):
+        tool = BaseTool(name="valuation_agent", description="Tool not found")
+        tool_context = self._make_tool_context()
+        user_id = "sip-user-handoff"
+        session_id = "sip-session-handoff"
+        tool_context.state.update(
+            {
+                "app:channel": "voice",
+                "app:user_id": user_id,
+                "app:session_id": session_id,
+                "temp:opening_phase_complete": True,
+                "temp:last_user_turn": "Yes.",
+            }
+        )
+        update_voice_state(
+            user_id=user_id,
+            session_id=session_id,
+            **{
+                "temp:recent_customer_context": (
+                    "Customer: I want to swap my iPhone XR for an iPhone 14."
+                ),
+            },
+        )
+        err = ValueError("Tool 'valuation_agent' not found.")
+
+        try:
+            result = await on_tool_error_emit(
+                tool=tool, args={}, tool_context=tool_context, error=err,
+            )
+            assert isinstance(result, dict)
+            assert "transfer_to_agent" in result.get("hint", "")
+            assert tool_context.actions.transfer_to_agent == "valuation_agent"
+            assert (
+                tool_context.state["temp:pending_handoff_recent_customer_context"]
+                == "Customer: I want to swap my iPhone XR for an iPhone 14."
+            )
+        finally:
+            clear_registered_voice_state(user_id=user_id, session_id=session_id)
+
+    @pytest.mark.asyncio
     async def test_hallucinated_agent_name_uses_session_opening_phase_complete_fallback(self):
         tool = BaseTool(name="valuation_agent", description="Tool not found")
         tool_context = self._make_tool_context()
@@ -1434,6 +2707,41 @@ class TestOnToolErrorEmit:
         assert isinstance(result, dict)
         assert "transfer_to_agent" in result.get("hint", "")
         assert tool_context.actions.transfer_to_agent == "valuation_agent"
+
+    @pytest.mark.asyncio
+    async def test_hallucinated_vision_agent_blocked_when_canonical_background_path_exists(self):
+        tool = BaseTool(name="vision_agent", description="Tool not found")
+        tool_context = self._make_tool_context(agent_name="valuation_agent")
+        tool_context.state.update(
+            {
+                "app:channel": "voice",
+                "temp:greeted": True,
+                "temp:opening_phase_complete": True,
+                "temp:last_user_turn": "Can you confirm the colour now?",
+                "temp:recent_customer_context": (
+                    "Customer: I want to swap my iPhone XR for an iPhone 14.\n"
+                    "Customer: Can you confirm the colour now?"
+                ),
+                "temp:background_vision_status": "ready",
+                "temp:last_analysis": {
+                    "device_name": "iPhone XR",
+                    "brand": "Apple",
+                    "device_color": "unknown",
+                    "color_confidence": 0.0,
+                    "condition": "Good",
+                    "details": {"body": {"description": "Minor wear"}},
+                },
+            }
+        )
+        err = ValueError("Tool 'vision_agent' not found.")
+
+        result = await on_tool_error_emit(
+            tool=tool, args={}, tool_context=tool_context, error=err,
+        )
+
+        assert isinstance(result, dict)
+        assert result["error"] == "canonical_background_vision_only"
+        assert tool_context.actions.transfer_to_agent is None
 
     @pytest.mark.asyncio
     async def test_hallucinated_valuation_agent_allows_tradein_fast_path_after_greeting(self):

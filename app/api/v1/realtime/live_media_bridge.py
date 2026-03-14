@@ -20,10 +20,12 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from app.api.v1.admin.firestore_helpers import _doc_delete, _doc_get, _doc_set, _doc_update
+from app.configs.model_resolver import get_live_media_vision_model_candidates
 from app.api.v1.realtime.models import SessionInitContext, SilenceState
 from app.api.v1.realtime.runtime_cache import bind_runtime_values
+from app.api.v1.realtime.voice_state_registry import update_voice_state
 from app.tools.scoped_queries import tenant_company_collection
-from app.tools.vision_tools import upload_to_cloud_storage
+from app.tools.vision_tools import analyze_device_media, cache_latest_image, upload_to_cloud_storage
 from shared.phone_identity import normalize_phone
 
 logger = logging.getLogger(__name__)
@@ -35,6 +37,15 @@ _PENDING_EVENT_SUBCOLLECTION = "pending_media_events"
 MAX_EVENT_AGE_SECONDS = 300
 QUEUE_EXPIRY_SECONDS = 60
 MAX_QUEUE_DEPTH = 3
+
+
+def _background_analysis_timeout_seconds() -> float:
+    raw = os.getenv("LIVE_MEDIA_ANALYSIS_TIMEOUT_SECONDS", "30").strip()
+    try:
+        parsed = float(raw)
+    except (TypeError, ValueError):
+        parsed = 30.0
+    return max(5.0, parsed)
 
 
 def _env_flag(name: str, default: bool = False) -> bool:
@@ -167,6 +178,345 @@ def _build_injection_reply(media_type: str) -> str:
     return f"I've received your {kind} and I'm checking it on the call now."
 
 
+def _build_live_media_guidance(
+    *,
+    media_kind: str,
+    handoff_summary: str,
+    provenance: str,
+) -> str:
+    normalized_kind = (media_kind or "").strip() or "media"
+    normalized_provenance = (
+        (provenance or "").strip()
+        or "The caller sent this media on WhatsApp during the current call."
+    )
+    guidance = (
+        f"[System: {normalized_provenance} "
+        f"This is customer-provided {normalized_kind} for the current live call."
+    )
+    if handoff_summary:
+        guidance += f" Prior context: {handoff_summary}"
+    guidance += (
+        " Continue from that context without asking the caller to repeat it."
+        " Immediately acknowledge receipt in one short spoken sentence, for example:"
+        " 'I've got the video, let me check it now.'"
+        " Match the acknowledgment to the actual media kind."
+        " If this media is a video, say video and do not say photo, photos, or image."
+        " If this media is a photo or image, say photo or image and do not say video."
+        " The detailed visual analysis is already running in the background on the backend."
+        " Do NOT transfer to vision_agent or call analyze_device_image_tool for this same media again."
+        " Keep the call moving by asking one safe non-visual follow-up question while the analysis runs."
+        " Start with trade-in questions that are not visible in the media."
+        " Safe topics include the desired new device storage, desired new device colour,"
+        " battery health, water exposure, repairs, Face ID or fingerprint status, and accessories."
+        " Never ask the caller to describe colour, cracks, scratches, dents, screen condition,"
+        " body condition, or any other visible cosmetic detail while this analysis runs."
+        " Do NOT state any color, model, damage, or condition claim until the tool-backed"
+        " analysis result becomes available in shared state.]"
+    )
+    return guidance
+
+
+def _cache_injected_media_for_tool_reuse(
+    *,
+    user_id: str,
+    session_id: str,
+    media_bytes: bytes,
+    mime_type: str,
+) -> None:
+    if not user_id or not session_id or not media_bytes or not mime_type:
+        return
+    cache_latest_image(
+        user_id=user_id,
+        session_id=session_id,
+        image_data=media_bytes,
+        mime_type=mime_type,
+    )
+
+
+def _persist_vision_media_handoff_state(
+    ctx: SessionInitContext,
+    *,
+    state_value: str,
+) -> None:
+    normalized = state_value.strip().lower()
+    if not normalized:
+        return
+    try:
+        ctx.session_state["temp:vision_media_handoff_state"] = normalized
+    except Exception:
+        logger.debug("Failed to persist vision media handoff state to session", exc_info=True)
+    try:
+        update_voice_state(
+            user_id=ctx.user_id,
+            session_id=ctx.resolved_session_id,
+            **{"temp:vision_media_handoff_state": normalized},
+        )
+    except Exception:
+        logger.debug("Failed to persist vision media handoff state to registry", exc_info=True)
+
+
+def _analysis_state_payload(analysis: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "device_name": analysis.get("device_name", "Unknown"),
+        "brand": analysis.get("brand", "Unknown"),
+        "device_color": analysis.get("device_color", "unknown"),
+        "color_confidence": analysis.get("color_confidence", 0.0),
+        "condition": analysis.get("condition", "Unknown"),
+        "power_state": analysis.get("power_state", "unknown"),
+        "details": analysis.get("details", {}),
+    }
+
+
+async def _persist_session_state_updates(
+    ctx: SessionInitContext,
+    *,
+    state_updates: dict[str, Any],
+    async_save_session_state_fn: Any,
+    session_service_obj: Any,
+    session_app_name: str,
+) -> None:
+    if not state_updates:
+        return
+    try:
+        ctx.session_state.update(state_updates)
+    except Exception:
+        logger.debug("Live media session state update skipped", exc_info=True)
+
+    registry_updates: dict[str, Any] = {}
+    background_status = state_updates.get("temp:background_vision_status")
+    if isinstance(background_status, str) and background_status.strip():
+        registry_updates["temp:background_vision_status"] = background_status.strip().lower()
+    last_analysis = state_updates.get("temp:last_analysis")
+    if isinstance(last_analysis, dict) and last_analysis:
+        registry_updates["temp:last_analysis"] = last_analysis
+    if registry_updates:
+        try:
+            update_voice_state(
+                user_id=ctx.user_id,
+                session_id=ctx.resolved_session_id,
+                **registry_updates,
+            )
+        except Exception:
+            logger.debug("Live media registry update skipped", exc_info=True)
+
+    if not async_save_session_state_fn or not session_service_obj or not session_app_name:
+        return
+    try:
+        await async_save_session_state_fn(
+            session_service_obj,
+            app_name=session_app_name,
+            user_id=ctx.user_id,
+            session_id=ctx.resolved_session_id,
+            state_updates=state_updates,
+        )
+    except Exception:
+        logger.debug("Live media persistent session save skipped", exc_info=True)
+
+
+async def _run_background_media_analysis(
+    *,
+    ctx: SessionInitContext,
+    event_ref: Any,
+    event_payload: dict[str, Any],
+    media_bytes: bytes,
+    mime_type: str,
+    silence_state: SilenceState,
+    generation_ref: dict[str, int],
+    generation: int,
+    async_save_session_state_fn: Any,
+    session_service_obj: Any,
+    session_app_name: str,
+) -> None:
+    event_id = str(event_payload.get("event_id", "") or "")
+    try:
+        logger.info(
+            "Background live media analysis started session=%s event=%s mime=%s generation=%s",
+            ctx.resolved_session_id,
+            event_id or "unknown",
+            mime_type or "unknown",
+            generation,
+        )
+        timeout_seconds = _background_analysis_timeout_seconds()
+        analysis = await asyncio.wait_for(
+            analyze_device_media(
+                media_data=media_bytes,
+                mime_type=mime_type,
+                model_candidates=get_live_media_vision_model_candidates(),
+            ),
+            timeout=timeout_seconds,
+        )
+        if generation != generation_ref.get("value"):
+            try:
+                await _doc_update(
+                    event_ref,
+                    {
+                        "analysis_status": "superseded",
+                        "analysis_finished_at": _to_iso(_utc_now()),
+                    },
+                )
+            except Exception:
+                logger.debug("Superseded media analysis update skipped", exc_info=True)
+            return
+
+        if analysis.get("error"):
+            await _persist_session_state_updates(
+                ctx,
+                state_updates={"temp:background_vision_status": "failed"},
+                async_save_session_state_fn=async_save_session_state_fn,
+                session_service_obj=session_service_obj,
+                session_app_name=session_app_name,
+            )
+            try:
+                await _doc_update(
+                    event_ref,
+                    {
+                        "analysis_status": "failed",
+                        "analysis_finished_at": _to_iso(_utc_now()),
+                        "analysis_error": str(analysis.get("error", "") or "analysis_failed"),
+                    },
+                )
+            except Exception:
+                logger.debug("Failed analysis event update skipped", exc_info=True)
+            logger.warning(
+                "Background live media analysis failed session=%s event=%s error=%s",
+                ctx.resolved_session_id,
+                event_id or "unknown",
+                str(analysis.get("error", "") or "analysis_failed"),
+            )
+            return
+
+        await _persist_session_state_updates(
+            ctx,
+            state_updates={
+                "temp:background_vision_status": "ready",
+                "temp:last_analysis": _analysis_state_payload(analysis),
+            },
+            async_save_session_state_fn=async_save_session_state_fn,
+            session_service_obj=session_service_obj,
+            session_app_name=session_app_name,
+        )
+        try:
+            await _doc_update(
+                event_ref,
+                {
+                    "analysis_status": "ready",
+                    "analysis_finished_at": _to_iso(_utc_now()),
+                },
+            )
+        except Exception:
+            logger.debug("Completed analysis event update skipped", exc_info=True)
+        logger.info(
+            "Background live media analysis complete session=%s event=%s device=%s color=%s confidence=%.2f",
+            ctx.resolved_session_id,
+            event_id or "unknown",
+            str(analysis.get("device_name", "") or "Unknown"),
+            str(analysis.get("device_color", "") or "unknown"),
+            float(analysis.get("color_confidence", 0.0) or 0.0),
+        )
+    except asyncio.TimeoutError:
+        if generation == generation_ref.get("value"):
+            await _persist_session_state_updates(
+                ctx,
+                state_updates={"temp:background_vision_status": "failed"},
+                async_save_session_state_fn=async_save_session_state_fn,
+                session_service_obj=session_service_obj,
+                session_app_name=session_app_name,
+            )
+        try:
+            await _doc_update(
+                event_ref,
+                {
+                    "analysis_status": "timeout",
+                    "analysis_finished_at": _to_iso(_utc_now()),
+                    "analysis_error": "timeout",
+                },
+            )
+        except Exception:
+            logger.debug("Timed out analysis event update skipped", exc_info=True)
+        logger.warning(
+            "Background live media analysis timed out session=%s event=%s timeout=%.1fs generation=%s",
+            ctx.resolved_session_id,
+            event_id or "unknown",
+            timeout_seconds,
+            generation,
+        )
+        return
+    except asyncio.CancelledError:
+        logger.info(
+            "Background live media analysis cancelled session=%s event=%s generation=%s",
+            ctx.resolved_session_id,
+            event_id or "unknown",
+            generation,
+        )
+        try:
+            await _doc_update(
+                event_ref,
+                {
+                    "analysis_status": "cancelled",
+                    "analysis_finished_at": _to_iso(_utc_now()),
+                    "analysis_error": "cancelled",
+                },
+            )
+        except Exception:
+            logger.debug("Cancelled analysis event update skipped", exc_info=True)
+        raise
+    except Exception:
+        if generation == generation_ref.get("value"):
+            await _persist_session_state_updates(
+                ctx,
+                state_updates={"temp:background_vision_status": "failed"},
+                async_save_session_state_fn=async_save_session_state_fn,
+                session_service_obj=session_service_obj,
+                session_app_name=session_app_name,
+            )
+        logger.debug("Background live media analysis crashed", exc_info=True)
+        try:
+            await _doc_update(
+                event_ref,
+                {
+                    "analysis_status": "failed",
+                    "analysis_finished_at": _to_iso(_utc_now()),
+                    "analysis_error": "exception",
+                },
+            )
+        except Exception:
+            logger.debug("Crashed analysis event update skipped", exc_info=True)
+    finally:
+        if generation == generation_ref.get("value"):
+            silence_state.pending_media_analysis = False
+
+
+def _start_background_media_analysis(
+    *,
+    ctx: SessionInitContext,
+    event_ref: Any,
+    event_payload: dict[str, Any],
+    media_bytes: bytes,
+    mime_type: str,
+    silence_state: SilenceState,
+    generation_ref: dict[str, int],
+    generation: int,
+    async_save_session_state_fn: Any,
+    session_service_obj: Any,
+    session_app_name: str,
+) -> asyncio.Task[Any]:
+    return asyncio.create_task(
+        _run_background_media_analysis(
+            ctx=ctx,
+            event_ref=event_ref,
+            event_payload=event_payload,
+            media_bytes=media_bytes,
+            mime_type=mime_type,
+            silence_state=silence_state,
+            generation_ref=generation_ref,
+            generation=generation,
+            async_save_session_state_fn=async_save_session_state_fn,
+            session_service_obj=session_service_obj,
+            session_app_name=session_app_name,
+        )
+    )
+
+
 async def register_active_live_session(ctx: SessionInitContext) -> None:
     if not _feature_enabled():
         return
@@ -226,6 +576,30 @@ async def unregister_active_live_session(ctx: SessionInitContext) -> None:
     if doc_ref is None:
         return
     try:
+        event_collection = _event_collection(doc_ref)
+        if event_collection is not None:
+            now_iso = _to_iso(_utc_now())
+            for snapshot in await _query_documents(event_collection):
+                payload = _snapshot_dict(snapshot)
+                if not payload:
+                    continue
+                status = str(payload.get("status", "") or "").strip().lower()
+                if status not in {"pending", "delivering"}:
+                    continue
+                try:
+                    await _doc_update(
+                        snapshot.reference,
+                        {
+                            "status": "expired",
+                            "expired_at": now_iso,
+                            "expiry_reason": "session_closed",
+                        },
+                    )
+                except Exception:
+                    logger.debug("Live media event expiry-on-close skipped", exc_info=True)
+    except Exception:
+        logger.debug("Active live session pending event cleanup skipped", exc_info=True)
+    try:
         await _doc_delete(doc_ref)
     except Exception:
         logger.debug("Active live session unregister skipped", exc_info=True)
@@ -268,6 +642,12 @@ async def enqueue_media_for_active_live_session(
 
     voice_channel = str(session_data.get("voice_channel", "") or "").strip().lower()
     if not _channel_enabled(voice_channel):
+        logger.warning(
+            "Active live media injection skipped because channel is disabled conversation=%s session=%s channel=%s",
+            conversation_id,
+            str(session_data.get("session_id", "") or "").strip(),
+            voice_channel or "unknown",
+        )
         return None
 
     expires_at = _from_iso(str(session_data.get("expires_at", "") or ""))
@@ -350,6 +730,13 @@ async def enqueue_media_for_active_live_session(
             "heartbeat_at": _to_iso(now),
             "expires_at": _to_iso(now + timedelta(seconds=MAX_EVENT_AGE_SECONDS)),
         },
+    )
+    logger.info(
+        "Queued active live media event=%s session=%s kind=%s channel=%s",
+        event_id,
+        target_session_id,
+        media_type,
+        voice_channel,
     )
     return {
         "status": "queued",
@@ -436,9 +823,28 @@ async def active_live_media_task(
     """Heartbeat active session registry and inject queued cross-channel media."""
     if not _feature_enabled():
         return
+    background_analysis_task: asyncio.Task[Any] | None = None
+    analysis_generation = {"value": 0}
     try:
         await register_active_live_session(ctx)
-        (types_mod,) = bind_runtime_values("types")
+        (
+            types_mod,
+            async_save_session_state_fn,
+            session_service_obj,
+            session_app_name,
+        ) = bind_runtime_values(
+            "types",
+            "async_save_session_state",
+            "session_service",
+            "SESSION_APP_NAME",
+        )
+        if (
+            types_mod is None
+            or not hasattr(types_mod, "Content")
+            or not hasattr(types_mod, "Part")
+        ):
+            logger.error("Live media bridge runtime types binding is unavailable")
+            return
         heartbeat_due = time.monotonic()
         while session_alive.is_set():
             now_monotonic = time.monotonic()
@@ -449,7 +855,7 @@ async def active_live_media_task(
                     logger.debug("Active live session heartbeat skipped", exc_info=True)
                 heartbeat_due = now_monotonic + 5.0
 
-            if silence_state.greeting_lock_active or silence_state.agent_busy:
+            if silence_state.greeting_lock_active or silence_state.assistant_output_active:
                 await asyncio.sleep(0.25)
                 continue
 
@@ -469,18 +875,51 @@ async def active_live_media_task(
             summary = str(event_payload.get("handoff_summary", "") or "").strip()
             media_kind = str(event_payload.get("media_kind", "") or "media").strip()
             provenance = str(event_payload.get("provenance_text", "") or "").strip()
-            guidance = (
-                "[System: "
-                + (provenance or "The caller sent this media on WhatsApp during the current call.")
-            )
-            if summary:
-                guidance += f" Prior context: {summary}"
-            guidance += (
-                " Continue from it now, do not ask the customer to repeat the context, "
-                f"and use it to assess the {media_kind}.]"
+            guidance = _build_live_media_guidance(
+                media_kind=media_kind,
+                handoff_summary=summary,
+                provenance=provenance,
             )
             try:
-                live_request_queue.send_realtime(types_mod.Blob(mime_type=mime_type, data=media_bytes))
+                _cache_injected_media_for_tool_reuse(
+                    user_id=ctx.user_id,
+                    session_id=ctx.resolved_session_id,
+                    media_bytes=media_bytes,
+                    mime_type=mime_type,
+                )
+                analysis_generation["value"] += 1
+                current_generation = analysis_generation["value"]
+                await _persist_session_state_updates(
+                    ctx,
+                    state_updates={
+                        "temp:background_vision_status": "running",
+                        "temp:vision_media_handoff_state": "",
+                        "temp:last_media_blob_path": str(event_payload.get("blob_path", "") or ""),
+                        "temp:last_media_gcs_uri": str(event_payload.get("gcs_uri", "") or ""),
+                        "temp:last_media_mime_type": mime_type,
+                    },
+                    async_save_session_state_fn=async_save_session_state_fn,
+                    session_service_obj=session_service_obj,
+                    session_app_name=session_app_name,
+                )
+                silence_state.last_client_activity = now_monotonic
+                silence_state.silence_nudge_count = 0
+                silence_state.awaiting_agent_response = True
+                silence_state.user_spoke_at = now_monotonic
+                silence_state.response_nudge_count = 0
+                silence_state.pending_media_analysis = True
+                if background_analysis_task is not None and not background_analysis_task.done():
+                    background_analysis_task.cancel()
+                    try:
+                        await background_analysis_task
+                    except asyncio.CancelledError:
+                        pass
+                logger.info(
+                    "Injecting queued live media session=%s event=%s kind=%s",
+                    ctx.resolved_session_id,
+                    str(event_payload.get("event_id", "") or ""),
+                    media_kind,
+                )
                 live_request_queue.send_content(
                     types_mod.Content(parts=[types_mod.Part(text=guidance)])
                 )
@@ -488,13 +927,40 @@ async def active_live_media_task(
                     event_ref,
                     {"status": "delivered", "delivered_at": _to_iso(_utc_now())},
                 )
+                background_analysis_task = _start_background_media_analysis(
+                    ctx=ctx,
+                    event_ref=event_ref,
+                    event_payload=event_payload,
+                    media_bytes=media_bytes,
+                    mime_type=mime_type,
+                    silence_state=silence_state,
+                    generation_ref=analysis_generation,
+                    generation=current_generation,
+                    async_save_session_state_fn=async_save_session_state_fn,
+                    session_service_obj=session_service_obj,
+                    session_app_name=session_app_name,
+                )
             except Exception:
+                silence_state.pending_media_analysis = False
+                await _persist_session_state_updates(
+                    ctx,
+                    state_updates={"temp:background_vision_status": "failed"},
+                    async_save_session_state_fn=async_save_session_state_fn,
+                    session_service_obj=session_service_obj,
+                    session_app_name=session_app_name,
+                )
                 logger.debug("Live media injection failed", exc_info=True)
                 try:
                     await _doc_update(event_ref, {"status": "failed", "failed_at": _to_iso(_utc_now())})
                 except Exception:
                     logger.debug("Live media event failure mark skipped", exc_info=True)
     finally:
+        if background_analysis_task is not None and not background_analysis_task.done():
+            background_analysis_task.cancel()
+            try:
+                await background_analysis_task
+            except asyncio.CancelledError:
+                pass
         await unregister_active_live_session(ctx)
 
 
