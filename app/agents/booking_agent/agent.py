@@ -88,6 +88,9 @@ _INSTRUCTION_TEMPLATE = """You handle delivery quotes, purchase finalization, an
        - customer can say the address on call, or
        - customer can type address details in WhatsApp chat while staying on the call.
     4. Call get_topship_delivery_quote to estimate delivery fee.
+       If the quote fails or no rates are returned, do NOT move to payment yet.
+       Ask the customer to confirm the delivery city or area again using a simple
+       locality name (for example "Yaba" instead of "Yaba, Lagos"), then retry.
     5. Present subtotal + delivery fee + total clearly.
     6. Call create_virtual_account_payment and read account details clearly.
     {delivery_followup_line}

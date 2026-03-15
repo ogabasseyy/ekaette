@@ -100,23 +100,6 @@ async def create_virtual_account_payment(
             "status_code": 500,
         }
 
-    notify_kwargs = dict(
-        phone=resolved_customer_phone,
-        account_number=result.get("account_number", ""),
-        bank_name=result.get("bank_name", ""),
-        account_name=result.get("account_name", ""),
-        amount_kobo=expected_amount_kobo,
-        sender_id=resolved_sender_id,
-    )
-    sms_sent = await service_payments.send_va_notification_sms(**notify_kwargs)
-    whatsapp_sent = await service_payments.send_va_notification_whatsapp(
-        phone=resolved_customer_phone,
-        account_number=result.get("account_number", ""),
-        bank_name=result.get("bank_name", ""),
-        account_name=result.get("account_name", ""),
-        amount_kobo=expected_amount_kobo,
-    )
-
     return {
         "status": "ok",
         "payment_method": "virtual_account",
@@ -130,11 +113,13 @@ async def create_virtual_account_payment(
         "currency_name": "naira" if isinstance(expected_amount_kobo, int) and expected_amount_kobo > 0 else "",
         "notification_phone": resolved_customer_phone,
         "sms_sender_id": resolved_sender_id,
-        "sms_sent": sms_sent,
-        "whatsapp_sent": whatsapp_sent,
+        "notifications_attempted": False,
+        "sms_sent": False,
+        "whatsapp_sent": False,
         "instructions": (
-            "Share this account on voice and follow up via SMS/WhatsApp. "
-            "Confirm payment only after webhook/verify success."
+            "Read this account clearly on the current channel. "
+            "Only send it via SMS or WhatsApp if the customer explicitly asks for that follow-up "
+            "or clearly agrees when you offer it. Confirm payment only after webhook/verify success."
         ),
     }
 

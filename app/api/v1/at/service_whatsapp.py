@@ -267,14 +267,17 @@ async def _handle_media_message(
         handoff_context=handoff_context if isinstance(handoff_context, dict) else None,
     )
     if isinstance(live_queue_result, dict):
-        reply_text = str(live_queue_result.get("reply_text", "") or "").strip()
-        if reply_text:
+        if str(live_queue_result.get("status", "") or "").strip().lower() == "queued":
             suppress_nudge_for_cross_session(
                 from_,
                 phone_number_id,
                 tenant_id=tenant_id,
                 company_id=company_id,
             )
+            reply_text = str(live_queue_result.get("reply_text", "") or "").strip()
+            return reply_text[:WA_MAX_CHARS]
+        reply_text = str(live_queue_result.get("reply_text", "") or "").strip()
+        if reply_text:
             return reply_text[:WA_MAX_CHARS]
 
     if runner is not None:

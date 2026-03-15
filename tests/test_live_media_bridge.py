@@ -167,7 +167,7 @@ async def test_active_live_media_task_delivers_queued_media_while_generic_busy(m
     assert queue.realtime == []
     assert len(queue.contents) == 1
     guidance = queue.contents[0].parts[0].text
-    assert "I've got the video, let me check it now." in guidance
+    assert "runtime handles the spoken media-receipt acknowledgement" in guidance
     assert "already running in the background" in guidance
     assert "Do NOT transfer to vision_agent" in guidance
     assert "safe non-visual follow-up question" in guidance

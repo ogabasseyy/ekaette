@@ -12,6 +12,8 @@ from typing import Any
 
 from google.adk.tools.tool_context import ToolContext
 
+from app.api.v1.realtime.voice_state_registry import get_registered_voice_state
+
 logger = logging.getLogger(__name__)
 
 # ─── Valid condition grades ─────────────────────────────────────
@@ -389,6 +391,60 @@ def _filter_questions_from_analysis(
     return [question for question in questions if question.get("id") not in omitted]
 
 
+def _tool_context_voice_session_identity(tool_context: ToolContext | None) -> tuple[str, str]:
+    if tool_context is None:
+        return "", ""
+    state = getattr(tool_context, "state", {})
+    session = getattr(tool_context, "session", None)
+    session_state = getattr(session, "state", None)
+    user_id = ""
+    session_id = ""
+    for source in (state, session_state):
+        if not isinstance(source, dict):
+            continue
+        if not user_id:
+            user_id = str(source.get("app:user_id", "") or "").strip()
+        if not session_id:
+            session_id = str(source.get("app:session_id", "") or "").strip()
+    if not user_id:
+        user_id = str(getattr(session, "user_id", "") or "").strip()
+    if not session_id:
+        session_id = str(getattr(session, "id", "") or "").strip()
+    return user_id, session_id
+
+
+def _latest_analysis_from_tool_context(tool_context: ToolContext | None) -> dict[str, Any] | None:
+    if tool_context is None:
+        return None
+    user_id, session_id = _tool_context_voice_session_identity(tool_context)
+    if user_id and session_id:
+        try:
+            registry_state = get_registered_voice_state(user_id=user_id, session_id=session_id)
+            if isinstance(registry_state, dict):
+                registry_analysis = registry_state.get("temp:last_analysis")
+                if isinstance(registry_analysis, dict) and registry_analysis:
+                    return registry_analysis
+        except Exception:
+            logger.debug(
+                "Failed to fetch registered voice analysis user_id=%s session_id=%s",
+                user_id,
+                session_id,
+                exc_info=True,
+            )
+    session = getattr(tool_context, "session", None)
+    session_state = getattr(session, "state", None)
+    if isinstance(session_state, dict):
+        session_analysis = session_state.get("temp:last_analysis")
+        if isinstance(session_analysis, dict) and session_analysis:
+            return session_analysis
+    state = getattr(tool_context, "state", None)
+    if isinstance(state, dict):
+        state_analysis = state.get("temp:last_analysis")
+        if isinstance(state_analysis, dict) and state_analysis:
+            return state_analysis
+    return None
+
+
 # ─── Questionnaire answer normalization ───────────────────────
 
 _YES_VALUES = {"yes", "true", "1", "y"}
@@ -587,9 +643,7 @@ def get_device_questionnaire_tool(
                 resolved_analysis = parsed
 
     if resolved_analysis is None and tool_context is not None:
-        state_analysis = tool_context.state.get("temp:last_analysis")
-        if isinstance(state_analysis, dict):
-            resolved_analysis = state_analysis
+        resolved_analysis = _latest_analysis_from_tool_context(tool_context)
 
     omitted_question_ids = _question_ids_omitted_from_analysis(resolved_analysis)
     questions = get_device_questionnaire(device_brand or "", analysis=resolved_analysis)

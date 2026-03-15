@@ -768,7 +768,6 @@ class TestGetDeviceQuestionnaireTool:
         question_ids = [question["id"] for question in result["questions"]]
         assert "does_not_power_on" not in question_ids
         assert result["omitted_question_ids"] == ["does_not_power_on"]
-        assert result["omitted_question_ids"] == ["does_not_power_on"]
 
     def test_tool_falls_back_to_tool_context_analysis(self):
         """ADK sessions should prune from shared latest analysis when args omit it."""
@@ -776,6 +775,26 @@ class TestGetDeviceQuestionnaireTool:
 
         tool_context = SimpleNamespace(
             state={"temp:last_analysis": {"power_state": "on"}},
+        )
+
+        result = get_device_questionnaire_tool(
+            device_brand="Apple",
+            tool_context=tool_context,
+        )
+
+        question_ids = [question["id"] for question in result["questions"]]
+        assert "does_not_power_on" not in question_ids
+        assert result["omitted_question_ids"] == ["does_not_power_on"]
+
+    def test_tool_falls_back_to_session_analysis_when_callback_state_is_stale(self):
+        """Live voice valuation should read analysis from session state, not only callback state."""
+        from app.tools.valuation_tools import get_device_questionnaire_tool
+
+        tool_context = SimpleNamespace(
+            state={"temp:last_analysis": {}},
+            session=SimpleNamespace(
+                state={"temp:last_analysis": {"power_state": "on"}},
+            ),
         )
 
         result = get_device_questionnaire_tool(

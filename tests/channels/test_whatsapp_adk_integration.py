@@ -193,7 +193,7 @@ class TestHandleImageMessageADK:
             new_callable=AsyncMock,
             return_value={
                 "status": "queued",
-                "reply_text": "I’ve received your photo and I’m checking it on the call now.",
+                "reply_text": "",
             },
         ) as mock_enqueue, patch(
             "app.api.v1.at.service_whatsapp.suppress_nudge_for_cross_session",
@@ -209,7 +209,7 @@ class TestHandleImageMessageADK:
                 phone_number_id="test_phone_id",
             )
 
-        assert reply == "I’ve received your photo and I’m checking it on the call now."
+        assert reply == ""
         mock_enqueue.assert_called_once()
         suppress_mock.assert_called_once_with(
             "2348001234567",
@@ -348,6 +348,56 @@ class TestHandleVideoMessageADK:
 
         assert reply == "Legacy video analysis"
         mock_legacy.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_video_queues_into_active_live_session_without_whatsapp_echo(self):
+        """Active-call video uploads should stay on the call and not echo a WhatsApp text."""
+        from app.api.v1.at import service_whatsapp
+
+        with patch(
+            "app.api.v1.at.service_whatsapp._get_adk_runner_and_service",
+            return_value=(MagicMock(), MagicMock(), "ekaette", None, ""),
+        ), patch(
+            "app.api.v1.at.providers.whatsapp_download_media",
+            new_callable=AsyncMock,
+            return_value=(b"fake-mp4", "video/mp4"),
+        ), patch(
+            "app.api.v1.at.service_whatsapp.load_and_consume_cross_channel_context",
+            new_callable=AsyncMock,
+            return_value={
+                "pending_reason": "trade_in_video_requested",
+                "conversation_summary": "Customer is continuing a live swap call with a video upload.",
+            },
+        ), patch(
+            "app.api.v1.at.service_whatsapp.enqueue_media_for_active_live_session",
+            new_callable=AsyncMock,
+            return_value={
+                "status": "queued",
+                "reply_text": "",
+            },
+        ) as mock_enqueue, patch(
+            "app.api.v1.at.service_whatsapp.suppress_nudge_for_cross_session",
+        ) as suppress_mock, patch(
+            "app.channels.adk_text_adapter.send_media_message",
+            new_callable=AsyncMock,
+        ) as mock_send:
+            reply = await service_whatsapp.handle_video_message(
+                from_="2348001234567",
+                media_id="media-456",
+                mime_type="video/mp4",
+                caption="Here is the trade-in video",
+                phone_number_id="test_phone_id",
+            )
+
+        assert reply == ""
+        mock_enqueue.assert_called_once()
+        suppress_mock.assert_called_once_with(
+            "2348001234567",
+            "test_phone_id",
+            tenant_id="public",
+            company_id="ekaette-electronics",
+        )
+        mock_send.assert_not_called()
 
     def test_video_is_supported_message_type(self):
         """Video should be in SUPPORTED_MESSAGE_TYPES, not UNSUPPORTED."""

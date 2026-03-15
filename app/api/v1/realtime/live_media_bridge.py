@@ -197,11 +197,8 @@ def _build_live_media_guidance(
         guidance += f" Prior context: {handoff_summary}"
     guidance += (
         " Continue from that context without asking the caller to repeat it."
-        " Immediately acknowledge receipt in one short spoken sentence, for example:"
-        " 'I've got the video, let me check it now.'"
-        " Match the acknowledgment to the actual media kind."
-        " If this media is a video, say video and do not say photo, photos, or image."
-        " If this media is a photo or image, say photo or image and do not say video."
+        " The runtime handles the spoken media-receipt acknowledgement for this upload."
+        " Do not repeat that you have received the media unless the caller asks again."
         " The detailed visual analysis is already running in the background on the backend."
         " Do NOT transfer to vision_agent or call analyze_device_image_tool for this same media again."
         " Keep the call moving by asking one safe non-visual follow-up question while the analysis runs."
@@ -740,7 +737,8 @@ async def enqueue_media_for_active_live_session(
     )
     return {
         "status": "queued",
-        "reply_text": _build_injection_reply(media_type),
+        # Keep the receipt acknowledgement on the live call itself.
+        "reply_text": "",
     }
 
 
@@ -894,6 +892,7 @@ async def active_live_media_task(
                     state_updates={
                         "temp:background_vision_status": "running",
                         "temp:vision_media_handoff_state": "",
+                        "temp:pending_media_received_voice_ack": media_kind,
                         "temp:last_media_blob_path": str(event_payload.get("blob_path", "") or ""),
                         "temp:last_media_gcs_uri": str(event_payload.get("gcs_uri", "") or ""),
                         "temp:last_media_mime_type": mime_type,

@@ -319,7 +319,11 @@ class TestTransferHandoffInjection:
         )
 
         assert any(
-            "request_media_via_whatsapp has not succeeded yet" in (content.parts[0].text or "")
+            "one moment, i'm sending you a whatsapp message now" in (content.parts[0].text or "").lower()
+            for content in queue.sent
+        )
+        assert any(
+            "runtime has already told the caller" in (content.parts[0].text or "").lower()
             for content in queue.sent
         )
         assert ctx.session_state["temp:pending_transfer_bootstrap_target_agent"] == ""
@@ -352,11 +356,157 @@ class TestTransferHandoffInjection:
         )
 
         assert any(
-            "request_media_via_whatsapp has not succeeded yet" in (content.parts[0].text or "")
+            "one moment, i'm sending you a whatsapp message now" in (content.parts[0].text or "").lower()
+            for content in queue.sent
+        )
+        assert any(
+            "runtime has already told the caller" in (content.parts[0].text or "").lower()
             for content in queue.sent
         )
         assert ctx.session_state["temp:pending_transfer_bootstrap_target_agent"] == ""
         assert ctx.session_state["temp:pending_transfer_bootstrap_reason"] == ""
+
+    @pytest.mark.asyncio
+    async def test_transfer_event_allows_immediate_same_voice_media_request_sending_line(self):
+        ctx = _make_ctx(_FakeWebSocket())
+        ctx.session_state.update(
+            {
+                "app:channel": "voice",
+                "temp:pending_handoff_target_agent": "valuation_agent",
+                "temp:pending_handoff_latest_user": "I want to swap my iPhone XR for an iPhone 14.",
+                "temp:pending_handoff_recent_customer_context": (
+                    "Customer: I want to swap my iPhone XR for an iPhone 14."
+                ),
+                "temp:pending_transfer_bootstrap_target_agent": "valuation_agent",
+                "temp:pending_transfer_bootstrap_reason": "voice_tradein_handoff",
+            }
+        )
+
+        websocket, queue, _ = await _run_downstream_events(
+            _make_live_event(
+                actions=SimpleNamespace(
+                    transfer_to_agent="valuation_agent",
+                    state_delta=None,
+                ),
+                author="ekaette_router",
+            ),
+            _make_content_event(audio_bytes=b"sending-audio"),
+            _make_live_event(
+                output_transcription=SimpleNamespace(
+                    text=(
+                        "One moment, I'm sending you a WhatsApp message now so you can reply "
+                        "there with a quick video or a few photos of your device."
+                    ),
+                    finished=True,
+                ),
+                author="valuation_agent",
+            ),
+            _make_live_event(turn_complete=True, author="valuation_agent"),
+            ctx=ctx,
+        )
+
+        agent_transcripts = [
+            msg for msg in websocket.sent_texts
+            if msg.get("type") == "transcription" and msg.get("role") == "agent"
+        ]
+        assert any(
+            "sending you a whatsapp message now" in str(msg.get("text", "")).lower()
+            for msg in agent_transcripts
+        )
+        assert websocket.sent_bytes == [b"sending-audio"]
+        assert any(
+            "runtime has already told the caller" in (content.parts[0].text or "").lower()
+            for content in queue.sent
+        )
+
+    @pytest.mark.asyncio
+    async def test_transfer_event_queues_tradein_booking_bootstrap_prompt(self):
+        ctx = _make_ctx(_FakeWebSocket())
+        ctx.session_state.update(
+            {
+                "app:channel": "voice",
+                "temp:pending_handoff_target_agent": "booking_agent",
+                "temp:pending_handoff_latest_user": "Okay, thank you very much. What's next?",
+                "temp:pending_handoff_recent_customer_context": (
+                    "Customer: Yes, let's proceed.\n"
+                    "Customer: Okay, thank you very much. What's next?"
+                ),
+                "temp:pending_transfer_bootstrap_target_agent": "booking_agent",
+                "temp:pending_transfer_bootstrap_reason": "voice_tradein_booking_handoff",
+            }
+        )
+
+        _, queue, _ = await _run_downstream_events(
+            _make_live_event(
+                actions=SimpleNamespace(
+                    transfer_to_agent="booking_agent",
+                    state_delta=None,
+                ),
+            ),
+            ctx=ctx,
+        )
+
+        assert any(
+            "runtime has already spoken the first fulfillment transition" in (content.parts[0].text or "").lower()
+            for content in queue.sent
+        )
+        assert any(
+            "do not mention any internal booking agent or transfer" in (content.parts[0].text or "").lower()
+            for content in queue.sent
+        )
+        assert ctx.session_state["temp:pending_transfer_bootstrap_target_agent"] == ""
+        assert ctx.session_state["temp:pending_transfer_bootstrap_reason"] == ""
+
+    @pytest.mark.asyncio
+    async def test_transfer_event_speaks_runtime_owned_tradein_booking_question(self):
+        ctx = _make_ctx(_FakeWebSocket())
+        ctx.session_state.update(
+            {
+                "app:channel": "voice",
+                "temp:pending_handoff_target_agent": "booking_agent",
+                "temp:pending_handoff_latest_user": "Okay, thank you very much. What's next?",
+                "temp:pending_handoff_recent_customer_context": (
+                    "Customer: Yes, let's proceed.\n"
+                    "Customer: Okay, thank you very much. What's next?"
+                ),
+                "temp:pending_transfer_bootstrap_target_agent": "booking_agent",
+                "temp:pending_transfer_bootstrap_reason": "voice_tradein_booking_handoff",
+            }
+        )
+
+        websocket, queue, _ = await _run_downstream_events(
+            _make_live_event(
+                actions=SimpleNamespace(
+                    transfer_to_agent="booking_agent",
+                    state_delta=None,
+                ),
+                author="valuation_agent",
+            ),
+            _make_content_event(audio_bytes=b"booking-bootstrap-audio"),
+            _make_live_event(
+                output_transcription=SimpleNamespace(
+                    text="Great, let's sort out the next step now. Would you like delivery or pickup?",
+                    finished=True,
+                ),
+                author="booking_agent",
+            ),
+            _make_live_event(turn_complete=True, author="booking_agent"),
+            ctx=ctx,
+        )
+
+        agent_transcripts = [
+            msg for msg in websocket.sent_texts
+            if msg.get("type") == "transcription" and msg.get("role") == "agent"
+        ]
+        assert any(
+            msg.get("text") == "Great, let's sort out the next step now. Would you like delivery or pickup?"
+            for msg in agent_transcripts
+        )
+        assert websocket.sent_bytes == [b"booking-bootstrap-audio"]
+        assert any(
+            "runtime has already spoken the first fulfillment transition" in (content.parts[0].text or "").lower()
+            for content in queue.sent
+        )
 
     @pytest.mark.asyncio
     async def test_transfer_event_uses_registry_bootstrap_when_session_state_is_stale(self):
@@ -391,7 +541,11 @@ class TestTransferHandoffInjection:
         )
 
         assert any(
-            "request_media_via_whatsapp has not succeeded yet" in (content.parts[0].text or "")
+            "one moment, i'm sending you a whatsapp message now" in (content.parts[0].text or "").lower()
+            for content in queue.sent
+        )
+        assert any(
+            "runtime has already told the caller" in (content.parts[0].text or "").lower()
             for content in queue.sent
         )
         registry_state = get_registered_voice_state(
@@ -1125,6 +1279,647 @@ class TestWatchdogClearingInDownstream:
         assert ctx.session_state["temp:greeted"] is True
 
     @pytest.mark.asyncio
+    async def test_analysis_reply_override_returns_grounded_color_from_registry(self):
+        import app.api.v1.realtime.stream_tasks as st
+
+        update_voice_state(
+            user_id="user-1",
+            session_id="session-1",
+            **{
+                "temp:background_vision_status": "ready",
+                "temp:last_analysis": {
+                    "device_name": "iPhone XR",
+                    "brand": "Apple",
+                    "device_color": "red",
+                    "condition": "Good",
+                },
+            },
+        )
+        try:
+            result = st._analysis_reply_override_for_turn(
+                state={
+                    "app:user_id": "user-1",
+                    "app:session_id": "session-1",
+                    "temp:last_user_turn": "What colour is the phone?",
+                    "temp:background_vision_status": "ready",
+                },
+                current_agent="valuation_agent",
+            )
+            assert result == "The video analysis shows the phone is red."
+        finally:
+            clear_registered_voice_state(user_id="user-1", session_id="session-1")
+
+    @pytest.mark.asyncio
+    async def test_valuation_result_reply_override_uses_grounded_analysis_and_naira(self):
+        import app.api.v1.realtime.stream_tasks as st
+
+        update_voice_state(
+            user_id="user-offer",
+            session_id="session-offer",
+            **{
+                "temp:background_vision_status": "ready",
+                "temp:last_analysis": {
+                    "device_name": "iPhone XR",
+                    "brand": "Apple",
+                    "device_color": "red",
+                    "condition": "Good",
+                    "power_state": "on",
+                },
+                "temp:last_offer_amount": 234000,
+            },
+        )
+        try:
+            result = st._valuation_result_reply_override_for_message(
+                state={
+                    "app:user_id": "user-offer",
+                    "app:session_id": "session-offer",
+                    "temp:background_vision_status": "ready",
+                    "temp:last_offer_amount": 234000,
+                },
+                current_agent="valuation_agent",
+                message={
+                    "type": "valuation_result",
+                    "price": 234000,
+                    "currency": "NGN",
+                },
+            )
+            assert "iPhone XR" in result
+            assert "red" in result.lower()
+            assert "₦234,000" in result
+        finally:
+            clear_registered_voice_state(user_id="user-offer", session_id="session-offer")
+
+    @pytest.mark.asyncio
+    async def test_downstream_flushes_validated_deterministic_analysis_reply(self):
+        st = _configure_downstream_runtime(
+            _make_live_event(
+                input_transcription=SimpleNamespace(
+                    text="What colour is the phone?",
+                    finished=True,
+                ),
+                author="valuation_agent",
+            ),
+            _make_content_event(audio_bytes=b"\x00\x01"),
+            _make_live_event(
+                output_transcription=SimpleNamespace(
+                    text="The video analysis shows the phone is red.",
+                    finished=True,
+                ),
+                author="valuation_agent",
+            ),
+            _make_live_event(turn_complete=True, author="valuation_agent"),
+        )
+        websocket = _FakeWebSocket()
+        ctx = _make_ctx(websocket)
+        ctx.session_state.update(
+            {
+                "app:channel": "voice",
+                "app:user_id": "user-1",
+                "app:session_id": "session-1",
+                "temp:active_agent": "valuation_agent",
+            }
+        )
+        update_voice_state(
+            user_id="user-1",
+            session_id="session-1",
+            **{
+                "temp:background_vision_status": "ready",
+                "temp:last_analysis": {
+                    "device_name": "iPhone XR",
+                    "brand": "Apple",
+                    "device_color": "red",
+                    "condition": "Good",
+                },
+            },
+        )
+        queue = _FakeRequestQueue()
+        session_alive = asyncio.Event()
+        session_alive.set()
+        silence_state = _make_silence_state()
+        try:
+            await st.downstream_task(ctx, queue, session_alive, silence_state)
+        finally:
+            clear_registered_voice_state(user_id="user-1", session_id="session-1")
+
+        agent_transcripts = [
+            msg for msg in websocket.sent_texts
+            if msg.get("type") == "transcription" and msg.get("role") == "agent"
+        ]
+        assert queue.sent
+        assert any(
+            msg.get("text") == "The video analysis shows the phone is red."
+            for msg in agent_transcripts
+        )
+        assert websocket.sent_bytes == [b"\x00\x01"]
+
+    @pytest.mark.asyncio
+    async def test_downstream_flushes_deterministic_valuation_result_reply(self):
+        st = _configure_downstream_runtime(
+            _make_live_event(turn_complete=True, author="valuation_agent"),
+            _make_content_event(audio_bytes=b"\x03\x04"),
+            _make_live_event(
+                output_transcription=SimpleNamespace(
+                    text=(
+                        "Here's what I can confirm from the video: it looks like an iPhone XR in red, "
+                        "it appears to power on, and overall it looks to be in Good condition. "
+                        "Based on that, our trade-in offer is ₦234,000. Would you like to go ahead "
+                        "with that offer, or would you like to negotiate?"
+                    ),
+                    finished=True,
+                ),
+                author="valuation_agent",
+            ),
+            _make_live_event(turn_complete=True, author="valuation_agent"),
+        )
+        websocket = _FakeWebSocket()
+        ctx = _make_ctx(websocket)
+        ctx.session_state.update(
+            {
+                "app:channel": "voice",
+                "app:user_id": "user-offer-2",
+                "app:session_id": "session-offer-2",
+                "temp:active_agent": "valuation_agent",
+                "temp:last_server_message": {
+                    "id": 1,
+                    "type": "valuation_result",
+                    "deviceName": "iPhone XR",
+                    "condition": "Good",
+                    "price": 234000,
+                    "currency": "NGN",
+                },
+                "temp:last_offer_amount": 234000,
+                "temp:pending_valuation_result_voice_ack": "ready",
+            }
+        )
+        update_voice_state(
+            user_id="user-offer-2",
+            session_id="session-offer-2",
+            **{
+                "temp:background_vision_status": "ready",
+                "temp:last_analysis": {
+                    "device_name": "iPhone XR",
+                    "brand": "Apple",
+                    "device_color": "red",
+                    "condition": "Good",
+                    "power_state": "on",
+                },
+                "temp:last_offer_amount": 234000,
+                "temp:pending_valuation_result_voice_ack": "ready",
+            },
+        )
+        queue = _FakeRequestQueue()
+        session_alive = asyncio.Event()
+        session_alive.set()
+        silence_state = _make_silence_state()
+        try:
+            await st.downstream_task(ctx, queue, session_alive, silence_state)
+        finally:
+            clear_registered_voice_state(user_id="user-offer-2", session_id="session-offer-2")
+
+        agent_transcripts = [
+            msg for msg in websocket.sent_texts
+            if msg.get("type") == "transcription" and msg.get("role") == "agent"
+        ]
+        assert any(
+            "our trade-in offer is ₦234,000" in (msg.get("text") or "")
+            for msg in agent_transcripts
+        )
+        assert any(
+            "runtime already determined the exact next sentence"
+            in (content.parts[0].text or "").lower()
+            for content in queue.sent
+        )
+        assert websocket.sent_bytes == [b"\x03\x04"]
+
+    @pytest.mark.asyncio
+    async def test_pending_valuation_result_suppresses_native_summary_until_grounded_reply_is_ready(self):
+        st = _configure_downstream_runtime(
+            _make_content_event(audio_bytes=b"wrong-summary-audio"),
+            _make_live_event(
+                output_transcription=SimpleNamespace(
+                    text="Based on the video, we see an iPhone X in Space Gray.",
+                    finished=True,
+                ),
+                author="valuation_agent",
+                turn_complete=True,
+            ),
+            _make_content_event(audio_bytes=b"grounded-summary-audio"),
+            _make_live_event(
+                output_transcription=SimpleNamespace(
+                    text=(
+                        "Here's what I can confirm from the video: it looks like an iPhone XR in red, "
+                        "and overall it looks to be in Good condition. Based on that, our trade-in "
+                        "offer is ₦234,000. Would you like to go ahead with that offer, or would you "
+                        "like to negotiate?"
+                    ),
+                    finished=True,
+                ),
+                author="valuation_agent",
+            ),
+            _make_live_event(turn_complete=True, author="valuation_agent"),
+        )
+        websocket = _FakeWebSocket()
+        ctx = _make_ctx(websocket)
+        ctx.session_state.update(
+            {
+                "app:channel": "voice",
+                "app:user_id": "user-offer-3",
+                "app:session_id": "session-offer-3",
+                "temp:active_agent": "valuation_agent",
+                "temp:last_server_message": {
+                    "id": 1,
+                    "type": "valuation_result",
+                    "deviceName": "iPhone XR",
+                    "condition": "Good",
+                    "price": 234000,
+                    "currency": "NGN",
+                },
+                "temp:last_offer_amount": 234000,
+                "temp:pending_valuation_result_voice_ack": "ready",
+            }
+        )
+        update_voice_state(
+            user_id="user-offer-3",
+            session_id="session-offer-3",
+            **{
+                "temp:background_vision_status": "ready",
+                "temp:last_analysis": {
+                    "device_name": "iPhone XR",
+                    "brand": "Apple",
+                    "device_color": "red",
+                    "condition": "Good",
+                },
+                "temp:last_offer_amount": 234000,
+                "temp:pending_valuation_result_voice_ack": "ready",
+            },
+        )
+        queue = _FakeRequestQueue()
+        session_alive = asyncio.Event()
+        session_alive.set()
+        silence_state = _make_silence_state()
+        try:
+            await st.downstream_task(ctx, queue, session_alive, silence_state)
+        finally:
+            clear_registered_voice_state(user_id="user-offer-3", session_id="session-offer-3")
+
+        agent_transcripts = [
+            msg for msg in websocket.sent_texts
+            if msg.get("type") == "transcription" and msg.get("role") == "agent"
+        ]
+        assert not any("space gray" in str(msg.get("text", "")).lower() for msg in agent_transcripts)
+        assert any("our trade-in offer is ₦234,000" in str(msg.get("text", "")) for msg in agent_transcripts)
+        assert websocket.sent_bytes == [b"grounded-summary-audio"]
+
+    @pytest.mark.asyncio
+    async def test_downstream_retries_when_analysis_reply_conflicts_with_expected(self):
+        st = _configure_downstream_runtime(
+            _make_live_event(
+                input_transcription=SimpleNamespace(
+                    text="What colour is the phone?",
+                    finished=True,
+                ),
+                author="valuation_agent",
+            ),
+            _make_content_event(audio_bytes=b"\x00\x01"),
+            _make_live_event(
+                output_transcription=SimpleNamespace(
+                    text="The analysis didn't specify the color.",
+                    finished=True,
+                ),
+                author="valuation_agent",
+            ),
+            _make_live_event(turn_complete=True, author="valuation_agent"),
+        )
+        websocket = _FakeWebSocket()
+        ctx = _make_ctx(websocket)
+        ctx.session_state.update(
+            {
+                "app:channel": "voice",
+                "app:user_id": "user-1",
+                "app:session_id": "session-1",
+                "temp:active_agent": "valuation_agent",
+            }
+        )
+        update_voice_state(
+            user_id="user-1",
+            session_id="session-1",
+            **{
+                "temp:background_vision_status": "ready",
+                "temp:last_analysis": {
+                    "device_name": "iPhone XR",
+                    "brand": "Apple",
+                    "device_color": "red",
+                    "condition": "Good",
+                },
+            },
+        )
+        queue = _FakeRequestQueue()
+        session_alive = asyncio.Event()
+        session_alive.set()
+        silence_state = _make_silence_state()
+        try:
+            await st.downstream_task(ctx, queue, session_alive, silence_state)
+        finally:
+            clear_registered_voice_state(user_id="user-1", session_id="session-1")
+
+        agent_transcripts = [
+            msg for msg in websocket.sent_texts
+            if msg.get("type") == "transcription" and msg.get("role") == "agent"
+        ]
+        assert not any(
+            msg.get("text") == "The analysis didn't specify the color."
+            for msg in agent_transcripts
+        )
+        assert websocket.sent_bytes == []
+        deterministic_prompts = [
+            content
+            for content in queue.sent
+            if "verified video-analysis fact" in ((content.parts[0].text or "").lower())
+        ]
+        assert len(deterministic_prompts) == 2
+
+    @pytest.mark.asyncio
+    async def test_downstream_requeues_same_voice_recovery_after_second_analysis_reply_mismatch(self):
+        st = _configure_downstream_runtime(
+            _make_live_event(
+                input_transcription=SimpleNamespace(
+                    text="What colour is the phone?",
+                    finished=True,
+                ),
+                author="valuation_agent",
+            ),
+            _make_live_event(
+                output_transcription=SimpleNamespace(
+                    text="The analysis didn't specify the color.",
+                    finished=True,
+                ),
+                author="valuation_agent",
+            ),
+            _make_live_event(turn_complete=True, author="valuation_agent"),
+            _make_live_event(
+                output_transcription=SimpleNamespace(
+                    text="I still can't confirm the colour.",
+                    finished=True,
+                ),
+                author="valuation_agent",
+            ),
+            _make_live_event(turn_complete=True, author="valuation_agent"),
+            _make_content_event(audio_bytes=b"same-voice-recovery-audio"),
+            _make_live_event(
+                output_transcription=SimpleNamespace(
+                    text="The video analysis shows the phone is red.",
+                    finished=True,
+                ),
+                author="valuation_agent",
+            ),
+            _make_live_event(turn_complete=True, author="valuation_agent"),
+        )
+        websocket = _FakeWebSocket()
+        ctx = _make_ctx(websocket)
+        ctx.session_state.update(
+            {
+                "app:channel": "voice",
+                "app:user_id": "user-1",
+                "app:session_id": "session-1",
+                "temp:active_agent": "valuation_agent",
+            }
+        )
+        update_voice_state(
+            user_id="user-1",
+            session_id="session-1",
+            **{
+                "temp:background_vision_status": "ready",
+                "temp:last_analysis": {
+                    "device_name": "iPhone XR",
+                    "brand": "Apple",
+                    "device_color": "red",
+                    "condition": "Good",
+                },
+            },
+        )
+        queue = _FakeRequestQueue()
+        session_alive = asyncio.Event()
+        session_alive.set()
+        silence_state = _make_silence_state()
+        try:
+            with patch(
+                "app.api.v1.at.providers.text_to_speech_pcm",
+                new=AsyncMock(side_effect=AssertionError("TTS should not be used")),
+            ):
+                await st.downstream_task(ctx, queue, session_alive, silence_state)
+        finally:
+            clear_registered_voice_state(user_id="user-1", session_id="session-1")
+
+        agent_transcripts = [
+            msg for msg in websocket.sent_texts
+            if msg.get("type") == "transcription" and msg.get("role") == "agent"
+        ]
+        assert any(
+            msg.get("text") == "The video analysis shows the phone is red."
+            for msg in agent_transcripts
+        )
+        assert websocket.sent_bytes == [b"same-voice-recovery-audio"]
+        assert any(
+            "verified analysis-backed answer" in (content.parts[0].text or "").lower()
+            for content in queue.sent
+        )
+
+    @pytest.mark.asyncio
+    async def test_runtime_media_received_ack_is_spoken_once_and_clears_pending_state(self):
+        ctx = _make_ctx(_FakeWebSocket())
+        ctx.session_state.update(
+            {
+                "app:channel": "voice",
+                "temp:active_agent": "valuation_agent",
+                "temp:last_media_request_status": "sent",
+                "temp:background_vision_status": "running",
+                "temp:pending_media_received_voice_ack": "video",
+                "temp:last_user_turn": "A B C and D's.",
+                "temp:recent_customer_context": "",
+            }
+        )
+
+        with patch(
+            "app.api.v1.at.providers.text_to_speech_pcm",
+            new=AsyncMock(side_effect=AssertionError("TTS should not be used")),
+        ):
+            websocket, queue, _ = await _run_downstream_events(
+                _make_live_event(turn_complete=True, author="valuation_agent"),
+                _make_content_event(audio_bytes=b"media-ack-audio", turn_complete=False),
+                _make_live_event(
+                    output_transcription=SimpleNamespace(
+                        text=(
+                            "I've got the video, let me check it now. While I do that, "
+                            "what storage size do you want for the new phone?"
+                        ),
+                        finished=True,
+                    ),
+                    author="valuation_agent",
+                ),
+                _make_live_event(turn_complete=True, author="valuation_agent"),
+                ctx=ctx,
+            )
+
+        agent_transcripts = [
+            msg for msg in websocket.sent_texts
+            if msg.get("type") == "transcription" and msg.get("role") == "agent"
+        ]
+        assert any(
+            msg.get("text")
+            == "I've got the video, let me check it now. While I do that, what storage size do you want for the new phone?"
+            for msg in agent_transcripts
+        )
+        assert websocket.sent_bytes == [b"media-ack-audio"]
+        assert ctx.session_state["temp:pending_media_received_voice_ack"] == ""
+        assert any(
+            "runtime already determined the exact next sentence"
+            in (content.parts[0].text or "").lower()
+            for content in queue.sent
+        )
+
+    @pytest.mark.asyncio
+    async def test_runtime_media_received_ack_suppresses_duplicate_native_followup_until_user_turn(self):
+        ctx = _make_ctx(_FakeWebSocket())
+        ctx.session_state.update(
+            {
+                "app:channel": "voice",
+                "temp:active_agent": "valuation_agent",
+                "temp:last_media_request_status": "sent",
+                "temp:background_vision_status": "running",
+                "temp:pending_media_received_voice_ack": "video",
+                "temp:last_user_turn": "I want to swap from XR to 14.",
+            }
+        )
+
+        with patch(
+            "app.api.v1.at.providers.text_to_speech_pcm",
+            new=AsyncMock(side_effect=AssertionError("TTS should not be used")),
+        ):
+            websocket, _, _ = await _run_downstream_events(
+                _make_live_event(turn_complete=True, author="valuation_agent"),
+                _make_content_event(audio_bytes=b"media-ack-audio", turn_complete=False),
+                _make_live_event(
+                    output_transcription=SimpleNamespace(
+                        text=(
+                            "I've got the video, let me check it now. While I do that, "
+                            "what storage size do you want for the new phone?"
+                        ),
+                        finished=True,
+                    ),
+                    author="valuation_agent",
+                ),
+                _make_live_event(turn_complete=True, author="valuation_agent"),
+                _make_content_event(audio_bytes=b"duplicate-ack-audio", turn_complete=False),
+                _make_live_event(
+                    output_transcription=SimpleNamespace(
+                        text=(
+                            "I've got the video, let me check it now. While I do that, "
+                            "what storage size do you want for the new phone?"
+                        ),
+                        finished=True,
+                    ),
+                    author="valuation_agent",
+                ),
+                _make_live_event(turn_complete=True, author="valuation_agent"),
+                ctx=ctx,
+            )
+
+        agent_transcripts = [
+            msg for msg in websocket.sent_texts
+            if msg.get("type") == "transcription" and msg.get("role") == "agent"
+        ]
+        assert agent_transcripts == [{
+            "type": "transcription",
+            "role": "agent",
+            "text": (
+                "I've got the video, let me check it now. While I do that, "
+                "what storage size do you want for the new phone?"
+            ),
+            "partial": False,
+        }]
+        assert websocket.sent_bytes == [b"media-ack-audio"]
+
+    @pytest.mark.asyncio
+    async def test_runtime_questionnaire_prompt_is_spoken_from_pending_state(self):
+        ctx = _make_ctx(_FakeWebSocket())
+        ctx.session_state.update(
+            {
+                "app:channel": "voice",
+                "temp:active_agent": "valuation_agent",
+                "temp:pending_questionnaire_voice_ack": "ready",
+                "temp:pending_questionnaire_voice_text": "Has the device ever been exposed to water damage?",
+            }
+        )
+
+        websocket, queue, _ = await _run_downstream_events(
+            _make_live_event(turn_complete=True, author="valuation_agent"),
+            _make_content_event(audio_bytes=b"question-audio", turn_complete=False),
+            _make_live_event(
+                output_transcription=SimpleNamespace(
+                    text="Has the device ever been exposed to water damage?",
+                    finished=True,
+                ),
+                author="valuation_agent",
+            ),
+            _make_live_event(turn_complete=True, author="valuation_agent"),
+            ctx=ctx,
+        )
+
+        agent_transcripts = [
+            msg for msg in websocket.sent_texts
+            if msg.get("type") == "transcription" and msg.get("role") == "agent"
+        ]
+        assert any(
+            msg.get("text") == "Has the device ever been exposed to water damage?"
+            for msg in agent_transcripts
+        )
+        assert websocket.sent_bytes == [b"question-audio"]
+        assert ctx.session_state["temp:pending_questionnaire_voice_ack"] == ""
+        assert ctx.session_state["temp:pending_questionnaire_voice_text"] == ""
+        assert any(
+            "runtime already determined the exact next sentence"
+            in (content.parts[0].text or "").lower()
+            for content in queue.sent
+        )
+
+    @pytest.mark.asyncio
+    async def test_explicit_swap_request_suppresses_router_chatter_until_valuation_transfer(self):
+        ctx = _make_ctx(_FakeWebSocket())
+        ctx.session_state["app:channel"] = "voice"
+
+        websocket, queue, _ = await _run_downstream_events(
+            _make_live_event(
+                input_transcription=SimpleNamespace(
+                    text="I want to swap my iPhone XR to an iPhone 14.",
+                    finished=True,
+                ),
+                author="ekaette_router",
+            ),
+            _make_live_event(
+                output_transcription=SimpleNamespace(
+                    text="Are you looking for a brand new or used iPhone 14?",
+                    finished=True,
+                ),
+                author="ekaette_router",
+            ),
+            _make_live_event(turn_complete=True, author="ekaette_router"),
+            ctx=ctx,
+        )
+
+        agent_transcripts = [
+            msg for msg in websocket.sent_texts
+            if msg.get("type") == "transcription" and msg.get("role") == "agent"
+        ]
+        assert not any(
+            "brand new or used iphone 14" in str(msg.get("text", "")).lower()
+            for msg in agent_transcripts
+        )
+        assert any(
+            "transfer immediately to valuation_agent" in (content.parts[0].text or "").lower()
+            for content in queue.sent
+        )
+
+    @pytest.mark.asyncio
     async def test_server_owned_opening_greeting_sent_before_first_user_turn(self, monkeypatch):
         import app.api.v1.realtime.stream_tasks as st
 
@@ -1268,56 +2063,198 @@ class TestWatchdogClearingInDownstream:
         } in websocket.sent_texts
 
     @pytest.mark.asyncio
-    async def test_media_request_success_queues_immediate_voice_ack_prompt(self):
+    async def test_media_request_success_emits_one_runtime_voice_ack(self):
         ctx = _make_ctx(_FakeWebSocket())
         ctx.session_state.update(
             {
                 "app:channel": "voice",
                 "temp:active_agent": "valuation_agent",
+                "temp:last_media_request_status": "sent",
+                "temp:background_vision_status": "awaiting_media",
                 "temp:pending_media_request_voice_ack": "ready",
             }
         )
 
-        _, queue, silence_state = await _run_downstream_events(
-            _make_live_event(turn_complete=True),
-            ctx=ctx,
-        )
+        with patch(
+            "app.api.v1.at.providers.text_to_speech_pcm",
+            new=AsyncMock(side_effect=AssertionError("TTS should not be used")),
+        ):
+            websocket, queue, silence_state = await _run_downstream_events(
+                _make_live_event(turn_complete=True),
+                _make_content_event(audio_bytes=b"request-ack-audio", turn_complete=False),
+                _make_live_event(
+                    output_transcription=SimpleNamespace(
+                        text=(
+                            "I've just sent a WhatsApp message. Please send a quick video "
+                            "or a few photos of your device there now."
+                        ),
+                        finished=True,
+                    ),
+                    author="valuation_agent",
+                ),
+                _make_live_event(turn_complete=True),
+                ctx=ctx,
+            )
 
+        agent_transcripts = [
+            msg for msg in websocket.sent_texts
+            if msg.get("type") == "transcription" and msg.get("role") == "agent"
+        ]
         assert any(
-            "whatsapp media request has already been sent successfully"
+            msg.get("text")
+            == "I've just sent a WhatsApp message. Please send a quick video or a few photos of your device there now."
+            for msg in agent_transcripts
+        )
+        assert websocket.sent_bytes == [b"request-ack-audio"]
+        assert any(
+            "runtime already determined the exact next sentence"
             in (content.parts[0].text or "").lower()
             for content in queue.sent
         )
         assert ctx.session_state["temp:pending_media_request_voice_ack"] == ""
-        assert silence_state.awaiting_agent_response is True
+        assert silence_state.awaiting_agent_response is False
 
     @pytest.mark.asyncio
-    async def test_media_request_success_prompt_consumed_when_agent_already_spoke(self):
+    async def test_media_request_success_suppresses_natural_duplicate_output(self):
         ctx = _make_ctx(_FakeWebSocket())
         ctx.session_state.update(
             {
                 "app:channel": "voice",
                 "temp:active_agent": "valuation_agent",
+                "temp:last_media_request_status": "sent",
+                "temp:background_vision_status": "awaiting_media",
                 "temp:pending_media_request_voice_ack": "ready",
             }
         )
 
-        _, queue, _ = await _run_downstream_events(
+        websocket, queue, _ = await _run_downstream_events(
+            _make_content_event(audio_bytes=b"natural-duplicate-audio"),
             _make_live_event(
                 output_transcription=SimpleNamespace(
                     text="I've sent the WhatsApp message. Please check it now.",
                     finished=True,
-                )
+                ),
+                author="valuation_agent",
             ),
+            _make_live_event(turn_complete=True),
+            _make_content_event(audio_bytes=b"validated-ack-audio"),
+            _make_live_event(
+                output_transcription=SimpleNamespace(
+                    text=(
+                        "I've just sent a WhatsApp message. Please send a quick video "
+                        "or a few photos of your device there now."
+                    ),
+                    finished=True,
+                ),
+                author="valuation_agent",
+            ),
+            _make_live_event(turn_complete=True),
             ctx=ctx,
         )
 
-        assert not any(
-            "whatsapp media request has already been sent successfully"
+        agent_transcripts = [
+            msg for msg in websocket.sent_texts
+            if msg.get("type") == "transcription" and msg.get("role") == "agent"
+        ]
+        assert agent_transcripts == [{
+            "type": "transcription",
+            "role": "agent",
+            "text": "I've just sent a WhatsApp message. Please send a quick video or a few photos of your device there now.",
+            "partial": False,
+        }]
+        assert websocket.sent_bytes == [b"validated-ack-audio"]
+        assert any(
+            "runtime already determined the exact next sentence"
             in (content.parts[0].text or "").lower()
             for content in queue.sent
         )
         assert ctx.session_state["temp:pending_media_request_voice_ack"] == ""
+
+    @pytest.mark.asyncio
+    async def test_media_request_runtime_ack_waits_for_native_voice_before_fallback(self):
+        ctx = _make_ctx(_FakeWebSocket())
+        ctx.session_state.update(
+            {
+                "app:channel": "voice",
+                "temp:active_agent": "valuation_agent",
+                "temp:last_media_request_status": "sent",
+                "temp:background_vision_status": "awaiting_media",
+                "temp:pending_media_request_voice_ack": "ready",
+            }
+        )
+
+        with patch(
+            "app.api.v1.at.providers.text_to_speech_pcm",
+            new=AsyncMock(side_effect=AssertionError("TTS should not be used")),
+        ):
+            websocket, _, _ = await _run_downstream_events(
+                _make_live_event(turn_complete=True),
+                _make_live_event(turn_complete=True),
+                _make_content_event(audio_bytes=b"validated-after-gap"),
+                _make_live_event(
+                    output_transcription=SimpleNamespace(
+                        text=(
+                            "I've just sent a WhatsApp message. Please send a quick video "
+                            "or a few photos of your device there now."
+                        ),
+                        finished=True,
+                    ),
+                    author="valuation_agent",
+                ),
+                _make_live_event(turn_complete=True),
+                ctx=ctx,
+            )
+
+        agent_transcripts = [
+            msg for msg in websocket.sent_texts
+            if msg.get("type") == "transcription" and msg.get("role") == "agent"
+        ]
+        assert agent_transcripts == [{
+            "type": "transcription",
+            "role": "agent",
+            "text": "I've just sent a WhatsApp message. Please send a quick video or a few photos of your device there now.",
+            "partial": False,
+        }]
+        assert websocket.sent_bytes == [b"validated-after-gap"]
+
+    @pytest.mark.asyncio
+    async def test_media_request_runtime_ack_exhaustion_uses_same_voice_recovery_only(self, monkeypatch):
+        import app.api.v1.realtime.stream_tasks as st
+
+        monkeypatch.setattr(st, "DETERMINISTIC_RUNTIME_REPLY_GRACE_SECONDS", 0.0)
+        ctx = _make_ctx(_FakeWebSocket())
+        ctx.session_state.update(
+            {
+                "app:channel": "voice",
+                "temp:active_agent": "valuation_agent",
+                "temp:last_media_request_status": "sent",
+                "temp:background_vision_status": "awaiting_media",
+                "temp:pending_media_request_voice_ack": "ready",
+            }
+        )
+
+        with patch(
+            "app.api.v1.at.providers.text_to_speech_pcm",
+            new=AsyncMock(side_effect=AssertionError("TTS should not be used")),
+        ):
+            _, queue, silence_state = await _run_downstream_events(
+                _make_live_event(turn_complete=True),
+                _make_live_event(turn_complete=True),
+                _make_live_event(turn_complete=True),
+                ctx=ctx,
+            )
+
+        prompts = [
+            content.parts[0].text
+            for content in queue.sent
+            if getattr(content, "parts", None)
+        ]
+        assert any(
+            "strict validation path did not complete in time" in (text or "").lower()
+            for text in prompts
+        )
+        assert ctx.session_state["temp:pending_media_request_voice_ack"] == ""
+        assert silence_state.awaiting_agent_response is True
 
     @pytest.mark.asyncio
     async def test_finished_callback_ack_emits_end_after_speaking_directly(self):

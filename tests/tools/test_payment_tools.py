@@ -49,11 +49,10 @@ class TestCreateVirtualAccountPaymentTool:
         assert result["status"] == "ok"
         assert result["notification_phone"] == "+2348012345678"
         assert result["sms_sender_id"] == "Awgabassey"
-        assert result["sms_sent"] is True
-        assert result["whatsapp_sent"] is True
+        assert result["notifications_attempted"] is False
+        assert result["sms_sent"] is False
+        assert result["whatsapp_sent"] is False
         assert mock_create.await_args.kwargs["phone"] == "+2348012345678"
-        assert mock_sms.await_args.kwargs["phone"] == "+2348012345678"
-        assert mock_sms.await_args.kwargs["sender_id"] == "Awgabassey"
 
 
 class TestCheckPaymentStatusDemoMode:

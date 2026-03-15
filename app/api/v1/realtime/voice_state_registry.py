@@ -27,7 +27,14 @@ VOICE_STATE_STR_KEYS = (
     "temp:recent_customer_context",
     "temp:vision_media_handoff_state",
     "temp:background_vision_status",
+    "temp:last_media_request_status",
+    "temp:tradein_fulfillment_phase",
+    "temp:last_delivery_quote_status",
+    "temp:pending_media_received_voice_ack",
     "temp:pending_media_request_voice_ack",
+    "temp:pending_questionnaire_voice_ack",
+    "temp:pending_questionnaire_voice_text",
+    "temp:pending_valuation_result_voice_ack",
     "temp:pending_handoff_target_agent",
     "temp:pending_handoff_latest_user",
     "temp:pending_handoff_latest_agent",
@@ -37,9 +44,12 @@ VOICE_STATE_STR_KEYS = (
 )
 VOICE_STATE_JSON_KEYS = (
     "temp:last_analysis",
+    "temp:tradein_questionnaire_state",
+    "temp:last_delivery_quote_details",
 )
 VOICE_STATE_INT_KEYS = (
     "temp:model_turn_count",
+    "temp:last_offer_amount",
 )
 VOICE_STATE_KEYS = frozenset(
     VOICE_STATE_BOOL_KEYS
@@ -91,7 +101,7 @@ def update_voice_state(
                 normalized[key] = value.strip()
             continue
         if key in VOICE_STATE_JSON_KEYS:
-            if isinstance(value, dict) and value:
+            if isinstance(value, dict):
                 normalized[key] = copy.deepcopy(value)
             continue
         if key in VOICE_STATE_INT_KEYS:
@@ -99,10 +109,7 @@ def update_voice_state(
                 parsed = int(value or 0)
             except (TypeError, ValueError):
                 parsed = 0
-            # Counters are only promoted when they advance; session teardown
-            # clears them instead of writing zero values back into the registry.
-            if parsed > 0:
-                normalized[key] = parsed
+            normalized[key] = parsed
 
     if not normalized:
         return

@@ -129,3 +129,78 @@ class TestTopshipDeliveryQuote:
             )
 
         assert result["code"] == "TOPSHIP_NO_QUOTES"
+
+    @pytest.mark.asyncio
+    async def test_retries_with_normalized_city_when_composite_city_has_no_quotes(self):
+        from app.tools import shipping_tools
+
+        # Topship production returns quote totals in kobo for this route shape.
+        payload = [
+            {
+                "mode": "Express Shipping",
+                "pricingTier": "Express",
+                "cost": 561272,
+                "currency": "KOBO",
+                "duration": "Delivery in 3 - 7 working days",
+            },
+        ]
+
+        with (
+            patch.object(shipping_tools, "TOPSHIP_API_KEY", "topship_test_key"),
+            patch.object(shipping_tools, "_fetch_topship_rates", new_callable=AsyncMock) as mock_fetch,
+        ):
+            mock_fetch.side_effect = [
+                (200, []),
+                (200, payload),
+            ]
+            result = await shipping_tools.get_topship_delivery_quote(
+                sender_city="Lagos",
+                receiver_city="Yaba, Lagos",
+            )
+
+        assert mock_fetch.await_count == 2
+        first_call, second_call = mock_fetch.await_args_list
+        assert first_call.args[0]["receiverDetails"]["cityName"] == "Yaba, Lagos"
+        assert second_call.args[0]["receiverDetails"]["cityName"] == "Yaba"
+        assert result["status"] == "ok"
+        assert result["requested_receiver_city"] == "Yaba, Lagos"
+        assert result["receiver_city"] == "Yaba"
+        assert result["normalized_route"] is True
+        assert result["attempted_receiver_cities"] == ["Yaba, Lagos", "Yaba"]
+        assert len(result["quotes"]) == 1
+        assert result["cheapest"]["total_kobo"] == 561272
+
+    @pytest.mark.asyncio
+    async def test_retries_next_city_candidate_after_client_error(self):
+        from app.tools import shipping_tools
+
+        payload = [
+            {
+                "mode": "Express Shipping",
+                "pricingTier": "Express",
+                "cost": 561272,
+                "currency": "KOBO",
+                "duration": "Delivery in 3 - 7 working days",
+            },
+        ]
+
+        with (
+            patch.object(shipping_tools, "TOPSHIP_API_KEY", "topship_test_key"),
+            patch.object(shipping_tools, "_fetch_topship_rates", new_callable=AsyncMock) as mock_fetch,
+        ):
+            mock_fetch.side_effect = [
+                (400, {"message": "invalid city"}),
+                (200, payload),
+            ]
+            result = await shipping_tools.get_topship_delivery_quote(
+                sender_city="Lagos",
+                receiver_city="Yaba, Lagos",
+            )
+
+        assert mock_fetch.await_count == 2
+        first_call, second_call = mock_fetch.await_args_list
+        assert first_call.args[0]["receiverDetails"]["cityName"] == "Yaba, Lagos"
+        assert second_call.args[0]["receiverDetails"]["cityName"] == "Yaba"
+        assert result["status"] == "ok"
+        assert result["receiver_city"] == "Yaba"
+        assert result["attempted_receiver_cities"] == ["Yaba, Lagos", "Yaba"]

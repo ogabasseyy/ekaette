@@ -28,6 +28,7 @@ class TestBookingAgentTools:
         assert "delivery quote + checkout flow" in instruction
         assert "fulfillment preference" in instruction
         assert "booking is optional for completed purchases" in instruction
+        assert "yaba, lagos" in instruction
 
     def test_text_booking_agent_omits_outbound_message_tools(self):
         from app.agents.booking_agent.agent import create_booking_agent

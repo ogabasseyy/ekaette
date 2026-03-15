@@ -328,6 +328,13 @@ async def _process_message(
         logger.info("Unknown WA message type received")
         return
 
+    if not str(reply or "").strip():
+        logger.info(
+            "Skipping WA outbound reply for msg_type=%s because handler returned empty text",
+            msg_type,
+        )
+        return
+
     # Send reply — voice note in → voice note out, text in → text out.
     if msg_type == "audio" and reply:
         status, send_body = await _send_voice_reply(from_, reply, phone_number_id)

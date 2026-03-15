@@ -415,6 +415,30 @@ def _extract_rate_items(payload: object) -> list[dict[str, Any]]:
     return []
 
 
+def _city_candidates(city: str) -> list[str]:
+    """Return ordered Topship-safe city candidates from a captured city string."""
+    raw = _clean_str(city)
+    if not raw:
+        return []
+
+    candidates: list[str] = [raw]
+    if "," in raw:
+        parts = [part.strip() for part in raw.split(",") if part.strip()]
+        if parts:
+            candidates.append(parts[0])
+            if len(parts) > 1:
+                candidates.append(parts[-1])
+
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for candidate in candidates:
+        key = candidate.casefold()
+        if candidate and key not in seen:
+            seen.add(key)
+            ordered.append(candidate)
+    return ordered
+
+
 def _map_rate_to_quote(rate: dict[str, Any]) -> dict[str, Any]:
     service_type = str(rate.get("serviceType") or rate.get("mode") or "Standard").strip() or "Standard"
     pricing_tier = str(rate.get("pricingTier") or "Budget").strip() or "Budget"
@@ -485,40 +509,67 @@ async def get_topship_delivery_quote(
     if weight_kg <= 0:
         weight_kg = 1.0
 
-    shipment_detail = {
-        "senderDetails": {
-            "cityName": sender,
-            "countryCode": (sender_country_code or "NG").strip().upper(),
-        },
-        "receiverDetails": {
-            "cityName": receiver,
-            "countryCode": (receiver_country_code or "NG").strip().upper(),
-        },
-        "totalWeight": round(weight_kg, 2),
-    }
+    sender_candidates = _city_candidates(sender)
+    receiver_candidates = _city_candidates(receiver)
+    attempted_sender_cities: list[str] = []
+    attempted_receiver_cities: list[str] = []
+    chosen_sender = sender
+    chosen_receiver = receiver
+    quotes: list[dict[str, Any]] = []
 
-    try:
-        status_code, payload = await _fetch_topship_rates(shipment_detail)
-    except Exception as exc:
-        return {
-            "error": f"Topship request failed: {exc}",
-            "code": "TOPSHIP_REQUEST_FAILED",
-            "provider": "topship",
-            "route": _route_summary(sender, receiver, weight_kg),
-        }
+    for sender_candidate in sender_candidates:
+        if sender_candidate not in attempted_sender_cities:
+            attempted_sender_cities.append(sender_candidate)
+        for receiver_candidate in receiver_candidates:
+            if receiver_candidate not in attempted_receiver_cities:
+                attempted_receiver_cities.append(receiver_candidate)
 
-    if status_code >= 400:
-        return {
-            "error": "Topship returned an error while fetching rates.",
-            "code": "TOPSHIP_API_ERROR",
-            "provider": "topship",
-            "status_code": status_code,
-            "route": _route_summary(sender, receiver, weight_kg),
-        }
+            shipment_detail = {
+                "senderDetails": {
+                    "cityName": sender_candidate,
+                    "countryCode": (sender_country_code or "NG").strip().upper(),
+                },
+                "receiverDetails": {
+                    "cityName": receiver_candidate,
+                    "countryCode": (receiver_country_code or "NG").strip().upper(),
+                },
+                "totalWeight": round(weight_kg, 2),
+            }
 
-    rates = _extract_rate_items(payload)
-    quotes = [_map_rate_to_quote(rate) for rate in rates]
-    quotes = [quote for quote in quotes if quote["total_kobo"] > 0]
+            try:
+                status_code, payload = await _fetch_topship_rates(shipment_detail)
+            except Exception as exc:
+                return {
+                    "error": f"Topship request failed: {exc}",
+                    "code": "TOPSHIP_REQUEST_FAILED",
+                    "provider": "topship",
+                    "route": _route_summary(sender, receiver, weight_kg),
+                    "attempted_sender_cities": attempted_sender_cities,
+                    "attempted_receiver_cities": attempted_receiver_cities,
+                }
+
+            if status_code >= 400:
+                if status_code >= 500:
+                    return {
+                        "error": "Topship returned an error while fetching rates.",
+                        "code": "TOPSHIP_API_ERROR",
+                        "provider": "topship",
+                        "status_code": status_code,
+                        "route": _route_summary(sender, receiver, weight_kg),
+                        "attempted_sender_cities": attempted_sender_cities,
+                        "attempted_receiver_cities": attempted_receiver_cities,
+                    }
+                continue
+
+            rates = _extract_rate_items(payload)
+            quotes = [_map_rate_to_quote(rate) for rate in rates]
+            quotes = [quote for quote in quotes if quote["total_kobo"] > 0]
+            if quotes:
+                chosen_sender = sender_candidate
+                chosen_receiver = receiver_candidate
+                break
+        if quotes:
+            break
 
     if not quotes:
         return {
@@ -526,6 +577,13 @@ async def get_topship_delivery_quote(
             "code": "TOPSHIP_NO_QUOTES",
             "provider": "topship",
             "route": _route_summary(sender, receiver, weight_kg),
+            "sender_city": sender,
+            "receiver_city": receiver,
+            "attempted_sender_cities": attempted_sender_cities,
+            "attempted_receiver_cities": attempted_receiver_cities,
+            "clarification_hint": (
+                "Confirm the delivery city or area again using a simple locality name."
+            ),
         }
 
     cheapest = min(quotes, key=lambda item: (item["total_kobo"], item["estimated_days"]))
@@ -539,9 +597,14 @@ async def get_topship_delivery_quote(
     return {
         "status": "ok",
         "provider": "topship",
-        "route": _route_summary(sender, receiver, weight_kg),
-        "sender_city": sender,
-        "receiver_city": receiver,
+        "route": _route_summary(chosen_sender, chosen_receiver, weight_kg),
+        "sender_city": chosen_sender,
+        "receiver_city": chosen_receiver,
+        "requested_sender_city": sender,
+        "requested_receiver_city": receiver,
+        "normalized_route": chosen_sender != sender or chosen_receiver != receiver,
+        "attempted_sender_cities": attempted_sender_cities,
+        "attempted_receiver_cities": attempted_receiver_cities,
         "weight_kg": round(weight_kg, 2),
         "recommended": recommended,
         "cheapest": cheapest,

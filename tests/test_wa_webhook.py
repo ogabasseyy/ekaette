@@ -456,6 +456,33 @@ class TestProcessHandler:
         )
         assert resp.status_code == 500
 
+    @patch("app.api.v1.at.providers.whatsapp_send_text", new_callable=AsyncMock)
+    @patch("app.api.v1.at.service_whatsapp.handle_video_message", new_callable=AsyncMock)
+    def test_process_skips_outbound_send_when_media_is_handed_to_live_call(
+        self,
+        mock_handle_video,
+        mock_send,
+    ) -> None:
+        mock_handle_video.return_value = ""
+        app = _build_wa_app_with_oidc_bypass()
+        client = TestClient(app)
+        resp = client.post(
+            "/api/v1/at/whatsapp/process",
+            json={
+                "message": {
+                    "id": "wamid.video1",
+                    "from": "2348012345678",
+                    "type": "video",
+                    "video": {"id": "media-video-1", "mime_type": "video/mp4"},
+                },
+                "phone_number_id": "test_phone_id",
+            },
+        )
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "ok"
+        mock_handle_video.assert_awaited_once()
+        mock_send.assert_not_awaited()
+
 
 # ── POST /whatsapp/send — Internal API ──
 

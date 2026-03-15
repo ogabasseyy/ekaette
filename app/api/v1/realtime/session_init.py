@@ -22,9 +22,18 @@ from app.api.v1.realtime.runtime_cache import (
 
 logger = logging.getLogger(__name__)
 
-_HANDOFF_STATE_DEFAULTS: dict[str, str] = {
+_HANDOFF_STATE_DEFAULTS: dict[str, object] = {
     "temp:vision_media_handoff_state": "",
     "temp:background_vision_status": "",
+    "temp:last_media_request_status": "",
+    "temp:tradein_fulfillment_phase": "",
+    "temp:last_delivery_quote_status": "",
+    "temp:last_offer_amount": 0,
+    "temp:last_delivery_quote_details": {},
+    "temp:pending_media_received_voice_ack": "",
+    "temp:pending_questionnaire_voice_ack": "",
+    "temp:pending_questionnaire_voice_text": "",
+    "temp:pending_valuation_result_voice_ack": "",
     "temp:pending_handoff_target_agent": "",
     "temp:pending_handoff_latest_user": "",
     "temp:pending_handoff_latest_agent": "",
