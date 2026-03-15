@@ -1504,6 +1504,50 @@ class TestCallbackEndAfterSpeaking:
 
 
 class TestInputDenoise:
+    def test_init_uses_conservative_gate_when_webrtc_apm_unavailable(self, monkeypatch):
+        import sip_bridge.session as session_mod
+
+        monkeypatch.setenv("SIP_DENOISE_ENABLED", "1")
+        monkeypatch.setenv("SIP_WEBRTC_APM_ENABLED", "1")
+        monkeypatch.delenv("SIP_DENOISE_GATE_MULTIPLIER", raising=False)
+        monkeypatch.delenv("SIP_DENOISE_MIN_RMS", raising=False)
+        monkeypatch.delenv("SIP_DENOISE_ATTACK_RMS", raising=False)
+        monkeypatch.delenv("SIP_DENOISE_ATTENUATION", raising=False)
+        monkeypatch.setattr(session_mod, "AudioProcessor", None)
+
+        s = session_mod.CallSession(call_id="c1", tenant_id="public", company_id="acme")
+
+        assert s._webrtc_apm_enabled is True
+        assert s._webrtc_apm is None
+        assert s._noise_gate_multiplier == 1.25
+        assert s._noise_gate_min_rms == 45.0
+        assert s._noise_gate_attack_rms == 90.0
+        assert s._noise_gate_attenuation == 0.35
+
+    def test_init_uses_conservative_gate_when_webrtc_apm_init_fails(self, monkeypatch):
+        import sip_bridge.session as session_mod
+
+        class _BrokenAPM:
+            def __init__(self, **_kwargs):
+                raise RuntimeError("boom")
+
+        monkeypatch.setenv("SIP_DENOISE_ENABLED", "1")
+        monkeypatch.setenv("SIP_WEBRTC_APM_ENABLED", "1")
+        monkeypatch.delenv("SIP_DENOISE_GATE_MULTIPLIER", raising=False)
+        monkeypatch.delenv("SIP_DENOISE_MIN_RMS", raising=False)
+        monkeypatch.delenv("SIP_DENOISE_ATTACK_RMS", raising=False)
+        monkeypatch.delenv("SIP_DENOISE_ATTENUATION", raising=False)
+        monkeypatch.setattr(session_mod, "AudioProcessor", _BrokenAPM)
+
+        s = session_mod.CallSession(call_id="c1", tenant_id="public", company_id="acme")
+
+        assert s._webrtc_apm is None
+        assert s._webrtc_apm_frame_size_bytes == 0
+        assert s._noise_gate_multiplier == 1.25
+        assert s._noise_gate_min_rms == 45.0
+        assert s._noise_gate_attack_rms == 90.0
+        assert s._noise_gate_attenuation == 0.35
+
     def test_webrtc_apm_processes_20ms_frame_in_two_10ms_chunks(self):
         s = CallSession(call_id="c1", tenant_id="public", company_id="acme")
 

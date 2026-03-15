@@ -13,6 +13,7 @@ import os
 import threading
 import time
 
+from shared.firestore_client import create_firestore_client
 from shared.phone_identity import normalize_phone
 
 logger = logging.getLogger(__name__)
@@ -43,10 +44,8 @@ def _get_firestore_client():
     global _FIRESTORE_CLIENT
     with _FIRESTORE_CLIENT_LOCK:
         if _FIRESTORE_CLIENT is None:
-            from google.cloud import firestore
-
             project = os.getenv("GOOGLE_CLOUD_PROJECT", "").strip() or None
-            _FIRESTORE_CLIENT = firestore.Client(project=project)
+            _FIRESTORE_CLIENT = create_firestore_client(project=project)
     return _FIRESTORE_CLIENT
 
 

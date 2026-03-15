@@ -56,6 +56,10 @@ ECHO_HOLDOFF_SEC = 0.5
 # Default audio gain for G.711 telephony input.
 # 2x compensates for typical PSTN attenuation without triggering VAD false positives.
 DEFAULT_AUDIO_GAIN = 2
+_FALLBACK_NOISE_GATE_MULTIPLIER = 1.25
+_FALLBACK_NOISE_GATE_MIN_RMS = 45.0
+_FALLBACK_NOISE_GATE_ATTACK_RMS = 90.0
+_FALLBACK_NOISE_GATE_ATTENUATION = 0.35
 
 
 def _read_float_env(name: str, default: float) -> float:
@@ -200,26 +204,90 @@ class CallSession:
         self._denoise_enabled = os.getenv("SIP_DENOISE_ENABLED", "1").strip().lower() in {
             "1", "true", "yes", "on",
         }
-        self._noise_gate_multiplier = max(
-            1.0, _read_float_env("SIP_DENOISE_GATE_MULTIPLIER", 1.6)
-        )
-        self._noise_gate_min_rms = max(
-            0.0, _read_float_env("SIP_DENOISE_MIN_RMS", 120.0)
-        )
-        self._noise_gate_attack_rms = max(
-            self._noise_gate_min_rms,
-            _read_float_env("SIP_DENOISE_ATTACK_RMS", 320.0),
-        )
-        self._noise_gate_attenuation = min(
-            1.0,
-            max(0.0, _read_float_env("SIP_DENOISE_ATTENUATION", 0.12)),
-        )
         self._webrtc_apm_enabled = os.getenv(
             "SIP_WEBRTC_APM_ENABLED", "1"
         ).strip().lower() in {"1", "true", "yes", "on"}
+        self._noise_gate_multiplier = max(
+            1.0,
+            _read_float_env(
+                "SIP_DENOISE_GATE_MULTIPLIER",
+                1.6,
+            ),
+        )
+        self._noise_gate_min_rms = max(
+            0.0,
+            _read_float_env(
+                "SIP_DENOISE_MIN_RMS",
+                120.0,
+            ),
+        )
+        self._noise_gate_attack_rms = max(
+            self._noise_gate_min_rms,
+            _read_float_env(
+                "SIP_DENOISE_ATTACK_RMS",
+                320.0,
+            ),
+        )
+        self._noise_gate_attenuation = min(
+            1.0,
+            max(
+                0.0,
+                _read_float_env(
+                    "SIP_DENOISE_ATTENUATION",
+                    0.12,
+                ),
+            ),
+        )
+        if self._denoise_enabled and self._webrtc_apm_enabled and AudioProcessor is None:
+            self._activate_conservative_noise_gate(reason="module_unavailable")
         self._maybe_init_webrtc_apm()
         if not self.delay_answer_until_ready:
             self._media_send_enabled.set()
+
+    def _activate_conservative_noise_gate(self, *, reason: str) -> None:
+        if not self._denoise_enabled:
+            return
+        self._noise_gate_multiplier = max(
+            1.0,
+            _read_float_env(
+                "SIP_DENOISE_GATE_MULTIPLIER",
+                _FALLBACK_NOISE_GATE_MULTIPLIER,
+            ),
+        )
+        self._noise_gate_min_rms = max(
+            0.0,
+            _read_float_env(
+                "SIP_DENOISE_MIN_RMS",
+                _FALLBACK_NOISE_GATE_MIN_RMS,
+            ),
+        )
+        self._noise_gate_attack_rms = max(
+            self._noise_gate_min_rms,
+            _read_float_env(
+                "SIP_DENOISE_ATTACK_RMS",
+                _FALLBACK_NOISE_GATE_ATTACK_RMS,
+            ),
+        )
+        self._noise_gate_attenuation = min(
+            1.0,
+            max(
+                0.0,
+                _read_float_env(
+                    "SIP_DENOISE_ATTENUATION",
+                    _FALLBACK_NOISE_GATE_ATTENUATION,
+                ),
+            ),
+        )
+        logger.warning(
+            "WebRTC APM unavailable on AT bridge; using conservative noise-gate fallback "
+            "call_id=%s reason=%s min_rms=%.0f multiplier=%.2f attack_rms=%.0f attenuation=%.2f",
+            self.call_id,
+            reason,
+            self._noise_gate_min_rms,
+            self._noise_gate_multiplier,
+            self._noise_gate_attack_rms,
+            self._noise_gate_attenuation,
+        )
 
     def _maybe_init_webrtc_apm(self) -> None:
         """Initialize WebRTC Audio Processing when available."""
@@ -248,6 +316,7 @@ class CallSession:
         except Exception:
             self._webrtc_apm = None
             self._webrtc_apm_frame_size_bytes = 0
+            self._activate_conservative_noise_gate(reason="init_failed")
             logger.warning(
                 "Failed to initialize WebRTC APM; falling back to noise gate call_id=%s",
                 self.call_id,
