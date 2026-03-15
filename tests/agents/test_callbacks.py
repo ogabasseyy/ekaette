@@ -1,5 +1,6 @@
 """Tests for shared agent callback behaviors."""
 
+import json
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -17,6 +18,7 @@ from app.agents.callbacks import (
     after_model_valuation_sanity,
     after_tool_emit_messages,
     before_agent_isolation_guard,
+    before_tool_capability_guard,
     before_model_inject_config,
     before_tool_capability_guard_and_log,
     on_tool_error_emit,
@@ -255,7 +257,165 @@ class TestBeforeModelInjectConfig:
         assert "device_color='red'" in system_instruction
         assert "condition='Good'" in system_instruction
         assert "power_state='on'" in system_instruction
+        assert "must say 'red' and no other colour" in system_instruction
         assert "did not confirm the device colour" not in system_instruction
+
+    @pytest.mark.asyncio
+    async def test_tradein_questionnaire_state_advances_from_latest_user_answer(self):
+        callback_context = SimpleNamespace(
+            state={
+                "app:channel": "voice",
+                "app:industry_config": {
+                    "name": "Electronics & Gadgets",
+                    "greeting": "Welcome!",
+                },
+                "temp:last_user_turn": "It is 87%.",
+                "temp:recent_customer_context": (
+                    "Customer: I want to swap my iPhone XR for an iPhone 14."
+                ),
+                "temp:tradein_questionnaire_state": {
+                    "status": "in_progress",
+                    "questions": [
+                        {
+                            "id": "battery_health_pct",
+                            "question": "What's the battery health %? (Settings → Battery → Battery Health)",
+                            "type": "number",
+                            "invert": False,
+                        },
+                        {
+                            "id": "account_locked",
+                            "question": "Have you signed out of iCloud and disabled Find My?",
+                            "type": "boolean",
+                            "invert": True,
+                        },
+                    ],
+                    "answers": {},
+                    "current_index": 0,
+                    "last_answer_source_text": "",
+                    "omitted_question_ids": [],
+                    "pending_completion_ack": False,
+                    "catalog_cache": {},
+                },
+            },
+            session=SimpleNamespace(state={}),
+            agent_name="valuation_agent",
+        )
+        llm_request = LlmRequest(model="gemini-test", contents=[])
+
+        await before_model_inject_config(callback_context, llm_request)
+
+        questionnaire_state = callback_context.state["temp:tradein_questionnaire_state"]
+        assert questionnaire_state["answers"]["battery_health_pct"] == 87
+        assert questionnaire_state["current_index"] == 1
+        system_instruction = str(llm_request.config.system_instruction)
+        assert "TRADE-IN QUESTIONNAIRE PHASE" in system_instruction
+        assert "Have you signed out of iCloud and disabled Find My?" in system_instruction
+
+    @pytest.mark.asyncio
+    async def test_injects_swap_direction_instruction_for_valuation_agent(self):
+        callback_context = SimpleNamespace(
+            state={
+                "app:channel": "voice",
+                "app:industry_config": {
+                    "name": "Electronics & Gadgets",
+                    "greeting": "Welcome!",
+                },
+                "temp:last_user_turn": "I want to swap from my iPhone XR to an iPhone 14.",
+                "temp:recent_customer_context": (
+                    "Customer: I want to swap from my iPhone XR to an iPhone 14."
+                ),
+            },
+            agent_name="valuation_agent",
+        )
+        llm_request = LlmRequest(model="gemini-test", contents=[])
+
+        await before_model_inject_config(callback_context, llm_request)
+
+        system_instruction = str(llm_request.config.system_instruction)
+        assert "SWAP DEVICE DIRECTION (MANDATORY)" in system_instruction
+        assert "'my iPhone XR'" in system_instruction or "'iPhone XR'" in system_instruction
+        assert "'an iPhone 14'" in system_instruction or "'iPhone 14'" in system_instruction
+        assert "only about the current trade-in device" in system_instruction
+
+    @pytest.mark.asyncio
+    async def test_injects_swap_direction_clarifier_when_two_devices_are_named_ambiguously(self):
+        callback_context = SimpleNamespace(
+            state={
+                "app:channel": "voice",
+                "app:industry_config": {
+                    "name": "Electronics & Gadgets",
+                    "greeting": "Welcome!",
+                },
+                "temp:last_user_turn": "I want to swap my iPhone XR and iPhone 14.",
+                "temp:recent_customer_context": (
+                    "Customer: I want to swap my iPhone XR and iPhone 14."
+                ),
+            },
+            agent_name="valuation_agent",
+        )
+        llm_request = LlmRequest(model="gemini-test", contents=[])
+
+        await before_model_inject_config(callback_context, llm_request)
+
+        system_instruction = str(llm_request.config.system_instruction)
+        assert "SWAP DEVICE DIRECTION IS UNCLEAR" in system_instruction
+
+    @pytest.mark.asyncio
+    async def test_injects_tradein_booking_handoff_instruction_for_valuation_agent(self):
+        callback_context = SimpleNamespace(
+            state={
+                "app:channel": "voice",
+                "app:industry_config": {
+                    "name": "Electronics & Gadgets",
+                    "greeting": "Welcome!",
+                },
+                "temp:last_offer_amount": 245000,
+                "temp:last_user_turn": "Yes, let's proceed with the swap.",
+                "temp:recent_customer_context": (
+                    "Customer: Yes, let's proceed with the swap."
+                ),
+            },
+            session=SimpleNamespace(state={}),
+            agent_name="valuation_agent",
+        )
+        llm_request = LlmRequest(model="gemini-test", contents=[])
+
+        await before_model_inject_config(callback_context, llm_request)
+
+        assert callback_context.state["temp:tradein_fulfillment_phase"] == "booking_pending"
+        system_instruction = str(llm_request.config.system_instruction)
+        assert "TRADE-IN BOOKING HANDOFF (MANDATORY)" in system_instruction
+        assert "transfer_to_agent with booking_agent" in system_instruction
+        assert "Do NOT ask for the customer's name" in system_instruction
+
+    @pytest.mark.asyncio
+    async def test_injects_exact_colour_answer_instruction_from_grounded_analysis(self):
+        callback_context = SimpleNamespace(
+            state={
+                "app:channel": "voice",
+                "app:industry_config": {
+                    "name": "Electronics & Gadgets",
+                    "greeting": "Welcome!",
+                },
+                "temp:background_vision_status": "ready",
+                "temp:last_user_turn": "What colour is the phone?",
+                "temp:last_analysis": {
+                    "device_name": "iPhone XR",
+                    "brand": "Apple",
+                    "device_color": "red",
+                    "condition": "Good",
+                },
+            },
+            agent_name="valuation_agent",
+        )
+        llm_request = LlmRequest(model="gemini-test", contents=[])
+
+        await before_model_inject_config(callback_context, llm_request)
+
+        system_instruction = str(llm_request.config.system_instruction)
+        assert "VISIBLE FACT ANSWER (MANDATORY)" in system_instruction
+        assert "phone is red" in system_instruction
+        assert "Do not mention any other colour" in system_instruction
 
     @pytest.mark.asyncio
     async def test_injects_unknown_colour_guidance_for_valuation_agent(self):
@@ -847,6 +1007,145 @@ class TestBeforeModelInjectConfig:
             clear_registered_voice_state(user_id=user_id, session_id=session_id)
 
     @pytest.mark.asyncio
+    async def test_after_model_prefers_live_session_turn_for_color_confirmation(self):
+        user_id = "voice-user-color-session"
+        session_id = "voice-session-color-session"
+        update_voice_state(
+            user_id=user_id,
+            session_id=session_id,
+            **{
+                "temp:background_vision_status": "ready",
+                "temp:last_analysis": {
+                    "device_name": "iPhone XR",
+                    "brand": "Apple",
+                    "device_color": "red",
+                    "condition": "Good",
+                },
+            },
+        )
+        try:
+            callback_context = SimpleNamespace(
+                state={
+                    "app:channel": "voice",
+                    "app:user_id": user_id,
+                    "app:session_id": session_id,
+                    "temp:background_vision_status": "ready",
+                    "temp:last_user_turn": "Yes, please.",
+                },
+                session=SimpleNamespace(
+                    state={
+                        "app:user_id": user_id,
+                        "app:session_id": session_id,
+                        "temp:last_user_turn": "Can you confirm the colour of the phone?",
+                    }
+                ),
+                agent_name="valuation_agent",
+            )
+            llm_response = SimpleNamespace(
+                content=SimpleNamespace(
+                    parts=[SimpleNamespace(text="Yes, the video shows that your iPhone XR is blue.")]
+                )
+            )
+
+            await after_model_valuation_sanity(callback_context, llm_response)
+
+            rewritten = llm_response.content.parts[0].text.lower()
+            assert "phone is red" in rewritten
+            assert "blue" not in rewritten
+        finally:
+            clear_registered_voice_state(user_id=user_id, session_id=session_id)
+
+    @pytest.mark.asyncio
+    async def test_after_model_rewrites_offer_summary_using_canonical_offer_and_analysis_state(self):
+        user_id = "voice-user-offer-summary"
+        session_id = "voice-session-offer-summary"
+        update_voice_state(
+            user_id=user_id,
+            session_id=session_id,
+            **{
+                "temp:background_vision_status": "ready",
+                "temp:last_analysis": {
+                    "device_name": "iPhone XR",
+                    "brand": "Apple",
+                    "device_color": "red",
+                    "condition": "Good",
+                    "power_state": "on",
+                    "details": {
+                        "screen_condition": "clear",
+                    },
+                },
+            },
+        )
+        try:
+            callback_context = SimpleNamespace(
+                state={
+                    "app:channel": "voice",
+                    "app:user_id": user_id,
+                    "app:session_id": session_id,
+                    "temp:background_vision_status": "ready",
+                    "temp:last_user_turn": "Yes, definitely. Face ID is working.",
+                },
+                session=SimpleNamespace(
+                    state={
+                        "app:user_id": user_id,
+                        "app:session_id": session_id,
+                        "temp:last_offer_amount": 87000,
+                    }
+                ),
+                agent_name="valuation_agent",
+            )
+            llm_response = SimpleNamespace(
+                content=SimpleNamespace(
+                    parts=[
+                        SimpleNamespace(
+                            text=(
+                                "Thanks for all that information. So, based on the video, "
+                                "we see a blue iPhone XR. Your trade-in offer is ₦87,000."
+                            )
+                        )
+                    ]
+                )
+            )
+
+            await after_model_valuation_sanity(callback_context, llm_response)
+
+            rewritten = llm_response.content.parts[0].text.lower()
+            assert "red" in rewritten
+            assert "blue" not in rewritten
+            assert "₦87,000".lower() in rewritten or "ngn" in rewritten
+        finally:
+            clear_registered_voice_state(user_id=user_id, session_id=session_id)
+
+    @pytest.mark.asyncio
+    async def test_after_model_rewrites_hand_you_over_booking_disclosure(self):
+        callback_context = SimpleNamespace(
+            state={
+                "app:channel": "voice",
+                "temp:tradein_fulfillment_phase": "booking_pending",
+                "temp:last_offer_amount": 87000,
+                "temp:last_user_turn": "Yes.",
+                "temp:recent_customer_context": "Customer: Yes.",
+            },
+            agent_name="valuation_agent",
+        )
+        llm_response = SimpleNamespace(
+            content=SimpleNamespace(
+                parts=[
+                    SimpleNamespace(
+                        text="Great! I'll hand you over now to finalize the pickup details."
+                    )
+                ]
+            )
+        )
+
+        await after_model_valuation_sanity(callback_context, llm_response)
+
+        rewritten = llm_response.content.parts[0].text.lower()
+        assert "hand you over" not in rewritten
+        assert "booking agent" not in rewritten
+        assert "let me get the next step sorted for you now" in rewritten
+
+    @pytest.mark.asyncio
     async def test_after_model_blocks_tradein_offer_while_background_analysis_is_running(self):
         callback_context = SimpleNamespace(
             state={
@@ -1138,6 +1437,45 @@ class TestCallbackLegGuards:
         clear_registered_voice_state(user_id=user_id, session_id=session_id)
 
     @pytest.mark.asyncio
+    async def test_questionnaire_blocked_from_registry_recent_customer_context_when_latest_turn_is_only_ack(self):
+        tool = SimpleNamespace(name="get_device_questionnaire_tool")
+        user_id = "voice-user-tradein-registry-context"
+        session_id = "sip-tradein-registry-context"
+        update_voice_state(
+            user_id=user_id,
+            session_id=session_id,
+            **{
+                "temp:background_vision_status": "running",
+                "temp:recent_customer_context": (
+                    "Customer: I want to swap my iPhone XR for an iPhone 14."
+                ),
+            },
+        )
+        try:
+            ctx = SimpleNamespace(
+                state={
+                    "app:session_id": session_id,
+                    "app:user_id": user_id,
+                    "app:capabilities": ["valuation_tradein"],
+                    "app:channel": "voice",
+                    "temp:last_user_turn": "Yes.",
+                },
+                session=SimpleNamespace(state={}),
+                agent_name="valuation_agent",
+            )
+
+            result = await before_tool_capability_guard_and_log(
+                tool,
+                {"device_brand": "Apple"},
+                ctx,
+            )
+
+            assert isinstance(result, dict)
+            assert result["error"] == "vision_analysis_pending"
+        finally:
+            clear_registered_voice_state(user_id=user_id, session_id=session_id)
+
+    @pytest.mark.asyncio
     async def test_grade_and_value_blocked_while_media_handoff_pending(self):
         tool = SimpleNamespace(name="grade_and_value_tool")
         ctx = SimpleNamespace(
@@ -1212,6 +1550,225 @@ class TestCallbackLegGuards:
             assert result["error"] == "vision_analysis_pending"
         finally:
             clear_registered_voice_state(user_id=user_id, session_id=session_id)
+
+    @pytest.mark.asyncio
+    async def test_request_media_via_whatsapp_is_deduped_while_waiting_for_upload(self):
+        tool = SimpleNamespace(name="request_media_via_whatsapp")
+        ctx = SimpleNamespace(
+            state={
+                "app:session_id": "sip-tradein-media-dedupe",
+                "app:user_id": "voice-user-media-dedupe",
+                "app:capabilities": ["valuation_tradein"],
+                "app:channel": "voice",
+                "temp:last_media_request_status": "sent",
+                "temp:background_vision_status": "awaiting_media",
+                "temp:last_outbound_delivery_phone": "+2348012345678",
+                "temp:last_user_turn": "Okay.",
+                "temp:recent_customer_context": "Customer: I want to swap my iPhone XR for an iPhone 14.",
+            },
+            session=SimpleNamespace(state={}),
+            agent_name="valuation_agent",
+        )
+
+        result = await before_tool_capability_guard_and_log(
+            tool,
+            {
+                "reason": "trade_in_photo_requested",
+                "summary": "Customer wants to swap an iPhone XR for an iPhone 14.",
+            },
+            ctx,
+        )
+
+        assert isinstance(result, dict)
+        assert result["status"] == "sent"
+        assert result["deduplicated"] is True
+
+    @pytest.mark.asyncio
+    async def test_request_media_via_whatsapp_resend_is_allowed_after_customer_reports_missing_message(self):
+        tool = SimpleNamespace(name="request_media_via_whatsapp")
+        ctx = SimpleNamespace(
+            state={
+                "app:session_id": "sip-tradein-media-resend",
+                "app:user_id": "voice-user-media-resend",
+                "app:capabilities": ["valuation_tradein"],
+                "app:channel": "voice",
+                "temp:last_media_request_status": "sent",
+                "temp:background_vision_status": "awaiting_media",
+                "temp:last_user_turn": "I didn't get the WhatsApp message, please resend it.",
+                "temp:recent_customer_context": "Customer: I didn't get the WhatsApp message, please resend it.",
+            },
+            session=SimpleNamespace(state={}),
+            agent_name="valuation_agent",
+        )
+
+        result = await before_tool_capability_guard_and_log(
+            tool,
+            {
+                "reason": "trade_in_photo_requested",
+                "summary": "Customer wants to swap an iPhone XR for an iPhone 14.",
+            },
+            ctx,
+        )
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_search_catalog_blocked_while_background_analysis_running(self):
+        tool = SimpleNamespace(name="search_catalog")
+        ctx = SimpleNamespace(
+            state={
+                "app:session_id": "sip-tradein-search-blocked",
+                "app:user_id": "voice-user-search-blocked",
+                "app:capabilities": ["catalog_lookup", "valuation_tradein"],
+                "app:channel": "voice",
+                "temp:background_vision_status": "running",
+                "temp:last_user_turn": "I want to swap my iPhone XR for an iPhone 14.",
+                "temp:recent_customer_context": (
+                    "Customer: I want to swap my iPhone XR for an iPhone 14."
+                ),
+            },
+            session=SimpleNamespace(state={}),
+            agent_name="valuation_agent",
+        )
+
+        result = await before_tool_capability_guard_and_log(
+            tool,
+            {"query": "iPhone 14 128GB"},
+            ctx,
+        )
+
+        assert isinstance(result, dict)
+        assert result["error"] == "vision_analysis_pending"
+
+    @pytest.mark.asyncio
+    async def test_search_catalog_blocked_while_questionnaire_incomplete(self):
+        tool = SimpleNamespace(name="search_catalog")
+        ctx = SimpleNamespace(
+            state={
+                "app:session_id": "sip-tradein-search-questionnaire",
+                "app:user_id": "voice-user-search-questionnaire",
+                "app:capabilities": ["catalog_lookup", "valuation_tradein"],
+                "app:channel": "voice",
+                "temp:last_user_turn": "I want to swap my iPhone XR for an iPhone 14.",
+                "temp:recent_customer_context": (
+                    "Customer: I want to swap my iPhone XR for an iPhone 14."
+                ),
+                "temp:tradein_questionnaire_state": {
+                    "status": "in_progress",
+                    "questions": [
+                        {
+                            "id": "water_damage",
+                            "question": "Has the device ever been exposed to water damage?",
+                            "type": "boolean",
+                            "invert": False,
+                        }
+                    ],
+                    "answers": {},
+                    "current_index": 0,
+                    "last_answer_source_text": "",
+                    "omitted_question_ids": [],
+                    "pending_completion_ack": False,
+                    "catalog_cache": {},
+                },
+                "temp:last_analysis": {
+                    "device_name": "iPhone XR",
+                    "brand": "Apple",
+                    "condition": "Good",
+                },
+            },
+            session=SimpleNamespace(state={}),
+            agent_name="valuation_agent",
+        )
+
+        result = await before_tool_capability_guard_and_log(
+            tool,
+            {"query": "iPhone XR"},
+            ctx,
+        )
+
+        assert isinstance(result, dict)
+        assert result["error"] == "questionnaire_incomplete"
+        assert "water damage" in result["detail"].lower()
+
+    @pytest.mark.asyncio
+    async def test_grade_and_value_uses_saved_questionnaire_answers(self):
+        tool = SimpleNamespace(name="grade_and_value_tool")
+        ctx = SimpleNamespace(
+            state={
+                "app:session_id": "sip-tradein-grade-answers",
+                "app:user_id": "voice-user-grade-answers",
+                "app:capabilities": ["valuation_tradein"],
+                "app:channel": "voice",
+                "temp:last_user_turn": "I want to swap my iPhone XR for an iPhone 14.",
+                "temp:recent_customer_context": (
+                    "Customer: I want to swap my iPhone XR for an iPhone 14."
+                ),
+                "temp:tradein_questionnaire_state": {
+                    "status": "completed",
+                    "questions": [],
+                    "answers": {"battery_health_pct": 87, "water_damage": "no"},
+                    "current_index": 0,
+                    "last_answer_source_text": "No water damage and battery is 87%.",
+                    "omitted_question_ids": [],
+                    "pending_completion_ack": False,
+                    "catalog_cache": {},
+                },
+                "temp:last_analysis": {
+                    "device_name": "iPhone XR",
+                    "brand": "Apple",
+                    "condition": "Good",
+                },
+            },
+            session=SimpleNamespace(state={}),
+            agent_name="valuation_agent",
+        )
+        args = {"analysis": "{}", "retail_price": 1000}
+
+        result = await before_tool_capability_guard_and_log(tool, args, ctx)
+
+        assert result is None
+        assert json.loads(args["questionnaire_answers"]) == {
+            "battery_health_pct": 87,
+            "water_damage": "no",
+        }
+
+    @pytest.mark.asyncio
+    async def test_search_catalog_requires_completion_ack_before_pricing(self):
+        tool = SimpleNamespace(name="search_catalog")
+        ctx = SimpleNamespace(
+            state={
+                "app:session_id": "sip-tradein-completion-ack",
+                "app:user_id": "voice-user-completion-ack",
+                "app:capabilities": ["catalog_lookup", "valuation_tradein"],
+                "app:channel": "voice",
+                "temp:last_user_turn": "Yes, Face ID works.",
+                "temp:recent_customer_context": (
+                    "Customer: I want to swap my iPhone XR for an iPhone 14."
+                ),
+                "temp:tradein_questionnaire_state": {
+                    "status": "completed",
+                    "questions": [],
+                    "answers": {"biometric_not_working": "yes"},
+                    "current_index": 0,
+                    "last_answer_source_text": "Yes, Face ID works.",
+                    "omitted_question_ids": [],
+                    "pending_completion_ack": True,
+                    "catalog_cache": {},
+                },
+                "temp:last_analysis": {
+                    "device_name": "iPhone XR",
+                    "brand": "Apple",
+                    "condition": "Good",
+                },
+            },
+            session=SimpleNamespace(state={}),
+            agent_name="valuation_agent",
+        )
+
+        result = await before_tool_capability_guard_and_log(tool, {"query": "iPhone XR"}, ctx)
+
+        assert isinstance(result, dict)
+        assert result["error"] == "questionnaire_completion_ack_required"
 
     @pytest.mark.asyncio
     async def test_grade_and_value_allowed_once_tool_backed_analysis_is_ready(self):
@@ -1347,6 +1904,38 @@ class TestCallbackLegGuards:
         assert ctx.state["temp:pending_transfer_bootstrap_target_agent"] == "valuation_agent"
         assert ctx.state["temp:pending_transfer_bootstrap_reason"] == "voice_tradein_handoff"
         assert session.state["temp:pending_transfer_bootstrap_target_agent"] == "valuation_agent"
+
+    @pytest.mark.asyncio
+    async def test_voice_tradein_booking_transfer_sets_bootstrap_for_normal_handoff(self):
+        tool = SimpleNamespace(name="transfer_to_agent")
+        session = SimpleNamespace(state={})
+        ctx = SimpleNamespace(
+            state={
+                "app:channel": "voice",
+                "temp:greeted": True,
+                "temp:opening_phase_complete": True,
+                "temp:tradein_fulfillment_phase": "booking_pending",
+                "temp:last_offer_amount": 168750,
+                "temp:last_user_turn": "Okay, thank you very much. What's next?",
+                "temp:recent_customer_context": (
+                    "Customer: Yes, let's proceed.\n"
+                    "Customer: Okay, thank you very much. What's next?"
+                ),
+            },
+            session=session,
+            agent_name="valuation_agent",
+        )
+
+        result = await before_tool_capability_guard_and_log(
+            tool,
+            {"agent_name": "booking_agent"},
+            ctx,
+        )
+
+        assert result is None
+        assert ctx.state["temp:pending_transfer_bootstrap_target_agent"] == "booking_agent"
+        assert ctx.state["temp:pending_transfer_bootstrap_reason"] == "voice_tradein_booking_handoff"
+        assert session.state["temp:pending_transfer_bootstrap_target_agent"] == "booking_agent"
 
     @pytest.mark.asyncio
     async def test_transfer_allowed_when_opening_phase_complete_exists_only_in_session_state(self):
@@ -1607,6 +2196,183 @@ class TestCallbackLegGuards:
             tool, {"agent_name": "booking_agent"}, ctx
         )
         assert result is None
+
+    @pytest.mark.asyncio
+    async def test_transfer_allows_booking_after_plain_yes_once_offer_exists(self):
+        tool = SimpleNamespace(name="transfer_to_agent")
+        ctx = SimpleNamespace(
+            state={
+                "app:channel": "voice",
+                "temp:greeted": True,
+                "temp:opening_phase_complete": True,
+                "temp:last_offer_amount": 87000,
+                "temp:last_user_turn": "Yes.",
+                "temp:recent_customer_context": (
+                    "Customer: Perfect. So, to confirm, you're swapping for a used 128GB iPhone 14. "
+                    "Your trade-in is worth ₦87,000.\n"
+                    "Customer: Yes."
+                ),
+            },
+            agent_name="valuation_agent",
+        )
+
+        result = await before_tool_capability_guard_and_log(
+            tool, {"agent_name": "booking_agent"}, ctx
+        )
+
+        assert result is None
+        assert ctx.state["temp:pending_transfer_bootstrap_reason"] == "voice_tradein_booking_handoff"
+
+    @pytest.mark.asyncio
+    async def test_transfer_allows_booking_after_explicit_payment_intent_once_offer_exists(self):
+        tool = SimpleNamespace(name="transfer_to_agent")
+        ctx = SimpleNamespace(
+            state={
+                "app:channel": "voice",
+                "temp:greeted": True,
+                "temp:opening_phase_complete": True,
+                "temp:last_offer_amount": 165400,
+                "temp:last_user_turn": "No, I want to make payment for the swap.",
+                "temp:recent_customer_context": (
+                    "Customer: The highest we can go is ₦165,400.\n"
+                    "Customer: Yes.\n"
+                    "Customer: No, I want to make payment for the swap."
+                ),
+            },
+            agent_name="valuation_agent",
+        )
+
+        result = await before_tool_capability_guard_and_log(
+            tool, {"agent_name": "booking_agent"}, ctx
+        )
+
+        assert result is None
+        assert ctx.state["temp:pending_transfer_bootstrap_reason"] == "voice_tradein_booking_handoff"
+
+    @pytest.mark.asyncio
+    async def test_transfer_allows_booking_after_asr_garbled_payment_when_recent_yes_exists(self):
+        tool = SimpleNamespace(name="transfer_to_agent")
+        ctx = SimpleNamespace(
+            state={
+                "app:channel": "voice",
+                "temp:greeted": True,
+                "temp:opening_phase_complete": True,
+                "temp:last_offer_amount": 165400,
+                "temp:last_user_turn": "I want to play for each work.",
+                "temp:recent_customer_context": (
+                    "Customer: Your final offer is ₦165,400.\n"
+                    "Customer: Yes.\n"
+                    "Customer: I want to play for each work."
+                ),
+            },
+            agent_name="valuation_agent",
+        )
+
+        result = await before_tool_capability_guard_and_log(
+            tool, {"agent_name": "booking_agent"}, ctx
+        )
+
+        assert result is None
+        assert ctx.state["temp:pending_transfer_bootstrap_reason"] == "voice_tradein_booking_handoff"
+
+    @pytest.mark.asyncio
+    async def test_transfer_allows_booking_when_tradein_fulfillment_phase_is_pending(self):
+        tool = SimpleNamespace(name="transfer_to_agent")
+        ctx = SimpleNamespace(
+            state={
+                "app:channel": "voice",
+                "temp:greeted": True,
+                "temp:opening_phase_complete": True,
+                "temp:tradein_fulfillment_phase": "booking_pending",
+                "temp:last_offer_amount": 168750,
+                "temp:last_user_turn": "Okay, I am in Lagos Nigeria.",
+                "temp:recent_customer_context": (
+                    "Customer: Great, let's proceed.\n"
+                    "Customer: My name is Bassey John.\n"
+                    "Customer: Okay, I am in Lagos Nigeria."
+                ),
+            },
+            agent_name="valuation_agent",
+        )
+        result = await before_tool_capability_guard_and_log(
+            tool, {"agent_name": "booking_agent"}, ctx
+        )
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_transfer_allows_booking_when_offer_only_exists_in_voice_state_registry(self):
+        tool = SimpleNamespace(name="transfer_to_agent")
+        user_id = "voice-booking-user"
+        session_id = "voice-booking-session"
+        ctx = SimpleNamespace(
+            state={
+                "app:channel": "voice",
+                "app:user_id": user_id,
+                "app:session_id": session_id,
+                "temp:greeted": True,
+                "temp:opening_phase_complete": True,
+                "temp:last_user_turn": "Okay, thank you very much. What's next?",
+                "temp:recent_customer_context": (
+                    "Customer: Yes, let's proceed.\n"
+                    "Customer: Okay, thank you very much. What's next?"
+                ),
+            },
+            session=SimpleNamespace(
+                state={
+                    "app:user_id": user_id,
+                    "app:session_id": session_id,
+                }
+            ),
+            agent_name="valuation_agent",
+        )
+        update_voice_state(
+            user_id=user_id,
+            session_id=session_id,
+            **{
+                "temp:last_offer_amount": 168750,
+                "temp:tradein_fulfillment_phase": "booking_pending",
+            },
+        )
+
+        try:
+            result = await before_tool_capability_guard_and_log(
+                tool, {"agent_name": "booking_agent"}, ctx
+            )
+            assert result is None
+            assert ctx.state["temp:pending_transfer_bootstrap_reason"] == "voice_tradein_booking_handoff"
+        finally:
+            clear_registered_voice_state(user_id=user_id, session_id=session_id)
+
+    @pytest.mark.asyncio
+    async def test_transfer_retry_cap_suppresses_repeat_blocked_booking_handoff(self):
+        tool = SimpleNamespace(name="transfer_to_agent")
+        ctx = SimpleNamespace(
+            state={
+                "app:channel": "voice",
+                "temp:greeted": True,
+                "temp:opening_phase_complete": True,
+                "temp:last_offer_amount": 87000,
+                "temp:last_user_turn": "Hello?",
+                "temp:recent_customer_context": "Customer: Hello?",
+            },
+            actions=SimpleNamespace(transfer_to_agent="booking_agent"),
+            agent_name="valuation_agent",
+        )
+
+        first = await before_tool_capability_guard_and_log(
+            tool, {"agent_name": "booking_agent"}, ctx
+        )
+        second = await before_tool_capability_guard_and_log(
+            tool, {"agent_name": "booking_agent"}, ctx
+        )
+        third = await before_tool_capability_guard_and_log(
+            tool, {"agent_name": "booking_agent"}, ctx
+        )
+
+        assert first["error"] == "explicit_request_required"
+        assert second["error"] == "explicit_request_required"
+        assert third["error"] == "routing_retry_suppressed"
+        assert ctx.actions.transfer_to_agent is None
 
     @pytest.mark.asyncio
     async def test_transfer_allowed_when_opening_phase_complete_exists_only_in_voice_state_registry(self):
@@ -2074,7 +2840,21 @@ class TestAfterToolEmitMessages:
     @pytest.mark.asyncio
     async def test_emits_valuation_result_message(self):
         tool = SimpleNamespace(name="grade_and_value_tool")
-        ctx = SimpleNamespace(state={}, agent_name="valuation_agent")
+        ctx = SimpleNamespace(
+            state={
+                "app:channel": "voice",
+                "temp:background_vision_status": "ready",
+                "temp:last_analysis": {
+                    "device_name": "iPhone 14 Pro",
+                    "brand": "Apple",
+                    "device_color": "red",
+                    "condition": "Good",
+                    "power_state": "on",
+                    "details": {"screen_condition": "clear"},
+                },
+            },
+            agent_name="valuation_agent",
+        )
         result = {
             "device_name": "iPhone 14 Pro",
             "grade": "Good",
@@ -2089,6 +2869,59 @@ class TestAfterToolEmitMessages:
         assert message["type"] == "valuation_result"
         assert message["deviceName"] == "iPhone 14 Pro"
         assert message["price"] == 230000
+        assert ctx.state["temp:pending_valuation_result_voice_ack"] == "ready"
+        assert " in red" in ctx.state["temp:pending_valuation_result_voice_text"].lower()
+
+    @pytest.mark.asyncio
+    async def test_grade_and_value_tool_is_deduped_for_same_signature(self):
+        tool = SimpleNamespace(name="grade_and_value_tool")
+        ctx = SimpleNamespace(
+            state={
+                "app:channel": "voice",
+                "temp:last_user_turn": "I want to swap my iPhone XR for an iPhone 14.",
+                "temp:recent_customer_context": (
+                    "Customer: I want to swap my iPhone XR for an iPhone 14."
+                ),
+                "temp:background_vision_status": "ready",
+                "temp:last_analysis": {
+                    "device_name": "iPhone XR",
+                    "brand": "Apple",
+                    "device_color": "red",
+                    "condition": "Good",
+                    "power_state": "on",
+                    "details": {"screen_condition": "clear"},
+                },
+                "temp:tradein_questionnaire_state": {
+                    "status": "in_progress",
+                    "questions": [],
+                    "answers": {"water_damage": "no"},
+                    "current_index": 0,
+                    "last_answer_source_text": "",
+                    "omitted_question_ids": [],
+                    "pending_completion_ack": False,
+                    "catalog_cache": {},
+                },
+            },
+            agent_name="valuation_agent",
+        )
+        args = {
+            "questionnaire_answers": json.dumps({"water_damage": "no"}),
+            "retail_price": 230000,
+        }
+        result = {
+            "device_name": "iPhone XR",
+            "grade": "Good",
+            "offer_amount": 87000,
+            "currency": "NGN",
+            "summary": "Minor wear",
+        }
+
+        await after_tool_emit_messages(tool, args, ctx, result)
+        deduped = await before_tool_capability_guard(tool, dict(args), ctx)
+
+        assert isinstance(deduped, dict)
+        assert deduped["deduplicated"] is True
+        assert deduped["offer_amount"] == 87000
 
     @pytest.mark.asyncio
     async def test_emits_booking_confirmation_message(self):
@@ -2175,6 +3008,93 @@ class TestAfterToolEmitMessages:
         assert ctx.state["temp:last_outbound_delivery_phone"] == "+2348012345678"
 
     @pytest.mark.asyncio
+    async def test_quote_failure_persists_clarify_route_state(self):
+        tool = SimpleNamespace(name="get_topship_delivery_quote")
+        session = SimpleNamespace(id="sess-1", state={})
+        ctx = SimpleNamespace(
+            state={"app:user_id": "user-1", "app:session_id": "sess-1"},
+            session=session,
+            agent_name="booking_agent",
+        )
+        result = {
+            "status": "error",
+            "code": "TOPSHIP_NO_QUOTES",
+            "receiver_city": "Yaba, Lagos",
+            "attempted_receiver_cities": ["Yaba, Lagos", "Yaba", "Lagos"],
+        }
+
+        await after_tool_emit_messages(tool, {}, ctx, result)
+
+        assert ctx.state["temp:last_delivery_quote_status"] == "clarify_route"
+        assert ctx.state["temp:last_server_message"]["code"] == "TOPSHIP_NO_QUOTES"
+        assert session.state["temp:last_delivery_quote_status"] == "clarify_route"
+        assert session.state["temp:last_delivery_quote_details"]["receiver_city"] == "Yaba, Lagos"
+
+    @pytest.mark.asyncio
+    async def test_request_media_via_whatsapp_skips_runtime_ack_when_agent_already_said_sending(self):
+        tool = SimpleNamespace(name="request_media_via_whatsapp")
+        ctx = SimpleNamespace(
+            state={
+                "app:channel": "voice",
+                "temp:last_user_turn": "I want to swap my iPhone XR for an iPhone 14.",
+                "temp:recent_customer_context": (
+                    "Customer: I want to swap my iPhone XR for an iPhone 14."
+                ),
+                "temp:last_agent_turn": (
+                    "One moment, I'm sending you a WhatsApp message now so you can reply there "
+                    "with a quick video or a few photos of your device."
+                ),
+            },
+            session=SimpleNamespace(state={}),
+            agent_name="valuation_agent",
+        )
+        result = {
+            "status": "sent",
+            "phone": "+2348012345678",
+            "message_id": "wamid-1",
+        }
+
+        await after_tool_emit_messages(tool, {}, ctx, result)
+
+        assert ctx.state["temp:last_media_request_status"] == "sent"
+        assert ctx.state["temp:pending_media_request_voice_ack"] == ""
+
+    @pytest.mark.asyncio
+    async def test_request_media_via_whatsapp_deduplicated_result_does_not_reset_tradein_state(self):
+        tool = SimpleNamespace(name="request_media_via_whatsapp")
+        ctx = SimpleNamespace(
+            state={
+                "app:channel": "voice",
+                "temp:background_vision_status": "ready",
+                "temp:last_analysis": {"device_name": "iPhone XR", "device_color": "red"},
+                "temp:last_offer_amount": 234000,
+            },
+            session=SimpleNamespace(
+                state={
+                    "temp:last_analysis": {"device_name": "iPhone XR", "device_color": "red"},
+                    "temp:last_offer_amount": 234000,
+                }
+            ),
+            agent_name="valuation_agent",
+        )
+        result = {
+            "status": "sent",
+            "phone": "+2348012345678",
+            "message_id": "wamid-1",
+            "deduplicated": True,
+        }
+
+        await after_tool_emit_messages(tool, {}, ctx, result)
+
+        assert ctx.state["temp:last_media_request_status"] == "sent"
+        assert ctx.state["temp:last_analysis"] == {"device_name": "iPhone XR", "device_color": "red"}
+        assert ctx.state["temp:last_offer_amount"] == 234000
+        assert ctx.session.state["temp:last_analysis"] == {
+            "device_name": "iPhone XR",
+            "device_color": "red",
+        }
+
+    @pytest.mark.asyncio
     async def test_request_media_via_whatsapp_marks_voice_tradein_media_pending(self):
         tool = SimpleNamespace(name="request_media_via_whatsapp")
         user_id = "voice-user-media-pending"
@@ -2212,7 +3132,48 @@ class TestAfterToolEmitMessages:
         assert ctx.session.state["temp:last_analysis"] == {}
         assert ctx.session.state["temp:last_offer_amount"] == 0
         assert ctx.session.state["temp:pending_media_request_voice_ack"] == "ready"
+        registry_state = get_registered_voice_state(user_id=user_id, session_id=session_id)
+        assert registry_state["temp:last_analysis"] == {}
+        assert registry_state["temp:last_offer_amount"] == 0
         clear_registered_voice_state(user_id=user_id, session_id=session_id)
+
+    @pytest.mark.asyncio
+    async def test_grade_and_value_persists_offer_amount_into_voice_registry(self):
+        tool = SimpleNamespace(name="grade_and_value_tool")
+        user_id = "voice-user-offer"
+        session_id = "voice-session-offer"
+        ctx = SimpleNamespace(
+            state={
+                "app:channel": "voice",
+                "app:user_id": user_id,
+                "app:session_id": session_id,
+            },
+            session=SimpleNamespace(
+                state={
+                    "app:user_id": user_id,
+                    "app:session_id": session_id,
+                }
+            ),
+            agent_name="valuation_agent",
+        )
+        result = {
+            "device_name": "iPhone XR",
+            "grade": "Good",
+            "offer_amount": 234000,
+            "currency": "NGN",
+        }
+
+        try:
+            await after_tool_emit_messages(tool, {}, ctx, result)
+            registry_state = get_registered_voice_state(
+                user_id=user_id,
+                session_id=session_id,
+            )
+            assert ctx.state["temp:last_offer_amount"] == 234000
+            assert ctx.session.state["temp:last_offer_amount"] == 234000
+            assert registry_state["temp:last_offer_amount"] == 234000
+        finally:
+            clear_registered_voice_state(user_id=user_id, session_id=session_id)
 
     @pytest.mark.asyncio
     async def test_request_media_via_whatsapp_marks_delivery_failure(self):
@@ -2226,6 +3187,161 @@ class TestAfterToolEmitMessages:
         assert ctx.state["temp:last_outbound_delivery_status"] == "failure"
         message = ctx.state["temp:last_server_message"]
         assert message["type"] == "error"
+
+    @pytest.mark.asyncio
+    async def test_create_virtual_account_payment_without_notifications_does_not_mark_delivery_failure(self):
+        tool = SimpleNamespace(name="create_virtual_account_payment")
+        ctx = SimpleNamespace(state={}, agent_name="booking_agent")
+        result = {
+            "status": "ok",
+            "notification_phone": "+2348012345678",
+            "notifications_attempted": False,
+            "sms_sent": False,
+            "whatsapp_sent": False,
+        }
+
+        await after_tool_emit_messages(tool, {}, ctx, result)
+
+        assert "temp:last_outbound_delivery_status" not in ctx.state
+
+    @pytest.mark.asyncio
+    async def test_blocks_booking_whatsapp_followup_without_explicit_customer_consent(self):
+        tool = SimpleNamespace(name="send_whatsapp_message")
+        ctx = SimpleNamespace(
+            state={
+                "app:channel": "voice",
+                "temp:last_user_turn": "yes",
+                "temp:last_agent_turn": "Here are the account details for your transfer.",
+            },
+            session=SimpleNamespace(state={}),
+            agent_name="booking_agent",
+        )
+
+        blocked = await before_tool_capability_guard(tool, {"text": "Account details"}, ctx)
+
+        assert blocked is not None
+        assert blocked["error"] == "written_followup_consent_required"
+
+    @pytest.mark.asyncio
+    async def test_allows_booking_whatsapp_followup_after_explicit_customer_consent(self):
+        tool = SimpleNamespace(name="send_whatsapp_message")
+        ctx = SimpleNamespace(
+            state={
+                "app:channel": "voice",
+                "temp:last_user_turn": "yes",
+                "temp:last_agent_turn": "Would you like me to send the account details via WhatsApp?",
+            },
+            session=SimpleNamespace(state={}),
+            agent_name="booking_agent",
+        )
+
+        blocked = await before_tool_capability_guard(tool, {"text": "Account details"}, ctx)
+
+        assert blocked is None
+
+    @pytest.mark.asyncio
+    async def test_blocks_payment_creation_when_delivery_quote_needs_clarification(self):
+        tool = SimpleNamespace(name="create_virtual_account_payment")
+        session = SimpleNamespace(state={"temp:last_delivery_quote_status": "clarify_route"})
+        ctx = SimpleNamespace(
+            state={"app:channel": "voice"},
+            session=session,
+            agent_name="booking_agent",
+        )
+
+        blocked = await before_tool_capability_guard(
+            tool,
+            {
+                "customer_email": "ada@example.com",
+                "customer_first_name": "Ada",
+                "customer_last_name": "Buyer",
+            },
+            ctx,
+        )
+
+        assert blocked is not None
+        assert blocked["error"] == "delivery_quote_required"
+
+    @pytest.mark.asyncio
+    async def test_blocks_payment_creation_without_explicit_payment_intent(self):
+        tool = SimpleNamespace(name="create_virtual_account_payment")
+        session = SimpleNamespace(state={"temp:last_delivery_quote_status": "ready"})
+        ctx = SimpleNamespace(
+            state={
+                "app:channel": "voice",
+                "temp:last_user_turn": "yes",
+                "temp:last_agent_turn": "Would you like delivery or pickup?",
+            },
+            session=session,
+            agent_name="booking_agent",
+        )
+
+        blocked = await before_tool_capability_guard(
+            tool,
+            {
+                "customer_email": "ada@example.com",
+                "customer_first_name": "Ada",
+                "customer_last_name": "Buyer",
+            },
+            ctx,
+        )
+
+        assert blocked is not None
+        assert blocked["error"] == "payment_intent_required"
+
+    @pytest.mark.asyncio
+    async def test_dedupes_check_availability_for_same_request(self):
+        tool = SimpleNamespace(name="check_availability")
+        args = {"date": "2026-03-20", "location": "Yaba"}
+        session = SimpleNamespace(state={})
+        ctx = SimpleNamespace(
+            state={"app:channel": "voice"},
+            session=session,
+            agent_name="booking_agent",
+        )
+        result = {"status": "ok", "slots": ["10:00"]}
+
+        await after_tool_emit_messages(tool, args, ctx, result)
+        deduped = await before_tool_capability_guard(tool, dict(args), ctx)
+
+        assert deduped is not None
+        assert deduped["deduplicated"] is True
+        assert deduped["slots"] == ["10:00"]
+
+    @pytest.mark.asyncio
+    async def test_dedupes_payment_creation_for_same_request(self):
+        tool = SimpleNamespace(name="create_virtual_account_payment")
+        args = {
+            "customer_email": "ada@example.com",
+            "customer_first_name": "Ada",
+            "customer_last_name": "Buyer",
+            "expected_amount_kobo": 12500000,
+        }
+        session = SimpleNamespace(state={"temp:last_delivery_quote_status": "ready"})
+        ctx = SimpleNamespace(
+            state={
+                "app:channel": "voice",
+                "temp:last_user_turn": "I want to pay now",
+                "temp:last_agent_turn": "Would you like me to generate the account details now?",
+            },
+            session=session,
+            agent_name="booking_agent",
+        )
+        result = {
+            "status": "ok",
+            "payment_method": "virtual_account",
+            "account_number": "1234567890",
+            "notifications_attempted": False,
+            "sms_sent": False,
+            "whatsapp_sent": False,
+        }
+
+        await after_tool_emit_messages(tool, args, ctx, result)
+        deduped = await before_tool_capability_guard(tool, dict(args), ctx)
+
+        assert deduped is not None
+        assert deduped["deduplicated"] is True
+        assert deduped["payment_method"] == "virtual_account"
 
     @pytest.mark.asyncio
     async def test_end_call_queues_end_after_speaking_on_voice(self):
@@ -2290,6 +3406,77 @@ class TestQuestionnaireWiring:
         message = ctx.state["temp:last_server_message"]
         assert message["type"] == "questionnaire_started"
         assert message["questionCount"] == 1
+        assert message["nextQuestion"] == "Water damage?"
+        questionnaire_state = ctx.state["temp:tradein_questionnaire_state"]
+        assert questionnaire_state["status"] == "in_progress"
+        assert questionnaire_state["questions"][0]["id"] == "water_damage"
+
+    @pytest.mark.asyncio
+    async def test_questionnaire_tool_sets_pending_voice_question_for_voice_channel(self):
+        tool = SimpleNamespace(name="get_device_questionnaire_tool")
+        ctx = SimpleNamespace(
+            state={"app:channel": "voice"},
+            session=SimpleNamespace(state={}),
+            agent_name="valuation_agent",
+        )
+        result = {
+            "questions": [
+                {
+                    "id": "water_damage",
+                    "question": "Has the device ever been exposed to water damage?",
+                    "type": "boolean",
+                    "invert": False,
+                }
+            ],
+        }
+
+        await after_tool_emit_messages(tool, {}, ctx, result)
+
+        assert ctx.state["temp:pending_questionnaire_voice_ack"] == "ready"
+        assert (
+            ctx.state["temp:pending_questionnaire_voice_text"]
+            == "Has the device ever been exposed to water damage?"
+        )
+
+    @pytest.mark.asyncio
+    async def test_search_catalog_result_cached_for_tradein_flow(self):
+        tool = SimpleNamespace(name="search_catalog")
+        ctx = SimpleNamespace(
+            state={
+                "app:channel": "voice",
+                "temp:last_user_turn": "I want to swap my iPhone XR for an iPhone 14.",
+                "temp:recent_customer_context": (
+                    "Customer: I want to swap my iPhone XR for an iPhone 14."
+                ),
+                "temp:tradein_questionnaire_state": {
+                    "status": "completed",
+                    "questions": [],
+                    "answers": {"battery_health_pct": 87},
+                    "current_index": 0,
+                    "last_answer_source_text": "Battery is 87%.",
+                    "omitted_question_ids": [],
+                    "pending_completion_ack": False,
+                    "catalog_cache": {},
+                },
+            },
+            session=SimpleNamespace(state={}),
+            agent_name="valuation_agent",
+        )
+        result = {
+            "products": [
+                {
+                    "name": "iPhone XR",
+                    "price": 350000,
+                    "currency": "NGN",
+                    "in_stock": True,
+                }
+            ]
+        }
+
+        await after_tool_emit_messages(tool, {"query": "iPhone XR"}, ctx, result)
+
+        questionnaire_state = ctx.state["temp:tradein_questionnaire_state"]
+        assert "iphone xr" in next(iter(questionnaire_state["catalog_cache"].keys()))
 
     @pytest.mark.asyncio
     async def test_caches_power_state_from_vision_analysis(self):

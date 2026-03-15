@@ -9,6 +9,7 @@ import errno
 import json
 import logging
 import os
+import re
 import time
 from collections import deque
 from types import SimpleNamespace
@@ -50,6 +51,7 @@ def _text_overlap(a: str, b: str) -> float:
     intersection = len(wa & wb)
     return intersection / max(len(wa), len(wb))
 
+
 def _parse_int_env(name: str, default: int) -> int:
     try:
         return int(os.getenv(name, str(default)))
@@ -87,6 +89,10 @@ LIVE_STREAM_RETRY_BASE_SECONDS = max(
 OPENING_DUPLICATE_SUPPRESSION_SECONDS = max(
     1.0,
     _parse_float_env("OPENING_DUPLICATE_SUPPRESSION_SECONDS", 3.0),
+)
+DETERMINISTIC_RUNTIME_REPLY_GRACE_SECONDS = max(
+    2.0,
+    _parse_float_env("DETERMINISTIC_RUNTIME_REPLY_GRACE_SECONDS", 6.0),
 )
 VOICE_SERVER_OWNED_OPENING_ENABLED = _env_flag(
     "VOICE_SERVER_OWNED_OPENING_ENABLED",
@@ -169,6 +175,137 @@ def _looks_like_tradein_request(text: str) -> bool:
             token in lowered
             for token in ("swap", "trade in", "trade-in", "upgrade")
         )
+
+
+def _analysis_reply_override_for_turn(
+    *,
+    state: dict[str, Any],
+    current_agent: str,
+) -> str:
+    normalized_agent = str(current_agent or "").strip()
+    if normalized_agent != "valuation_agent":
+        return ""
+    try:
+        from app.agents.callbacks import (
+            _asks_to_confirm_device_color,
+            _latest_tool_backed_analysis,
+            _normalized_color_token,
+        )
+    except Exception:
+        return ""
+
+    latest_user_turn = str(state.get("temp:last_user_turn", "") or "").strip()
+    if not _asks_to_confirm_device_color(latest_user_turn):
+        return ""
+
+    analysis = _latest_tool_backed_analysis(state)
+    if not isinstance(analysis, dict):
+        return ""
+
+    device_color = _normalized_color_token(str(analysis.get("device_color", "") or ""))
+    if not device_color or device_color == "unknown":
+        return "The video analysis did not clearly confirm the phone's colour."
+    return f"The video analysis shows the phone is {device_color}."
+
+
+def _valuation_result_reply_override_for_message(
+    *,
+    state: dict[str, Any],
+    current_agent: str,
+    message: dict[str, Any],
+) -> str:
+    normalized_agent = str(current_agent or "").strip()
+    if normalized_agent != "valuation_agent":
+        return ""
+    if str(message.get("type", "") or "").strip() != "valuation_result":
+        return ""
+    try:
+        from app.agents.callbacks import (
+            _analysis_supports_tradein_offer,
+            _latest_tool_backed_analysis,
+            _tradein_offer_replacement,
+        )
+    except Exception:
+        return ""
+
+    analysis = _latest_tool_backed_analysis(state)
+    if not _analysis_supports_tradein_offer(analysis):
+        return ""
+
+    raw_offer_amount = message.get("price", state.get("temp:last_offer_amount", 0))
+    try:
+        offer_amount = int(raw_offer_amount or 0)
+    except (TypeError, ValueError):
+        offer_amount = 0
+    if offer_amount <= 0:
+        return ""
+
+    return _tradein_offer_replacement(
+        offer_amount=offer_amount,
+        analysis=analysis,
+        original_text="",
+    )
+
+
+def _build_media_request_sent_ack_text(*, tradein_media_flow_active: bool) -> str:
+    if tradein_media_flow_active:
+        return (
+            "I've just sent a WhatsApp message. Please send a quick video or a few photos "
+            "of your device there now."
+        )
+    return "I've just sent a WhatsApp message. Please check it now."
+
+
+def _build_media_request_sending_text(*, tradein_media_flow_active: bool) -> str:
+    if tradein_media_flow_active:
+        return (
+            "One moment, I'm sending you a WhatsApp message now so you can reply there "
+            "with a quick video or a few photos of your device."
+        )
+    return "One moment, I'm sending you a WhatsApp message now."
+
+
+def _build_media_received_ack_text(
+    *,
+    media_kind: str,
+    tradein_media_flow_active: bool,
+) -> str:
+    normalized_kind = str(media_kind or "").strip().lower()
+    if normalized_kind in {"photo", "image"}:
+        opening = "I've got the photo, let me check it now."
+    else:
+        opening = "I've got the video, let me check it now."
+    if tradein_media_flow_active:
+        return f"{opening} While I do that, what storage size do you want for the new phone?"
+    return opening
+
+
+def _normalize_tradein_booking_context_text(text: str) -> str:
+    return " ".join(str(text or "").strip().lower().split())
+
+
+def _tradein_booking_preference_from_text(text: str) -> str:
+    normalized = _normalize_tradein_booking_context_text(text)
+    if not normalized:
+        return ""
+    if re.search(r"\b(?:pick(?: |-)?up|collect it|come pick it up)\b", normalized):
+        return "pickup"
+    if re.search(r"\b(?:delivery|deliver(?:ed)?|ship(?:ping)?|send it|drop it off)\b", normalized):
+        return "delivery"
+    return ""
+
+
+def _build_tradein_booking_bootstrap_text(*, preference: str) -> str:
+    normalized = str(preference or "").strip().lower()
+    if normalized == "pickup":
+        return "Great, let's sort out the next step now. What date and pickup location would you prefer?"
+    if normalized == "delivery":
+        return "Great, let's sort out the next step now. What city should we deliver to?"
+    return "Great, let's sort out the next step now. Would you like delivery or pickup?"
+
+
+def _normalized_word_count(text: str) -> int:
+    return len([token for token in str(text or "").split() if token])
 
 
 def _normalize_opening_transport_text(text: str) -> str:
@@ -759,6 +896,83 @@ async def downstream_task(
             return registry_raw.strip().lower()
         return ""
 
+    def _pending_media_received_voice_ack() -> str:
+        raw = _session_get("temp:pending_media_received_voice_ack", "")
+        if isinstance(raw, str) and raw.strip():
+            return raw.strip().lower()
+        registry_state = get_registered_voice_state(
+            user_id=ctx.user_id,
+            session_id=ctx.resolved_session_id,
+        )
+        registry_raw = registry_state.get("temp:pending_media_received_voice_ack", "")
+        if isinstance(registry_raw, str) and registry_raw.strip():
+            return registry_raw.strip().lower()
+        return ""
+
+    def _pending_valuation_result_voice_ack() -> str:
+        raw = _session_get("temp:pending_valuation_result_voice_ack", "")
+        if isinstance(raw, str) and raw.strip():
+            return raw.strip().lower()
+        registry_state = get_registered_voice_state(
+            user_id=ctx.user_id,
+            session_id=ctx.resolved_session_id,
+        )
+        registry_raw = registry_state.get("temp:pending_valuation_result_voice_ack", "")
+        if isinstance(registry_raw, str) and registry_raw.strip():
+            return registry_raw.strip().lower()
+        return ""
+
+    def _pending_questionnaire_voice_ack() -> str:
+        raw = _session_get("temp:pending_questionnaire_voice_ack", "")
+        if isinstance(raw, str) and raw.strip():
+            return raw.strip().lower()
+        registry_state = get_registered_voice_state(
+            user_id=ctx.user_id,
+            session_id=ctx.resolved_session_id,
+        )
+        registry_raw = registry_state.get("temp:pending_questionnaire_voice_ack", "")
+        if isinstance(registry_raw, str) and registry_raw.strip():
+            return registry_raw.strip().lower()
+        return ""
+
+    def _pending_valuation_result_voice_text() -> str:
+        raw = _session_get("temp:pending_valuation_result_voice_text", "")
+        if isinstance(raw, str) and raw.strip():
+            return raw.strip()
+        registry_state = get_registered_voice_state(
+            user_id=ctx.user_id,
+            session_id=ctx.resolved_session_id,
+        )
+        registry_raw = registry_state.get("temp:pending_valuation_result_voice_text", "")
+        if isinstance(registry_raw, str) and registry_raw.strip():
+            return registry_raw.strip()
+        return ""
+
+    def _pending_questionnaire_voice_text() -> str:
+        raw = _session_get("temp:pending_questionnaire_voice_text", "")
+        if isinstance(raw, str) and raw.strip():
+            return raw.strip()
+        registry_state = get_registered_voice_state(
+            user_id=ctx.user_id,
+            session_id=ctx.resolved_session_id,
+        )
+        registry_raw = registry_state.get("temp:pending_questionnaire_voice_text", "")
+        if isinstance(registry_raw, str) and registry_raw.strip():
+            return registry_raw.strip()
+        latest_message = _latest_server_message_from_session()
+        if isinstance(latest_message, dict):
+            next_question = latest_message.get("nextQuestion", "")
+            if isinstance(next_question, str) and next_question.strip():
+                return next_question.strip()
+        return ""
+
+    def _clear_pending_media_received_voice_ack() -> None:
+        _session_set("temp:pending_media_received_voice_ack", "")
+
+    def _clear_pending_questionnaire_voice_ack() -> None:
+        _session_set("temp:pending_questionnaire_voice_ack", "")
+        _session_set("temp:pending_questionnaire_voice_text", "")
+
     def _queue_media_request_sent_ack_prompt() -> None:
         prompt = (
             "[System: The WhatsApp media request has already been sent successfully. "
@@ -794,6 +1008,57 @@ async def downstream_task(
         )
         return True
 
+    def _queue_router_tradein_handoff_prompt(*, retry: bool = False) -> None:
+        latest_user = str(_session_get("temp:last_user_turn", "") or "").strip()
+        recent_customer = str(_session_get("temp:recent_customer_context", "") or "").strip()
+        prompt = (
+            "[System: The customer has already made an explicit live swap or trade-in request. "
+            "If you are still ekaette_router, transfer immediately to valuation_agent. "
+            "Do not ask catalog or buying questions first. Do not say anything aloud before the "
+            "transfer happens.]"
+        )
+        if latest_user:
+            prompt += f" Latest customer request: '{latest_user}'."
+        if recent_customer:
+            prompt += f" Recent customer context: '{recent_customer}'."
+        try:
+            (types_mod,) = bind_runtime_values("types")
+            content = types_mod.Content(parts=[types_mod.Part(text=prompt)])
+        except Exception:
+            content = SimpleNamespace(parts=[SimpleNamespace(text=prompt)])
+        live_request_queue.send_content(content)
+        logger.info(
+            "Queued router trade-in handoff prompt session=%s retry=%s",
+            sanitize_log_fn(ctx.resolved_session_id),
+            retry,
+        )
+
+    def _queue_post_media_follow_up_prompt() -> None:
+        if not _tradein_media_flow_active():
+            return
+        prompt = (
+            "[System: The runtime has already acknowledged receipt of the customer's media. "
+            "Do not repeat that you got the video or photo. Ask exactly one short non-visual "
+            "follow-up question while the background analysis runs. Prefer a trade-in question "
+            "such as the desired new phone storage, battery health, repairs, water exposure, "
+            "Face ID or fingerprint status, or accessories. Do not ask about visible condition.]"
+        )
+        try:
+            (types_mod,) = bind_runtime_values("types")
+            content = types_mod.Content(parts=[types_mod.Part(text=prompt)])
+        except Exception:
+            content = SimpleNamespace(parts=[SimpleNamespace(text=prompt)])
+        live_request_queue.send_content(content)
+        silence_state.awaiting_agent_response = True
+        silence_state.user_turn_active = False
+        silence_state.user_spoke_at = time.monotonic()
+        silence_state.response_nudge_count = 0
+        _sync_pending_media_analysis()
+        logger.info(
+            "Queued post-media follow-up prompt session=%s",
+            sanitize_log_fn(ctx.resolved_session_id),
+        )
+
     def _resolve_opening_sentence(log_context: str) -> str:
         opening_sentence = "Hello, this is ehkaitay from our service desk."
         try:
@@ -825,19 +1090,23 @@ async def downstream_task(
             "Do not stay silent.]"
         )
 
-    def _queue_opening_bootstrap_prompt() -> bool:
-        retry_raw = _session_get("temp:opening_bootstrap_retry_count", 0)
-        try:
-            retry_count = int(retry_raw or 0)
-        except (TypeError, ValueError):
-            retry_count = 0
-        if retry_count >= 1:
-            logger.warning(
-                "Opening bootstrap retry exhausted session=%s",
-                sanitize_log_fn(ctx.resolved_session_id),
-            )
-            return False
-        _session_set("temp:opening_bootstrap_retry_count", retry_count + 1)
+    def _queue_opening_bootstrap_prompt(*, consume_retry_budget: bool = True) -> bool:
+        attempt_label = "initial"
+        if consume_retry_budget:
+            retry_raw = _session_get("temp:opening_bootstrap_retry_count", 0)
+            try:
+                retry_count = int(retry_raw or 0)
+            except (TypeError, ValueError):
+                retry_count = 0
+            if retry_count >= 1:
+                logger.warning(
+                    "Opening bootstrap retry exhausted session=%s",
+                    sanitize_log_fn(ctx.resolved_session_id),
+                )
+                return False
+            retry_count += 1
+            _session_set("temp:opening_bootstrap_retry_count", retry_count)
+            attempt_label = f"retry-{retry_count}"
         prompt = _opening_bootstrap_prompt_text()
         try:
             (types_mod,) = bind_runtime_values("types")
@@ -846,22 +1115,73 @@ async def downstream_task(
             content = SimpleNamespace(parts=[SimpleNamespace(text=prompt)])
         live_request_queue.send_content(content)
         logger.info(
-            "Queued opening bootstrap prompt session=%s attempt=%d",
+            "Queued opening bootstrap prompt session=%s attempt=%s",
             sanitize_log_fn(ctx.resolved_session_id),
-            retry_count + 1,
+            attempt_label,
         )
         return True
 
-    def _background_media_analysis_running() -> bool:
+    def _background_media_analysis_status() -> str:
         raw = _session_get("temp:background_vision_status", "")
-        if isinstance(raw, str) and raw.strip().lower() == "running":
-            return True
+        if isinstance(raw, str) and raw.strip():
+            return raw.strip().lower()
         registry_state = get_registered_voice_state(
             user_id=ctx.user_id,
             session_id=ctx.resolved_session_id,
         )
         registry_raw = registry_state.get("temp:background_vision_status", "")
-        return isinstance(registry_raw, str) and registry_raw.strip().lower() == "running"
+        if isinstance(registry_raw, str) and registry_raw.strip():
+            return registry_raw.strip().lower()
+        return ""
+
+    def _background_media_analysis_running() -> bool:
+        return _background_media_analysis_status() == "running"
+
+    def _media_request_status_local() -> str:
+        raw = _session_get("temp:last_media_request_status", "")
+        if isinstance(raw, str) and raw.strip():
+            return raw.strip().lower()
+        registry_state = get_registered_voice_state(
+            user_id=ctx.user_id,
+            session_id=ctx.resolved_session_id,
+        )
+        registry_raw = registry_state.get("temp:last_media_request_status", "")
+        if isinstance(registry_raw, str) and registry_raw.strip():
+            return registry_raw.strip().lower()
+        return ""
+
+    def _tradein_media_flow_active() -> bool:
+        media_status = _media_request_status_local()
+        background_status = _background_media_analysis_status()
+        if media_status == "sent" and background_status in {
+            "awaiting_media",
+            "running",
+            "ready",
+            "failed",
+        }:
+            return True
+        combined = " ".join(
+            part for part in (
+                str(_session_get("temp:last_user_turn", "") or "").strip(),
+                str(_session_get("temp:recent_customer_context", "") or "").strip(),
+            ) if part
+        ).strip()
+        return _looks_like_tradein_request(combined)
+
+    def _tradein_booking_preference_from_handoff_context() -> str:
+        latest_user = str(_session_get("temp:pending_handoff_latest_user", "") or "").strip()
+        preference = _tradein_booking_preference_from_text(latest_user)
+        if preference:
+            return preference
+        recent_customer = str(
+            _session_get("temp:pending_handoff_recent_customer_context", "") or ""
+        ).strip()
+        for raw_line in reversed(recent_customer.splitlines()):
+            line = raw_line.replace("Customer:", "").strip()
+            preference = _tradein_booking_preference_from_text(line)
+            if preference:
+                return preference
+        return ""
 
     def _sync_pending_media_analysis() -> None:
         silence_state.pending_media_analysis = _background_media_analysis_running()
@@ -880,12 +1200,31 @@ async def downstream_task(
             )
             prompt = (
                 f"[System: {routing_phrase} this live voice trade-in call to "
-                "valuation_agent. Respond immediately with one short continuity phrase. Do not "
-                "greet or stay silent. If request_media_via_whatsapp has not succeeded yet on "
-                "this call, call it now before you say the message was sent or ask the caller "
-                "to check WhatsApp. After the tool succeeds, tell the caller briefly to check "
-                "WhatsApp. Do not ask them to describe visible condition before the media is "
+                "valuation_agent. Do not greet or stay silent. The runtime has already told "
+                "the caller that a WhatsApp message is being sent. Do NOT repeat that sentence. "
+                "If request_media_via_whatsapp has not succeeded yet on this call, your next "
+                "action in this turn must be request_media_via_whatsapp. Do not wait silently. "
+                "Do not say the message has already been sent unless the tool actually "
+                "succeeded. Do not ask them to describe visible condition before the media is "
                 "received.]"
+            )
+        elif (
+            reason in {"voice_tradein_booking_recovery", "voice_tradein_booking_handoff"}
+            and target_agent == "booking_agent"
+        ):
+            routing_phrase = (
+                "Routing recovery just transferred"
+                if reason == "voice_tradein_booking_recovery"
+                else "Routing just transferred"
+            )
+            prompt = (
+                f"[System: {routing_phrase} this live trade-in call to booking_agent. "
+                "Do not greet again. Do not mention any internal booking agent or transfer. "
+                "The runtime has already spoken the first fulfillment transition and, when needed, "
+                "already asked the first fulfillment question. Do NOT repeat that question. "
+                "Continue directly from the customer's next answer. If the customer had already "
+                "stated pickup or delivery earlier, continue from that preference instead of "
+                "re-asking.]"
             )
         else:
             prompt = (
@@ -951,6 +1290,24 @@ async def downstream_task(
     current_agent = current_agent_raw if isinstance(current_agent_raw, str) else "ekaette_router"
     opening_audio_buffer: list[bytes] = []
     opening_candidate_text = ""
+    deterministic_analysis_audio_buffer: list[bytes] = []
+    deterministic_analysis_candidate_text = ""
+    deterministic_analysis_expected_text = ""
+    deterministic_analysis_pending = False
+    deterministic_analysis_retry_count = 0
+    deterministic_runtime_audio_buffer: list[bytes] = []
+    deterministic_runtime_candidate_text = ""
+    deterministic_runtime_expected_text = ""
+    deterministic_runtime_pending = False
+    deterministic_runtime_retry_count = 0
+    deterministic_runtime_started_at = 0.0
+    deterministic_runtime_label = ""
+    runtime_owned_turn_label = ""
+    runtime_owned_turn_text = ""
+    runtime_owned_turn_suppression_logged = False
+    router_tradein_handoff_pending = False
+    router_tradein_handoff_retry_count = 0
+    router_tradein_suppression_logged = False
 
     def _record_voice_transcript(role: str, text: str, partial: bool) -> None:
         if voice_analytics is None:
@@ -1073,6 +1430,404 @@ async def downstream_task(
             sanitize_log_fn(ctx.resolved_session_id),
             sanitize_log_fn(ctx.session_voice),
         )
+
+    def _analysis_reply_guard_active() -> bool:
+        return deterministic_analysis_pending and bool(deterministic_analysis_expected_text)
+
+    def _runtime_reply_guard_active() -> bool:
+        return deterministic_runtime_pending and bool(deterministic_runtime_expected_text)
+
+    def _router_tradein_handoff_guard_active() -> bool:
+        return router_tradein_handoff_pending and current_agent == "ekaette_router"
+
+    def _clear_buffered_analysis_reply() -> None:
+        nonlocal deterministic_analysis_candidate_text
+        deterministic_analysis_audio_buffer.clear()
+        deterministic_analysis_candidate_text = ""
+
+    def _clear_buffered_runtime_reply() -> None:
+        nonlocal deterministic_runtime_candidate_text
+        deterministic_runtime_audio_buffer.clear()
+        deterministic_runtime_candidate_text = ""
+
+    def _clear_runtime_owned_turn() -> None:
+        nonlocal runtime_owned_turn_label
+        nonlocal runtime_owned_turn_text
+        nonlocal runtime_owned_turn_suppression_logged
+        runtime_owned_turn_label = ""
+        runtime_owned_turn_text = ""
+        runtime_owned_turn_suppression_logged = False
+
+    def _runtime_owned_turn_active() -> bool:
+        return bool(runtime_owned_turn_label and runtime_owned_turn_text)
+
+    def _runtime_reply_passthrough_active() -> bool:
+        return deterministic_runtime_pending and deterministic_runtime_label == "media_request_sending"
+
+    def _mark_runtime_owned_turn(label: str, text: str) -> None:
+        nonlocal runtime_owned_turn_label
+        nonlocal runtime_owned_turn_text
+        nonlocal runtime_owned_turn_suppression_logged
+        if label not in {"media_request_ack", "media_request_sending", "media_received_ack", "valuation_result"}:
+            _clear_runtime_owned_turn()
+            return
+        runtime_owned_turn_label = label
+        runtime_owned_turn_text = text.strip()
+        runtime_owned_turn_suppression_logged = False
+
+    def _suppress_runtime_owned_turn_output() -> bool:
+        if not _runtime_owned_turn_active():
+            return False
+        nonlocal runtime_owned_turn_suppression_logged
+        if not runtime_owned_turn_suppression_logged:
+            logger.warning(
+                "Suppressing native model output after runtime-owned reply session=%s label=%s text=%s",
+                sanitize_log_fn(ctx.resolved_session_id),
+                sanitize_log_fn(runtime_owned_turn_label),
+                sanitize_log_fn(runtime_owned_turn_text),
+            )
+            runtime_owned_turn_suppression_logged = True
+        return True
+
+    def _normalize_analysis_contract_text(text: str) -> str:
+        lowered = re.sub(r"[^a-z0-9]+", " ", str(text or "").lower())
+        return " ".join(lowered.split()).strip()
+
+    def _analysis_output_matches_expected(text: str) -> bool:
+        candidate = _normalize_analysis_contract_text(text)
+        expected = _normalize_analysis_contract_text(deterministic_analysis_expected_text)
+        if not candidate or not expected:
+            return False
+        return expected in candidate or _text_overlap(expected, candidate) >= 0.8
+
+    def _runtime_output_matches_expected(text: str) -> bool:
+        candidate = _normalize_analysis_contract_text(text)
+        expected = _normalize_analysis_contract_text(deterministic_runtime_expected_text)
+        if not candidate or not expected:
+            return False
+        if deterministic_runtime_label in {
+            "media_received_ack",
+            "valuation_result",
+            "media_request_ack",
+            "questionnaire_question",
+            "booking_bootstrap",
+        }:
+            if candidate == expected:
+                return True
+            overlap = _text_overlap(expected, candidate)
+            expected_word_count = _normalized_word_count(expected)
+            candidate_word_count = _normalized_word_count(candidate)
+            if expected_word_count <= 0 or candidate_word_count <= 0:
+                return False
+            ratio = candidate_word_count / expected_word_count
+            return overlap >= 0.95 and 0.85 <= ratio <= 1.15
+        return expected in candidate or _text_overlap(expected, candidate) >= 0.8
+
+    def _queue_deterministic_analysis_reply_prompt(*, retry: bool = False) -> None:
+        prompt = (
+            "[System: The caller just asked about a verified video-analysis fact. "
+            f"Respond immediately with this exact sentence and nothing contradictory: "
+            f"'{deterministic_analysis_expected_text}' "
+            "Do not mention any different colour or any uncertainty. Do not ask a follow-up "
+            "question before this exact sentence.]"
+        )
+        try:
+            (types_mod,) = bind_runtime_values("types")
+            content = types_mod.Content(parts=[types_mod.Part(text=prompt)])
+        except Exception:
+            content = SimpleNamespace(parts=[SimpleNamespace(text=prompt)])
+        live_request_queue.send_content(content)
+        logger.info(
+            "Queued deterministic analysis reply prompt session=%s retry=%s expected=%s",
+            sanitize_log_fn(ctx.resolved_session_id),
+            retry,
+            sanitize_log_fn(deterministic_analysis_expected_text),
+        )
+
+    def _queue_deterministic_runtime_reply_prompt(*, retry: bool = False) -> None:
+        prompt = (
+            "[System: The runtime already determined the exact next sentence for this live call. "
+            f"Respond immediately with this exact sentence and nothing contradictory: "
+            f"'{deterministic_runtime_expected_text}' "
+            "Do not add any extra sentence before or after it. Do not restate it differently."
+        )
+        try:
+            (types_mod,) = bind_runtime_values("types")
+            content = types_mod.Content(parts=[types_mod.Part(text=prompt)])
+        except Exception:
+            content = SimpleNamespace(parts=[SimpleNamespace(text=prompt)])
+        live_request_queue.send_content(content)
+        logger.info(
+            "Queued deterministic runtime reply prompt session=%s retry=%s label=%s expected=%s",
+            sanitize_log_fn(ctx.resolved_session_id),
+            retry,
+            sanitize_log_fn(deterministic_runtime_label),
+            sanitize_log_fn(deterministic_runtime_expected_text),
+        )
+
+    def _start_deterministic_runtime_reply(text: str, *, label: str) -> None:
+        nonlocal deterministic_runtime_expected_text
+        nonlocal deterministic_runtime_pending
+        nonlocal deterministic_runtime_retry_count
+        nonlocal deterministic_runtime_started_at
+        nonlocal deterministic_runtime_label
+        _clear_runtime_owned_turn()
+        deterministic_runtime_expected_text = text
+        deterministic_runtime_pending = True
+        deterministic_runtime_retry_count = 0
+        deterministic_runtime_started_at = time.monotonic()
+        deterministic_runtime_label = label
+        _clear_buffered_runtime_reply()
+        silence_state.awaiting_agent_response = True
+        silence_state.user_turn_active = False
+        silence_state.user_spoke_at = time.monotonic()
+        silence_state.response_nudge_count = 0
+        _sync_pending_media_analysis()
+        _queue_deterministic_runtime_reply_prompt(retry=False)
+
+    def _clear_runtime_reply_source_state() -> None:
+        if deterministic_runtime_label == "media_request_ack":
+            _session_set("temp:pending_media_request_voice_ack", "")
+        elif deterministic_runtime_label == "media_received_ack":
+            _clear_pending_media_received_voice_ack()
+        elif deterministic_runtime_label == "questionnaire_question":
+            _clear_pending_questionnaire_voice_ack()
+        elif deterministic_runtime_label == "valuation_result":
+            _session_set("temp:pending_valuation_result_voice_ack", "")
+            _session_set("temp:pending_valuation_result_voice_text", "")
+
+    async def _flush_buffered_runtime_reply(text: str) -> None:
+        nonlocal deterministic_runtime_pending
+        nonlocal deterministic_runtime_retry_count
+        nonlocal deterministic_runtime_expected_text
+        nonlocal deterministic_runtime_started_at
+        nonlocal deterministic_runtime_label
+        silence_state.agent_busy = True
+        silence_state.assistant_output_active = True
+        silence_state.awaiting_agent_response = False
+        silence_state.user_turn_active = False
+        _sync_pending_media_analysis()
+
+        await websocket.send_text(json.dumps({
+            "type": "agent_status",
+            "agent": current_agent,
+            "status": "active",
+        }))
+        for audio_bytes in deterministic_runtime_audio_buffer:
+            await websocket.send_bytes(audio_bytes)
+        await websocket.send_text(json.dumps({
+            "type": "transcription",
+            "role": "agent",
+            "text": text,
+            "partial": False,
+        }))
+        _record_voice_transcript("agent", text, False)
+        recent_turns.append(("agent", text))
+        _session_set("temp:last_agent_turn", text)
+        deterministic_runtime_pending = False
+        deterministic_runtime_retry_count = 0
+        deterministic_runtime_expected_text = ""
+        deterministic_runtime_started_at = 0.0
+        _clear_runtime_reply_source_state()
+        consumed_label = deterministic_runtime_label
+        deterministic_runtime_label = ""
+        _mark_runtime_owned_turn(consumed_label, text)
+        _clear_buffered_runtime_reply()
+        logger.info(
+            "Validated deterministic runtime reply session=%s label=%s text=%s",
+            sanitize_log_fn(ctx.resolved_session_id),
+            sanitize_log_fn(consumed_label),
+            sanitize_log_fn(text),
+        )
+
+    def _complete_passthrough_runtime_reply(text: str) -> None:
+        nonlocal deterministic_runtime_pending
+        nonlocal deterministic_runtime_retry_count
+        nonlocal deterministic_runtime_expected_text
+        nonlocal deterministic_runtime_started_at
+        nonlocal deterministic_runtime_label
+        consumed_label = deterministic_runtime_label
+        _clear_runtime_reply_source_state()
+        deterministic_runtime_pending = False
+        deterministic_runtime_retry_count = 0
+        deterministic_runtime_expected_text = ""
+        deterministic_runtime_started_at = 0.0
+        deterministic_runtime_label = ""
+        _clear_buffered_runtime_reply()
+        _mark_runtime_owned_turn(consumed_label, text)
+        logger.info(
+            "Completed passthrough runtime reply session=%s label=%s text=%s",
+            sanitize_log_fn(ctx.resolved_session_id),
+            sanitize_log_fn(consumed_label),
+            sanitize_log_fn(text),
+        )
+
+    async def _flush_buffered_analysis_reply(text: str) -> None:
+        nonlocal deterministic_analysis_pending
+        nonlocal deterministic_analysis_retry_count
+        nonlocal deterministic_analysis_expected_text
+        silence_state.agent_busy = True
+        silence_state.assistant_output_active = True
+        silence_state.awaiting_agent_response = False
+        silence_state.user_turn_active = False
+        _sync_pending_media_analysis()
+
+        await websocket.send_text(json.dumps({
+            "type": "agent_status",
+            "agent": current_agent,
+            "status": "active",
+        }))
+        for audio_bytes in deterministic_analysis_audio_buffer:
+            await websocket.send_bytes(audio_bytes)
+        await websocket.send_text(json.dumps({
+            "type": "transcription",
+            "role": "agent",
+            "text": text,
+            "partial": False,
+        }))
+        _record_voice_transcript("agent", text, False)
+        recent_turns.append(("agent", text))
+        _session_set("temp:last_agent_turn", text)
+        deterministic_analysis_pending = False
+        deterministic_analysis_retry_count = 0
+        deterministic_analysis_expected_text = ""
+        _clear_buffered_analysis_reply()
+        logger.info(
+            "Validated deterministic analysis reply session=%s text=%s",
+            sanitize_log_fn(ctx.resolved_session_id),
+            sanitize_log_fn(text),
+        )
+
+    async def _recover_deterministic_analysis_reply_same_voice() -> None:
+        nonlocal deterministic_analysis_pending
+        nonlocal deterministic_analysis_retry_count
+        nonlocal deterministic_analysis_expected_text
+        expected_text = deterministic_analysis_expected_text
+        try:
+            prompt = (
+                "[System: The caller is waiting for a verified analysis-backed answer. "
+                f"Respond right now with this exact sentence in your normal live call voice: "
+                f"'{expected_text}' "
+                "Do not add any extra sentence before or after it.]"
+            )
+            try:
+                (types_mod,) = bind_runtime_values("types")
+                content = types_mod.Content(parts=[types_mod.Part(text=prompt)])
+            except Exception:
+                content = SimpleNamespace(parts=[SimpleNamespace(text=prompt)])
+            live_request_queue.send_content(content)
+            silence_state.awaiting_agent_response = True
+            silence_state.user_turn_active = False
+            silence_state.user_spoke_at = time.monotonic()
+            silence_state.response_nudge_count = 0
+            _sync_pending_media_analysis()
+            logger.error(
+                "Deterministic analysis reply exhausted strict validation; queued same-voice recovery session=%s expected=%s",
+                sanitize_log_fn(ctx.resolved_session_id),
+                sanitize_log_fn(expected_text),
+            )
+        finally:
+            deterministic_analysis_pending = False
+            deterministic_analysis_retry_count = 0
+            deterministic_analysis_expected_text = ""
+            _clear_buffered_analysis_reply()
+
+    async def _recover_deterministic_runtime_reply_same_voice() -> None:
+        nonlocal deterministic_runtime_pending
+        nonlocal deterministic_runtime_retry_count
+        nonlocal deterministic_runtime_expected_text
+        nonlocal deterministic_runtime_started_at
+        nonlocal deterministic_runtime_label
+        expected_text = deterministic_runtime_expected_text
+        recovery_label = deterministic_runtime_label
+        try:
+            prompt = (
+                "[System: The runtime already determined the exact next sentence for this live call, "
+                "but the strict validation path did not complete in time. Respond right now in your "
+                "normal live call voice with this exact sentence and nothing else: "
+                f"'{expected_text}']"
+            )
+            try:
+                (types_mod,) = bind_runtime_values("types")
+                content = types_mod.Content(parts=[types_mod.Part(text=prompt)])
+            except Exception:
+                content = SimpleNamespace(parts=[SimpleNamespace(text=prompt)])
+            live_request_queue.send_content(content)
+            silence_state.awaiting_agent_response = True
+            silence_state.user_turn_active = False
+            silence_state.user_spoke_at = time.monotonic()
+            silence_state.response_nudge_count = 0
+            _sync_pending_media_analysis()
+            logger.error(
+                "Deterministic runtime reply exhausted strict validation; queued same-voice recovery session=%s label=%s expected=%s",
+                sanitize_log_fn(ctx.resolved_session_id),
+                sanitize_log_fn(recovery_label),
+                sanitize_log_fn(expected_text),
+            )
+        finally:
+            _clear_runtime_reply_source_state()
+            deterministic_runtime_pending = False
+            deterministic_runtime_retry_count = 0
+            deterministic_runtime_expected_text = ""
+            deterministic_runtime_started_at = 0.0
+            deterministic_runtime_label = ""
+            _clear_buffered_runtime_reply()
+
+    async def _speak_runtime_media_received_ack(media_kind: str) -> None:
+        ack_text = _build_media_received_ack_text(
+            media_kind=media_kind,
+            tradein_media_flow_active=_tradein_media_flow_active(),
+        )
+        _start_deterministic_runtime_reply(
+            ack_text,
+            label="media_received_ack",
+        )
+
+    def _speak_runtime_media_request_ack() -> None:
+        ack_text = _build_media_request_sent_ack_text(
+            tradein_media_flow_active=_tradein_media_flow_active(),
+        )
+        _start_deterministic_runtime_reply(
+            ack_text,
+            label="media_request_ack",
+        )
+
+    def _maybe_start_pending_valuation_result_reply() -> bool:
+        if _pending_valuation_result_voice_ack() != "ready":
+            return False
+        valuation_result_override = _pending_valuation_result_voice_text()
+        if not valuation_result_override:
+            latest_message = _latest_server_message_from_session()
+            if not isinstance(latest_message, dict):
+                return False
+            valuation_result_override = _valuation_result_reply_override_for_message(
+                state=session_state_store,
+                current_agent=current_agent,
+                message=latest_message,
+            )
+        if not valuation_result_override:
+            return False
+        _start_deterministic_runtime_reply(
+            valuation_result_override,
+            label="valuation_result",
+        )
+        return True
+
+    def _maybe_start_pending_questionnaire_reply() -> bool:
+        if _pending_questionnaire_voice_ack() != "ready":
+            return False
+        if str(_session_get("app:channel", "") or "").strip().lower() != "voice":
+            _clear_pending_questionnaire_voice_ack()
+            return False
+        questionnaire_text = _pending_questionnaire_voice_text()
+        if not questionnaire_text:
+            _clear_pending_questionnaire_voice_ack()
+            return False
+        _start_deterministic_runtime_reply(
+            questionnaire_text,
+            label="questionnaire_question",
+        )
+        return True
 
     def _looks_like_callback_request(text: str) -> bool:
         from app.agents.callbacks import looks_like_callback_request
@@ -1379,7 +2134,9 @@ async def downstream_task(
         and not bool(_session_get("temp:first_user_turn_started", False))
         and not bool(_session_get("temp:first_user_turn_complete", False))
     ):
-        server_owned_opening_pending = _queue_opening_bootstrap_prompt()
+        server_owned_opening_pending = _queue_opening_bootstrap_prompt(
+            consume_retry_budget=False
+        )
 
     try:
         while session_alive.is_set():
@@ -1393,6 +2150,10 @@ async def downstream_task(
                     if retry_attempt > 0:
                         retry_attempt = 0
                     event_had_agent_output = False
+                    event_transfer_target = ""
+                    source_handoff_suppression_logged = False
+                    if event.actions and isinstance(event.actions.transfer_to_agent, str):
+                        event_transfer_target = event.actions.transfer_to_agent.strip()
                     try:
                         # Audio + Text content
                         if event.content and event.content.parts:
@@ -1422,6 +2183,89 @@ async def downstream_task(
                                         opening_candidate_text = str(part.text or "").strip()
                                         opening_output_observed = True
                                         event_had_agent_output = True
+                                    continue
+                                if _analysis_reply_guard_active():
+                                    if (
+                                        part.inline_data
+                                        and part.inline_data.data
+                                        and part.inline_data.mime_type
+                                        and "audio" in part.inline_data.mime_type
+                                    ):
+                                        silence_state.agent_busy = True
+                                        silence_state.assistant_output_active = True
+                                        silence_state.awaiting_agent_response = False
+                                        silence_state.user_turn_active = False
+                                        _sync_pending_media_analysis()
+                                        event_had_agent_output = True
+                                        audio_bytes = part.inline_data.data
+                                        if isinstance(audio_bytes, str):
+                                            audio_bytes = base64.b64decode(audio_bytes)
+                                        deterministic_analysis_audio_buffer.append(audio_bytes)
+                                        continue
+                                    elif part.text and not ctx.is_native_audio:
+                                        silence_state.agent_busy = True
+                                        silence_state.assistant_output_active = True
+                                        silence_state.awaiting_agent_response = False
+                                        silence_state.user_turn_active = False
+                                        _sync_pending_media_analysis()
+                                        event_had_agent_output = True
+                                        deterministic_analysis_candidate_text = str(part.text or "").strip()
+                                        continue
+                                if _runtime_reply_guard_active() and not _runtime_reply_passthrough_active():
+                                    if (
+                                        part.inline_data
+                                        and part.inline_data.data
+                                        and part.inline_data.mime_type
+                                        and "audio" in part.inline_data.mime_type
+                                    ):
+                                        silence_state.agent_busy = True
+                                        silence_state.assistant_output_active = True
+                                        silence_state.awaiting_agent_response = False
+                                        silence_state.user_turn_active = False
+                                        _sync_pending_media_analysis()
+                                        event_had_agent_output = True
+                                        audio_bytes = part.inline_data.data
+                                        if isinstance(audio_bytes, str):
+                                            audio_bytes = base64.b64decode(audio_bytes)
+                                        deterministic_runtime_audio_buffer.append(audio_bytes)
+                                        continue
+                                    elif part.text and not ctx.is_native_audio:
+                                        silence_state.agent_busy = True
+                                        silence_state.assistant_output_active = True
+                                        silence_state.awaiting_agent_response = False
+                                        silence_state.user_turn_active = False
+                                        _sync_pending_media_analysis()
+                                        event_had_agent_output = True
+                                        deterministic_runtime_candidate_text = str(part.text or "").strip()
+                                        continue
+                                if (
+                                    event_transfer_target
+                                    and event_transfer_target != current_agent
+                                ):
+                                    if not source_handoff_suppression_logged:
+                                        logger.warning(
+                                            "Suppressing source-agent speech during handoff session=%s from=%s to=%s",
+                                            sanitize_log_fn(ctx.resolved_session_id),
+                                            sanitize_log_fn(current_agent),
+                                            sanitize_log_fn(event_transfer_target),
+                                        )
+                                        source_handoff_suppression_logged = True
+                                    continue
+                                if _router_tradein_handoff_guard_active():
+                                    if not router_tradein_suppression_logged:
+                                        logger.warning(
+                                            "Suppressing router speech until valuation handoff session=%s",
+                                            sanitize_log_fn(ctx.resolved_session_id),
+                                        )
+                                        router_tradein_suppression_logged = True
+                                    continue
+                                if _pending_media_request_voice_ack() and not _runtime_reply_passthrough_active():
+                                    continue
+                                if _pending_media_received_voice_ack():
+                                    continue
+                                if _pending_valuation_result_voice_ack():
+                                    continue
+                                if _suppress_runtime_owned_turn_output():
                                     continue
                                 server_owned_opening_logged = False
                                 # Audio -> binary WebSocket frame (lowest latency)
@@ -1486,6 +2330,7 @@ async def downstream_task(
                             text = getattr(event.input_transcription, "text", None)
                             finished = getattr(event.input_transcription, "finished", False)
                             if text:
+                                _clear_runtime_owned_turn()
                                 if _server_owned_preuser_guard_active():
                                     logger.warning(
                                         "Caller spoke before opening greeting was validated session=%s; "
@@ -1529,6 +2374,37 @@ async def downstream_task(
                                             _session_set("temp:greeting_block_count", 0)
                                         _maybe_register_callback_from_user_turn(text)
                                         _persist_recent_customer_context()
+                                        if (
+                                            current_agent == "ekaette_router"
+                                            and _looks_like_tradein_request(text)
+                                        ):
+                                            if (
+                                                _media_request_status_local() not in {"sending", "sent"}
+                                                and not _runtime_reply_guard_active()
+                                                and not _pending_media_request_voice_ack()
+                                            ):
+                                                _start_deterministic_runtime_reply(
+                                                    _build_media_request_sending_text(
+                                                        tradein_media_flow_active=True,
+                                                    ),
+                                                    label="media_request_sending",
+                                                )
+                                            router_tradein_handoff_pending = True
+                                            router_tradein_handoff_retry_count = 0
+                                            router_tradein_suppression_logged = False
+                                            _queue_router_tradein_handoff_prompt(retry=False)
+                                        analysis_reply_override = _analysis_reply_override_for_turn(
+                                            state=session_state_store,
+                                            current_agent=current_agent,
+                                        )
+                                        if analysis_reply_override:
+                                            deterministic_analysis_expected_text = (
+                                                analysis_reply_override
+                                            )
+                                            deterministic_analysis_pending = True
+                                            deterministic_analysis_retry_count = 0
+                                            _clear_buffered_analysis_reply()
+                                            _queue_deterministic_analysis_reply_prompt()
                                         last_input_text = ""
                                         receiving_input = False
                                         input_finalized = True
@@ -1564,6 +2440,75 @@ async def downstream_task(
                                             text[:80],
                                         )
                                         server_owned_opening_logged = True
+                                    if finished:
+                                        _last_final_text = text
+                                        _last_final_ts = time.monotonic()
+                                        last_output_text = ""
+                                        output_finalized = True
+                                    continue
+                                if _analysis_reply_guard_active():
+                                    silence_state.agent_busy = True
+                                    silence_state.assistant_output_active = True
+                                    silence_state.awaiting_agent_response = False
+                                    silence_state.user_turn_active = False
+                                    _sync_pending_media_analysis()
+                                    event_had_agent_output = True
+                                    if finished:
+                                        deterministic_analysis_candidate_text = str(text or "").strip()
+                                        _last_final_text = text
+                                        _last_final_ts = time.monotonic()
+                                        last_output_text = ""
+                                        output_finalized = True
+                                    continue
+                                if _runtime_reply_guard_active() and not _runtime_reply_passthrough_active():
+                                    silence_state.agent_busy = True
+                                    silence_state.assistant_output_active = True
+                                    silence_state.awaiting_agent_response = False
+                                    silence_state.user_turn_active = False
+                                    _sync_pending_media_analysis()
+                                    event_had_agent_output = True
+                                    if finished:
+                                        deterministic_runtime_candidate_text = str(text or "").strip()
+                                        _last_final_text = text
+                                        _last_final_ts = time.monotonic()
+                                        last_output_text = ""
+                                        output_finalized = True
+                                    continue
+                                if _router_tradein_handoff_guard_active():
+                                    if not router_tradein_suppression_logged:
+                                        logger.warning(
+                                            "Suppressing router transcription until valuation handoff session=%s",
+                                            sanitize_log_fn(ctx.resolved_session_id),
+                                        )
+                                        router_tradein_suppression_logged = True
+                                    if finished:
+                                        _last_final_text = text
+                                        _last_final_ts = time.monotonic()
+                                        last_output_text = ""
+                                        output_finalized = True
+                                    continue
+                                if _pending_media_request_voice_ack() and not _runtime_reply_passthrough_active():
+                                    if finished:
+                                        _last_final_text = text
+                                        _last_final_ts = time.monotonic()
+                                        last_output_text = ""
+                                        output_finalized = True
+                                    continue
+                                if _pending_media_received_voice_ack():
+                                    if finished:
+                                        _last_final_text = text
+                                        _last_final_ts = time.monotonic()
+                                        last_output_text = ""
+                                        output_finalized = True
+                                    continue
+                                if _pending_valuation_result_voice_ack():
+                                    if finished:
+                                        _last_final_text = text
+                                        _last_final_ts = time.monotonic()
+                                        last_output_text = ""
+                                        output_finalized = True
+                                    continue
+                                if _suppress_runtime_owned_turn_output():
                                     if finished:
                                         _last_final_text = text
                                         _last_final_ts = time.monotonic()
@@ -1645,6 +2590,8 @@ async def downstream_task(
                                             _session_set(
                                                 "temp:last_agent_turn", text
                                             )
+                                            if _runtime_reply_passthrough_active():
+                                                _complete_passthrough_runtime_reply(text)
                                         _last_final_text = text
                                         _last_final_ts = time.monotonic()
                                         model_has_spoken = True
@@ -1702,6 +2649,13 @@ async def downstream_task(
                             elif new_agent == current_agent:
                                 logger.debug("Suppressing no-op agent_transfer (already on %s)", new_agent)
                             else:
+                                if (
+                                    router_tradein_handoff_pending
+                                    and new_agent == "valuation_agent"
+                                ):
+                                    router_tradein_handoff_pending = False
+                                    router_tradein_handoff_retry_count = 0
+                                    router_tradein_suppression_logged = False
                                 await websocket.send_text(json.dumps({
                                     "type": "agent_transfer",
                                     "from": current_agent,
@@ -1750,9 +2704,41 @@ async def downstream_task(
                                     _session_set("temp:pending_transfer_bootstrap_target_agent", "")
                                     _session_set("temp:pending_transfer_bootstrap_reason", "")
                                     if isinstance(bootstrap_reason, str) and bootstrap_reason.strip():
+                                        normalized_reason = bootstrap_reason.strip()
+                                        if (
+                                            current_agent == "valuation_agent"
+                                            and normalized_reason in {
+                                                "voice_tradein_recovery",
+                                                "voice_tradein_handoff",
+                                            }
+                                            and _media_request_status_local() not in {"sending", "sent"}
+                                            and not _runtime_reply_guard_active()
+                                            and _pending_media_request_voice_ack() != "ready"
+                                        ):
+                                            _session_set("temp:pending_media_request_voice_ack", "sending")
+                                            _start_deterministic_runtime_reply(
+                                                _build_media_request_sending_text(
+                                                    tradein_media_flow_active=True,
+                                                ),
+                                                label="media_request_sending",
+                                            )
+                                        elif (
+                                            current_agent == "booking_agent"
+                                            and normalized_reason in {
+                                                "voice_tradein_booking_recovery",
+                                                "voice_tradein_booking_handoff",
+                                            }
+                                            and not _runtime_reply_guard_active()
+                                        ):
+                                            _start_deterministic_runtime_reply(
+                                                _build_tradein_booking_bootstrap_text(
+                                                    preference=_tradein_booking_preference_from_handoff_context(),
+                                                ),
+                                                label="booking_bootstrap",
+                                            )
                                         _queue_transfer_bootstrap_prompt(
                                             current_agent,
-                                            bootstrap_reason.strip(),
+                                            normalized_reason,
                                         )
                                 output_finished = bool(
                                     getattr(event.output_transcription, "finished", False)
@@ -1789,15 +2775,130 @@ async def downstream_task(
                                 payload = {k: v for k, v in structured.items() if k != "id"}
                                 await websocket.send_text(json.dumps(payload))
                                 last_structured_message_id = structured_id
-    
-                        if event_had_agent_output and _pending_media_request_voice_ack() == "ready":
+                                if (
+                                    str(payload.get("type", "") or "").strip() == "valuation_result"
+                                    and not _runtime_reply_guard_active()
+                                ):
+                                    _maybe_start_pending_valuation_result_reply()
+                                elif (
+                                    str(payload.get("type", "") or "").strip() == "questionnaire_started"
+                                    and not _runtime_reply_guard_active()
+                                ):
+                                    _maybe_start_pending_questionnaire_reply()
+
+                        if _pending_media_received_voice_ack() and _pending_media_request_voice_ack() == "ready":
                             _session_set("temp:pending_media_request_voice_ack", "")
-                        elif not event_had_agent_output:
-                            _maybe_queue_media_request_sent_ack_prompt()
-    
+
                         # Turn complete -> finalize output + status
                         if event.turn_complete:
                             await _finalize_input()
+                            if _runtime_reply_guard_active():
+                                if _runtime_output_matches_expected(deterministic_runtime_candidate_text):
+                                    await _flush_buffered_runtime_reply(
+                                        deterministic_runtime_candidate_text
+                                        or deterministic_runtime_expected_text
+                                    )
+                                elif not str(deterministic_runtime_candidate_text or "").strip():
+                                    elapsed = time.monotonic() - deterministic_runtime_started_at
+                                    grace_window = (
+                                        DETERMINISTIC_RUNTIME_REPLY_GRACE_SECONDS
+                                        * (deterministic_runtime_retry_count + 1)
+                                    )
+                                    if elapsed < grace_window:
+                                        logger.info(
+                                            "Deterministic runtime reply still waiting for native output session=%s label=%s elapsed=%.2fs",
+                                            sanitize_log_fn(ctx.resolved_session_id),
+                                            sanitize_log_fn(deterministic_runtime_label),
+                                            elapsed,
+                                        )
+                                    elif deterministic_runtime_retry_count < 1:
+                                        deterministic_runtime_retry_count += 1
+                                        deterministic_runtime_started_at = time.monotonic()
+                                        logger.warning(
+                                            "Deterministic runtime reply produced no validated output; retrying session=%s label=%s expected=%s",
+                                            sanitize_log_fn(ctx.resolved_session_id),
+                                            sanitize_log_fn(deterministic_runtime_label),
+                                            sanitize_log_fn(deterministic_runtime_expected_text),
+                                        )
+                                        _clear_buffered_runtime_reply()
+                                        _queue_deterministic_runtime_reply_prompt(retry=True)
+                                    else:
+                                        logger.warning(
+                                            "Deterministic runtime reply produced no validated output after grace window; using fallback session=%s label=%s expected=%s",
+                                            sanitize_log_fn(ctx.resolved_session_id),
+                                            sanitize_log_fn(deterministic_runtime_label),
+                                            sanitize_log_fn(deterministic_runtime_expected_text),
+                                        )
+                                        await _recover_deterministic_runtime_reply_same_voice()
+                                elif deterministic_runtime_retry_count < 1:
+                                    deterministic_runtime_retry_count += 1
+                                    deterministic_runtime_started_at = time.monotonic()
+                                    logger.warning(
+                                        "Deterministic runtime reply failed validation; retrying session=%s label=%s candidate=%s expected=%s",
+                                        sanitize_log_fn(ctx.resolved_session_id),
+                                        sanitize_log_fn(deterministic_runtime_label),
+                                        sanitize_log_fn(deterministic_runtime_candidate_text[:160]),
+                                        sanitize_log_fn(deterministic_runtime_expected_text),
+                                    )
+                                    _clear_buffered_runtime_reply()
+                                    _queue_deterministic_runtime_reply_prompt(retry=True)
+                                else:
+                                    logger.warning(
+                                        "Deterministic runtime reply failed validation twice; using fallback session=%s label=%s candidate=%s expected=%s",
+                                        sanitize_log_fn(ctx.resolved_session_id),
+                                        sanitize_log_fn(deterministic_runtime_label),
+                                        sanitize_log_fn(deterministic_runtime_candidate_text[:160]),
+                                        sanitize_log_fn(deterministic_runtime_expected_text),
+                                    )
+                                    await _recover_deterministic_runtime_reply_same_voice()
+                            else:
+                                pending_media_ack_kind = _pending_media_received_voice_ack()
+                                if pending_media_ack_kind:
+                                    await _speak_runtime_media_received_ack(pending_media_ack_kind)
+                                elif _pending_media_request_voice_ack() == "ready":
+                                    _speak_runtime_media_request_ack()
+                                elif _pending_valuation_result_voice_ack() == "ready":
+                                    if not _maybe_start_pending_valuation_result_reply():
+                                        logger.warning(
+                                            "Pending valuation-result voice acknowledgement had no grounded runtime override session=%s",
+                                            sanitize_log_fn(ctx.resolved_session_id),
+                                        )
+                                        _session_set("temp:pending_valuation_result_voice_ack", "")
+                                elif _pending_questionnaire_voice_ack() == "ready":
+                                    if not _maybe_start_pending_questionnaire_reply():
+                                        logger.warning(
+                                            "Pending questionnaire voice acknowledgement had no grounded runtime override session=%s",
+                                            sanitize_log_fn(ctx.resolved_session_id),
+                                        )
+                                        _clear_pending_questionnaire_voice_ack()
+                                elif _analysis_reply_guard_active():
+                                    if _analysis_output_matches_expected(deterministic_analysis_candidate_text):
+                                        await _flush_buffered_analysis_reply(
+                                            deterministic_analysis_candidate_text
+                                            or deterministic_analysis_expected_text
+                                        )
+                                    elif deterministic_analysis_retry_count < 1:
+                                        deterministic_analysis_retry_count += 1
+                                        logger.warning(
+                                            "Deterministic analysis reply failed validation; retrying session=%s candidate=%s expected=%s",
+                                            sanitize_log_fn(ctx.resolved_session_id),
+                                            sanitize_log_fn(deterministic_analysis_candidate_text[:160]),
+                                            sanitize_log_fn(deterministic_analysis_expected_text),
+                                        )
+                                        _clear_buffered_analysis_reply()
+                                        _queue_deterministic_analysis_reply_prompt(retry=True)
+                                    else:
+                                        logger.warning(
+                                            "Deterministic analysis reply failed validation twice; using fallback session=%s candidate=%s expected=%s",
+                                            sanitize_log_fn(ctx.resolved_session_id),
+                                            sanitize_log_fn(deterministic_analysis_candidate_text[:160]),
+                                            sanitize_log_fn(deterministic_analysis_expected_text),
+                                        )
+                                        await _recover_deterministic_analysis_reply_same_voice()
+                                elif _router_tradein_handoff_guard_active():
+                                    if router_tradein_handoff_retry_count < 1:
+                                        router_tradein_handoff_retry_count += 1
+                                        _queue_router_tradein_handoff_prompt(retry=True)
                             await _finalize_output()
                             if silence_state.greeting_lock_active:
                                 if _server_owned_preuser_guard_active():
@@ -1988,9 +3089,7 @@ async def downstream_task(
                     continue
                 raise
     finally:
-        if opening_task is not None and not opening_task.done():
-            opening_task.cancel()
-            await asyncio.gather(opening_task, return_exceptions=True)
+        _clear_buffered_opening_output()
 
 
 async def silence_nudge_task(

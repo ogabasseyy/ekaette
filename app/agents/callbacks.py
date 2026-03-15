@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import copy
+import json
 import logging
 import re
+import time
 from typing import Any
 
 from google.adk.agents.callback_context import CallbackContext
@@ -38,6 +40,15 @@ logger = logging.getLogger(__name__)
 _INSTRUCTION_STATE_DEFAULTS: dict[str, Any] = {
     "temp:vision_media_handoff_state": "",
     "temp:background_vision_status": "",
+    "temp:last_media_request_status": "",
+    "temp:tradein_fulfillment_phase": "",
+    "temp:last_delivery_quote_status": "",
+    "temp:last_delivery_quote_details": {},
+    "temp:pending_media_received_voice_ack": "",
+    "temp:pending_questionnaire_voice_ack": "",
+    "temp:pending_questionnaire_voice_text": "",
+    "temp:pending_valuation_result_voice_ack": "",
+    "temp:pending_valuation_result_voice_text": "",
     "temp:pending_handoff_target_agent": "",
     "temp:pending_handoff_latest_user": "",
     "temp:pending_handoff_latest_agent": "",
@@ -107,6 +118,16 @@ _CALLBACK_PROMISE_PATTERNS = (
     re.compile(r"\brequest a callback for you right after this\b", re.IGNORECASE),
     re.compile(r"\bwhen i call back\b", re.IGNORECASE),
 )
+_MEDIA_REQUEST_RESEND_PATTERNS = (
+    re.compile(
+        r"\b(?:resend|send again|retry|re-send)\b.{0,40}\b(?:whatsapp|message|text|it)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:did(?:n't| not)\s+get|haven't\s+got|have not got|not (?:seen|seeing|received)|no\b.{0,8}\bmessage)\b",
+        re.IGNORECASE,
+    ),
+)
 _WHATSAPP_DELIVERY_CLAIM_PATTERNS = (
     re.compile(r"\b(?:i(?:'|’)ve|i have|i just|we(?:'|’)ve|we have)\s+sent\b", re.IGNORECASE),
     re.compile(r"\bcheck\s+(?:your\s+)?whatsapp\b", re.IGNORECASE),
@@ -125,6 +146,42 @@ _SELF_INTRO_ONLY_PATTERN = re.compile(
 _ACK_ONLY_PATTERN = re.compile(
     r"^\s*(?:yes|yeah|yep|no|nope|okay|ok|alright|all right|sure|mm+h+m*|uh-huh)\s*[!.?]*\s*$",
     re.IGNORECASE,
+)
+_NEGATIVE_ACK_ONLY_PATTERN = re.compile(
+    r"^\s*(?:no|nope|nah)\s*[!.?]*\s*$",
+    re.IGNORECASE,
+)
+_WRITTEN_FOLLOWUP_REQUEST_PATTERNS = (
+    re.compile(
+        r"\b(?:send|share|text|message|drop|forward)\b.{0,50}\b(?:whatsapp|sms|text)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:whatsapp|sms|text)\b.{0,50}\b(?:send|share|message)\b",
+        re.IGNORECASE,
+    ),
+)
+_WRITTEN_FOLLOWUP_OFFER_PATTERNS = (
+    re.compile(
+        r"\b(?:shall i|should i|would you like me to|do you want me to|want me to|can i)\b"
+        r".{0,80}\b(?:send|share|text|message)\b.{0,40}\b(?:whatsapp|sms|text)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:send|share)\b.{0,40}\b(?:via|on)\b.{0,20}\b(?:whatsapp|sms)\b",
+        re.IGNORECASE,
+    ),
+)
+_WRITTEN_FOLLOWUP_RESEND_PATTERNS = (
+    re.compile(
+        r"\b(?:resend|send again|retry|re-send)\b.{0,40}\b(?:whatsapp|sms|text|message|it)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:did(?:n't| not)\s+get|haven't\s+got|have not got|not (?:seen|received)|missed)\b"
+        r".{0,40}\b(?:whatsapp|sms|text|message|it)\b",
+        re.IGNORECASE,
+    ),
 )
 _VOICE_REPAIR_PATTERN = re.compile(
     r"\b("
@@ -176,6 +233,19 @@ _BOOKING_PROGRESS_PATTERN = re.compile(
     r"i(?:'|’)ll take it|i will take it|finali[sz]e|complete(?: the)? order|"
     r"confirm(?: the)? order|take the offer|take it"
     r")\b",
+    re.IGNORECASE,
+)
+_BOOKING_PAYMENT_INTENT_PATTERN = re.compile(
+    r"\b("
+    r"pay|payment|make payment|pay now|account number|virtual account|bank transfer|"
+    r"send (?:me )?(?:the )?(?:account|payment details)|payment details|"
+    r"pla?y\b.{0,24}\b(?:for|it|this|swap|order|work|now)\b"
+    r")\b",
+    re.IGNORECASE,
+)
+_PAYMENT_SETUP_OFFER_PATTERN = re.compile(
+    r"\b(?:would|do|shall|should|can)\b.{0,80}\b(?:send|share|read|create|generate|set ?up)\b"
+    r".{0,60}\b(?:account|payment|virtual account|bank details|account details)\b",
     re.IGNORECASE,
 )
 _BOOKING_CONTEXT_PATTERN = re.compile(
@@ -236,12 +306,32 @@ _DEVICE_COLOR_PATTERN = re.compile(
     r"\b(black|white|silver|gray|grey|blue|red|gold|green|pink|purple|yellow|orange|brown)\b",
     re.IGNORECASE,
 )
+_QUESTIONNAIRE_POSITIVE_PATTERN = re.compile(
+    r"\b(?:yes|yeah|yep|correct|it does|they do|it has|i have|i did|done|signed out|disabled|removed)\b",
+    re.IGNORECASE,
+)
+_QUESTIONNAIRE_NEGATIVE_PATTERN = re.compile(
+    r"\b(?:no|nope|nah|not at all|never|it does not|it doesn't|they don't|i do not|i don't|"
+    r"i have not|i haven't|it has not|it hasn't|not yet)\b",
+    re.IGNORECASE,
+)
+_POST_OFFER_AFFIRMATIVE_PATTERN = re.compile(
+    r"^\s*(?:"
+    r"yes|yeah|yep|okay|ok|alright|all right|sure|fine|great|perfect|nice|"
+    r"thank you|thanks|yes please|yes definitely|okay thank you(?: very much)?|"
+    r"that works|sounds good|let(?:'|’)s go|lets go"
+    r")(?:[.!?, ]+(?:please|definitely|very much|now|then|what(?:'|’)s next|whats next))?\s*$",
+    re.IGNORECASE,
+)
+_QUESTIONNAIRE_NUMBER_PATTERN = re.compile(r"\b(100|[1-9]?\d)\b")
 _TEXT_ASSISTANT_NAME_PATTERN = re.compile(r"\b(?:ehkaitay|eh[-\s]?kai[-\s]?tay)\b", re.IGNORECASE)
 _TRANSFER_DISCLOSURE_PATTERNS = (
     re.compile(r"\btransfer(?:ring)?\s+(?:you|this call)\b", re.IGNORECASE),
     re.compile(r"\bconnect(?:ing)?\s+(?:you|this call)\b", re.IGNORECASE),
     re.compile(r"\brouting\s+you\b", re.IGNORECASE),
     re.compile(r"\bpass(?:ing)?\s+you\s+to\b", re.IGNORECASE),
+    re.compile(r"\bhand(?:ing)?\s+you\s+over\b", re.IGNORECASE),
+    re.compile(r"\bhandover\b", re.IGNORECASE),
     re.compile(r"\bbooking agent\b", re.IGNORECASE),
     re.compile(r"\bvaluation specialist\b", re.IGNORECASE),
 )
@@ -271,26 +361,38 @@ def looks_like_callback_promise(text: str) -> bool:
 
 
 def _latest_user_turn_text(state: Any, *, session: Any = None) -> str:
-    latest_user_raw = _state_get(state, "temp:last_user_turn", "")
-    if isinstance(latest_user_raw, str) and latest_user_raw.strip():
-        return latest_user_raw.strip()
+    user_id, session_id = _voice_session_identity(state, session=session)
+    if user_id and session_id:
+        registry_state = get_registered_voice_state(user_id=user_id, session_id=session_id)
+        registry_latest_user_raw = registry_state.get("temp:last_user_turn", "")
+        if isinstance(registry_latest_user_raw, str) and registry_latest_user_raw.strip():
+            return registry_latest_user_raw.strip()
     session_state = getattr(session, "state", None)
     if session_state is not None:
         session_latest_user_raw = _state_get(session_state, "temp:last_user_turn", "")
         if isinstance(session_latest_user_raw, str) and session_latest_user_raw.strip():
             return session_latest_user_raw.strip()
+    latest_user_raw = _state_get(state, "temp:last_user_turn", "")
+    if isinstance(latest_user_raw, str) and latest_user_raw.strip():
+        return latest_user_raw.strip()
     return ""
 
 
 def _latest_agent_turn_text(state: Any, *, session: Any = None) -> str:
-    latest_agent_raw = _state_get(state, "temp:last_agent_turn", "")
-    if isinstance(latest_agent_raw, str) and latest_agent_raw.strip():
-        return latest_agent_raw.strip()
+    user_id, session_id = _voice_session_identity(state, session=session)
+    if user_id and session_id:
+        registry_state = get_registered_voice_state(user_id=user_id, session_id=session_id)
+        registry_latest_agent_raw = registry_state.get("temp:last_agent_turn", "")
+        if isinstance(registry_latest_agent_raw, str) and registry_latest_agent_raw.strip():
+            return registry_latest_agent_raw.strip()
     session_state = getattr(session, "state", None)
     if session_state is not None:
         session_latest_agent_raw = _state_get(session_state, "temp:last_agent_turn", "")
         if isinstance(session_latest_agent_raw, str) and session_latest_agent_raw.strip():
             return session_latest_agent_raw.strip()
+    latest_agent_raw = _state_get(state, "temp:last_agent_turn", "")
+    if isinstance(latest_agent_raw, str) and latest_agent_raw.strip():
+        return latest_agent_raw.strip()
     return ""
 
 
@@ -408,6 +510,12 @@ def _looks_like_explicit_device_swap_request(text: str) -> bool:
 
 
 def _recent_customer_context_text(state: Any, *, session: Any = None) -> str:
+    user_id, session_id = _voice_session_identity(state, session=session)
+    if user_id and session_id:
+        registry_state = get_registered_voice_state(user_id=user_id, session_id=session_id)
+        registry_recent_raw = registry_state.get("temp:recent_customer_context", "")
+        if isinstance(registry_recent_raw, str) and registry_recent_raw.strip():
+            return registry_recent_raw.strip()
     recent_raw = _state_get(state, "temp:recent_customer_context", "")
     if isinstance(recent_raw, str) and recent_raw.strip():
         return recent_raw.strip()
@@ -599,6 +707,38 @@ def _voice_tradein_context_text(state: Any, *, session: Any = None) -> str:
     ).strip()
 
 
+def _extract_tradein_swap_devices(text: str) -> tuple[str, str] | None:
+    normalized = " ".join(str(text or "").split()).strip()
+    if not normalized or not _looks_like_tradein_or_upgrade_request(normalized):
+        return None
+
+    explicit_side_patterns = (
+        re.compile(
+            r"\bfrom\b\s+([A-Za-z0-9+\-/ ]{1,40}?)\s+\bto\b\s+([A-Za-z0-9+\-/ ]{1,40})",
+            re.IGNORECASE,
+        ),
+        re.compile(
+            r"\b(?:swap|trade(?:\s|-)?in|exchange|switch)\b.{0,32}?\b"
+            r"([A-Za-z0-9+\-/ ]{1,40}?)\s+\bfor\b\s+([A-Za-z0-9+\-/ ]{1,40})",
+            re.IGNORECASE,
+        ),
+        re.compile(
+            r"\b(?:swap|trade(?:\s|-)?in|upgrade|switch|exchange)\b.{0,32}?\b"
+            r"([A-Za-z0-9+\-/ ]{1,40}?)\s+\bto\b\s+([A-Za-z0-9+\-/ ]{1,40})",
+            re.IGNORECASE,
+        ),
+    )
+    for pattern in explicit_side_patterns:
+        match = pattern.search(normalized)
+        if not match:
+            continue
+        current_device = " ".join(match.group(1).split()).strip(" ,.;:!?")
+        target_device = " ".join(match.group(2).split()).strip(" ,.;:!?")
+        if _swap_side_has_device_signal(current_device) and _swap_side_has_device_signal(target_device):
+            return current_device, target_device
+    return None
+
+
 def _router_voice_swap_handoff_instruction(
     state: State,
     agent_name: str,
@@ -675,6 +815,9 @@ def _has_booking_commitment_intent(
     latest_user: str,
     recent_customer: str,
 ) -> bool:
+    has_offer_amount = _has_tradein_offer_amount(state, session=session)
+    if _tradein_fulfillment_phase(state, session=session) in {"booking_pending", "booking_active"}:
+        return True
     combined_parts = [
         text.strip()
         for text in (latest_user, recent_customer)
@@ -686,19 +829,67 @@ def _has_booking_commitment_intent(
     if _BOOKING_REQUEST_PATTERN.search(combined_text):
         return True
     latest_user_text = latest_user.strip() if isinstance(latest_user, str) else ""
+    if has_offer_amount and _looks_like_post_offer_affirmation(latest_user_text):
+        return True
+    if has_offer_amount and _BOOKING_PAYMENT_INTENT_PATTERN.search(latest_user_text):
+        return True
+    context_text = recent_customer.strip() if isinstance(recent_customer, str) else ""
+    if has_offer_amount and context_text:
+        for raw_line in context_text.splitlines():
+            line = raw_line.replace("Customer:", "").strip()
+            if not line:
+                continue
+            if _looks_like_post_offer_affirmation(line):
+                return True
+            if _BOOKING_PAYMENT_INTENT_PATTERN.search(line):
+                return True
+            if _BOOKING_PROGRESS_PATTERN.search(line):
+                return True
     if not latest_user_text or not _BOOKING_PROGRESS_PATTERN.search(latest_user_text):
         return False
-    offer_amount = _state_get(state, "temp:last_offer_amount", 0)
-    try:
-        has_offer_amount = float(offer_amount or 0) > 0
-    except (TypeError, ValueError):
-        has_offer_amount = False
-    context_text = recent_customer.strip() if isinstance(recent_customer, str) else ""
     return bool(
         has_offer_amount
         or _BOOKING_CONTEXT_PATTERN.search(context_text)
         or _looks_like_tradein_or_upgrade_request(context_text)
     )
+
+
+def _looks_like_post_offer_affirmation(text: str) -> bool:
+    normalized = " ".join(str(text or "").split()).strip()
+    if not normalized:
+        return False
+    normalized = normalized.strip(" .,!?:;")
+    if _BOOKING_PROGRESS_PATTERN.search(normalized):
+        return True
+    return bool(_POST_OFFER_AFFIRMATIVE_PATTERN.fullmatch(normalized))
+
+
+def _has_explicit_payment_setup_intent(
+    *,
+    state: Any,
+    session: Any = None,
+    latest_user: str,
+    latest_agent: str,
+    recent_customer: str,
+) -> bool:
+    combined_parts = [
+        text.strip()
+        for text in (latest_user, recent_customer)
+        if isinstance(text, str) and text.strip()
+    ]
+    combined_text = " ".join(combined_parts).strip()
+    if combined_text and _BOOKING_PAYMENT_INTENT_PATTERN.search(combined_text):
+        return True
+    latest_user_text = latest_user.strip() if isinstance(latest_user, str) else ""
+    latest_agent_text = latest_agent.strip() if isinstance(latest_agent, str) else ""
+    if (
+        latest_user_text
+        and _looks_like_post_offer_affirmation(latest_user_text)
+        and latest_agent_text
+        and _PAYMENT_SETUP_OFFER_PATTERN.search(latest_agent_text)
+    ):
+        return True
+    return False
 
 
 def _has_explicit_transfer_request(
@@ -1436,6 +1627,24 @@ def _offer_followup_prompt(text: str) -> str:
     return "Would you like to go ahead with that offer, or would you like to negotiate?"
 
 
+def _pending_valuation_result_voice_text(state: Any, *, session: Any = None) -> str:
+    user_id, session_id = _voice_session_identity(state, session=session)
+    if user_id and session_id:
+        registry_state = get_registered_voice_state(user_id=user_id, session_id=session_id)
+        registry_raw = registry_state.get("temp:pending_valuation_result_voice_text", "")
+        if isinstance(registry_raw, str) and registry_raw.strip():
+            return registry_raw.strip()
+    session_state = getattr(session, "state", None)
+    if session_state is not None:
+        session_raw = _state_get(session_state, "temp:pending_valuation_result_voice_text", "")
+        if isinstance(session_raw, str) and session_raw.strip():
+            return session_raw.strip()
+    raw = _state_get(state, "temp:pending_valuation_result_voice_text", "")
+    if isinstance(raw, str) and raw.strip():
+        return raw.strip()
+    return ""
+
+
 def _tradein_offer_replacement(
     *,
     offer_amount: int | float,
@@ -1447,6 +1656,60 @@ def _tradein_offer_replacement(
     followup = _offer_followup_prompt(original_text)
     pieces = [piece for piece in (summary, offer_text, followup) if piece]
     return " ".join(pieces).strip()
+
+
+def _grade_and_value_request_signature(
+    *,
+    state: Any,
+    session: Any = None,
+    args: dict[str, Any],
+) -> str:
+    analysis = _latest_tool_backed_analysis(state, session=session)
+    if not isinstance(analysis, dict):
+        analysis = {}
+    answers_payload: dict[str, Any] | str = ""
+    answers_raw = args.get("questionnaire_answers")
+    if isinstance(answers_raw, str) and answers_raw.strip():
+        try:
+            parsed_answers = json.loads(answers_raw)
+        except json.JSONDecodeError:
+            answers_payload = answers_raw.strip()
+        else:
+            answers_payload = parsed_answers if isinstance(parsed_answers, dict) else answers_raw.strip()
+    elif isinstance(answers_raw, dict):
+        answers_payload = copy.deepcopy(answers_raw)
+    payload = {
+        "analysis": analysis,
+        "answers": answers_payload,
+        "retail_price": args.get("retail_price", 0),
+    }
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"))
+
+
+def _cached_grade_and_value_result(
+    questionnaire_state: dict[str, Any] | None,
+    *,
+    signature: str,
+) -> dict[str, Any] | None:
+    if not isinstance(questionnaire_state, dict):
+        return None
+    previous_signature = str(questionnaire_state.get("last_grade_and_value_signature", "") or "")
+    if not previous_signature or previous_signature != signature:
+        return None
+    cached_result = questionnaire_state.get("last_grade_and_value_result")
+    if not isinstance(cached_result, dict):
+        return None
+    ts_raw = questionnaire_state.get("last_grade_and_value_ts", 0.0)
+    try:
+        ts = float(ts_raw or 0.0)
+    except (TypeError, ValueError):
+        ts = 0.0
+    if ts <= 0.0 or (time.monotonic() - ts) > 5.0:
+        return None
+    result = copy.deepcopy(cached_result)
+    result["cached"] = True
+    result["deduplicated"] = True
+    return result
 
 
 def _unguarded_tradein_offer_replacement(
@@ -1508,6 +1771,64 @@ def _normalized_color_token(text: str) -> str:
         return ""
     color = match.group(1).strip().lower()
     return "gray" if color == "grey" else color
+
+
+def _response_claims_analysis_color(text: str) -> bool:
+    normalized = " ".join(str(text or "").lower().split())
+    if not normalized:
+        return False
+    if any(
+        phrase in normalized
+        for phrase in (
+            "video shows",
+            "video analysis",
+            "analysis shows",
+            "analysis confirms",
+            "analysis indicated",
+            "i saw it in the video",
+            "from the video",
+            "based on the video",
+            "based on that video",
+        )
+    ):
+        return True
+    response_color = _normalized_color_token(normalized)
+    if response_color and any(marker in normalized for marker in ("video", "analysis", "we see")):
+        return True
+    return bool(
+        re.search(
+            r"\b(?:your|the)\s+(?:iphone|phone|device)\b.{0,20}\bis\b",
+            normalized,
+        )
+    )
+
+
+def _response_conflicts_with_analysis_color(
+    *,
+    text: str,
+    analysis: dict[str, Any] | None,
+) -> bool:
+    if not isinstance(analysis, dict):
+        return False
+    analysis_color = _normalized_color_token(str(analysis.get("device_color", "") or ""))
+    if not analysis_color or analysis_color == "unknown":
+        return False
+    normalized = " ".join(str(text or "").lower().split())
+    if not normalized:
+        return False
+    if (
+        "couldn't confirm the phone's colour" in normalized
+        or "could not clearly confirm the exact colour" in normalized
+        or "didn't specifically confirm the color" in normalized
+        or "did not specifically confirm the color" in normalized
+    ):
+        return True
+    response_color = _normalized_color_token(normalized)
+    return bool(
+        response_color
+        and response_color != analysis_color
+        and _response_claims_analysis_color(normalized)
+    )
 
 
 def _grounded_color_confirmation_replacement(
@@ -1582,15 +1903,91 @@ def _transfer_disclosure_replacement(
 
 
 def _media_request_status(state: Any, *, session: Any = None) -> str:
-    raw_status = _state_get(state, "temp:last_media_request_status", "")
-    if isinstance(raw_status, str) and raw_status.strip():
-        return raw_status.strip().lower()
+    user_id, session_id = _voice_session_identity(state, session=session)
+    if user_id and session_id:
+        registry_state = get_registered_voice_state(user_id=user_id, session_id=session_id)
+        registry_raw = registry_state.get("temp:last_media_request_status", "")
+        if isinstance(registry_raw, str) and registry_raw.strip():
+            return registry_raw.strip().lower()
     session_state = getattr(session, "state", None)
     if session_state is not None:
         session_raw = _state_get(session_state, "temp:last_media_request_status", "")
         if isinstance(session_raw, str) and session_raw.strip():
             return session_raw.strip().lower()
+    raw_status = _state_get(state, "temp:last_media_request_status", "")
+    if isinstance(raw_status, str) and raw_status.strip():
+        return raw_status.strip().lower()
     return ""
+
+
+def _tradein_fulfillment_phase(state: Any, *, session: Any = None) -> str:
+    user_id, session_id = _voice_session_identity(state, session=session)
+    if user_id and session_id:
+        registry_state = get_registered_voice_state(user_id=user_id, session_id=session_id)
+        registry_raw = registry_state.get("temp:tradein_fulfillment_phase", "")
+        if isinstance(registry_raw, str) and registry_raw.strip():
+            return registry_raw.strip().lower()
+    session_state = getattr(session, "state", None)
+    if session_state is not None:
+        session_raw = _state_get(session_state, "temp:tradein_fulfillment_phase", "")
+        if isinstance(session_raw, str) and session_raw.strip():
+            return session_raw.strip().lower()
+    raw = _state_get(state, "temp:tradein_fulfillment_phase", "")
+    if isinstance(raw, str) and raw.strip():
+        return raw.strip().lower()
+    return ""
+
+
+def _latest_tradein_offer_amount(state: Any, *, session: Any = None) -> int:
+    user_id, session_id = _voice_session_identity(state, session=session)
+    if user_id and session_id:
+        registry_state = get_registered_voice_state(user_id=user_id, session_id=session_id)
+        registry_raw = registry_state.get("temp:last_offer_amount", 0)
+        try:
+            registry_amount = int(registry_raw or 0)
+        except (TypeError, ValueError):
+            registry_amount = 0
+        if registry_amount > 0:
+            return registry_amount
+    session_state = getattr(session, "state", None)
+    if session_state is not None:
+        try:
+            session_amount = int(_state_get(session_state, "temp:last_offer_amount", 0) or 0)
+        except (TypeError, ValueError):
+            session_amount = 0
+        if session_amount > 0:
+            return session_amount
+    try:
+        callback_amount = int(_state_get(state, "temp:last_offer_amount", 0) or 0)
+    except (TypeError, ValueError):
+        callback_amount = 0
+    return max(0, callback_amount)
+
+
+def _persist_tradein_fulfillment_phase(
+    *,
+    state: Any,
+    session: Any = None,
+    phase: str,
+) -> None:
+    normalized = phase.strip().lower() if isinstance(phase, str) else ""
+    _persist_runtime_hint_state(
+        state=state,
+        session=session,
+        key="temp:tradein_fulfillment_phase",
+        value=normalized,
+    )
+
+
+def _has_tradein_offer_amount(state: Any, *, session: Any = None) -> bool:
+    return _latest_tradein_offer_amount(state, session=session) > 0
+
+
+def _looks_like_media_request_resend_intent(text: str) -> bool:
+    normalized = text.strip()
+    if not normalized:
+        return False
+    return any(pattern.search(normalized) for pattern in _MEDIA_REQUEST_RESEND_PATTERNS)
 
 
 def _background_tradein_followup_question(state: Any, *, session: Any = None) -> str:
@@ -1615,6 +2012,19 @@ def _background_tradein_followup_question(state: Any, *, session: Any = None) ->
     return f"{preface}has the phone ever been exposed to water damage or had any repairs?"
 
 
+def _latest_agent_mentions_media_send_in_progress(state: Any, *, session: Any = None) -> bool:
+    normalized = " ".join(_latest_agent_turn_text(state, session=session).lower().split())
+    if not normalized:
+        return False
+    return any(
+        phrase in normalized
+        for phrase in (
+            "sending you a whatsapp message now",
+            "sending a whatsapp message now",
+        )
+    )
+
+
 def _tool_backed_analysis_available(state: Any, *, session: Any = None) -> bool:
     raw = _latest_tool_backed_analysis(state, session=session)
     if not isinstance(raw, dict):
@@ -1623,6 +2033,316 @@ def _tool_backed_analysis_available(state: Any, *, session: Any = None) -> bool:
         bool(str(raw.get(key, "") or "").strip())
         for key in ("device_name", "brand", "condition")
     ) or bool(raw.get("details"))
+
+
+def _promote_tradein_fulfillment_phase_from_latest_user(
+    *,
+    state: Any,
+    session: Any = None,
+) -> None:
+    if _tradein_fulfillment_phase(state, session=session) in {"booking_pending", "booking_active"}:
+        return
+    if not _is_voice_tradein_flow(state, session=session):
+        return
+    if not _has_tradein_offer_amount(state, session=session):
+        return
+    latest_user = _latest_user_turn_text(state, session=session)
+    recent_customer = _recent_customer_context_text(state, session=session)
+    if not _has_booking_commitment_intent(
+        state=state,
+        session=session,
+        latest_user=latest_user,
+        recent_customer=recent_customer,
+    ):
+        return
+    _persist_tradein_fulfillment_phase(
+        state=state,
+        session=session,
+        phase="booking_pending",
+    )
+
+
+def _tradein_questionnaire_state(state: Any, *, session: Any = None) -> dict[str, Any] | None:
+    user_id, session_id = _voice_session_identity(state, session=session)
+    if user_id and session_id:
+        registry_state = get_registered_voice_state(user_id=user_id, session_id=session_id)
+        registry_raw = registry_state.get("temp:tradein_questionnaire_state")
+        if isinstance(registry_raw, dict) and registry_raw:
+            return copy.deepcopy(registry_raw)
+    session_state = getattr(session, "state", None)
+    if session_state is not None:
+        session_raw = _state_get(session_state, "temp:tradein_questionnaire_state", None)
+        if isinstance(session_raw, dict) and session_raw:
+            return copy.deepcopy(session_raw)
+    raw = _state_get(state, "temp:tradein_questionnaire_state", None)
+    if isinstance(raw, dict) and raw:
+        return copy.deepcopy(raw)
+    return None
+
+
+def _persist_tradein_questionnaire_state(
+    *,
+    state: Any,
+    session: Any = None,
+    questionnaire_state: dict[str, Any],
+) -> None:
+    if not isinstance(questionnaire_state, dict):
+        return
+    _persist_voice_json_state(
+        state=state,
+        session=session,
+        key="temp:tradein_questionnaire_state",
+        value=questionnaire_state,
+    )
+
+
+def _tradein_questionnaire_current_question(
+    questionnaire_state: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if not isinstance(questionnaire_state, dict):
+        return None
+    questions = questionnaire_state.get("questions")
+    if not isinstance(questions, list) or not questions:
+        return None
+    answers = questionnaire_state.get("answers")
+    if not isinstance(answers, dict):
+        answers = {}
+    current_index_raw = questionnaire_state.get("current_index", 0)
+    try:
+        current_index = max(0, int(current_index_raw or 0))
+    except (TypeError, ValueError):
+        current_index = 0
+    for question in questions[current_index:]:
+        question_id = str(question.get("id", "") or "").strip()
+        if question_id and question_id not in answers:
+            return question
+    return None
+
+
+def _tradein_questionnaire_is_incomplete(
+    questionnaire_state: dict[str, Any] | None,
+) -> bool:
+    if not isinstance(questionnaire_state, dict):
+        return False
+    if str(questionnaire_state.get("status", "") or "").strip().lower() != "in_progress":
+        return False
+    return _tradein_questionnaire_current_question(questionnaire_state) is not None
+
+
+def _tradein_questionnaire_completion_ack_pending(
+    questionnaire_state: dict[str, Any] | None,
+) -> bool:
+    if not isinstance(questionnaire_state, dict):
+        return False
+    return bool(questionnaire_state.get("pending_completion_ack", False))
+
+
+def _tradein_questionnaire_prompt(questionnaire_state: dict[str, Any] | None) -> str:
+    question = _tradein_questionnaire_current_question(questionnaire_state)
+    if not isinstance(question, dict):
+        return ""
+    prompt = str(question.get("question", "") or "").strip()
+    return prompt
+
+
+def _set_pending_questionnaire_voice_prompt(
+    *,
+    state: Any,
+    session: Any = None,
+    question_text: str,
+) -> None:
+    normalized = " ".join(str(question_text or "").split()).strip()
+    if not normalized:
+        _persist_runtime_hint_state(
+            state=state,
+            session=session,
+            key="temp:pending_questionnaire_voice_ack",
+            value="",
+        )
+        _persist_runtime_hint_state(
+            state=state,
+            session=session,
+            key="temp:pending_questionnaire_voice_text",
+            value="",
+        )
+        return
+    _persist_runtime_hint_state(
+        state=state,
+        session=session,
+        key="temp:pending_questionnaire_voice_ack",
+        value="ready",
+    )
+    _persist_runtime_hint_state(
+        state=state,
+        session=session,
+        key="temp:pending_questionnaire_voice_text",
+        value=normalized,
+    )
+
+
+def _clear_pending_questionnaire_voice_prompt(
+    *,
+    state: Any,
+    session: Any = None,
+) -> None:
+    _set_pending_questionnaire_voice_prompt(state=state, session=session, question_text="")
+
+
+def _tradein_questionnaire_answers_json(
+    questionnaire_state: dict[str, Any] | None,
+) -> str:
+    if not isinstance(questionnaire_state, dict):
+        return "{}"
+    answers = questionnaire_state.get("answers")
+    if not isinstance(answers, dict):
+        return "{}"
+    try:
+        return json.dumps(answers)
+    except (TypeError, ValueError):
+        return "{}"
+
+
+def _tradein_questionnaire_cache_key(query: str, category: str = "") -> str:
+    normalized_query = " ".join(str(query or "").lower().split())
+    normalized_category = " ".join(str(category or "").lower().split())
+    return f"{normalized_query}|{normalized_category}".strip("|")
+
+
+def _extract_questionnaire_boolean_answer(text: str) -> str | None:
+    normalized = " ".join(str(text or "").split()).strip()
+    if not normalized:
+        return None
+    if _QUESTIONNAIRE_NEGATIVE_PATTERN.search(normalized):
+        return "no"
+    if _QUESTIONNAIRE_POSITIVE_PATTERN.search(normalized):
+        return "yes"
+    return None
+
+
+def _extract_questionnaire_number_answer(text: str) -> int | None:
+    normalized = " ".join(str(text or "").split()).strip()
+    if not normalized:
+        return None
+    match = _QUESTIONNAIRE_NUMBER_PATTERN.search(normalized)
+    if not match:
+        return None
+    try:
+        return int(match.group(1))
+    except (TypeError, ValueError):
+        return None
+
+
+def _extract_tradein_questionnaire_answer(
+    question: dict[str, Any] | None,
+    latest_user_turn: str,
+) -> Any | None:
+    if not isinstance(question, dict):
+        return None
+    normalized = latest_user_turn.strip()
+    if not normalized:
+        return None
+    if _VOICE_REPAIR_PATTERN.search(normalized):
+        return None
+    if _GREETING_ONLY_PATTERN.fullmatch(normalized):
+        return None
+    question_type = str(question.get("type", "boolean") or "boolean").strip().lower()
+    if question_type == "number":
+        return _extract_questionnaire_number_answer(normalized)
+    return _extract_questionnaire_boolean_answer(normalized)
+
+
+def _advance_tradein_questionnaire_from_latest_user(
+    *,
+    state: Any,
+    session: Any = None,
+) -> dict[str, Any] | None:
+    questionnaire_state = _tradein_questionnaire_state(state, session=session)
+    if not _tradein_questionnaire_is_incomplete(questionnaire_state):
+        return questionnaire_state
+
+    latest_user_turn = _latest_user_turn_text(state, session=session)
+    if not latest_user_turn:
+        return questionnaire_state
+    if latest_user_turn == str(questionnaire_state.get("last_answer_source_text", "") or ""):
+        return questionnaire_state
+
+    current_question = _tradein_questionnaire_current_question(questionnaire_state)
+    answer_value = _extract_tradein_questionnaire_answer(current_question, latest_user_turn)
+    if answer_value is None:
+        return questionnaire_state
+
+    updated = copy.deepcopy(questionnaire_state)
+    answers = updated.get("answers")
+    if not isinstance(answers, dict):
+        answers = {}
+    question_id = str((current_question or {}).get("id", "") or "").strip()
+    if not question_id:
+        return questionnaire_state
+    answers[question_id] = answer_value
+    updated["answers"] = answers
+    updated["last_answer_source_text"] = latest_user_turn
+
+    questions = updated.get("questions")
+    if not isinstance(questions, list):
+        questions = []
+    next_index = 0
+    for idx, question in enumerate(questions):
+        candidate_id = str(question.get("id", "") or "").strip()
+        if candidate_id and candidate_id not in answers:
+            next_index = idx
+            break
+    else:
+        next_index = len(questions)
+    updated["current_index"] = next_index
+    if next_index >= len(questions):
+        updated["status"] = "completed"
+        updated["pending_completion_ack"] = True
+    _persist_tradein_questionnaire_state(
+        state=state,
+        session=session,
+        questionnaire_state=updated,
+    )
+    if str(_state_get(state, "app:channel", "") or "").strip().lower() == "voice":
+        if updated.get("pending_completion_ack"):
+            _clear_pending_questionnaire_voice_prompt(state=state, session=session)
+        else:
+            _set_pending_questionnaire_voice_prompt(
+                state=state,
+                session=session,
+                question_text=_tradein_questionnaire_prompt(updated),
+            )
+    return updated
+
+
+def _tradein_questionnaire_instruction(
+    state: State,
+    agent_name: str,
+    *,
+    session: Any = None,
+) -> str:
+    normalized_agent = agent_name.strip() if isinstance(agent_name, str) else ""
+    if normalized_agent != "valuation_agent":
+        return ""
+    questionnaire_state = _tradein_questionnaire_state(state, session=session)
+    if _tradein_questionnaire_is_incomplete(questionnaire_state):
+        next_question = _tradein_questionnaire_prompt(questionnaire_state)
+        if not next_question:
+            return ""
+        return (
+            "TRADE-IN QUESTIONNAIRE PHASE — MANDATORY: The valuation questionnaire has "
+            "already started. Do NOT call get_device_questionnaire_tool again. Do NOT "
+            "call search_catalog or grade_and_value_tool yet. Ask exactly one unresolved "
+            f"diagnostic question now: '{next_question}'. After the caller answers, move "
+            "to the next unresolved diagnostic question only."
+        )
+    if _tradein_questionnaire_completion_ack_pending(questionnaire_state):
+        return (
+            "TRADE-IN QUESTIONNAIRE COMPLETE — MANDATORY: In your very next sentence, "
+            "briefly tell the caller you have enough details and you are calculating the "
+            "value now. Do NOT repeat any diagnostic question in this turn. After that "
+            "short acknowledgement, continue into pricing."
+        )
+    return ""
 
 
 def _valuation_tool_requires_media_analysis(
@@ -1908,6 +2628,228 @@ def _outbound_delivery_instruction(state: State) -> str:
     return ""
 
 
+def _latest_delivery_quote_status(state: Any, *, session: Any = None) -> str:
+    registry_state = get_registered_voice_state(
+        user_id=str(_state_get(state, "app:user_id", "") or ""),
+        session_id=str(getattr(session, "id", "") or _state_get(state, "app:session_id", "") or ""),
+    )
+    if registry_state:
+        raw = registry_state.get("temp:last_delivery_quote_status", "")
+        if isinstance(raw, str) and raw.strip():
+            return raw.strip().lower()
+    if session is not None:
+        session_state = getattr(session, "state", None)
+        raw = _state_get(session_state, "temp:last_delivery_quote_status", "")
+        if isinstance(raw, str) and raw.strip():
+            return raw.strip().lower()
+    raw = _state_get(state, "temp:last_delivery_quote_status", "")
+    return raw.strip().lower() if isinstance(raw, str) else ""
+
+
+def _latest_delivery_quote_details(state: Any, *, session: Any = None) -> dict[str, Any]:
+    registry_state = get_registered_voice_state(
+        user_id=str(_state_get(state, "app:user_id", "") or ""),
+        session_id=str(getattr(session, "id", "") or _state_get(state, "app:session_id", "") or ""),
+    )
+    if registry_state:
+        raw = registry_state.get("temp:last_delivery_quote_details")
+        if isinstance(raw, dict):
+            return raw
+    if session is not None:
+        session_state = getattr(session, "state", None)
+        raw = _state_get(session_state, "temp:last_delivery_quote_details", {})
+        if isinstance(raw, dict):
+            return raw
+    raw = _state_get(state, "temp:last_delivery_quote_details", {})
+    return raw if isinstance(raw, dict) else {}
+
+
+def _recent_booking_tool_result(
+    state: Any,
+    *,
+    session: Any = None,
+    tool_name: str,
+    signature: str,
+    ttl_seconds: float,
+) -> dict[str, Any] | None:
+    if not signature:
+        return None
+    session_state = getattr(session, "state", None)
+    signature_key = f"temp:last_{tool_name}_signature"
+    result_key = f"temp:last_{tool_name}_result"
+    ts_key = f"temp:last_{tool_name}_ts"
+    stores = [session_state, state]
+    seen_ids: set[int] = set()
+    for store in stores:
+        if store is None or id(store) in seen_ids:
+            continue
+        seen_ids.add(id(store))
+        if str(_state_get(store, signature_key, "") or "") != signature:
+            continue
+        cached_result = _state_get(store, result_key, None)
+        raw_ts = _state_get(store, ts_key, 0.0)
+        try:
+            cached_ts = float(raw_ts or 0.0)
+        except (TypeError, ValueError):
+            cached_ts = 0.0
+        if not isinstance(cached_result, dict) or cached_ts <= 0.0:
+            continue
+        if (time.monotonic() - cached_ts) > ttl_seconds:
+            continue
+        deduped_result = copy.deepcopy(cached_result)
+        deduped_result["deduplicated"] = True
+        deduped_result["cached"] = True
+        return deduped_result
+    return None
+
+
+def _persist_recent_booking_tool_result(
+    *,
+    state: Any,
+    session: Any = None,
+    tool_name: str,
+    signature: str,
+    result: dict[str, Any],
+) -> None:
+    if not signature or not isinstance(result, dict):
+        return
+    session_state = getattr(session, "state", None)
+    payload = copy.deepcopy(result)
+    for store in (state, session_state):
+        if store is None:
+            continue
+        try:
+            store[f"temp:last_{tool_name}_signature"] = signature
+            store[f"temp:last_{tool_name}_result"] = copy.deepcopy(payload)
+            store[f"temp:last_{tool_name}_ts"] = time.monotonic()
+        except Exception:
+            logger.debug("Failed to persist booking tool cache for %s", tool_name, exc_info=True)
+
+
+def _check_availability_request_signature(args: dict[str, Any]) -> str:
+    payload = {
+        "date": args.get("date"),
+        "time": args.get("time"),
+        "location": args.get("location"),
+        "timezone": args.get("timezone"),
+    }
+    return json.dumps(payload, sort_keys=True, default=str)
+
+
+def _payment_setup_request_signature(args: dict[str, Any]) -> str:
+    payload = {
+        "customer_email": args.get("customer_email"),
+        "customer_first_name": args.get("customer_first_name"),
+        "customer_last_name": args.get("customer_last_name"),
+        "customer_phone": args.get("customer_phone"),
+        "expected_amount_kobo": args.get("expected_amount_kobo"),
+        "campaign_id": args.get("campaign_id"),
+        "preferred_bank_slug": args.get("preferred_bank_slug"),
+        "reference": args.get("reference"),
+    }
+    return json.dumps(payload, sort_keys=True, default=str)
+
+
+def _written_followup_channel_was_sent(state: Any, channel: str) -> bool:
+    raw_channels = _state_get(state, "temp:last_outbound_delivery_channels", "")
+    channels = raw_channels.strip().lower() if isinstance(raw_channels, str) else ""
+    return channel in {part.strip() for part in channels.split("and") if part.strip()}
+
+
+def _looks_like_written_followup_resend_intent(text: str) -> bool:
+    normalized = text.strip()
+    if not normalized:
+        return False
+    return any(pattern.search(normalized) for pattern in _WRITTEN_FOLLOWUP_RESEND_PATTERNS)
+
+
+def _written_followup_has_explicit_intent(
+    state: Any,
+    *,
+    session: Any = None,
+    channel: str,
+) -> bool:
+    latest_user = _latest_user_turn_text(state, session=session)
+    if not latest_user:
+        return False
+    if any(pattern.search(latest_user) for pattern in _WRITTEN_FOLLOWUP_REQUEST_PATTERNS):
+        normalized = latest_user.lower()
+        if channel == "whatsapp" and "sms" in normalized and "whatsapp" not in normalized:
+            return False
+        if channel == "sms" and "whatsapp" in normalized and "sms" not in normalized:
+            return False
+        return True
+
+    if _NEGATIVE_ACK_ONLY_PATTERN.match(latest_user):
+        return False
+
+    if _ACK_ONLY_PATTERN.match(latest_user):
+        latest_agent = _state_get(state, "temp:last_agent_turn", "")
+        if isinstance(latest_agent, str) and latest_agent.strip():
+            normalized_agent = latest_agent.lower()
+            if channel == "whatsapp" and "whatsapp" not in normalized_agent:
+                return False
+            if channel == "sms" and "sms" not in normalized_agent and "text" not in normalized_agent:
+                return False
+            return any(pattern.search(latest_agent) for pattern in _WRITTEN_FOLLOWUP_OFFER_PATTERNS)
+    return False
+
+
+def _duplicate_written_followup_result(
+    *,
+    state: Any,
+    session: Any = None,
+    channel: str,
+) -> dict[str, Any] | None:
+    if not _written_followup_channel_was_sent(state, channel):
+        return None
+    latest_user_turn = _latest_user_turn_text(state, session=session)
+    if _looks_like_written_followup_resend_intent(latest_user_turn):
+        return None
+    phone = str(_state_get(state, "temp:last_outbound_delivery_phone", "") or "").strip()
+    return {
+        "status": "sent",
+        "phone": phone,
+        "deduplicated": True,
+        "detail": (
+            f"The written follow-up was already sent via {channel}. "
+            "Do not send it again unless the customer explicitly asks for a resend."
+        ),
+    }
+
+
+def _delivery_quote_instruction(
+    state: State,
+    agent_name: str,
+    *,
+    session: Any = None,
+) -> str:
+    if (agent_name or "").strip() != "booking_agent":
+        return ""
+    status = _latest_delivery_quote_status(state, session=session)
+    if status not in {"clarify_route", "failed"}:
+        return ""
+    details = _latest_delivery_quote_details(state, session=session)
+    receiver = str(details.get("receiver_city", "") or "").strip()
+    attempted = details.get("attempted_receiver_cities")
+    suggestions = [
+        str(item).strip()
+        for item in attempted
+        if isinstance(item, str) and str(item).strip() and str(item).strip() != receiver
+    ] if isinstance(attempted, list) else []
+    suggestion_line = ""
+    if suggestions:
+        suggestion_line = (
+            f" Suggested locality options based on the failed route are: {', '.join(suggestions[:2])}."
+        )
+    return (
+        "DELIVERY QUOTE STATUS: The latest delivery-fee lookup did not return a usable rate. "
+        "Do NOT move to payment yet and do NOT send written payment details yet. "
+        "Ask one short clarification question about the delivery city or area now, using a simple locality name."
+        + suggestion_line
+    )
+
+
 def _media_request_instruction(state: State, *, session: Any = None) -> str:
     status = _media_request_status(state, session=session)
     if status == "sending":
@@ -1928,6 +2870,98 @@ def _media_request_instruction(state: State, *, session: Any = None) -> str:
             "plainly and resend instead of pretending the message already arrived."
         )
     return ""
+
+
+def _swap_direction_instruction(
+    state: State,
+    agent_name: str,
+    *,
+    session: Any = None,
+) -> str:
+    normalized_agent = agent_name.strip() if isinstance(agent_name, str) else ""
+    if normalized_agent != "valuation_agent":
+        return ""
+    combined_text = _voice_tradein_context_text(state, session=session)
+    if not combined_text:
+        return ""
+    swap_devices = _extract_tradein_swap_devices(combined_text)
+    if swap_devices:
+        current_device, target_device = swap_devices
+        return (
+            "SWAP DEVICE DIRECTION (MANDATORY): The customer's current trade-in device is "
+            f"'{current_device}'. The desired replacement device is '{target_device}'. "
+            "Ask diagnostic or valuation questions only about the current trade-in device. "
+            "Questions about the desired replacement device must stay limited to purchase "
+            "preferences such as storage, colour, availability, or price."
+        )
+    brand_matches = list(_DEVICE_BRAND_PATTERN.finditer(combined_text))
+    if len(brand_matches) >= 2 and _looks_like_tradein_or_upgrade_request(combined_text):
+        return (
+            "SWAP DEVICE DIRECTION IS UNCLEAR: The customer named more than one device, but "
+            "the trade-in direction is not explicit enough yet. Before you ask battery, "
+            "repairs, water damage, or condition questions, ask one brief clarification to "
+            "confirm which phone they are trading in and which phone they want."
+        )
+    return ""
+
+
+def _analysis_visible_fact_instruction(
+    state: State,
+    agent_name: str,
+    *,
+    session: Any = None,
+) -> str:
+    normalized_agent = agent_name.strip() if isinstance(agent_name, str) else ""
+    if normalized_agent != "valuation_agent":
+        return ""
+    analysis = _latest_tool_backed_analysis(state, session=session)
+    if not isinstance(analysis, dict):
+        return ""
+    latest_user_turn = _latest_user_turn_text(state, session=session)
+    if not _asks_to_confirm_device_color(latest_user_turn):
+        return ""
+    device_color = _normalized_color_token(str(analysis.get("device_color", "") or ""))
+    if not device_color or device_color == "unknown":
+        return (
+            "VISIBLE FACT ANSWER (MANDATORY): The caller just asked about the phone colour. "
+            "In your very next sentence, say you could not confirm the colour from the verified "
+            "video analysis. Do not name any specific colour."
+        )
+    return (
+        "VISIBLE FACT ANSWER (MANDATORY): The caller just asked about the phone colour. "
+        f"In your very next sentence, answer from the verified analysis and say the phone is {device_color}. "
+        "Do not mention any other colour, do not hedge, and do not say the analysis was unclear."
+    )
+
+
+def _duplicate_media_request_result(
+    *,
+    state: Any,
+    session: Any = None,
+) -> dict[str, Any] | None:
+    channel = _state_get(state, "app:channel", "")
+    normalized_channel = channel.strip().lower() if isinstance(channel, str) else ""
+    if normalized_channel != "voice":
+        return None
+    if not _is_voice_tradein_flow(state, session=session):
+        return None
+    latest_user_turn = _latest_user_turn_text(state, session=session)
+    if _looks_like_media_request_resend_intent(latest_user_turn):
+        return None
+    media_status = _media_request_status(state, session=session)
+    background_status = _background_vision_status(state, session=session)
+    if media_status != "sent" or background_status not in {"awaiting_media", "running", "ready"}:
+        return None
+    phone = str(_state_get(state, "temp:last_outbound_delivery_phone", "") or "").strip()
+    return {
+        "status": "sent",
+        "phone": phone,
+        "deduplicated": True,
+        "detail": (
+            "The WhatsApp media request for this live swap flow has already been sent. "
+            "Do not send it again unless the caller explicitly asks for a resend."
+        ),
+    }
 
 
 def _latest_analysis_instruction(
@@ -2021,7 +3055,12 @@ def _latest_analysis_instruction(
         " Before you quote any trade-in price, briefly read back the grounded analysis "
         "in plain language first, then give the amount."
     )
-    if not color_confirmed:
+    if color_confirmed:
+        instruction += (
+            f" If you mention the device colour at any point, you must say '{device_color}' "
+            "and no other colour."
+        )
+    else:
         instruction += (
             " The analysis did not confirm the device colour. "
             "If the customer asks about colour, say you cannot confirm it from the analysis "
@@ -2171,6 +3210,34 @@ def _voice_tradein_media_instruction(
     )
 
 
+def _tradein_booking_handoff_instruction(
+    state: State,
+    agent_name: str,
+    *,
+    session: Any = None,
+) -> str:
+    phase = _tradein_fulfillment_phase(state, session=session)
+    if phase not in {"booking_pending", "booking_active"}:
+        return ""
+    normalized_agent = agent_name.strip() if isinstance(agent_name, str) else ""
+    if normalized_agent == "valuation_agent":
+        return (
+            "TRADE-IN BOOKING HANDOFF (MANDATORY): The customer has already agreed to proceed "
+            "with the trade-in or swap, and booking_agent now owns the fulfillment step. "
+            "Your next action must be transfer_to_agent with booking_agent. Do NOT ask for the "
+            "customer's name, delivery or pickup preference, city, address, location, or any "
+            "other booking details yourself. Do NOT mention any internal agent or transfer aloud."
+        )
+    if normalized_agent == "booking_agent":
+        return (
+            "TRADE-IN BOOKING CONTINUITY: The customer has already accepted the swap or trade-in "
+            "offer. Continue directly with fulfillment. Ask whether they want delivery or pickup "
+            "unless they already gave that preference earlier; if they did, continue from that "
+            "stated preference without re-asking."
+        )
+    return ""
+
+
 def _clear_pending_handoff_state(state: State) -> None:
     """Clear one-shot transfer continuity keys after the new agent speaks.
 
@@ -2208,6 +3275,14 @@ async def before_model_inject_config(
     instruction_lines: list[str] = []
     agent_name = getattr(callback_context, "agent_name", "") or ""
     _ensure_instruction_state_defaults(callback_context.state)
+    _advance_tradein_questionnaire_from_latest_user(
+        state=callback_context.state,
+        session=getattr(callback_context, "session", None),
+    )
+    _promote_tradein_fulfillment_phase_from_latest_user(
+        state=callback_context.state,
+        session=getattr(callback_context, "session", None),
+    )
 
     already_greeted = _is_greeted_state(
         callback_context.state,
@@ -2320,12 +3395,30 @@ async def before_model_inject_config(
         instruction_lines.append(outbound_line)
         has_runtime_context = True
 
+    delivery_quote_line = _delivery_quote_instruction(
+        callback_context.state,
+        agent_name,
+        session=getattr(callback_context, "session", None),
+    )
+    if delivery_quote_line:
+        instruction_lines.append(delivery_quote_line)
+        has_runtime_context = True
+
     media_request_line = _media_request_instruction(
         callback_context.state,
         session=getattr(callback_context, "session", None),
     )
     if media_request_line:
         instruction_lines.append(media_request_line)
+        has_runtime_context = True
+
+    swap_direction_line = _swap_direction_instruction(
+        callback_context.state,
+        agent_name,
+        session=getattr(callback_context, "session", None),
+    )
+    if swap_direction_line:
+        instruction_lines.append(swap_direction_line)
         has_runtime_context = True
 
     latest_analysis_line = _latest_analysis_instruction(
@@ -2335,6 +3428,24 @@ async def before_model_inject_config(
     )
     if latest_analysis_line:
         instruction_lines.append(latest_analysis_line)
+        has_runtime_context = True
+
+    questionnaire_phase_line = _tradein_questionnaire_instruction(
+        callback_context.state,
+        agent_name,
+        session=getattr(callback_context, "session", None),
+    )
+    if questionnaire_phase_line:
+        instruction_lines.append(questionnaire_phase_line)
+        has_runtime_context = True
+
+    analysis_visible_fact_line = _analysis_visible_fact_instruction(
+        callback_context.state,
+        agent_name,
+        session=getattr(callback_context, "session", None),
+    )
+    if analysis_visible_fact_line:
+        instruction_lines.append(analysis_visible_fact_line)
         has_runtime_context = True
 
     background_vision_line = _background_vision_instruction(
@@ -2355,6 +3466,14 @@ async def before_model_inject_config(
     )
     if voice_tradein_media_line:
         instruction_lines.append(voice_tradein_media_line)
+        has_runtime_context = True
+    tradein_booking_line = _tradein_booking_handoff_instruction(
+        callback_context.state,
+        agent_name,
+        session=_cb_session_obj,
+    )
+    if tradein_booking_line:
+        instruction_lines.append(tradein_booking_line)
         has_runtime_context = True
     if _is_callback_leg(callback_context.state, session_id_override=str(_cb_session_id or "")):
         instruction_lines.append(
@@ -2546,6 +3665,40 @@ async def after_model_valuation_sanity(
                 "voice transfer disclosure rewritten agent=%s",
                 callback_context.agent_name,
             )
+    if (
+        callback_context.agent_name == "valuation_agent"
+        and normalized_channel == "voice"
+        and text
+        and _tradein_fulfillment_phase(
+            callback_context.state,
+            session=getattr(callback_context, "session", None),
+        ) in {"booking_pending", "booking_active"}
+    ):
+        normalized_text = " ".join(text.lower().split())
+        if any(
+            marker in normalized_text
+            for marker in (
+                "what name should i use",
+                "preferred delivery location",
+                "preferred pickup location",
+                "delivery location",
+                "pickup location",
+                "would you like this delivered",
+                "prefer to pick it up",
+                "booking",
+                "connecting you",
+                "hand you over",
+                "handover",
+                "right person",
+            )
+        ):
+            replacement = "Great, let me get the next step sorted for you now."
+            if replacement != text and _rewrite_response_text(llm_response, replacement):
+                text = replacement
+                has_content = True
+                logger.warning(
+                    "valuation_agent booking-field response rewritten while booking handoff was pending"
+                )
     pending_target = _state_get(callback_context.state, "temp:pending_handoff_target_agent", "")
     if (
         has_content
@@ -2630,14 +3783,23 @@ async def after_model_valuation_sanity(
                 "valuation_agent visible-condition question rewritten during background analysis"
             )
 
+    active_session = getattr(callback_context, "session", None)
+    offer_amount = _latest_tradein_offer_amount(
+        callback_context.state,
+        session=active_session,
+    )
+
     if callback_context.agent_name == "valuation_agent" and normalized_channel == "voice" and text:
-        active_session = getattr(callback_context, "session", None)
         latest_user_turn = _latest_user_turn_text(callback_context.state, session=active_session)
-        if _asks_to_confirm_device_color(latest_user_turn):
-            analysis = _latest_tool_backed_analysis(
-                callback_context.state,
-                session=active_session,
-            )
+        analysis = _latest_tool_backed_analysis(
+            callback_context.state,
+            session=active_session,
+        )
+        explicit_color_question = _asks_to_confirm_device_color(latest_user_turn)
+        conflicting_color_claim = _response_conflicts_with_analysis_color(text=text, analysis=analysis)
+        if explicit_color_question or (
+            conflicting_color_claim and not _looks_like_offer_response(text, offer_amount)
+        ):
             replacement = _grounded_color_confirmation_replacement(
                 analysis=analysis,
                 state=callback_context.state,
@@ -2671,26 +3833,48 @@ async def after_model_valuation_sanity(
                 "valuation_agent whatsapp-delivery claim rewritten without tool-backed send state"
             )
 
+    if callback_context.agent_name == "valuation_agent" and normalized_channel == "voice" and has_content:
+        questionnaire_state = _tradein_questionnaire_state(
+            callback_context.state,
+            session=getattr(callback_context, "session", None),
+        )
+        if _tradein_questionnaire_completion_ack_pending(questionnaire_state):
+            updated_questionnaire_state = copy.deepcopy(questionnaire_state)
+            updated_questionnaire_state["pending_completion_ack"] = False
+            _persist_tradein_questionnaire_state(
+                state=callback_context.state,
+                session=getattr(callback_context, "session", None),
+                questionnaire_state=updated_questionnaire_state,
+            )
+
+    if callback_context.agent_name == "booking_agent" and has_content:
+        _persist_tradein_fulfillment_phase(
+            state=callback_context.state,
+            session=getattr(callback_context, "session", None),
+            phase="booking_active",
+        )
+
     if callback_context.agent_name != "valuation_agent":
         return None
 
-    offer_amount = callback_context.state.get("temp:last_offer_amount")
-    if not isinstance(offer_amount, (int, float)) or offer_amount <= 0:
+    if offer_amount <= 0:
         return None
 
     if not text:
         return None
 
-    active_session = getattr(callback_context, "session", None)
+    analysis = _latest_tool_backed_analysis(
+        callback_context.state,
+        session=active_session,
+    )
     if (
         normalized_channel == "voice"
-        and _is_voice_tradein_flow(callback_context.state, session=active_session)
         and _looks_like_offer_response(text, offer_amount)
-    ):
-        analysis = _latest_tool_backed_analysis(
-            callback_context.state,
-            session=active_session,
+        and (
+            _is_voice_tradein_flow(callback_context.state, session=active_session)
+            or _analysis_supports_tradein_offer(analysis)
         )
+    ):
         if not _analysis_supports_tradein_offer(analysis):
             replacement = _unguarded_tradein_offer_replacement(
                 state=callback_context.state,
@@ -2801,10 +3985,16 @@ async def before_tool_capability_guard(
             "detail": detail,
         }
 
+    active_session = getattr(tool_context, "session", None)
+    questionnaire_state = _tradein_questionnaire_state(
+        tool_context.state,
+        session=active_session,
+    )
+
     if _valuation_tool_requires_media_analysis(
         tool_name=tool.name,
         state=tool_context.state,
-        session=getattr(tool_context, "session", None),
+        session=active_session,
     ):
         logger.warning(
             "Blocked %s until tool-backed media analysis is ready agent=%s",
@@ -2828,6 +4018,264 @@ async def before_tool_capability_guard(
             "error": "vision_analysis_pending",
             "detail": detail,
         }
+
+    if (
+        tool.name == "get_device_questionnaire_tool"
+        and _is_voice_tradein_flow(tool_context.state, session=active_session)
+        and isinstance(questionnaire_state, dict)
+        and isinstance(questionnaire_state.get("questions"), list)
+        and questionnaire_state.get("questions")
+    ):
+        cached_result: dict[str, Any] = {
+            "status": "ok",
+            "questions": copy.deepcopy(questionnaire_state.get("questions", [])),
+            "cached": True,
+        }
+        omitted_question_ids = questionnaire_state.get("omitted_question_ids")
+        if isinstance(omitted_question_ids, list):
+            cached_result["omitted_question_ids"] = copy.deepcopy(omitted_question_ids)
+        logger.info(
+            "deduped_get_device_questionnaire_tool agent=%s status=%s",
+            tool_context.agent_name,
+            questionnaire_state.get("status", ""),
+        )
+        return cached_result
+
+    if tool.name == "request_media_via_whatsapp":
+        duplicate_result = _duplicate_media_request_result(
+            state=tool_context.state,
+            session=active_session,
+        )
+        if duplicate_result is not None:
+            logger.info(
+                "deduped_request_media_via_whatsapp agent=%s status=%s background=%s",
+                tool_context.agent_name,
+                _media_request_status(tool_context.state, session=active_session)
+                or "none",
+                _background_vision_status(
+                    tool_context.state,
+                    session=active_session,
+                )
+                or "none",
+            )
+            return duplicate_result
+
+    if tool.name in {"send_whatsapp_message", "send_sms_message"} and tool_context.agent_name == "booking_agent":
+        channel = "whatsapp" if tool.name == "send_whatsapp_message" else "sms"
+        duplicate_written_result = _duplicate_written_followup_result(
+            state=tool_context.state,
+            session=active_session,
+            channel=channel,
+        )
+        if duplicate_written_result is not None:
+            logger.info(
+                "deduped_%s agent=%s",
+                tool.name,
+                tool_context.agent_name,
+            )
+            return duplicate_written_result
+        if not _written_followup_has_explicit_intent(
+            tool_context.state,
+            session=active_session,
+            channel=channel,
+        ):
+            return {
+                "status": "error",
+                "error": "written_followup_consent_required",
+                "detail": (
+                    f"Written {channel} follow-up blocked. First ask whether the customer wants the "
+                    f"details sent via {channel}, and only send them after the customer explicitly asks "
+                    "for that follow-up or clearly agrees."
+                ),
+            }
+
+    if tool.name == "check_availability" and tool_context.agent_name == "booking_agent":
+        signature = _check_availability_request_signature(args)
+        cached_result = _recent_booking_tool_result(
+            tool_context.state,
+            session=active_session,
+            tool_name="check_availability",
+            signature=signature,
+            ttl_seconds=5.0,
+        )
+        if cached_result is not None:
+            logger.info(
+                "deduped_check_availability agent=%s",
+                tool_context.agent_name,
+            )
+            return cached_result
+
+    if tool.name == "search_catalog" and _is_voice_tradein_flow(
+        tool_context.state,
+        session=active_session,
+    ):
+        background_status = _background_vision_status(
+            tool_context.state,
+            session=active_session,
+        )
+        if background_status in {"awaiting_media", "running"}:
+            return {
+                "status": "error",
+                "error": "vision_analysis_pending",
+                "detail": (
+                    "Catalog lookup blocked while the latest swap photo or video is still being "
+                    "checked. Keep the call moving with one short non-visual follow-up question "
+                    "instead."
+                ),
+            }
+        if background_status == "failed":
+            return {
+                "status": "error",
+                "error": "vision_analysis_failed",
+                "detail": (
+                    "Catalog lookup blocked because the latest swap media could not be analyzed. "
+                    "Ask the caller to resend the video or a few clear photos on WhatsApp first."
+                ),
+            }
+        if _tradein_questionnaire_is_incomplete(questionnaire_state):
+            next_question = _tradein_questionnaire_prompt(questionnaire_state)
+            detail = (
+                "Catalog lookup blocked because the trade-in questionnaire is still in progress. "
+                "Ask the next unresolved diagnostic question before you price anything."
+            )
+            if next_question:
+                detail += f" Next question: {next_question}"
+            return {
+                "status": "error",
+                "error": "questionnaire_incomplete",
+                "detail": detail,
+            }
+        if _tradein_questionnaire_completion_ack_pending(questionnaire_state):
+            return {
+                "status": "error",
+                "error": "questionnaire_completion_ack_required",
+                "detail": (
+                    "Before any catalog lookup, first tell the caller briefly that you now have "
+                    "enough details and you are calculating the value."
+                ),
+            }
+        query = args.get("query", "")
+        category = args.get("category", "")
+        cache_key = _tradein_questionnaire_cache_key(
+            query if isinstance(query, str) else "",
+            category if isinstance(category, str) else "",
+        )
+        if cache_key:
+            cache = questionnaire_state.get("catalog_cache") if isinstance(questionnaire_state, dict) else None
+            if isinstance(cache, dict):
+                cached_result = cache.get(cache_key)
+                if isinstance(cached_result, dict):
+                    deduped_result = copy.deepcopy(cached_result)
+                    deduped_result["cached"] = True
+                    logger.info(
+                        "deduped_search_catalog agent=%s query=%r",
+                        tool_context.agent_name,
+                        cache_key,
+                    )
+                    return deduped_result
+
+    if tool.name == "grade_and_value_tool" and _is_voice_tradein_flow(
+        tool_context.state,
+        session=active_session,
+    ):
+        if _tradein_questionnaire_is_incomplete(questionnaire_state):
+            next_question = _tradein_questionnaire_prompt(questionnaire_state)
+            detail = (
+                "Pricing blocked because the trade-in questionnaire is still incomplete. "
+                "Ask the next unresolved diagnostic question first."
+            )
+            if next_question:
+                detail += f" Next question: {next_question}"
+            return {
+                "status": "error",
+                "error": "questionnaire_incomplete",
+                "detail": detail,
+            }
+        if _tradein_questionnaire_completion_ack_pending(questionnaire_state):
+            return {
+                "status": "error",
+                "error": "questionnaire_completion_ack_required",
+                "detail": (
+                    "Before pricing, first tell the caller briefly that you have enough details "
+                    "and you are calculating the value now."
+                ),
+            }
+        if isinstance(questionnaire_state, dict):
+            stored_answers_raw = questionnaire_state.get("answers")
+            if isinstance(stored_answers_raw, dict) and stored_answers_raw:
+                merged_answers = dict(stored_answers_raw)
+                existing_answers_raw = args.get("questionnaire_answers")
+                parsed_existing = None
+                if isinstance(existing_answers_raw, str) and existing_answers_raw.strip():
+                    try:
+                        parsed_existing = json.loads(existing_answers_raw)
+                    except json.JSONDecodeError:
+                        parsed_existing = None
+                if isinstance(parsed_existing, dict):
+                    merged_answers.update(parsed_existing)
+                args["questionnaire_answers"] = json.dumps(merged_answers)
+        signature = _grade_and_value_request_signature(
+            state=tool_context.state,
+            session=active_session,
+            args=args,
+        )
+        cached_result = _cached_grade_and_value_result(
+            questionnaire_state,
+            signature=signature,
+        )
+        if cached_result is not None:
+            logger.info(
+                "deduped_grade_and_value_tool agent=%s",
+                tool_context.agent_name,
+            )
+            return cached_result
+
+    if tool.name == "create_virtual_account_payment" and tool_context.agent_name == "booking_agent":
+        quote_status = _latest_delivery_quote_status(
+            tool_context.state,
+            session=active_session,
+        )
+        if quote_status in {"clarify_route", "failed"}:
+            return {
+                "status": "error",
+                "error": "delivery_quote_required",
+                "detail": (
+                    "Payment setup blocked. The delivery fee is not confirmed yet. Clarify the delivery city "
+                    "or area and get a valid delivery quote before creating payment details."
+                ),
+            }
+        latest_user = _latest_user_turn_text(tool_context.state, session=active_session)
+        latest_agent = _latest_agent_turn_text(tool_context.state, session=active_session)
+        recent_customer = _recent_customer_context_text(tool_context.state, session=active_session)
+        if not _has_explicit_payment_setup_intent(
+            state=tool_context.state,
+            session=active_session,
+            latest_user=latest_user,
+            latest_agent=latest_agent,
+            recent_customer=recent_customer,
+        ):
+            return {
+                "status": "error",
+                "error": "payment_intent_required",
+                "detail": (
+                    "Payment setup blocked. First confirm that the customer explicitly wants to "
+                    "make payment or wants the account details now."
+                ),
+            }
+        signature = _payment_setup_request_signature(args)
+        cached_result = _recent_booking_tool_result(
+            tool_context.state,
+            session=active_session,
+            tool_name="create_virtual_account_payment",
+            signature=signature,
+            ttl_seconds=30.0,
+        )
+        if cached_result is not None:
+            logger.info(
+                "deduped_create_virtual_account_payment agent=%s",
+                tool_context.agent_name,
+            )
+            return cached_result
 
     required_cap = TOOL_CAPABILITY_MAP.get(tool.name)
     if required_cap is None:
@@ -2952,15 +4400,64 @@ def _guard_transfer_without_explicit_request(
         latest_user=latest_user_turn,
         recent_customer=recent_customer,
     ):
+        _persist_runtime_hint_state(
+            state=state,
+            session=session,
+            key="temp:last_blocked_explicit_transfer_signature",
+            value="",
+        )
+        _persist_runtime_hint_state(
+            state=state,
+            session=session,
+            key="temp:last_blocked_explicit_transfer_attempts",
+            value=0,
+        )
         return None
 
+    signature = f"{agent_name}|{target_agent}|{latest_user_turn}|{recent_customer}"
+    previous_signature = str(_state_get(state, "temp:last_blocked_explicit_transfer_signature", "") or "")
+    previous_attempts_raw = _state_get(state, "temp:last_blocked_explicit_transfer_attempts", 0)
+    try:
+        previous_attempts = int(previous_attempts_raw or 0)
+    except (TypeError, ValueError):
+        previous_attempts = 0
+    current_attempts = previous_attempts + 1 if previous_signature == signature else 1
+    _persist_runtime_hint_state(
+        state=state,
+        session=session,
+        key="temp:last_blocked_explicit_transfer_signature",
+        value=signature,
+    )
+    _persist_runtime_hint_state(
+        state=state,
+        session=session,
+        key="temp:last_blocked_explicit_transfer_attempts",
+        value=current_attempts,
+    )
+
     logger.warning(
-        "transfer_blocked_without_explicit_request agent=%s target=%s latest_user=%r recent_customer=%r",
+        "transfer_blocked_without_explicit_request agent=%s target=%s attempt=%d latest_user=%r recent_customer=%r",
         agent_name,
         target_agent,
+        current_attempts,
         latest_user_turn[:160],
         recent_customer[:160],
     )
+    if current_attempts >= 3:
+        logger.warning(
+            "transfer_retry_exhausted agent=%s target=%s attempt=%d latest_user=%r",
+            agent_name,
+            target_agent,
+            current_attempts,
+            latest_user_turn[:160],
+        )
+        return {
+            "error": "routing_retry_suppressed",
+            "detail": (
+                f"Transfer to {target_agent} has already been denied multiple times for this same turn. "
+                "Do not retry it again. Continue helping the customer directly with the task they asked for."
+            ),
+        }
     return {
         "error": "explicit_request_required",
         "detail": (
@@ -3002,6 +4499,12 @@ async def before_tool_agent_transfer_guard(
         target_agent=target_agent,
     )
     if guard_result is not None:
+        if (
+            str(guard_result.get("error", "") or "").strip() == "routing_retry_suppressed"
+            and hasattr(tool_context, "actions")
+            and getattr(tool_context.actions, "transfer_to_agent", None) is not None
+        ):
+            tool_context.actions.transfer_to_agent = None
         return guard_result
 
     enabled_agents = resolve_enabled_agents_from_state(tool_context.state)
@@ -3107,11 +4610,33 @@ async def before_tool_log(
         channel = _state_get(tool_context.state, "app:channel", "")
         is_voice = isinstance(channel, str) and channel.strip().lower() == "voice"
         if is_voice:
+            tradein_phase = _tradein_fulfillment_phase(tool_context.state, session=session)
+            if (
+                target_agent == "booking_agent"
+                and tradein_phase not in {"booking_pending", "booking_active"}
+                and _has_booking_commitment_intent(
+                    state=tool_context.state,
+                    session=session,
+                    latest_user=latest_user,
+                    recent_customer=recent_customer,
+                )
+            ):
+                _persist_tradein_fulfillment_phase(
+                    state=tool_context.state,
+                    session=session,
+                    phase="booking_pending",
+                )
+                tradein_phase = "booking_pending"
             bootstrap_reason = (
                 "voice_tradein_handoff"
                 if target_agent == "valuation_agent"
                 and _is_voice_tradein_flow(tool_context.state, session=session)
-                else "voice_handoff"
+                else (
+                    "voice_tradein_booking_handoff"
+                    if target_agent == "booking_agent"
+                    and tradein_phase in {"booking_pending", "booking_active"}
+                    else "voice_handoff"
+                )
             )
             _persist_runtime_hint_state(
                 state=tool_context.state,
@@ -3274,8 +4799,30 @@ async def after_tool_emit_messages(
             _persist_runtime_hint_state(
                 state=tool_context.state,
                 session=getattr(tool_context, "session", None),
+                key="temp:pending_valuation_result_voice_text",
+                value="",
+            )
+            _persist_runtime_hint_state(
+                state=tool_context.state,
+                session=getattr(tool_context, "session", None),
                 key="temp:last_outbound_delivery_status",
                 value="failure",
+            )
+        if tool.name == "get_topship_delivery_quote":
+            session = getattr(tool_context, "session", None)
+            code = str(effective_result.get("code", "") or "").strip().upper()
+            quote_status = "clarify_route" if code == "TOPSHIP_NO_QUOTES" else "failed"
+            _persist_runtime_hint_state(
+                state=tool_context.state,
+                session=session,
+                key="temp:last_delivery_quote_status",
+                value=quote_status,
+            )
+            _persist_voice_json_state(
+                state=tool_context.state,
+                session=session,
+                key="temp:last_delivery_quote_details",
+                value=copy.deepcopy(effective_result),
             )
         if tool.name in {"send_whatsapp_message", "send_sms_message"}:
             tool_context.state["temp:last_outbound_delivery_status"] = "failure"
@@ -3299,6 +4846,25 @@ async def after_tool_emit_messages(
     if tool.name == "request_media_via_whatsapp":
         phone = str(effective_result.get("phone", "") or "").strip()
         session = getattr(tool_context, "session", None)
+        if bool(effective_result.get("deduplicated", False)):
+            _persist_runtime_hint_state(
+                state=tool_context.state,
+                session=session,
+                key="temp:last_media_request_status",
+                value="sent",
+            )
+            if phone:
+                _persist_runtime_hint_state(
+                    state=tool_context.state,
+                    session=session,
+                    key="temp:last_outbound_delivery_phone",
+                    value=phone,
+                )
+            logger.info(
+                "request_media_via_whatsapp deduplicated agent=%s",
+                tool_context.agent_name,
+            )
+            return None
         _persist_runtime_hint_state(
             state=tool_context.state,
             session=session,
@@ -3338,24 +4904,101 @@ async def after_tool_emit_messages(
                 key="temp:background_vision_status",
                 value="awaiting_media",
             )
+            pending_media_request_ack = str(
+                _state_get(getattr(session, "state", None) or tool_context.state, "temp:pending_media_request_voice_ack", "")
+                or ""
+            ).strip().lower()
+            if pending_media_request_ack == "sending":
+                _persist_runtime_hint_state(
+                    state=tool_context.state,
+                    session=session,
+                    key="temp:pending_media_request_voice_ack",
+                    value="",
+                )
+            elif not _latest_agent_mentions_media_send_in_progress(
+                tool_context.state,
+                session=session,
+            ):
+                _persist_runtime_hint_state(
+                    state=tool_context.state,
+                    session=session,
+                    key="temp:pending_media_request_voice_ack",
+                    value="ready",
+                )
+            else:
+                _persist_runtime_hint_state(
+                    state=tool_context.state,
+                    session=session,
+                    key="temp:pending_media_request_voice_ack",
+                    value="",
+                )
             _persist_runtime_hint_state(
                 state=tool_context.state,
                 session=session,
-                key="temp:pending_media_request_voice_ack",
-                value="ready",
+                key="temp:last_analysis",
+                value={},
             )
-            try:
-                tool_context.state["temp:last_analysis"] = {}
-                tool_context.state["temp:last_offer_amount"] = 0
-            except Exception:
-                logger.debug("Failed to clear callback trade-in analysis state", exc_info=True)
-            session_state = getattr(session, "state", None)
-            if session_state is not None:
-                try:
-                    session_state["temp:last_analysis"] = {}
-                    session_state["temp:last_offer_amount"] = 0
-                except Exception:
-                    logger.debug("Failed to clear session trade-in analysis state", exc_info=True)
+            _persist_runtime_hint_state(
+                state=tool_context.state,
+                session=session,
+                key="temp:last_offer_amount",
+                value=0,
+            )
+            _persist_runtime_hint_state(
+                state=tool_context.state,
+                session=session,
+                key="temp:pending_valuation_result_voice_text",
+                value="",
+            )
+            _persist_tradein_questionnaire_state(
+                state=tool_context.state,
+                session=session,
+                questionnaire_state={
+                    "status": "idle",
+                    "questions": [],
+                    "answers": {},
+                    "current_index": 0,
+                    "last_answer_source_text": "",
+                    "omitted_question_ids": [],
+                    "pending_completion_ack": False,
+                    "catalog_cache": {},
+                },
+            )
+            _clear_pending_questionnaire_voice_prompt(
+                state=tool_context.state,
+                session=session,
+            )
+            _persist_tradein_fulfillment_phase(
+                state=tool_context.state,
+                session=session,
+                phase="valuation",
+            )
+        return None
+
+    if tool.name == "get_topship_delivery_quote":
+        session = getattr(tool_context, "session", None)
+        _persist_runtime_hint_state(
+            state=tool_context.state,
+            session=session,
+            key="temp:last_delivery_quote_status",
+            value="ready",
+        )
+        _persist_voice_json_state(
+            state=tool_context.state,
+            session=session,
+            key="temp:last_delivery_quote_details",
+            value=copy.deepcopy(effective_result),
+        )
+        return None
+
+    if tool.name == "check_availability":
+        _persist_recent_booking_tool_result(
+            state=tool_context.state,
+            session=getattr(tool_context, "session", None),
+            tool_name="check_availability",
+            signature=_check_availability_request_signature(args),
+            result=effective_result,
+        )
         return None
 
     if tool.name == "end_call":
@@ -3400,6 +5043,14 @@ async def after_tool_emit_messages(
         return None
 
     if tool.name == "create_virtual_account_payment":
+        _persist_recent_booking_tool_result(
+            state=tool_context.state,
+            session=getattr(tool_context, "session", None),
+            tool_name="create_virtual_account_payment",
+            signature=_payment_setup_request_signature(args),
+            result=effective_result,
+        )
+        notifications_attempted = bool(effective_result.get("notifications_attempted"))
         sms_sent = bool(effective_result.get("sms_sent"))
         whatsapp_sent = bool(effective_result.get("whatsapp_sent"))
         channels = [
@@ -3407,7 +5058,7 @@ async def after_tool_emit_messages(
             for channel, sent in (("sms", sms_sent), ("whatsapp", whatsapp_sent))
             if sent
         ]
-        if channels:
+        if notifications_attempted and channels:
             tool_context.state["temp:last_outbound_delivery_status"] = (
                 "success" if len(channels) == 2 else "partial"
             )
@@ -3415,7 +5066,7 @@ async def after_tool_emit_messages(
             phone = effective_result.get("notification_phone", "")
             if isinstance(phone, str):
                 tool_context.state["temp:last_outbound_delivery_phone"] = phone.strip()
-        elif effective_result.get("notification_phone"):
+        elif notifications_attempted and effective_result.get("notification_phone"):
             tool_context.state["temp:last_outbound_delivery_status"] = "failure"
 
     if tool.name == "analyze_device_image_tool":
@@ -3458,18 +5109,97 @@ async def after_tool_emit_messages(
 
     if tool.name == "get_device_questionnaire_tool":
         questions = effective_result.get("questions", [])
+        questionnaire_state = {
+            "status": "in_progress",
+            "questions": copy.deepcopy(questions) if isinstance(questions, list) else [],
+            "answers": {},
+            "current_index": 0,
+            "last_answer_source_text": "",
+            "omitted_question_ids": copy.deepcopy(effective_result.get("omitted_question_ids", []))
+            if isinstance(effective_result.get("omitted_question_ids"), list)
+            else [],
+            "pending_completion_ack": False,
+            "catalog_cache": {},
+        }
+        _persist_tradein_questionnaire_state(
+            state=tool_context.state,
+            session=getattr(tool_context, "session", None),
+            questionnaire_state=questionnaire_state,
+        )
+        next_question = _tradein_questionnaire_prompt(questionnaire_state)
+        if str(_state_get(tool_context.state, "app:channel", "") or "").strip().lower() == "voice":
+            _set_pending_questionnaire_voice_prompt(
+                state=tool_context.state,
+                session=getattr(tool_context, "session", None),
+                question_text=next_question,
+            )
         queue_server_message(
             tool_context.state,
             {
                 "type": "questionnaire_started",
                 "questionCount": len(questions) if isinstance(questions, list) else 0,
+                "nextQuestion": next_question,
             },
         )
         return None
 
     if tool.name == "grade_and_value_tool":
+        if bool(effective_result.get("deduplicated", False)):
+            return None
         offer_amount = int(effective_result.get("offer_amount") or 0)
-        tool_context.state["temp:last_offer_amount"] = offer_amount
+        session = getattr(tool_context, "session", None)
+        _persist_runtime_hint_state(
+            state=tool_context.state,
+            session=session,
+            key="temp:last_offer_amount",
+            value=offer_amount,
+        )
+        questionnaire_state = _tradein_questionnaire_state(
+            tool_context.state,
+            session=session,
+        )
+        if isinstance(questionnaire_state, dict):
+            updated_questionnaire_state = copy.deepcopy(questionnaire_state)
+            updated_questionnaire_state["status"] = "completed"
+            updated_questionnaire_state["pending_completion_ack"] = False
+            updated_questionnaire_state["last_grade_and_value_signature"] = _grade_and_value_request_signature(
+                state=tool_context.state,
+                session=session,
+                args=args,
+            )
+            updated_questionnaire_state["last_grade_and_value_result"] = copy.deepcopy(effective_result)
+            updated_questionnaire_state["last_grade_and_value_ts"] = time.monotonic()
+            _persist_tradein_questionnaire_state(
+                state=tool_context.state,
+                session=session,
+                questionnaire_state=updated_questionnaire_state,
+            )
+        _clear_pending_questionnaire_voice_prompt(
+            state=tool_context.state,
+            session=session,
+        )
+        channel = _state_get(tool_context.state, "app:channel", "")
+        voice_reply_text = ""
+        analysis = _latest_tool_backed_analysis(tool_context.state, session=session)
+        if _analysis_supports_tradein_offer(analysis) and offer_amount > 0:
+            voice_reply_text = _tradein_offer_replacement(
+                offer_amount=offer_amount,
+                analysis=analysis,
+                original_text="",
+            )
+        if isinstance(channel, str) and channel.strip().lower() == "voice":
+            _persist_runtime_hint_state(
+                state=tool_context.state,
+                session=session,
+                key="temp:pending_valuation_result_voice_ack",
+                value="ready",
+            )
+            _persist_runtime_hint_state(
+                state=tool_context.state,
+                session=session,
+                key="temp:pending_valuation_result_voice_text",
+                value=voice_reply_text,
+            )
 
         message: dict[str, Any] = {
             "type": "valuation_result",
@@ -3490,6 +5220,11 @@ async def after_tool_emit_messages(
         return None
 
     if tool.name == "create_booking":
+        _persist_tradein_fulfillment_phase(
+            state=tool_context.state,
+            session=getattr(tool_context, "session", None),
+            phase="booking_active",
+        )
         queue_server_message(
             tool_context.state,
             {
@@ -3504,6 +5239,31 @@ async def after_tool_emit_messages(
         return None
 
     if tool.name == "search_catalog":
+        if _is_voice_tradein_flow(
+            tool_context.state,
+            session=getattr(tool_context, "session", None),
+        ):
+            questionnaire_state = _tradein_questionnaire_state(
+                tool_context.state,
+                session=getattr(tool_context, "session", None),
+            )
+            if isinstance(questionnaire_state, dict):
+                cache = questionnaire_state.get("catalog_cache")
+                if not isinstance(cache, dict):
+                    cache = {}
+                cache_key = _tradein_questionnaire_cache_key(
+                    args.get("query", "") if isinstance(args.get("query"), str) else "",
+                    args.get("category", "") if isinstance(args.get("category"), str) else "",
+                )
+                if cache_key:
+                    cache[cache_key] = copy.deepcopy(effective_result)
+                    updated_questionnaire_state = copy.deepcopy(questionnaire_state)
+                    updated_questionnaire_state["catalog_cache"] = cache
+                    _persist_tradein_questionnaire_state(
+                        state=tool_context.state,
+                        session=getattr(tool_context, "session", None),
+                        questionnaire_state=updated_questionnaire_state,
+                    )
         products_raw = effective_result.get("products")
         if not isinstance(products_raw, list):
             return None
@@ -3711,11 +5471,17 @@ async def on_tool_error_emit(
                 value="transferring",
             )
         if is_voice:
+            tradein_phase = _tradein_fulfillment_phase(tool_context.state, session=session)
             bootstrap_reason = (
                 "voice_tradein_recovery"
                 if tool.name == "valuation_agent"
                 and _is_voice_tradein_flow(tool_context.state, session=session)
-                else "voice_handoff_recovery"
+                else (
+                    "voice_tradein_booking_recovery"
+                    if tool.name == "booking_agent"
+                    and tradein_phase in {"booking_pending", "booking_active"}
+                    else "voice_handoff_recovery"
+                )
             )
             _persist_runtime_hint_state(
                 state=tool_context.state,
