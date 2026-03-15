@@ -18,6 +18,10 @@ from app.tools.callback_tools import request_callback
 from app.tools.call_control_tools import end_call
 from app.tools.sms_messaging import send_sms_message
 from app.tools.wa_messaging import send_whatsapp_message
+from app.tools.image_preview_tools import (
+    generate_case_preview_via_whatsapp,
+    image_preview_enabled,
+)
 from app.tools.knowledge_tools import (
     get_company_profile_fact,
     query_company_system,
@@ -47,6 +51,13 @@ _TEXT_DELIVERY_FOLLOWUP = (
     "6. Share the account details directly in this chat and do not promise a "
     "separate WhatsApp follow-up."
 )
+_VOICE_IMAGE_PREVIEW_FOLLOWUP = (
+    '       - If the customer wants to see how a case could look on the chosen phone,\n'
+    '         you may offer a WhatsApp preview mockup. Only generate and send it after\n'
+    '         the customer explicitly asks for the preview or clearly agrees to receive it.\n'
+    '         Treat the preview as optional and continue checkout while it is being sent.\n'
+)
+_TEXT_IMAGE_PREVIEW_FOLLOWUP = ""
 
 _INSTRUCTION_TEMPLATE = """You handle delivery quotes, purchase finalization, and pickup scheduling.
 
@@ -83,6 +94,7 @@ _INSTRUCTION_TEMPLATE = """You handle delivery quotes, purchase finalization, an
        - Do not derail checkout; move on immediately after the answer
        - Best phrasing: "Would you like me to add a screen protector or case so
          the phone is protected?"
+{image_preview_line}\
     3. Ask for delivery destination city and full delivery address.
        For voice calls, offer both options:
        - customer can say the address on call, or
@@ -168,6 +180,8 @@ def _tools_for_channel(channel: str) -> list[object]:
         tools.append(end_call)
         tools.append(send_sms_message)
         tools.append(send_whatsapp_message)
+        if image_preview_enabled():
+            tools.append(generate_case_preview_via_whatsapp)
     return tools
 
 
@@ -178,7 +192,10 @@ def create_booking_agent(model: str, *, channel: str = "voice") -> Agent:
     instruction = _INSTRUCTION_TEMPLATE.format(
         delivery_followup_line=(
             _VOICE_DELIVERY_FOLLOWUP if channel == "voice" else _TEXT_DELIVERY_FOLLOWUP
-        )
+        ),
+        image_preview_line=(
+            _VOICE_IMAGE_PREVIEW_FOLLOWUP if channel == "voice" else _TEXT_IMAGE_PREVIEW_FOLLOWUP
+        ),
     )
     return Agent(
         name="booking_agent",

@@ -341,6 +341,7 @@ _OUTBOUND_CALLER_TOOLS = frozenset({
     "request_callback",
     "send_sms_message",
     "send_whatsapp_message",
+    "generate_case_preview_via_whatsapp",
 })
 
 
@@ -986,6 +987,7 @@ TOOL_CAPABILITY_MAP: dict[str, str] = {
     "get_company_profile_fact": "policy_qa",
     "query_company_system": "connector_dispatch",
     "send_whatsapp_message": "outbound_messaging",
+    "generate_case_preview_via_whatsapp": "outbound_messaging",
     "send_sms_message": "outbound_messaging",
     "request_callback": "outbound_messaging",
     "get_device_questionnaire_tool": "valuation_tradein",
@@ -4060,8 +4062,8 @@ async def before_tool_capability_guard(
             )
             return duplicate_result
 
-    if tool.name in {"send_whatsapp_message", "send_sms_message"} and tool_context.agent_name == "booking_agent":
-        channel = "whatsapp" if tool.name == "send_whatsapp_message" else "sms"
+    if tool.name in {"send_whatsapp_message", "send_sms_message", "generate_case_preview_via_whatsapp"} and tool_context.agent_name == "booking_agent":
+        channel = "sms" if tool.name == "send_sms_message" else "whatsapp"
         duplicate_written_result = _duplicate_written_followup_result(
             state=tool_context.state,
             session=active_session,
@@ -4824,15 +4826,15 @@ async def after_tool_emit_messages(
                 key="temp:last_delivery_quote_details",
                 value=copy.deepcopy(effective_result),
             )
-        if tool.name in {"send_whatsapp_message", "send_sms_message"}:
+        if tool.name in {"send_whatsapp_message", "send_sms_message", "generate_case_preview_via_whatsapp"}:
             tool_context.state["temp:last_outbound_delivery_status"] = "failure"
         queue_server_message(tool_context.state, _tool_error_server_message(effective_result))
         return None
 
-    if tool.name in {"send_whatsapp_message", "send_sms_message"}:
-        channel = "whatsapp" if tool.name == "send_whatsapp_message" else "sms"
+    if tool.name in {"send_whatsapp_message", "send_sms_message", "generate_case_preview_via_whatsapp"}:
+        channel = "sms" if tool.name == "send_sms_message" else "whatsapp"
         phone = ""
-        if tool.name == "send_whatsapp_message":
+        if tool.name in {"send_whatsapp_message", "generate_case_preview_via_whatsapp"}:
             caller_phone = _state_get(tool_context.state, "user:caller_phone", "")
             phone = caller_phone.strip() if isinstance(caller_phone, str) else ""
         else:

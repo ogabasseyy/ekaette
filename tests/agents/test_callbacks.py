@@ -3223,6 +3223,24 @@ class TestAfterToolEmitMessages:
         assert blocked["error"] == "written_followup_consent_required"
 
     @pytest.mark.asyncio
+    async def test_blocks_booking_case_preview_without_explicit_customer_consent(self):
+        tool = SimpleNamespace(name="generate_case_preview_via_whatsapp")
+        ctx = SimpleNamespace(
+            state={
+                "app:channel": "voice",
+                "temp:last_user_turn": "yes",
+                "temp:last_agent_turn": "I can preview how a white case might look on the phone.",
+            },
+            session=SimpleNamespace(state={}),
+            agent_name="booking_agent",
+        )
+
+        blocked = await before_tool_capability_guard(tool, {"device_name": "iPhone 14"}, ctx)
+
+        assert blocked is not None
+        assert blocked["error"] == "written_followup_consent_required"
+
+    @pytest.mark.asyncio
     async def test_allows_booking_whatsapp_followup_after_explicit_customer_consent(self):
         tool = SimpleNamespace(name="send_whatsapp_message")
         ctx = SimpleNamespace(
@@ -3236,6 +3254,23 @@ class TestAfterToolEmitMessages:
         )
 
         blocked = await before_tool_capability_guard(tool, {"text": "Account details"}, ctx)
+
+        assert blocked is None
+
+    @pytest.mark.asyncio
+    async def test_allows_booking_case_preview_after_explicit_customer_consent(self):
+        tool = SimpleNamespace(name="generate_case_preview_via_whatsapp")
+        ctx = SimpleNamespace(
+            state={
+                "app:channel": "voice",
+                "temp:last_user_turn": "yes please send it on whatsapp",
+                "temp:last_agent_turn": "Would you like me to send you a WhatsApp preview mockup of the case?",
+            },
+            session=SimpleNamespace(state={}),
+            agent_name="booking_agent",
+        )
+
+        blocked = await before_tool_capability_guard(tool, {"device_name": "iPhone 14"}, ctx)
 
         assert blocked is None
 

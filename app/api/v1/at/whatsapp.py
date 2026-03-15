@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import binascii
 import hashlib
 import json
 import logging
@@ -40,6 +41,7 @@ from .wa_security import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+_ALLOWED_OUTBOUND_IMAGE_MIME_TYPES = {"image/png", "image/jpeg", "image/webp"}
 
 
 def _safe_task_id(wamid: str) -> str:
@@ -517,27 +519,62 @@ async def wa_send(
     msg_type = body.get("type", "text")
     template_name = str(body.get("template_name", "") or "").strip()
     template_language = str(body.get("template_language", "") or "").strip()
+    media_base64 = str(body.get("media_base64", "") or "").strip()
+    mime_type = str(body.get("mime_type", "") or "").strip().lower() or "image/png"
+    caption = str(body.get("caption", "") or "").strip()
     idempotency_key = request.headers.get("X-Idempotency-Key", "")
+    max_image_bytes = providers.MEDIA_SIZE_LIMITS.get("image", 5 * 1024 * 1024)
+    max_image_base64_chars = ((max_image_bytes + 2) // 3) * 4
 
-    if not to or not text:
-        raise HTTPException(status_code=400, detail="Missing to or text")
+    if not to:
+        raise HTTPException(status_code=400, detail="Missing to")
+    if msg_type == "text" and not text:
+        raise HTTPException(status_code=400, detail="Missing text")
+    if msg_type == "image" and not media_base64:
+        raise HTTPException(status_code=400, detail="Missing media_base64")
+    if msg_type == "image" and len(media_base64) > max_image_base64_chars:
+        raise HTTPException(status_code=413, detail="Media payload too large")
+    if msg_type == "image" and mime_type not in _ALLOWED_OUTBOUND_IMAGE_MIME_TYPES:
+        raise HTTPException(status_code=400, detail=f"Unsupported mime_type: {mime_type}")
+    if msg_type not in {"text", "image"}:
+        raise HTTPException(status_code=400, detail=f"Unsupported type: {msg_type}")
 
     tenant_id = body.get("tenant_id", "public")
     company_id = body.get("company_id", "ekaette-electronics")
     phone_number_id = body.get("phone_number_id", WHATSAPP_PHONE_NUMBER_ID)
 
     async def _do_send() -> tuple[int, dict]:
-        return await service_whatsapp.send_with_template_fallback(
-            to=to,
-            text=text,
+        if msg_type == "text":
+            return await service_whatsapp.send_with_template_fallback(
+                to=to,
+                text=text,
+                phone_number_id=phone_number_id,
+                tenant_id=tenant_id,
+                company_id=company_id,
+                template_name=template_name,
+                template_language=template_language,
+            )
+
+        try:
+            media_bytes = base64.b64decode(media_base64, validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise HTTPException(status_code=400, detail="Invalid media_base64") from exc
+        media_id = await providers.whatsapp_upload_media(
+            access_token=WHATSAPP_ACCESS_TOKEN,
+            media_bytes=media_bytes,
+            mime_type=mime_type,
             phone_number_id=phone_number_id,
-            tenant_id=tenant_id,
-            company_id=company_id,
-            template_name=template_name,
-            template_language=template_language,
+        )
+        return await providers.whatsapp_send_image(
+            access_token=WHATSAPP_ACCESS_TOKEN,
+            to=to,
+            media_id=media_id,
+            caption=caption,
+            phone_number_id=phone_number_id,
         )
 
     if idempotency_key:
+        media_hash = hashlib.sha256(media_base64.encode()).hexdigest() if media_base64 else ""
         payload_hash = hashlib.sha256(
             json.dumps(
                 {
@@ -546,6 +583,9 @@ async def wa_send(
                     "type": msg_type,
                     "template_name": template_name,
                     "template_language": template_language,
+                    "caption": caption,
+                    "mime_type": mime_type,
+                    "media_hash": media_hash,
                 },
                 sort_keys=True,
             ).encode()

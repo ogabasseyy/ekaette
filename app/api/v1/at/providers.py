@@ -503,6 +503,7 @@ async def whatsapp_send_audio(
     resolved_version = _normalize_graph_api_version(
         (api_version or "").strip() or WHATSAPP_API_VERSION
     )
+    resolved_media_id = _normalize_media_id(media_id)
     headers = {
         "Authorization": f"Bearer {access_token}",
         "Content-Type": "application/json",
@@ -512,8 +513,47 @@ async def whatsapp_send_audio(
         "recipient_type": "individual",
         "to": to.lstrip("+"),
         "type": "audio",
-        "audio": {"id": media_id},
+        "audio": {"id": resolved_media_id},
     }
+    return await _wa_graph_request(
+        "POST",
+        path_segments=(resolved_version, resolved_phone_id, "messages"),
+        headers=headers,
+        json=payload,
+    )
+
+
+async def whatsapp_send_image(
+    *,
+    access_token: str,
+    to: str,
+    media_id: str,
+    caption: str = "",
+    phone_number_id: str | None = None,
+    api_version: str | None = None,
+) -> tuple[int, dict]:
+    """Send an image message via WhatsApp Cloud API using uploaded media_id."""
+    resolved_phone_id = _normalize_phone_number_id(
+        (phone_number_id or "").strip() or WHATSAPP_PHONE_NUMBER_ID
+    )
+    resolved_version = _normalize_graph_api_version(
+        (api_version or "").strip() or WHATSAPP_API_VERSION
+    )
+    resolved_media_id = _normalize_media_id(media_id)
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "messaging_product": "whatsapp",
+        "recipient_type": "individual",
+        "to": to.lstrip("+"),
+        "type": "image",
+        "image": {"id": resolved_media_id},
+    }
+    normalized_caption = caption.strip()
+    if normalized_caption:
+        payload["image"]["caption"] = normalized_caption[:1024]
     return await _wa_graph_request(
         "POST",
         path_segments=(resolved_version, resolved_phone_id, "messages"),

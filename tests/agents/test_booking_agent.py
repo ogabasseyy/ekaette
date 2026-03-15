@@ -1,5 +1,7 @@
 """Tests for booking_agent wiring and fallback purchase flow guidance."""
 
+from unittest.mock import patch
+
 
 class TestBookingAgentTools:
     def test_booking_agent_includes_checkout_tools(self):
@@ -20,6 +22,28 @@ class TestBookingAgentTools:
         assert "end_call" in tool_names
         assert "send_sms_message" in tool_names
         assert "send_whatsapp_message" in tool_names
+
+    def test_booking_agent_includes_case_preview_tool_when_enabled(self):
+        from app.agents.booking_agent.agent import create_booking_agent
+
+        with patch("app.agents.booking_agent.agent.image_preview_enabled", return_value=True):
+            agent = create_booking_agent("gemini-live-2.5-flash-native-audio", channel="voice")
+        tool_names = {
+            getattr(tool, "name", getattr(tool, "__name__", str(tool)))
+            for tool in agent.tools
+        }
+        assert "generate_case_preview_via_whatsapp" in tool_names
+
+    def test_booking_agent_excludes_case_preview_tool_when_disabled(self):
+        from app.agents.booking_agent.agent import create_booking_agent
+
+        with patch("app.agents.booking_agent.agent.image_preview_enabled", return_value=False):
+            agent = create_booking_agent("gemini-live-2.5-flash-native-audio", channel="voice")
+        tool_names = {
+            getattr(tool, "name", getattr(tool, "__name__", str(tool)))
+            for tool in agent.tools
+        }
+        assert "generate_case_preview_via_whatsapp" not in tool_names
 
     def test_booking_instruction_mentions_purchase_fallback(self):
         from app.agents.booking_agent.agent import booking_agent
@@ -49,6 +73,7 @@ class TestBookingAgentTools:
         instruction = agent.instruction.lower()
         assert "separate whatsapp follow-up" in instruction
         assert "do not promise" in instruction
+        assert "whatsapp preview mockup" not in instruction
 
     def test_voice_booking_instruction_mentions_sms_or_whatsapp_followup(self):
         from app.agents.booking_agent.agent import booking_agent
@@ -65,3 +90,4 @@ class TestBookingAgentTools:
         assert "before delivery fee or payment" in instruction
         assert "only offer it once per purchase flow" in instruction
         assert "screen protector or case" in instruction
+        assert "whatsapp preview mockup" in instruction

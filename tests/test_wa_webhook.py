@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import builtins
+import base64
 import hashlib
 import hmac
 import json
+import time
+import uuid
 
 import pytest
 from unittest.mock import patch, AsyncMock
@@ -497,3 +500,56 @@ class TestSendEndpoint:
             json={"to": "+234", "text": "hello"},
         )
         assert resp.status_code == 403
+
+    @patch("app.api.v1.at.providers.whatsapp_send_image", new_callable=AsyncMock)
+    @patch("app.api.v1.at.providers.whatsapp_upload_media", new_callable=AsyncMock)
+    def test_send_image_with_service_auth(
+        self,
+        mock_upload,
+        mock_send_image,
+        wa_client: TestClient,
+    ) -> None:
+        mock_upload.return_value = "media-123"
+        mock_send_image.return_value = (200, {"messages": [{"id": "wamid.image1"}]})
+
+        payload = {
+            "to": "+2348012345678",
+            "type": "image",
+            "media_base64": base64.b64encode(b"\x89PNG").decode(),
+            "mime_type": "image/png",
+            "caption": "Preview image",
+            "tenant_id": "public",
+            "company_id": "ekaette-electronics",
+        }
+        body = json.dumps(payload)
+        timestamp = str(time.time())
+        nonce = uuid.uuid4().hex
+        sig = hmac.new(
+            b"svc_secret",
+            f"{timestamp}:{nonce}:{body}".encode(),
+            hashlib.sha256,
+        ).hexdigest()
+        headers = {
+            "X-Service-Timestamp": timestamp,
+            "X-Service-Nonce": nonce,
+            "X-Service-Auth": sig,
+            "X-Idempotency-Key": "wa-image-test",
+            "Content-Type": "application/json",
+        }
+
+        resp = wa_client.post(
+            "/api/v1/at/whatsapp/send",
+            data=body,
+            headers=headers,
+        )
+
+        assert resp.status_code == 200
+        mock_upload.assert_awaited_once()
+        mock_send_image.assert_awaited_once()
+        upload_kwargs = mock_upload.await_args.kwargs
+        assert upload_kwargs["media_bytes"] == b"\x89PNG"
+        assert upload_kwargs["mime_type"] == "image/png"
+        send_kwargs = mock_send_image.await_args.kwargs
+        assert send_kwargs["media_id"] == "media-123"
+        assert send_kwargs["to"] == "+2348012345678"
+        assert send_kwargs["caption"] == "Preview image"

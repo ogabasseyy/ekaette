@@ -17,6 +17,8 @@ DEFAULT_VISION_MODEL_ID = "gemini-2.5-flash"
 DEFAULT_VISION_FALLBACK_MODEL_ID = "gemini-2.5-pro"
 DEFAULT_LIVE_MEDIA_ANALYSIS_MODEL_ID = "gemini-2.5-pro"
 DEFAULT_TTS_MODEL_ID = "gemini-2.5-flash-tts"
+DEFAULT_IMAGE_GENERATION_MODEL_ID = "gemini-3.1-flash-image-preview"
+DEFAULT_IMAGE_GENERATION_FALLBACK_MODEL_ID = "gemini-2.5-flash-image"
 
 
 def _env_flag(name: str, default: str = "false") -> bool:
@@ -60,6 +62,14 @@ def resolve_tts_model_id() -> str:
 def resolve_vision_model_id() -> str:
     """Resolve the model for vision/analysis tools (image grading, device ID)."""
     return os.getenv("VISION_MODEL", DEFAULT_VISION_MODEL_ID).strip() or DEFAULT_VISION_MODEL_ID
+
+
+def resolve_image_generation_model_id() -> str:
+    """Resolve the model for image-generation tools."""
+    return (
+        os.getenv("IMAGE_GENERATION_MODEL", DEFAULT_IMAGE_GENERATION_MODEL_ID).strip()
+        or DEFAULT_IMAGE_GENERATION_MODEL_ID
+    )
 
 
 def get_vision_model_candidates() -> list[str]:
@@ -107,6 +117,32 @@ def get_live_media_vision_model_candidates() -> list[str]:
 
     if not candidates:
         candidates.append(DEFAULT_LIVE_MEDIA_ANALYSIS_MODEL_ID)
+    return candidates
+
+
+def get_image_generation_model_candidates() -> list[str]:
+    """Return ordered candidates for image-generation calls."""
+    candidates: list[str] = []
+    primary = os.getenv(
+        "IMAGE_GENERATION_MODEL",
+        DEFAULT_IMAGE_GENERATION_MODEL_ID,
+    ).strip()
+    fallback = os.getenv(
+        "IMAGE_GENERATION_MODEL_FALLBACK",
+        DEFAULT_IMAGE_GENERATION_FALLBACK_MODEL_ID,
+    ).strip()
+    extra = [
+        item.strip()
+        for item in os.getenv("IMAGE_GENERATION_MODEL_CANDIDATES", "").split(",")
+        if item.strip()
+    ]
+
+    for candidate in [primary, fallback, *extra]:
+        if candidate and candidate not in candidates:
+            candidates.append(candidate)
+
+    if not candidates:
+        candidates.append(DEFAULT_IMAGE_GENERATION_MODEL_ID)
     return candidates
 
 
