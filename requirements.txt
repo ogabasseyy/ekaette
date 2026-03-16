@@ -25,7 +25,7 @@ kreuzberg==4.4.4
 # Environment
 python-dotenv==1.2.2
 python-multipart==0.0.22
-pydantic-settings==2.11.0
+pydantic-settings==2.13.1
 openpyxl==3.1.5
 
 # Phone identity
