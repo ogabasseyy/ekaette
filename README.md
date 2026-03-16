@@ -15,6 +15,29 @@
 
 ---
 
+## Testing for Judges
+
+**Live testing (no setup required):**
+
+| Channel | Contact | What to try |
+|---------|---------|-------------|
+| **Voice** | Call `+2342017001127` | Speak to Ekaette — ask about products, request a trade-in, book an appointment |
+| **WhatsApp** | Message `+2348124975729` | Send a text, photo, or video — test cross-channel continuity |
+
+**Automated test suite (641 tests):**
+
+```bash
+# Backend (463 tests)
+source .venv/bin/activate
+pytest tests/ -v
+
+# Frontend (178 tests)
+cd frontend
+pnpm exec vitest run
+```
+
+---
+
 ## Demo
 
 ### Video Walkthrough

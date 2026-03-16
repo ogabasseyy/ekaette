@@ -1,30 +1,26 @@
-graph TB
-    subgraph "Frontend — React 19 + Vite 7 + Tailwind v4"
-        UI["Web UI"]
-        WS["WebSocket Client"]
-        MIC["Microphone / Camera"]
+graph LR
+    subgraph Channels
+        direction TB
+        PHONE["📞 PSTN<br/>Africa's Talking"]
+        SIP_B["SIP Bridge VM<br/>G.711/Opus ↔ PCM16<br/>denoise, prewarm"]
+        WA["💬 WhatsApp<br/>Business API"]
+        UI["🌐 Web UI<br/>React 19 + Vite 7"]
+        PHONE --> SIP_B
     end
 
-    subgraph "WhatsApp Channel"
-        WA["WhatsApp Business API"]
-        TTS["Gemini TTS"]
+    subgraph "Cloud Run — Main HTTP"
+        direction TB
+        CTRL["Channel Routes<br/>AT voice callback<br/>WhatsApp webhook<br/>SMS, payments, shipping"]
+        TR["Text Runtime<br/>Gemini 2.5 Pro"]
     end
 
-    subgraph "Phone Channel"
-        PHONE["PSTN / Africa's Talking"]
-        SIP_B["SIP Bridge VM<br/>(G.711/Opus ↔ PCM16,<br/>denoise, callback prewarm,<br/>explicit SIP BYE)"]
-    end
-
-    subgraph "Cloud Run — Main HTTP Service"
-        CTRL["Public + Admin + Channel Routes<br/>(AT voice callback, WhatsApp webhook,<br/>SMS, bootstrap, uploads)"]
-        TR["Text Runtime<br/>(WhatsApp/SMS/adk_text_adapter)"]
-    end
-
-    subgraph "Cloud Run — Live Voice Service"
-        GW["Live Voice Gateway<br/>/ws session auth + streaming"]
-        subgraph "Google ADK 1.25.1"
-            ROOT["ekaette_router<br/>(Gemini 2.5 Flash Native Audio)"]
-            VA["vision_agent<br/>(Live API + VISION_MODEL tools)"]
+    subgraph "Cloud Run — Live Voice"
+        direction TB
+        GW["WebSocket Gateway<br/>session auth + streaming"]
+        subgraph "Google ADK 1.26.0"
+            direction TB
+            ROOT["ekaette_router<br/>Gemini Live 2.5 Flash<br/>Native Audio"]
+            VA["vision_agent"]
             VLA["valuation_agent"]
             BA["booking_agent"]
             CA["catalog_agent"]
@@ -33,35 +29,35 @@ graph TB
     end
 
     subgraph "Google Cloud"
-        LIVE["Gemini Live API"]
-        G3F["VISION_MODEL<br/>(Standard API)"]
+        direction TB
+        LIVE["Gemini Live API<br/>Vertex AI"]
+        VISION["Gemini 2.5 Flash/Pro<br/>Vision + Media Analysis"]
+        IMGGEN["Gemini 3.1 Flash<br/>Image Generation"]
+        TTS["Gemini 2.5 Flash TTS"]
         FS["Firestore"]
         CS["Cloud Storage"]
-        MB["Memory Bank"]
+        MB["Vertex AI Memory Bank"]
         CT["Cloud Tasks"]
     end
 
-    UI --> WS
-    MIC --> WS
-    WS -->|"WSS"| GW
-    WA -->|"Webhook / send"| CTRL
-    PHONE -->|"Voice webhook + SIP"| CTRL
-    PHONE --> SIP_B
-    CTRL -->|"Dial XML<br/>callback orchestration"| PHONE
-    SIP_B -->|"WSS (PCM16)"| GW
-    GW --> ROOT
-    GW --> TR
+    SIP_B -->|"WSS PCM16"| GW
+    WA -->|"Webhook"| CTRL
+    PHONE -->|"Voice webhook"| CTRL
+    UI -->|"WSS"| GW
     CTRL --> TR
-    ROOT -->|"photo"| VA
-    ROOT -->|"price"| VLA
-    ROOT -->|"book"| BA
-    ROOT -->|"search"| CA
-    ROOT -->|"help"| SA
+    CTRL -->|"Dial XML"| PHONE
+    GW --> ROOT
+    ROOT --> VA
+    ROOT --> VLA
+    ROOT --> BA
+    ROOT --> CA
+    ROOT --> SA
     ROOT -.->|"Bidi Audio"| LIVE
-    VA -.->|"Vision"| G3F
-    ROOT --> FS
+    VA -.-> VISION
+    VA -.-> IMGGEN
     VA --> CS
-    ROOT -->|"Memory"| MB
-    TR -->|"Voice reply"| TTS
-    TTS -->|"Audio"| WA
-    CT -->|"Nudge"| WA
+    ROOT --> FS
+    ROOT --> MB
+    TR --> TTS
+    TTS --> WA
+    CT --> WA
